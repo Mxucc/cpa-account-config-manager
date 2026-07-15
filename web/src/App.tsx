@@ -14,6 +14,7 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Upload,
   Wifi,
   WifiOff,
   X,
@@ -23,6 +24,7 @@ import * as api from "./api/client";
 import { BatchEditor } from "./components/BatchEditor";
 import { ForceSyncPreviewDialog } from "./components/ForceSyncPreviewDialog";
 import { IconButton } from "./components/IconButton";
+import { ImportDialog } from "./components/ImportDialog";
 import { JobPanel, jobStateLabel } from "./components/JobPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { Modal } from "./components/Modal";
@@ -40,6 +42,8 @@ import type {
   DefaultPolicy,
   ForceSyncJobSnapshot,
   ForceSyncPreview,
+  ImportPreview,
+  ImportResult,
   JobSnapshot,
   PolicySnapshot,
 } from "./types";
@@ -102,6 +106,12 @@ export default function App() {
   const [forceStarting, setForceStarting] = useState(false);
   const [forceJob, setForceJob] = useState<ForceSyncJobSnapshot | null>(null);
   const [forceJobOpen, setForceJobOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importPreviewing, setImportPreviewing] = useState(false);
+  const [importStarting, setImportStarting] = useState(false);
+  const [importError, setImportError] = useState("");
   const [notice, setNotice] = useState("");
   const accountRequest = useRef(0);
 
@@ -458,6 +468,66 @@ export default function App() {
     }
   };
 
+  const openImport = () => {
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError("");
+    setImportOpen(true);
+  };
+
+  const closeImport = () => {
+    setImportOpen(false);
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError("");
+  };
+
+  const resetImport = () => {
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError("");
+  };
+
+  const previewImport = async (files: File[]) => {
+    setImportPreviewing(true);
+    setImportError("");
+    setImportResult(null);
+    try {
+      setImportPreview(await api.createImportPreview(files));
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) {
+        closeImport();
+        handleAPIError(error);
+      } else {
+        setImportError(errorText(error));
+      }
+    } finally {
+      setImportPreviewing(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview) return;
+    setImportStarting(true);
+    setImportError("");
+    try {
+      const result = await api.startImport(importPreview.id);
+      setImportPreview(null);
+      setImportResult(result);
+      setNotice(`已导入 ${result.imported} 个账号${result.failed || result.skipped ? `，${result.failed + result.skipped} 个未写入` : ""}`);
+      void refreshAccounts();
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) {
+        closeImport();
+        handleAPIError(error);
+      } else {
+        setImportError(errorText(error));
+      }
+    } finally {
+      setImportStarting(false);
+    }
+  };
+
   const scopeLabel = scopeMode === "selected" && selected.size > 0
     ? `已选 ${selected.size} 个账号`
     : `当前筛选 ${data.total} 个账号`;
@@ -480,6 +550,7 @@ export default function App() {
           {job?.id ? <IconButton className="mobile-job-action" label="打开批量任务" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
           {forceJob?.id ? <IconButton className="mobile-job-action" label="打开强制同步任务" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
           <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
+          <IconButton label="导入账号" onClick={openImport}><Upload size={17} /></IconButton>
           <IconButton className="export-action" label="导出筛选账号" onClick={() => void api.downloadExport("accounts", apiFilters).catch(handleAPIError)}><Download size={17} /></IconButton>
           <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
@@ -594,6 +665,7 @@ export default function App() {
       {editorOpen ? <BatchEditor scopeLabel={scopeLabel} onClose={() => setEditorOpen(false)} onSubmit={(patch) => { setEditorOpen(false); void beginPreview(patch); }} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => void api.downloadExport("results").catch(handleAPIError)} onRefresh={() => void refreshJob()} /> : null}
+      {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
       {policyOpen && policySnapshot ? <PolicyDialog key={`${policySnapshot.policy.enabled}:${policySnapshot.policy.priority}:${policySnapshot.policy.websockets}:${policySnapshot.policy.scan_interval_seconds}`} snapshot={policySnapshot} saving={policySaving} scanning={policyScanning} forceLoading={forcePreviewLoading} error={policyError} onClose={() => setPolicyOpen(false)} onSave={(policy) => void savePolicy(policy)} onScan={() => void scanPolicy()} onForcePreview={() => void previewForceSync()} /> : null}
       {policyOpen && !policySnapshot ? (
         <Modal title="默认策略" onClose={() => setPolicyOpen(false)} footer={<button className="button" type="button" onClick={() => setPolicyOpen(false)}>关闭</button>}>

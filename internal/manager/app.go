@@ -47,6 +47,7 @@ type App struct {
 	jobs      *JobEngine
 	policies  *PolicyEngine
 	force     *ForceSyncEngine
+	imports   *ImportService
 	indexHTML []byte
 }
 
@@ -62,6 +63,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		jobs:      jobs,
 		policies:  policies,
 		force:     NewForceSyncEngine(accounts, host, policies, mutations),
+		imports:   NewImportService(host, mutations),
 		indexHTML: append([]byte(nil), indexHTML...),
 	}
 }
@@ -87,6 +89,7 @@ func (a *App) Close() {
 	a.policies.Shutdown()
 	a.jobs.Shutdown()
 	a.previews.Clear()
+	a.imports.Clear()
 }
 
 func (a *App) Registration() Registration {
@@ -117,6 +120,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/retry", Description: "Retry the failed subset of the last in-memory batch."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export a redacted filtered account view."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/preview", Description: "Preview JSON or ZIP conversion into CPA Auth files."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/start", Description: "Import a confirmed converted Auth-file preview."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults", Description: "Read the default Auth-file policy and safe scan status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/defaults", Description: "Validate and save the default Auth-file policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/scan", Description: "Request an immediate missing-only Auth-file scan."},
@@ -160,6 +165,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleExportAccounts(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/export/results":
 		return jsonDownloadResponse(http.StatusOK, "cpa-account-config-results.json", a.jobs.Snapshot(true))
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/import/preview":
+		return a.handleImportPreview(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/import/start":
+		return a.handleImportStart(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults":
 		return jsonResponse(http.StatusOK, a.policies.Snapshot())
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/defaults":
@@ -179,6 +188,60 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			"path":   path,
 		})
 	}
+}
+
+func (a *App) handleImportPreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	uploads, multipartUpload, errUploads := importUploadsFromRequest(req, a.imports.limits)
+	if errUploads != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(errUploads.Error(), "exceeds") || strings.Contains(errUploads.Error(), "more than") {
+			status = http.StatusRequestEntityTooLarge
+		}
+		return jsonResponse(status, map[string]any{"error": errUploads.Error()})
+	}
+	var preview ImportPreview
+	var errPreview error
+	if multipartUpload {
+		preview, errPreview = a.imports.PreviewMany(ctx, uploads)
+	} else {
+		preview, errPreview = a.imports.Preview(ctx, uploads[0])
+	}
+	if errPreview != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(errPreview, ErrImportNoAccounts):
+			status = http.StatusUnprocessableEntity
+		case errors.Is(errPreview, ErrImportAuthUnavailable):
+			status = http.StatusBadGateway
+		case strings.Contains(errPreview.Error(), "exceeds") || strings.Contains(errPreview.Error(), "more than"):
+			status = http.StatusRequestEntityTooLarge
+		}
+		return jsonResponse(status, map[string]any{"error": errPreview.Error()})
+	}
+	return jsonResponse(http.StatusOK, preview)
+}
+
+func (a *App) handleImportStart(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request ImportStartRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	result, errStart := a.imports.Start(ctx, request.PreviewID)
+	if errStart != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(errStart, ErrImportPreviewExpired):
+			status = http.StatusGone
+		case errors.Is(errStart, ErrImportPreviewNotFound):
+			status = http.StatusNotFound
+		case errors.Is(errStart, ErrJobBusy):
+			status = http.StatusConflict
+		case errors.Is(errStart, ErrImportAuthUnavailable):
+			status = http.StatusBadGateway
+		}
+		return jsonResponse(status, map[string]any{"error": errStart.Error()})
+	}
+	return jsonResponse(http.StatusOK, result)
 }
 
 func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

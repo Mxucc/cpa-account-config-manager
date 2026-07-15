@@ -198,6 +198,61 @@ export interface ForceSyncJobSnapshot {
   results?: JobResult[];
 }
 
+export interface ImportSkippedItem {
+  source_name: string;
+  source_path?: string;
+  reason: string;
+}
+
+export interface ImportPreviewItem {
+  index: number;
+  source_name: string;
+  source_path?: string;
+  target_name: string;
+  email?: string;
+  account_id?: string;
+  label: string;
+  synthetic_id_token: boolean;
+  warnings?: string[];
+}
+
+export interface ImportPreview {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  input_type: "json" | "zip" | "mixed";
+  source_files: number;
+  total: number;
+  skipped: number;
+  warnings?: string[];
+  items: ImportPreviewItem[];
+  skipped_items?: ImportSkippedItem[];
+}
+
+export interface ImportResultItem {
+  index: number;
+  source_name: string;
+  source_path?: string;
+  target_name: string;
+  email?: string;
+  account_id?: string;
+  label: string;
+  status: "imported" | "skipped" | "failed";
+  error?: string;
+}
+
+export interface ImportResult {
+  id: string;
+  state: "completed" | "partial" | "failed";
+  total: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  started_at: string;
+  finished_at: string;
+  results: ImportResultItem[];
+}
+
 export interface Session {
   baseUrl: string;
   managementKey: string;

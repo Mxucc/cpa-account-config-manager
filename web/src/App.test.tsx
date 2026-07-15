@@ -375,4 +375,95 @@ describe("primary account batch flow", () => {
     expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false });
     expect(localStorage.length).toBe(0);
   });
+
+  it("previews arbitrary JSON and confirms a redacted account import", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const rawJSON = `{"wrapper":{"accounts":[{"email":"import@example.com","account_id":"import-account","access_token":"browser-access-secret","refresh_token":"browser-refresh-secret"}]}}`;
+    let imported = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/import/preview")) {
+        return jsonResponse({
+          id: "import-preview-ui",
+          created_at: "2026-07-15T10:00:00Z",
+          expires_at: "2026-07-15T10:05:00Z",
+          input_type: "json",
+          source_files: 1,
+          total: 1,
+          skipped: 0,
+          warnings: ["existing Auth files will not be overwritten"],
+          items: [{
+            index: 1,
+            source_name: "pasted-import.json",
+            source_path: "$.wrapper.accounts[0]",
+            target_name: "codex-import_example_com.json",
+            email: "import@example.com",
+            account_id: "import-account",
+            label: "import@example.com",
+            synthetic_id_token: false,
+          }],
+        });
+      }
+      if (url.includes("/import/start")) {
+        imported = true;
+        return jsonResponse({
+          id: "import-preview-ui",
+          state: "completed",
+          total: 1,
+          imported: 1,
+          skipped: 0,
+          failed: 0,
+          started_at: "2026-07-15T10:00:01Z",
+          finished_at: "2026-07-15T10:00:02Z",
+          results: [{
+            index: 1,
+            source_name: "pasted-import.json",
+            source_path: "$.wrapper.accounts[0]",
+            target_name: "codex-import_example_com.json",
+            email: "import@example.com",
+            account_id: "import-account",
+            label: "import@example.com",
+            status: "imported",
+          }],
+        });
+      }
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      return jsonResponse({
+        accounts: imported ? [{ ...account, id: "imported-1", name: "codex-import_example_com.json", label: "import@example.com", email: "import@example.com" }] : [account],
+        total: 1,
+        page: 1,
+        page_size: url.includes("page_size=1") ? 1 : 50,
+        pages: 1,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    await user.click(await screen.findByRole("button", { name: "导入账号" }));
+    await user.click(screen.getByRole("button", { name: "粘贴 JSON" }));
+    fireEvent.change(screen.getByLabelText("JSON 内容"), { target: { value: rawJSON } });
+    await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+    expect(await screen.findByText("codex-import_example_com.json")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(rawJSON)).not.toBeInTheDocument();
+    expect(screen.queryByText("browser-access-secret")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "导入 1 个账号" }));
+
+    expect(await screen.findByText("导入完成")).toBeInTheDocument();
+    expect(screen.getAllByText("codex-import_example_com.json").length).toBeGreaterThan(0);
+    await waitFor(() => expect(requests.some(({ url }) => url.includes("/import/start"))).toBe(true));
+    const previewRequest = requests.find(({ url }) => url.includes("/import/preview"));
+    expect(previewRequest?.init.body).toBeInstanceOf(FormData);
+    const pastedFile = (previewRequest?.init.body as FormData).get("files") as File;
+    expect(pastedFile.name).toBe("pasted-import.json");
+    expect(pastedFile.size).toBe(new Blob([rawJSON]).size);
+    expect(new Headers(previewRequest?.init.headers).get("Content-Type")).toBeNull();
+    expect(localStorage.length).toBe(0);
+  });
 });

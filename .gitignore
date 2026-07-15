@@ -18,3 +18,5 @@ web/coverage/
 .DS_Store
 .gocache/
 .playwright-cli/
+/.codex-tasks/
+/output/playwright/

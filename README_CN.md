@@ -16,9 +16,10 @@
 - 写入前由服务端生成预览，显示目标数、可执行数、只读数、缺失数和物理文件数。
 - 后台异步执行、受限并发、逐账号结果、Revision 冲突检测、部分成功继续和仅重试失败项。
 - 导出脱敏后的筛选账号和任务结果。
+- 支持粘贴 JSON，或一次混合选择多份 JSON/ZIP 文件；服务端递归识别多种账号结构，转换成 CPA Codex Auth JSON，预览确认后导入且不覆盖现有 Auth 文件。
 - React 单文件内嵌界面，支持官方 Management Center 的主题和同源认证状态。
 
-MVP 不提供删除账号、上传或下载原始 Auth JSON、刷新 Token、OAuth 重新授权、直接编辑凭据、额度巡检和调度功能。
+MVP 不提供删除账号、下载原始 Auth JSON、刷新 Token、OAuth 重新授权、无限制凭据编辑、额度巡检和调度功能。
 
 ## 兼容性
 
@@ -133,6 +134,28 @@ CLIProxyAPI 进程需要：
 
 预览有效期为 5 分钟。执行时消费的是固定目标快照，后续新匹配筛选条件的账号不会被静默加入。
 
+## 账号导入
+
+在操作栏打开“导入账号”。文件模式一次最多混合选择 64 份 JSON 和 ZIP；粘贴 JSON 会作为一份仅存在于浏览器内存中的 JSON 文件提交。每份 JSON 可以是单账号、数组，或任意层级的对象与数组。转换器会递归识别 [`GPTSession2CPAandSub2API`](https://github.com/Mxucc/GPTSession2CPAandSub2API) 使用的 ChatGPT session、sub2api、9router、Codex、Codex-manager 和已有 CPA 字段别名。
+
+每个 ZIP 可以包含多个目录和多份 JSON。目录和非 JSON 条目不会解压到磁盘，只会在预览中列为跳过；多文件请求中，单份 JSON 损坏时也会跳过该文件并继续处理其他有效来源。ZIP 路径穿越、符号链接、加密条目、不支持的压缩方法、异常压缩比或累计上限超标会在写入任何 Auth 文件前拒绝整批请求。
+
+服务端预览只返回账号身份、来源位置、生成的 CPA 文件名和警告，不返回 Access Token、Refresh Token、ID Token、Session Token 或原始 JSON。转换后的凭据只保存在有界的 5 分钟进程内预览中，上传或粘贴的原始 JSON 不进入预览存储；服务端接受预览后，浏览器会清除粘贴文本和已选 `File` 引用。确认后，插件占用共享写入槽位并通过 `host.auth.save` 保存规范化的 `type: codex` 文档。
+
+所有限制按整次混合请求累计，不能通过拆成多个 ZIP 绕过：
+
+| 限制 | 数值 |
+| --- | --- |
+| 顶层上传文件 | 64 |
+| 所有 ZIP 的条目总数 | 256 |
+| Multipart/原始请求体 | 12 MiB |
+| 单个解压 JSON 条目 | 2 MiB |
+| 所有 ZIP 的 JSON 解压总量 | 32 MiB |
+| JSON 层级 / 访问节点 | 32 层 / 50,000 个节点 |
+| 转换账号数 | 500 |
+
+预览时会结合当前 Auth 列表预留目标文件名；正式保存前再次检查。同名文件只会跳过，不会调用宿主可覆盖保存接口。宿主 ABI 暂无 create-only Compare-and-swap，因此最终名称检查与保存之间仍存在很窄的外部竞态窗口。
+
 ## Auth 文件默认策略
 
 在操作栏打开“默认策略”，可以分别管理 `priority` 与 `websockets`。未勾选的字段不受策略管理；`priority: 0` 和 `websockets: false` 都是有效的明确值，不会被当成空值。启用策略时至少要管理一个字段。
@@ -159,7 +182,7 @@ CLIProxyAPI 进程需要：
 
 ## 并发、冲突与部分失败
 
-- 同一时间只有一个 Auth 文件写入路径占用写入槽位；普通批量任务、后台缺失字段补齐和默认策略强制同步彼此串行。
+- 同一时间只有一个 Auth 文件写入路径占用写入槽位；普通批量任务、账号导入、后台缺失字段补齐和默认策略强制同步彼此串行。
 - 所有目标先做 Preflight。无效、缺失、重复或只读目标跳过，其余可执行目标继续。
 - 预览时记录物理 Auth JSON 的 SHA-256 Revision；每次写入前立即重读。Revision 改变时返回冲突，不覆盖新内容。
 - 当前 ABI 没有宿主级 Compare-and-swap，因此最终 Revision 检查与 Management API 写入之间仍存在很窄的竞态窗口。插件不宣称跨文件严格事务。
@@ -176,6 +199,7 @@ CLIProxyAPI 进程需要：
 - 批量启动和重试优先使用请求携带的 Bearer Key。非浏览器调用也可以通过 `MANAGEMENT_PASSWORD` 或 `CPA_MANAGEMENT_KEY` 提供进程内回退；插件不会把这些环境变量写入磁盘。
 - 插件内部调用只允许回环地址，响应读取上限为 64 KiB，且不会把上游响应正文拼进公开错误。
 - 默认策略扫描和强制同步直接调用 `host.auth.list/get/save`，不读取也不保存浏览器 Management Key。原始 Auth JSON 只在进程内转换，不会由策略接口返回，也不会写入插件状态文件。
+- 导入预览和确认都是鉴权 Management 路由。Multipart 文件、转换凭据和原始 JSON 不写入 `data_dir`；公开预览/结果使用显式白名单，预览在消费、过期、淘汰或插件关闭时清除内存。
 
 不要把 CLIProxyAPI Management API 暴露到不可信网络，Management Key 仍需单独妥善保护。
 
@@ -208,7 +232,7 @@ services:
 
 ## Management 路由
 
-以下 13 条鉴权路由都是 `/v0/management/plugins/cpa-account-config-manager` 下的固定精确路径：
+以下 15 条鉴权路由都是 `/v0/management/plugins/cpa-account-config-manager` 下的固定精确路径：
 
 - `GET /accounts`
 - `POST /batch/preview`
@@ -217,6 +241,8 @@ services:
 - `POST /batch/retry`
 - `GET /export/accounts`
 - `GET /export/results`
+- `POST /import/preview`
+- `POST /import/start`
 - `GET /defaults`
 - `PUT /defaults`
 - `POST /defaults/scan`
@@ -254,7 +280,7 @@ cd web
 VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 ```
 
-打开 `http://127.0.0.1:5175`，CPA 地址保持页面同源，Management Key 使用 `demo-key`。Mock 仅包含合成账号并模拟批量任务及默认策略进度，不会修改真实凭据。
+打开 `http://127.0.0.1:5175`，CPA 地址保持页面同源，Management Key 使用 `demo-key`。Mock 仅包含合成账号，并模拟批量任务、默认策略进度及混合 JSON/ZIP 导入，不会修改真实凭据。
 
 ## 发布
 

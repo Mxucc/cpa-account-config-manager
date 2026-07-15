@@ -29,6 +29,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/batch/retry":            {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/export/accounts":         {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/export/results":          {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/import/preview":         {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/import/start":           {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/defaults":                {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/defaults":                {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/scan":          {},

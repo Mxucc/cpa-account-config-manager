@@ -29,11 +29,14 @@ behavior in sub2api.
 - Bounded asynchronous jobs, per-account results, revision-conflict detection,
   best-effort continuation, and failed-only retry.
 - Redacted JSON exports for filtered accounts and sanitized job results.
+- Preview-confirmed account import from pasted JSON or mixed multi-file JSON
+  and ZIP selections, with recursive format conversion into CPA Codex Auth
+  JSON and no overwrite of existing Auth files.
 - Embedded React UI with official Management Center theme and remembered-auth
   integration.
 
-The MVP intentionally does not expose account deletion, Auth JSON upload or
-download, token refresh, OAuth reauthorization, raw credential editing, quota
+The MVP intentionally does not expose account deletion, raw Auth JSON download,
+token refresh, OAuth reauthorization, unrestricted credential editing, quota
 inspection, or scheduling.
 
 ## Compatibility
@@ -182,6 +185,50 @@ The preview expires after five minutes. Starting a preview consumes that fixed
 snapshot, so accounts that begin matching the filter later are not silently
 added.
 
+## Account Import
+
+Open **Import accounts** from the operator toolbar. The file picker accepts up
+to 64 JSON and ZIP files in one mixed selection; pasted JSON is submitted as a
+single in-memory JSON file. Every JSON file may contain one account, an array,
+or arbitrarily nested objects and arrays. The converter recursively recognizes
+the common ChatGPT session, sub2api, 9router, Codex, Codex-manager, and
+already-CPA credential aliases used by
+[`GPTSession2CPAandSub2API`](https://github.com/Mxucc/GPTSession2CPAandSub2API).
+
+Each ZIP may contain multiple directories and JSON files. Directories and
+non-JSON entries are not extracted and are reported as skipped. A malformed
+individual JSON file is also skipped when other selected files remain usable.
+Unsafe paths, symbolic links, encrypted entries, unsupported compression,
+excessive expansion, and archive-limit violations reject the request before
+any Auth file is written.
+
+The server returns only account identity, source location, generated CPA
+filename, and warnings. Converted credential values remain only in a bounded
+five-minute in-memory preview; uploaded and pasted raw JSON is not retained by
+the preview store. The browser clears pasted text and selected `File` references
+after the preview is accepted. Confirming the preview writes each canonical
+`type: codex` document through `host.auth.save` while holding the shared mutation
+slot.
+
+Import limits apply to the complete mixed request, not independently to every
+archive:
+
+| Limit | Value |
+| --- | --- |
+| Top-level uploaded files | 64 |
+| ZIP entries across all archives | 256 |
+| Multipart/raw request body | 12 MiB |
+| One expanded JSON entry | 2 MiB |
+| Expanded JSON across all ZIP files | 32 MiB |
+| JSON nesting / visited nodes | 32 levels / 50,000 nodes |
+| Converted accounts | 500 |
+
+Generated filenames are reserved against the current Auth list during preview.
+The plugin rechecks names immediately before writes and skips a collision rather
+than calling the overwrite-capable host save operation. The host ABI does not
+provide create-only compare-and-swap, so a narrow external race remains between
+the final name check and save.
+
 ## Default Auth-File Policy
 
 Open **Default policy** in the operator toolbar to manage `priority` and
@@ -227,8 +274,8 @@ and otherwise unsupported records remain visible but read-only.
 ## Concurrency and Failure Semantics
 
 - Only one Auth-file mutation path owns the writer slot at a time. Ordinary
-  batch jobs, missing-only default-policy reconciliation, and force sync are
-  serialized with each other.
+  batch jobs, imports, missing-only default-policy reconciliation, and force
+  sync are serialized with each other.
 - Every target is preflighted. Invalid, missing, duplicated, or read-only
   targets are skipped while eligible targets continue.
 - The plugin records a SHA-256 revision during preview and re-reads the physical
@@ -273,6 +320,10 @@ and otherwise unsupported records remain visible but read-only.
   so they neither request nor persist a browser Management Key. Raw Auth JSON
   is transformed only in process and is never returned by policy routes or
   written into plugin state.
+- Import preview/start are authenticated Management routes. Multipart files,
+  converted credentials, and raw JSON are never written to `data_dir`; public
+  preview/result models are allow-listed, and preview memory is cleared on
+  consumption, expiry, eviction, or plugin shutdown.
 
 Do not expose the CLIProxyAPI Management API to untrusted networks. Protect the
 Management Key independently of this plugin.
@@ -317,7 +368,7 @@ upgrading the native library.
 
 ## Management Routes
 
-All 13 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 15 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
 - `POST /batch/preview`
@@ -326,6 +377,8 @@ All 13 privileged routes are exact paths below `/v0/management/plugins/cpa-accou
 - `POST /batch/retry`
 - `GET /export/accounts`
 - `GET /export/results`
+- `POST /import/preview`
+- `POST /import/start`
 - `GET /defaults`
 - `PUT /defaults`
 - `POST /defaults/scan`
@@ -377,7 +430,8 @@ VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 
 Open `http://127.0.0.1:5175`, leave the CPA address on the same origin, and use
 the demo key `demo-key`. The mock contains synthetic accounts and simulates
-batch/default-policy progress; it does not edit real credentials.
+batch/default-policy progress plus mixed JSON/ZIP imports; it does not edit real
+credentials.
 
 ## Release Process
 

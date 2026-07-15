@@ -7,6 +7,8 @@ import type {
 	DefaultPolicy,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
+  ImportPreview,
+  ImportResult,
   JobSnapshot,
 	PolicySnapshot,
   TargetScope,
@@ -33,14 +35,14 @@ function buildURL(path: string, query?: URLSearchParams): string {
 async function request<T>(path: string, init: RequestInit = {}, query?: URLSearchParams): Promise<T> {
   const session = getSession();
   if (!session) throw new APIError(401, "Management Key 未设置");
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/json");
+  headers.set("Authorization", `Bearer ${session.managementKey}`);
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (init.body && !isFormData && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(buildURL(path, query), {
     ...init,
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${session.managementKey}`,
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...init.headers,
-    },
+    headers,
   });
   if (!response.ok) {
     let message = `请求失败 (${response.status})`;
@@ -134,6 +136,22 @@ export async function getForceSyncStatus(includeResults = true): Promise<ForceSy
 	const query = new URLSearchParams();
 	if (!includeResults) query.set("light", "1");
 	return request<ForceSyncJobSnapshot>("/defaults/force/status", {}, query);
+}
+
+export async function createImportPreview(files: File[]): Promise<ImportPreview> {
+  const body = new FormData();
+  files.forEach((file) => body.append("files", file, file.name));
+  return request<ImportPreview>("/import/preview", {
+    method: "POST",
+    body,
+  });
+}
+
+export async function startImport(previewID: string): Promise<ImportResult> {
+  return request<ImportResult>("/import/start", {
+    method: "POST",
+    body: JSON.stringify({ preview_id: previewID }),
+  });
 }
 
 export async function downloadExport(kind: "accounts" | "results", filters?: AccountFilters): Promise<void> {

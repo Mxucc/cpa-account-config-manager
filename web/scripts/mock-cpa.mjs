@@ -4,6 +4,7 @@ const port = Number(process.env.MOCK_CPA_PORT || 8318);
 const managementKey = process.env.MOCK_CPA_KEY || "demo-key";
 const previews = new Map();
 let activeJob = null;
+const importPreviews = new Map();
 const forcePreviews = new Map();
 let activeForceJob = null;
 let defaultPolicy = {
@@ -70,6 +71,18 @@ async function readJSON(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+}
+
+async function readFormData(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const body = Buffer.concat(chunks);
+  const webRequest = new Request("http://127.0.0.1/import", {
+    method: "POST",
+    headers: request.headers,
+    body,
+  });
+  return webRequest.formData();
 }
 
 function filterAccounts(filters) {
@@ -260,6 +273,96 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname.endsWith("/export/results")) {
     return json(response, 200, snapshotJob(true), { "Content-Disposition": 'attachment; filename="demo-results.json"' });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/import/preview")) {
+    const formData = await readFormData(request);
+    const files = formData.getAll("files").filter((file) => typeof file?.name === "string");
+    if (!files.length) return json(response, 400, { error: "multipart import contains no files" });
+    const previewID = crypto.randomUUID();
+    const items = [];
+    files.forEach((file, fileIndex) => {
+      const isZip = file.name.toLowerCase().endsWith(".zip");
+      const count = isZip ? 2 : 1;
+      for (let entryIndex = 0; entryIndex < count; entryIndex += 1) {
+        const sequence = items.length + 1;
+        const stem = file.name.replace(/\.[^.]+$/, "").replace(/[^a-z0-9]+/gi, "_").toLowerCase() || `import_${sequence}`;
+        const email = `${stem}_${entryIndex + 1}@example.com`;
+        items.push({
+          index: sequence,
+          source_name: isZip ? `${file.name}/account-${entryIndex + 1}.json` : file.name,
+          source_path: isZip ? `$[${entryIndex}]` : "$",
+          target_name: `codex-${stem}_${entryIndex + 1}.json`,
+          email,
+          account_id: `demo-import-${fileIndex + 1}-${entryIndex + 1}`,
+          label: email,
+          synthetic_id_token: true,
+          warnings: ["ID token was synthesized from account metadata"],
+        });
+      }
+    });
+    const inputTypes = new Set(files.map((file) => file.name.toLowerCase().endsWith(".zip") ? "zip" : "json"));
+    const preview = {
+      id: previewID,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+      input_type: inputTypes.size > 1 ? "mixed" : [...inputTypes][0],
+      source_files: items.length,
+      total: items.length,
+      skipped: 0,
+      warnings: ["existing Auth files will not be overwritten"],
+      items,
+    };
+    importPreviews.set(previewID, preview);
+    return json(response, 200, preview);
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/import/start")) {
+    const body = await readJSON(request);
+    const preview = importPreviews.get(body.preview_id);
+    if (!preview) return json(response, 404, { error: "import preview not found" });
+    const results = preview.items.map((item) => {
+      accounts.push({
+        id: `auth-import-${crypto.randomUUID()}`,
+        auth_id: `runtime-${item.account_id}`,
+        name: item.target_name,
+        provider: "codex",
+        type: "codex",
+        label: item.label,
+        email: item.email,
+        account_type: "oauth",
+        status: "active",
+        status_message: "",
+        disabled: false,
+        unavailable: false,
+        runtime_only: false,
+        source: "file",
+        priority: 0,
+        note: "Imported by mock CPA",
+        prefix: "",
+        proxy: "",
+        proxy_configured: false,
+        websockets: false,
+        header_names: [],
+        header_count: 0,
+        editable: true,
+        read_only_reason: "",
+        success: 0,
+        failed: 0,
+        updated_at: new Date().toISOString(),
+      });
+      return { ...item, status: "imported" };
+    });
+    importPreviews.delete(body.preview_id);
+    return json(response, 200, {
+      id: preview.id,
+      state: "completed",
+      total: results.length,
+      imported: results.length,
+      skipped: 0,
+      failed: 0,
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      results,
+    });
   }
   if (request.method === "GET" && url.pathname.endsWith("/defaults")) {
     return json(response, 200, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });

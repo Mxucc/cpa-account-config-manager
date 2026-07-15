@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "mock": "node scripts/mock-cpa.mjs",
-    "build": "tsc --noEmit -p tsconfig.json && VITE_HOSTED=1 vite build",
+    "build": "tsc --noEmit -p tsconfig.json && vite build --mode hosted",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json"

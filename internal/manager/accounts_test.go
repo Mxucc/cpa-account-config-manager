@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -137,6 +138,102 @@ func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 	for _, emptyTime := range []string{"updated_at", "last_refresh", "0001-01-01"} {
 		if bytes.Contains(encoded, []byte(emptyTime)) {
 			t.Fatalf("public account contained empty timestamp %q: %s", emptyTime, encoded)
+		}
+	}
+}
+
+func TestAccountServiceListJoinsSanitizedUsageAndNativeRequestActivity(t *testing.T) {
+	now := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "auth-index-usage",
+		AuthID:    "runtime-secret-id",
+		APIKey:    "sk-client-secret",
+		Failure:   cpaapi.UsageFailure{Body: "upstream-secret-body"},
+		Detail:    cpaapi.UsageDetail{InputTokens: 80, OutputTokens: 20, TotalTokens: 100},
+		ResponseHeaders: http.Header{
+			"Authorization":                         []string{"Bearer header-secret"},
+			"Set-Cookie":                            []string{"session=cookie-secret"},
+			"X-Codex-Primary-Used-Percent":          []string{"64"},
+			"X-Codex-Primary-Reset-After-Seconds":   []string{"604800"},
+			"X-Codex-Primary-Window-Minutes":        []string{"10080"},
+			"X-Codex-Secondary-Used-Percent":        []string{"18"},
+			"X-Codex-Secondary-Reset-After-Seconds": []string{"1800"},
+			"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+		},
+	})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "fallback-auth-id",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 999},
+	})
+
+	nextRetryAfter := now.Add(10 * time.Minute)
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{
+				ID:             "runtime-id",
+				AuthIndex:      "auth-index-usage",
+				Name:           "usage.json",
+				Provider:       "codex",
+				Source:         "file",
+				Path:           "/auths/usage.json",
+				Success:        12,
+				Failed:         2,
+				NextRetryAfter: nextRetryAfter,
+				RecentRequests: []cpaapi.HostRecentRequestEntry{{Time: "2026-07-15T12:00:00Z", Success: 3, Failed: 1}},
+			},
+			{
+				ID:       "fallback-auth-id",
+				Name:     "missing-index.json",
+				Provider: "codex",
+				Source:   "file",
+				Path:     "/auths/missing-index.json",
+			},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-index-usage": {AuthIndex: "auth-index-usage", Path: "/auths/usage.json", JSON: json.RawMessage(`{"type":"codex"}`)},
+		},
+	}
+
+	response, errList := NewAccountService(host, tracker).List(context.Background(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if len(response.Accounts) != 2 {
+		t.Fatalf("accounts len = %d, want 2", len(response.Accounts))
+	}
+	var usageAccount, missingIndexAccount Account
+	for _, account := range response.Accounts {
+		switch account.ID {
+		case "auth-index-usage":
+			usageAccount = account
+		case "fallback-auth-id":
+			missingIndexAccount = account
+		}
+	}
+	if usageAccount.Usage == nil || usageAccount.Usage.TotalTokens != 100 || usageAccount.Usage.Codex == nil {
+		t.Fatalf("usage snapshot = %#v", usageAccount.Usage)
+	}
+	if usageAccount.Success != 12 || usageAccount.Failed != 2 || len(usageAccount.RecentRequests) != 1 {
+		t.Fatalf("request activity = success:%d failed:%d recent:%#v", usageAccount.Success, usageAccount.Failed, usageAccount.RecentRequests)
+	}
+	if usageAccount.NextRetryAfter == nil || !usageAccount.NextRetryAfter.Equal(nextRetryAfter) {
+		t.Fatalf("next retry = %v, want %v", usageAccount.NextRetryAfter, nextRetryAfter)
+	}
+	if missingIndexAccount.Usage != nil {
+		t.Fatalf("account without AuthIndex joined fallback usage: %#v", missingIndexAccount.Usage)
+	}
+	encoded, errMarshal := json.Marshal(response)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+	for _, secret := range []string{"runtime-secret-id", "sk-client-secret", "upstream-secret-body", "header-secret", "cookie-secret", "Authorization", "Set-Cookie"} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("public account response leaked %q: %s", secret, encoded)
 		}
 	}
 }

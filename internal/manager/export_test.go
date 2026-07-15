@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"strings"
@@ -162,6 +163,23 @@ func TestCredentialExportRejectsOversizedAuthEntry(t *testing.T) {
 	_, errExport := NewAccountService(host).ExportCredentialSources(t.Context(), AccountFilters{})
 	if !errors.Is(errExport, ErrCredentialExportTooLarge) {
 		t.Fatalf("oversized export error = %v, want %v", errExport, ErrCredentialExportTooLarge)
+	}
+}
+
+func TestCredentialExportAccountLimitRemainsFiveHundred(t *testing.T) {
+	if maxCredentialExportAccounts != 500 {
+		t.Fatalf("credential export account limit = %d, want 500", maxCredentialExportAccounts)
+	}
+	host := &fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}}
+	for index := 0; index < maxCredentialExportAccounts+1; index++ {
+		name := fmt.Sprintf("account-%03d.json", index)
+		host.entries = append(host.entries, cpaapi.HostAuthFileEntry{
+			AuthIndex: name, Name: name, Provider: "codex", Type: "codex", Source: "file", Path: "/auths/" + name,
+		})
+	}
+	_, errExport := NewAccountService(host).ExportCredentialSources(t.Context(), AccountFilters{})
+	if !errors.Is(errExport, ErrCredentialExportTooLarge) {
+		t.Fatalf("501-account credential export error = %v, want %v", errExport, ErrCredentialExportTooLarge)
 	}
 }
 

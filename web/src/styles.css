@@ -110,18 +110,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .table-meta { height: 39px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 11px; font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }
 .table-meta span:first-child { color: var(--ink); font-family: "Avenir Next", sans-serif; font-size: 12px; font-weight: 700; }
 .table-scroll { max-width: 100%; overflow: auto; overscroll-behavior-inline: contain; background: var(--surface); }
-.account-table { width: 100%; min-width: 1080px; border-collapse: collapse; table-layout: fixed; }
+.account-table { width: 100%; min-width: 1300px; border-collapse: collapse; table-layout: fixed; }
 .account-table .col-select { width: 42px; }
 .account-table .col-identity { width: 260px; }
 .account-table .col-provider { width: 130px; }
 .account-table .col-state { width: 155px; }
 .account-table .col-priority { width: 78px; }
 .account-table .col-routing { width: 215px; }
-.account-table .col-activity { width: 96px; }
+.account-table .col-activity { width: 205px; }
 .account-table .col-updated { width: 115px; }
 .account-table .col-access { width: 102px; }
 .account-table th { height: 34px; padding: 0 10px; color: var(--muted); background: var(--surface-2); border-bottom: 1px solid var(--line-strong); text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; position: sticky; top: 0; z-index: 5; }
-.account-table td { height: 58px; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 12px; overflow: hidden; }
+.account-table td { height: 74px; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 12px; overflow: hidden; }
 .account-table th:first-child, .account-table td:first-child { position: sticky; left: 0; }
 .account-table th:nth-child(2), .account-table td:nth-child(2) { position: sticky; left: 42px; box-shadow: 1px 0 0 var(--line); }
 .account-table th:first-child, .account-table th:nth-child(2) { z-index: 8; background: var(--surface-2); }
@@ -151,15 +151,33 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .routing-cell code { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 5px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); font-size: 10px; }
 .routing-cell > span { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; font-size: 9px; }
 .routing-cell .ws-on { color: var(--success); }
-.activity-cell { display: flex; align-items: center; gap: 5px; font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: 10px; }
-.activity-cell span { min-width: 32px; padding: 3px 5px; border-radius: 3px; text-align: center; background: var(--surface-2); }
+.account-usage-cell { min-width: 0; display: grid; gap: 5px; font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }
+.usage-overview { min-width: 0; height: 18px; display: grid; grid-template-columns: minmax(46px, 1fr) auto auto; align-items: center; gap: 7px; }
+.usage-overview > span { min-width: 0; display: inline-flex; align-items: baseline; white-space: nowrap; }
+.usage-token-total { gap: 3px; overflow: hidden; }
+.usage-token-total strong { overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.usage-token-total small { color: var(--faint); font-size: 7px; text-transform: uppercase; }
+.usage-request-total { gap: 3px; font-size: 9px; }
+.usage-request-total i { color: var(--line-strong); font-style: normal; }
+.usage-recent-total { gap: 3px; color: var(--muted); font-size: 9px; }
+.usage-recent-total svg { flex: 0 0 auto; color: var(--faint); }
+.usage-quota-list { min-width: 0; display: grid; gap: 3px; }
+.usage-quota-row { min-width: 0; height: 12px; display: grid; grid-template-columns: 17px minmax(0, 1fr) 34px; align-items: center; gap: 5px; color: var(--accent); }
+.usage-quota-row > span:first-child { color: var(--muted); font-size: 8px; font-weight: 700; }
+.usage-quota-row > b { overflow: hidden; color: currentColor; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
+.usage-quota-track { min-width: 0; height: 4px; display: block; overflow: hidden; border-radius: 2px; background: var(--surface-3); }
+.usage-quota-track > span { height: 100%; display: block; border-radius: inherit; background: currentColor; }
+.usage-quota-row.quota-warning { color: var(--warning); }
+.usage-quota-row.quota-danger { color: var(--danger); }
+.usage-quota-empty { height: 27px; display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 8px; }
+.usage-quota-empty b { color: var(--muted); font-size: 10px; }
 .success, .tone-success { color: var(--success); }
 .danger { color: var(--danger); }
 .account-table time { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .access-tag { height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 3px; font-size: 9px; font-weight: 700; }
 .access-tag.editable { color: var(--success); background: var(--success-soft); }
 .access-tag.readonly { color: var(--muted); background: var(--surface-2); }
-.loading-row td { height: 58px; }
+.loading-row td { height: 74px; }
 .loading-row span { display: block; width: 100%; height: 12px; background: var(--surface-2); animation: loadingPulse 1s ease-in-out infinite alternate; }
 .empty-state { min-height: 220px; display: grid; place-items: center; color: var(--faint); font-size: 12px; }
 .empty-state.compact { min-height: 120px; }
@@ -314,6 +332,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .import-record-state { text-align: right; font-size: 9px; font-weight: 700; }
 .import-record-state.success { color: var(--success); }
 .import-record-state.warning { color: var(--warning); }
+.import-list-overflow { min-height: 38px; display: grid; place-items: center; padding: 7px 10px; border-top: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 700; }
 .import-skipped-list { max-height: 130px; overflow: auto; border-top: 1px solid var(--line); }
 .import-skipped-list > div { min-height: 30px; display: grid; grid-template-columns: 18px minmax(110px, 0.7fr) minmax(0, 1fr); align-items: center; gap: 7px; padding: 5px 9px; border-bottom: 1px solid var(--line); color: var(--warning); font-size: 9px; }
 .import-skipped-list span, .import-skipped-list b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -472,6 +491,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .search-box { grid-column: 1 / -1; }
   .reset-filters { width: 100%; grid-column: 1 / -1; }
   .brand-block div > span { display: none; }
+  .account-table .col-identity { width: 220px; }
+  .account-table th:nth-child(2), .account-table td:nth-child(2) { position: static; box-shadow: none; }
+  .account-table th:nth-child(2) { z-index: 5; background: var(--surface-2); }
+  .account-table td:nth-child(2) { z-index: auto; }
   .preview-metrics { grid-template-columns: repeat(2, 1fr); }
   .policy-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .policy-metrics > div { border-bottom: 1px solid var(--line); }

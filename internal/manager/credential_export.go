@@ -23,7 +23,7 @@ const (
 	CredentialExportFormatAxonHub      = "axonhub"
 	CredentialExportFormatCodexManager = "codexmanager"
 
-	maxCredentialExportAccounts = defaultImportMaxAccounts
+	maxCredentialExportAccounts = 500
 	maxCredentialExportEntry    = defaultImportMaxEntryBytes
 	maxCredentialExportBytes    = defaultImportMaxExpandedBytes
 )

@@ -27,7 +27,7 @@ const (
 	defaultImportMaxExpandedBytes = 32 << 20
 	defaultImportMaxJSONDepth     = 32
 	defaultImportMaxJSONNodes     = 50_000
-	defaultImportMaxAccounts      = 500
+	defaultImportMaxAccounts      = 10_000
 	defaultImportMaxRatio         = 200
 )
 

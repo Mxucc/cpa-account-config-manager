@@ -24,8 +24,40 @@ func TestHandleMethodRegistersManagementCapability(t *testing.T) {
 	if !registration.Capabilities.ManagementAPI {
 		t.Fatal("management_api capability is false")
 	}
+	if !registration.Capabilities.UsagePlugin {
+		t.Fatal("usage_plugin capability is false")
+	}
 	if registration.Metadata.Name != manager.PluginName {
 		t.Fatalf("metadata name = %q", registration.Metadata.Name)
+	}
+}
+
+func TestHandleMethodAcceptsCurrentUsageABIJSON(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.Configure([]byte("data_dir: " + t.TempDir()))
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	raw, errHandle := handleMethod(cpaapi.MethodUsageHandle, []byte(`{
+		"Provider":"codex",
+		"AuthIndex":"auth-index-1",
+		"RequestedAt":"2026-07-15T12:00:00Z",
+		"Detail":{"InputTokens":12,"OutputTokens":3,"TotalTokens":15},
+		"ResponseHeaders":{"X-Codex-Secondary-Used-Percent":["25"]}
+	}`))
+	if errHandle != nil {
+		t.Fatalf("handleMethod() error = %v", errHandle)
+	}
+	result, errDecode := decodeEnvelopeResult(raw)
+	if errDecode != nil {
+		t.Fatalf("decodeEnvelopeResult() error = %v", errDecode)
+	}
+	if string(result) != "{}" {
+		t.Fatalf("result = %s, want {}", result)
 	}
 }
 

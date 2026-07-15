@@ -19,6 +19,7 @@ import { Modal } from "./Modal";
 
 const MAX_UPLOAD_FILES = 64;
 const MAX_INPUT_BYTES = 12 << 20;
+const MAX_VISIBLE_IMPORT_ROWS = 250;
 
 interface ImportDialogProps {
   preview: ImportPreview | null;
@@ -191,6 +192,8 @@ export function ImportDialog({
 }
 
 function ImportPreviewView({ preview }: { preview: ImportPreview }) {
+  const visibleItems = preview.items.slice(0, MAX_VISIBLE_IMPORT_ROWS);
+  const hiddenItems = Math.max(0, preview.total - visibleItems.length);
   return (
     <div className="import-preview-stage">
       <div className="import-metrics">
@@ -203,7 +206,7 @@ function ImportPreviewView({ preview }: { preview: ImportPreview }) {
       <div className="import-records">
         <div className="import-record-header"><span>账号</span><span>来源</span><span>CPA 文件</span><span>状态</span></div>
         <div className="import-record-list">
-          {preview.items.map((item) => (
+          {visibleItems.map((item) => (
             <div className="import-record" key={`${item.index}:${item.target_name}`}>
               <div className="import-record-identity"><strong>{item.label}</strong><span>{item.account_id || item.email || `#${item.index}`}</span></div>
               <div className="import-record-source"><strong>{item.source_name}</strong><span>{item.source_path || "$"}</span></div>
@@ -211,6 +214,7 @@ function ImportPreviewView({ preview }: { preview: ImportPreview }) {
               <span className={item.warnings?.length ? "import-record-state warning" : "import-record-state success"}>{item.warnings?.length ? `${item.warnings.length} 警告` : "就绪"}</span>
             </div>
           ))}
+          {hiddenItems ? <div className="import-list-overflow" role="status">另有 {hiddenItems} 个账号未展开</div> : null}
         </div>
       </div>
       {preview.skipped_items?.length ? (
@@ -224,6 +228,8 @@ function ImportPreviewView({ preview }: { preview: ImportPreview }) {
 
 function ImportResultView({ result }: { result: ImportResult }) {
   const complete = result.state === "completed";
+  const visibleResults = result.results.slice(0, MAX_VISIBLE_IMPORT_ROWS);
+  const hiddenResults = Math.max(0, result.total - visibleResults.length);
   return (
     <div className="import-result-stage">
       <div className={`import-result-banner state-${result.state}`}>
@@ -237,7 +243,7 @@ function ImportResultView({ result }: { result: ImportResult }) {
         <ImportMetric label="失败" value={result.failed} tone={result.failed ? "danger" : ""} />
       </div>
       <div className="import-result-list">
-        {result.results.map((item) => (
+        {visibleResults.map((item) => (
           <div className="import-result-row" key={`${item.index}:${item.target_name}`}>
             {item.status === "imported" ? <CheckCircle2 size={16} /> : item.status === "skipped" ? <AlertTriangle size={16} /> : <XCircle size={16} />}
             <div><strong>{item.label}</strong><span>{item.target_name}</span></div>
@@ -245,6 +251,7 @@ function ImportResultView({ result }: { result: ImportResult }) {
             <small>{item.error ? importMessage(item.error) : item.source_name}</small>
           </div>
         ))}
+        {hiddenResults ? <div className="import-list-overflow" role="status">另有 {hiddenResults} 个账号未展开</div> : null}
       </div>
     </div>
   );

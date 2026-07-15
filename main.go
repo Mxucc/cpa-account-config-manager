@@ -39,6 +39,15 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			}
 		}
 		return okEnvelope(pluginApp.HandleManagement(context.Background(), managementRequest))
+	case cpaapi.MethodUsageHandle:
+		var record cpaapi.UsageRecord
+		if len(request) > 0 {
+			if errUnmarshal := json.Unmarshal(request, &record); errUnmarshal != nil {
+				return nil, fmt.Errorf("decode usage record: %w", errUnmarshal)
+			}
+		}
+		pluginApp.HandleUsage(record)
+		return okEnvelope(struct{}{})
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}

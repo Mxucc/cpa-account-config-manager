@@ -1,0 +1,76 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import type { Account } from "../types";
+import { AccountUsageCell } from "./AccountUsageCell";
+
+const baseAccount: Account = {
+  id: "auth-usage",
+  name: "usage.json",
+  provider: "codex",
+  disabled: false,
+  unavailable: false,
+  runtime_only: false,
+  proxy_configured: false,
+  header_count: 0,
+  editable: true,
+  success: 23,
+  failed: 2,
+};
+
+describe("AccountUsageCell", () => {
+  it("renders token and request activity with clamped Codex quota tracks", () => {
+    render(<AccountUsageCell account={{
+      ...baseAccount,
+      recent_requests: [
+        { time: "2026-07-15T11:00:00Z", success: 3, failed: 1 },
+        { time: "2026-07-15T12:00:00Z", success: 4, failed: 0 },
+      ],
+      usage: {
+        input_tokens: 10_000,
+        output_tokens: 2_000,
+        reasoning_tokens: 345,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 12_345,
+        last_request_at: "2026-07-15T12:00:00Z",
+        updated_at: "2026-07-15T12:00:00Z",
+        codex: {
+          observed_at: "2026-07-15T12:00:00Z",
+          five_hour: { used_percent: 18.5, reset_at: "2026-07-15T12:30:00Z", window_minutes: 300 },
+          seven_day: { used_percent: 142, reset_at: "2026-07-20T12:00:00Z", window_minutes: 10_080 },
+        },
+      },
+    }} />);
+
+    expect(screen.getByTitle("累计 Token：12,345")).toHaveTextContent("12.3Ktok");
+    expect(screen.getByTitle("累计请求：成功 23，失败 2")).toHaveTextContent("23/2");
+    expect(screen.getByTitle(/CPA 近期请求：8/)).toHaveTextContent("8");
+    expect(screen.getByRole("meter", { name: "5h 用量 18.5%" }).firstElementChild).toHaveStyle({ width: "18.5%" });
+    expect(screen.getByRole("meter", { name: "7d 用量 142%" }).firstElementChild).toHaveStyle({ width: "100%" });
+    expect(screen.getByText("142%")).toBeInTheDocument();
+  });
+
+  it("shows a neutral quota placeholder for missing and stale snapshots", () => {
+    const { rerender } = render(<AccountUsageCell account={baseAccount} />);
+    expect(screen.getByText("配额").parentElement).toHaveTextContent("配额--");
+    expect(screen.getByText("--", { selector: ".usage-token-total strong" })).toBeInTheDocument();
+
+    rerender(<AccountUsageCell account={{
+      ...baseAccount,
+      usage: {
+        input_tokens: 40,
+        output_tokens: 2,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 42,
+        updated_at: "2026-07-15T10:00:00Z",
+      },
+    }} />);
+    expect(screen.getByText("42")).toBeInTheDocument();
+    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
+    expect(screen.getByText("配额").parentElement).toHaveTextContent("配额--");
+  });
+});

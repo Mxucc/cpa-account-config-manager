@@ -7,6 +7,7 @@ describe("operatorMessage", () => {
     expect(operatorMessage("job result storage is unavailable; configure data_dir to a writable directory")).toContain("data_dir");
     expect(operatorMessage("default policy changed; create a new force-sync preview")).toContain("默认策略已变化");
     expect(operatorMessage("default policy update failed")).toBe("默认策略字段更新失败");
+    expect(operatorMessage("import contains more than 10000 accounts")).toBe("一次最多导入 10000 个账号");
     expect(operatorMessage("provider-specific detail")).toBe("provider-specific detail");
     expect(operatorMessage()).toBe("");
   });

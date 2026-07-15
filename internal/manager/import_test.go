@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -157,6 +158,42 @@ func TestImportMultiDocumentTextHonorsAggregateNodeLimit(t *testing.T) {
 	_, errParse := parseImportUpload(importUpload{Name: "too-many.jsonl", Data: []byte("{}\n{}\n{}")}, limits, time.Unix(0, 0).UTC())
 	if errParse == nil || !strings.Contains(errParse.Error(), "node limit") {
 		t.Fatalf("error = %v, want node limit", errParse)
+	}
+}
+
+func TestImportSupportsTenThousandAccounts(t *testing.T) {
+	limits := defaultImportLimits()
+	if limits.MaxAccounts != 10_000 {
+		t.Fatalf("default MaxAccounts = %d, want 10000", limits.MaxAccounts)
+	}
+	raw := importBoundaryDocument(t, limits.MaxAccounts)
+	if len(raw) > limits.MaxRequestBytes || int64(len(raw)) > limits.MaxEntryBytes {
+		t.Fatalf("compact 10000-account document is %d bytes and exceeds default byte limits", len(raw))
+	}
+	host := &fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}}
+	service := NewImportService(host, NewMutationCoordinator())
+	service.now = func() time.Time { return time.Unix(0, 0).UTC() }
+	defer service.Clear()
+	preview, errPreview := service.Preview(t.Context(), importUpload{Name: "ten-thousand.json", ContentType: "application/json", Data: raw})
+	if errPreview != nil {
+		t.Fatalf("preview 10000 accounts: %v", errPreview)
+	}
+	if preview.SourceFiles != 1 || preview.Total != limits.MaxAccounts || len(preview.Items) != limits.MaxAccounts {
+		t.Fatalf("10000-account preview = %d sources, %d total, %d items", preview.SourceFiles, preview.Total, len(preview.Items))
+	}
+	result, errStart := service.Start(t.Context(), preview.ID)
+	if errStart != nil {
+		t.Fatalf("start 10000-account import: %v", errStart)
+	}
+	if result.Imported != limits.MaxAccounts || result.Total != limits.MaxAccounts || len(result.Results) != limits.MaxAccounts || len(host.saves) != limits.MaxAccounts {
+		t.Fatalf("10000-account import = total %d, imported %d, results %d, saves %d", result.Total, result.Imported, len(result.Results), len(host.saves))
+	}
+
+	_, errTooMany := service.Preview(t.Context(), importUpload{
+		Name: "ten-thousand-one.json", ContentType: "application/json", Data: importBoundaryDocument(t, limits.MaxAccounts+1),
+	})
+	if errTooMany == nil || !strings.Contains(errTooMany.Error(), "more than 10000 accounts") {
+		t.Fatalf("parse 10001 accounts error = %v", errTooMany)
 	}
 }
 
@@ -582,4 +619,27 @@ func decodeImportCandidate(t *testing.T, candidate importCandidate) map[string]a
 		t.Fatalf("Unmarshal() error = %v", errUnmarshal)
 	}
 	return decoded
+}
+
+func importBoundaryDocument(t *testing.T, count int) []byte {
+	t.Helper()
+	type boundaryAccount struct {
+		Email       string `json:"email"`
+		AccountID   string `json:"account_id"`
+		AccessToken string `json:"access_token"`
+	}
+	payload := struct {
+		Accounts []boundaryAccount `json:"accounts"`
+	}{Accounts: make([]boundaryAccount, count)}
+	for index := range payload.Accounts {
+		token := strconv.Itoa(index + 1)
+		payload.Accounts[index] = boundaryAccount{
+			Email: "u" + token + "@example.com", AccountID: "account-" + token, AccessToken: "token-" + token,
+		}
+	}
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		t.Fatalf("marshal import boundary document: %v", errMarshal)
+	}
+	return raw
 }

@@ -26,8 +26,42 @@ export interface Account {
   read_only_reason?: string;
   success: number;
   failed: number;
+  recent_requests?: RecentRequestEntry[];
+  next_retry_after?: string;
+  usage?: AccountUsageSnapshot;
   updated_at?: string;
   last_refresh?: string;
+}
+
+export interface RecentRequestEntry {
+  time: string;
+  success: number;
+  failed: number;
+}
+
+export interface UsageWindowSnapshot {
+  used_percent: number;
+  reset_at?: string;
+  window_minutes?: number;
+}
+
+export interface CodexUsageSnapshot {
+  five_hour?: UsageWindowSnapshot;
+  seven_day?: UsageWindowSnapshot;
+  observed_at: string;
+}
+
+export interface AccountUsageSnapshot {
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  last_request_at?: string;
+  updated_at?: string;
+  codex?: CodexUsageSnapshot;
 }
 
 export interface AccountFilters {

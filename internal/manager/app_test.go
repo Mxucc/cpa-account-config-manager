@@ -20,6 +20,7 @@ import (
 
 func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
 	registration := app.ManagementRegistration()
 	expected := map[string]struct{}{
 		http.MethodGet + " /plugins/cpa-account-config-manager/accounts":                {},
@@ -74,9 +75,14 @@ func TestRegistrationUsesInjectedReleaseMetadata(t *testing.T) {
 		PluginRepository = originalRepository
 	}()
 
-	registration := NewApp(&fakeAuthHost{}, []byte("index")).Registration()
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	registration := app.Registration()
 	if registration.Metadata.Version != "1.2.3" || registration.Metadata.GitHubRepository != PluginRepository {
 		t.Fatalf("metadata = %#v", registration.Metadata)
+	}
+	if !registration.Capabilities.ManagementAPI || !registration.Capabilities.UsagePlugin {
+		t.Fatalf("capabilities = %#v", registration.Capabilities)
 	}
 }
 
@@ -99,6 +105,7 @@ func TestHandleManagementListsRedactedAccounts(t *testing.T) {
 		},
 	}
 	app := NewApp(host, []byte("index"))
+	defer app.Close()
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   "/v0/management/plugins/cpa-account-config-manager/accounts",
@@ -114,6 +121,7 @@ func TestHandleManagementListsRedactedAccounts(t *testing.T) {
 
 func TestHandleManagementServesResourceOnlyAtResourcePath(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("<!doctype html><title>manager</title>"))
+	defer app.Close()
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   "/v0/resource/plugins/cpa-account-config-manager/index.html",

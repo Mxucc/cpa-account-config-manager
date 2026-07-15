@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
 import { BatchEditor } from "./components/BatchEditor";
+import { AccountUsageCell } from "./components/AccountUsageCell";
 import { ExportDialog } from "./components/ExportDialog";
 import { ForceSyncPreviewDialog } from "./components/ForceSyncPreviewDialog";
 import { IconButton } from "./components/IconButton";
@@ -668,7 +669,7 @@ export default function App() {
             <thead>
               <tr>
                 <th><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label="选择本页可编辑账号" /></th>
-                <th>账号</th><th>Provider</th><th>状态</th><th>Priority</th><th>路由配置</th><th>请求</th><th>更新时间</th><th>权限</th>
+                <th>账号</th><th>Provider</th><th>状态</th><th>Priority</th><th>路由配置</th><th>用量</th><th>更新时间</th><th>权限</th>
               </tr>
             </thead>
             <tbody>
@@ -686,7 +687,7 @@ export default function App() {
                   <td><StateCell account={account} /></td>
                   <td><code className="priority-value">{account.priority ?? "-"}</code></td>
                   <td><RoutingCell account={account} /></td>
-                  <td><div className="activity-cell"><span className="success">{account.success}</span><span className="danger">{account.failed}</span></div></td>
+                  <td><AccountUsageCell account={account} /></td>
                   <td><time>{formatDate(account.updated_at || account.last_refresh)}</time></td>
                   <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />可编辑</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason)}><LockKeyhole size={13} />只读</span>}</td>
                 </tr>

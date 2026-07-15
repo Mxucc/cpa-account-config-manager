@@ -17,6 +17,7 @@ const (
 	MethodPluginReconfigure  = "plugin.reconfigure"
 	MethodManagementRegister = "management.register"
 	MethodManagementHandle   = "management.handle"
+	MethodUsageHandle        = "usage.handle"
 	MethodHostAuthList       = "host.auth.list"
 	MethodHostAuthGet        = "host.auth.get"
 	MethodHostAuthGetRuntime = "host.auth.get_runtime"
@@ -76,6 +77,42 @@ type ManagementResponse struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+}
+
+type UsageRecord struct {
+	Provider        string        `json:"Provider"`
+	ExecutorType    string        `json:"ExecutorType"`
+	Model           string        `json:"Model"`
+	Alias           string        `json:"Alias"`
+	APIKey          string        `json:"APIKey"`
+	AuthID          string        `json:"AuthID"`
+	AuthIndex       string        `json:"AuthIndex"`
+	AuthType        string        `json:"AuthType"`
+	Source          string        `json:"Source"`
+	ReasoningEffort string        `json:"ReasoningEffort"`
+	ServiceTier     string        `json:"ServiceTier"`
+	RequestedAt     time.Time     `json:"RequestedAt"`
+	Latency         time.Duration `json:"Latency"`
+	TTFT            time.Duration `json:"TTFT"`
+	Failed          bool          `json:"Failed"`
+	Failure         UsageFailure  `json:"Failure"`
+	Detail          UsageDetail   `json:"Detail"`
+	ResponseHeaders http.Header   `json:"ResponseHeaders"`
+}
+
+type UsageFailure struct {
+	StatusCode int    `json:"StatusCode"`
+	Body       string `json:"Body"`
+}
+
+type UsageDetail struct {
+	InputTokens         int64 `json:"InputTokens"`
+	OutputTokens        int64 `json:"OutputTokens"`
+	ReasoningTokens     int64 `json:"ReasoningTokens"`
+	CachedTokens        int64 `json:"CachedTokens"`
+	CacheReadTokens     int64 `json:"CacheReadTokens"`
+	CacheCreationTokens int64 `json:"CacheCreationTokens"`
+	TotalTokens         int64 `json:"TotalTokens"`
 }
 
 type HostRecentRequestEntry struct {

@@ -28,8 +28,13 @@ type AuthHost interface {
 	SaveAuth(context.Context, string, json.RawMessage) (cpaapi.HostAuthSaveResponse, error)
 }
 
+type UsageSnapshotReader interface {
+	Snapshot(string) *AccountUsageSnapshot
+}
+
 type AccountService struct {
-	host AuthHost
+	host  AuthHost
+	usage UsageSnapshotReader
 }
 
 type ResolvedTargets struct {
@@ -38,8 +43,12 @@ type ResolvedTargets struct {
 	PhysicalFiles int
 }
 
-func NewAccountService(host AuthHost) *AccountService {
-	return &AccountService{host: host}
+func NewAccountService(host AuthHost, usage ...UsageSnapshotReader) *AccountService {
+	service := &AccountService{host: host}
+	if len(usage) > 0 {
+		service.usage = usage[0]
+	}
+	return service
 }
 
 func (s *AccountService) List(ctx context.Context, query ListQuery) (ListResponse, error) {
@@ -178,7 +187,7 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	}
 	accounts := make([]Account, 0, len(entries))
 	for _, entry := range entries {
-		accounts = append(accounts, projectHostEntry(entry, pathCounts, indexCounts))
+		accounts = append(accounts, projectHostEntry(entry, pathCounts, indexCounts, s.usage))
 	}
 	return accounts, nil
 }
@@ -222,7 +231,7 @@ func sortAccounts(accounts []Account) {
 	})
 }
 
-func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts map[string]int) Account {
+func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts map[string]int, usage UsageSnapshotReader) Account {
 	provider := strings.TrimSpace(firstNonEmpty(entry.Provider, entry.Type))
 	authIndex := strings.TrimSpace(entry.AuthIndex)
 	account := Account{
@@ -245,6 +254,23 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 		Success:       entry.Success,
 		Failed:        entry.Failed,
 		path:          normalizedPath(entry.Path),
+	}
+	if len(entry.RecentRequests) > 0 {
+		account.RecentRequests = make([]RecentRequestEntry, 0, len(entry.RecentRequests))
+		for _, recent := range entry.RecentRequests {
+			account.RecentRequests = append(account.RecentRequests, RecentRequestEntry{
+				Time:    strings.TrimSpace(recent.Time),
+				Success: recent.Success,
+				Failed:  recent.Failed,
+			})
+		}
+	}
+	if !entry.NextRetryAfter.IsZero() {
+		nextRetryAfter := entry.NextRetryAfter.UTC()
+		account.NextRetryAfter = &nextRetryAfter
+	}
+	if usage != nil && authIndex != "" {
+		account.Usage = usage.Snapshot(authIndex)
 	}
 	if !entry.UpdatedAt.IsZero() {
 		updatedAt := entry.UpdatedAt

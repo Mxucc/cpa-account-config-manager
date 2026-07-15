@@ -37,6 +37,7 @@ type Registration struct {
 
 type RegistrationCapabilities struct {
 	ManagementAPI bool `json:"management_api"`
+	UsagePlugin   bool `json:"usage_plugin"`
 }
 
 type App struct {
@@ -48,11 +49,13 @@ type App struct {
 	policies  *PolicyEngine
 	force     *ForceSyncEngine
 	imports   *ImportService
+	usage     *UsageTracker
 	indexHTML []byte
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
-	accounts := NewAccountService(host)
+	usage := NewUsageTracker()
+	accounts := NewAccountService(host, usage)
 	mutations := NewMutationCoordinator()
 	jobs := NewJobEngineWithCoordinator(accounts, mutations)
 	policies := NewPolicyEngineWithCoordinator(host, mutations)
@@ -64,6 +67,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		policies:  policies,
 		force:     NewForceSyncEngine(accounts, host, policies, mutations),
 		imports:   NewImportService(host, mutations),
+		usage:     usage,
 		indexHTML: append([]byte(nil), indexHTML...),
 	}
 }
@@ -79,10 +83,18 @@ func (a *App) Configure(raw []byte) {
 	a.jobs.Configure(config)
 	a.policies.Configure(config)
 	a.force.Configure(config)
+	a.usage.Configure(config)
+}
+
+func (a *App) HandleUsage(record cpaapi.UsageRecord) {
+	if a == nil || a.usage == nil {
+		return
+	}
+	a.usage.Observe(record)
 }
 
 func (a *App) Close() {
-	if a == nil || a.jobs == nil {
+	if a == nil {
 		return
 	}
 	a.force.Shutdown()
@@ -90,6 +102,7 @@ func (a *App) Close() {
 	a.jobs.Shutdown()
 	a.previews.Clear()
 	a.imports.Clear()
+	a.usage.Close()
 }
 
 func (a *App) Registration() Registration {
@@ -102,11 +115,11 @@ func (a *App) Registration() Registration {
 			GitHubRepository: PluginRepository,
 			ConfigFields: []cpaapi.ConfigField{
 				{Name: "workers", Type: cpaapi.ConfigFieldTypeInteger, Description: "Optional maximum concurrent account mutations (default 6, range 1-16)."},
-				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job and default-policy state."},
+				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job, default-policy, and usage snapshot state."},
 				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL; defaults to http://127.0.0.1:8317."},
 			},
 		},
-		Capabilities: RegistrationCapabilities{ManagementAPI: true},
+		Capabilities: RegistrationCapabilities{ManagementAPI: true, UsagePlugin: true},
 	}
 }
 

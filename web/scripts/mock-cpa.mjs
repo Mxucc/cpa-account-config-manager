@@ -27,6 +27,39 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
   const provider = providers[index % providers.length];
   const readOnly = index % 11 === 0;
   const disabled = index % 7 === 0;
+  const recentRequests = Array.from({ length: 6 }, (_, bucket) => ({
+    time: new Date(Date.now() - (5 - bucket) * 10 * 60_000).toISOString(),
+    success: (index + bucket * 2) % 7,
+    failed: (index + bucket) % 9 === 0 ? 1 : 0,
+  }));
+  const hasUsage = index % 10 !== 9;
+  const hasCodexQuota = provider === "codex" && index % 8 !== 0;
+  const usage = hasUsage ? {
+    input_tokens: 120_000 + index * 18_750,
+    output_tokens: 34_000 + index * 4_200,
+    reasoning_tokens: index % 3 === 0 ? 8_000 + index * 750 : 0,
+    cached_tokens: index % 2 === 0 ? 21_000 + index * 600 : 0,
+    cache_read_tokens: index % 2 === 0 ? 18_000 + index * 500 : 0,
+    cache_creation_tokens: index % 5 === 0 ? 3_000 : 0,
+    total_tokens: 162_000 + index * 23_700,
+    last_request_at: new Date(Date.now() - (index % 7) * 7 * 60_000).toISOString(),
+    updated_at: new Date(Date.now() - (index % 7) * 7 * 60_000).toISOString(),
+    ...(hasCodexQuota ? {
+      codex: {
+        observed_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+        five_hour: {
+          used_percent: index === 12 ? 118 : 18 + (index % 6) * 12.5,
+          reset_at: new Date(Date.now() + 38 * 60_000).toISOString(),
+          window_minutes: 300,
+        },
+        seven_day: {
+          used_percent: 31 + (index % 5) * 14,
+          reset_at: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
+          window_minutes: 10_080,
+        },
+      },
+    } : {}),
+  } : undefined;
   return {
     id: `auth-${String(index + 1).padStart(3, "0")}`,
     auth_id: `runtime-${index + 1}`,
@@ -54,6 +87,9 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
     read_only_reason: readOnly ? "runtime-only account has no physical auth file" : "",
     success: 80 + index * 3,
     failed: index % 6,
+    recent_requests: recentRequests,
+    next_retry_after: index % 9 === 0 ? new Date(Date.now() + 12 * 60_000).toISOString() : undefined,
+    ...(usage ? { usage } : {}),
     updated_at: new Date(Date.now() - index * 43 * 60_000).toISOString(),
   };
 });

@@ -79,5 +79,7 @@ const operatorMessages: Record<string, string> = {
 
 export function operatorMessage(message?: string): string {
   const normalized = message?.trim() ?? "";
+  const importAccountLimit = normalized.match(/^import contains more than (\d+) accounts$/);
+  if (importAccountLimit) return `一次最多导入 ${importAccountLimit[1]} 个账号`;
   return operatorMessages[normalized] ?? normalized;
 }

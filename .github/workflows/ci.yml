@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify source and embedded UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Verify
+        run: make verify
+
+  package:
+    name: Package ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            ext: so
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            ext: so
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+            ext: dylib
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            ext: dll
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build embedded UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build native plugin
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          VERSION: 0.0.0-ci
+        run: |
+          mkdir -p dist
+          go build \
+            -buildvcs=false \
+            -ldflags "-X cpa-account-config-manager/internal/manager.PluginVersion=${VERSION} -X cpa-account-config-manager/internal/manager.PluginRepository=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            -buildmode=c-shared \
+            -o "dist/cpa-account-config-manager.${{ matrix.ext }}" \
+            .
+
+      - name: Verify target platform
+        shell: bash
+        run: |
+          go version -m "dist/cpa-account-config-manager.${{ matrix.ext }}" | tee build-info.txt
+          grep -q "GOOS=${{ matrix.goos }}" build-info.txt
+          grep -q "GOARCH=${{ matrix.goarch }}" build-info.txt
+
+      - name: Package release archive
+        shell: bash
+        run: |
+          go run ./cmd/releasepack \
+            -version 0.0.0-ci \
+            -goos "${{ matrix.goos }}" \
+            -goarch "${{ matrix.goarch }}" \
+            -library "dist/cpa-account-config-manager.${{ matrix.ext }}" \
+            -out dist/release
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpa-account-config-manager-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/release/*.zip
+            dist/release/*.sha256
+          if-no-files-found: error
+          retention-days: 30

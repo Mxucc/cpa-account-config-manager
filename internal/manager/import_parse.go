@@ -31,7 +31,10 @@ const (
 	defaultImportMaxRatio         = 200
 )
 
-var errImportNotCandidate = errors.New("not an import candidate")
+var (
+	errImportNotCandidate      = errors.New("not an import candidate")
+	errImportJSONDocumentLimit = errors.New("JSON document count exceeds the node limit")
+)
 
 type importLimits struct {
 	MaxRequestBytes  int
@@ -165,8 +168,11 @@ func parseImportUploadsInternal(uploads []importUpload, limits importLimits, now
 				if len(uploads) > 1 {
 					sourceName = name + "!/" + source.Name
 				}
-				value, errDecode := decodeImportJSON(source.Data)
+				documents, errDecode := decodeImportJSONDocuments(source.Data, limits.MaxJSONNodes-collector.nodes)
 				if errDecode != nil {
+					if errors.Is(errDecode, errImportJSONDocumentLimit) {
+						return importParseResult{}, fmt.Errorf("inspect %s: %w", sourceName, errDecode)
+					}
 					collector.skipped = append(collector.skipped, importSkipped{
 						SourceName: sourceName,
 						Reason:     "entry does not contain valid JSON",
@@ -174,24 +180,28 @@ func parseImportUploadsInternal(uploads []importUpload, limits importLimits, now
 					continue
 				}
 				result.SourceFiles++
-				if errVisit := collector.visit(value, sourceName, "$", 0); errVisit != nil {
-					return importParseResult{}, fmt.Errorf("inspect %s: %w", sourceName, errVisit)
+				for documentIndex, value := range documents {
+					if errVisit := collector.visit(value, sourceName, importDocumentPath(len(documents), documentIndex), 0); errVisit != nil {
+						return importParseResult{}, fmt.Errorf("inspect %s: %w", sourceName, errVisit)
+					}
 				}
 			}
 			continue
 		}
 
-		value, errDecode := decodeImportJSON(upload.Data)
+		documents, errDecode := decodeImportJSONDocuments(upload.Data, limits.MaxJSONNodes-collector.nodes)
 		if errDecode != nil {
-			if strictSingle {
+			if strictSingle || errors.Is(errDecode, errImportJSONDocumentLimit) {
 				return importParseResult{}, fmt.Errorf("invalid JSON in %s: %w", name, errDecode)
 			}
 			collector.skipped = append(collector.skipped, importSkipped{SourceName: name, Reason: "uploaded file does not contain valid JSON"})
 			continue
 		}
 		result.SourceFiles++
-		if errVisit := collector.visit(value, name, "$", 0); errVisit != nil {
-			return importParseResult{}, fmt.Errorf("inspect %s: %w", name, errVisit)
+		for documentIndex, value := range documents {
+			if errVisit := collector.visit(value, name, importDocumentPath(len(documents), documentIndex), 0); errVisit != nil {
+				return importParseResult{}, fmt.Errorf("inspect %s: %w", name, errVisit)
+			}
 		}
 	}
 	result.Candidates = collector.candidates
@@ -274,8 +284,8 @@ func readImportZIP(raw []byte, limits importLimits) (importZIPReadResult, error)
 		if entry.Method != zip.Store && entry.Method != zip.Deflate {
 			return importZIPReadResult{}, fmt.Errorf("ZIP entry %q uses an unsupported compression method", entry.Name)
 		}
-		if !strings.EqualFold(filepath.Ext(entry.Name), ".json") {
-			skipped = append(skipped, importSkipped{SourceName: entry.Name, Reason: "entry is not a JSON file"})
+		if !isImportJSONSourceName(entry.Name) {
+			skipped = append(skipped, importSkipped{SourceName: entry.Name, Reason: "entry is not a JSON or text JSON file"})
 			continue
 		}
 		if entry.UncompressedSize64 > uint64(limits.MaxEntryBytes) {
@@ -334,18 +344,47 @@ func importUploadIsZIP(upload importUpload) bool {
 	return len(upload.Data) >= 4 && bytes.Equal(upload.Data[:4], []byte{'P', 'K', 0x03, 0x04})
 }
 
-func decodeImportJSON(raw []byte) (any, error) {
+func isImportJSONSourceName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".json", ".jsonl", ".ndjson", ".txt":
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeImportJSONDocuments(raw []byte, maxDocuments int) ([]any, error) {
+	if maxDocuments <= 0 {
+		return nil, fmt.Errorf("%w: JSON structure exceeds the configured node limit", errImportJSONDocumentLimit)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	var value any
-	if errDecode := decoder.Decode(&value); errDecode != nil {
-		return nil, errDecode
+	documents := make([]any, 0, 1)
+	for {
+		var value any
+		errDecode := decoder.Decode(&value)
+		if errors.Is(errDecode, io.EOF) {
+			break
+		}
+		if errDecode != nil {
+			return nil, errDecode
+		}
+		if len(documents) >= maxDocuments {
+			return nil, fmt.Errorf("%w: JSON structure exceeds the configured node limit", errImportJSONDocumentLimit)
+		}
+		documents = append(documents, value)
 	}
-	var trailing any
-	if errTrailing := decoder.Decode(&trailing); !errors.Is(errTrailing, io.EOF) {
-		return nil, fmt.Errorf("file must contain exactly one JSON value")
+	if len(documents) == 0 {
+		return nil, fmt.Errorf("file must contain at least one JSON value")
 	}
-	return value, nil
+	return documents, nil
+}
+
+func importDocumentPath(total, index int) string {
+	if total <= 1 {
+		return "$"
+	}
+	return fmt.Sprintf("$document[%d]", index)
 }
 
 func (c *importCollector) visit(value any, sourceName, sourcePath string, depth int) error {

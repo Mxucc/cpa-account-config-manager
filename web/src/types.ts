@@ -220,7 +220,7 @@ export interface ImportPreview {
   id: string;
   created_at: string;
   expires_at: string;
-  input_type: "json" | "zip" | "mixed";
+  input_type: "json" | "text" | "zip" | "mixed";
   source_files: number;
   total: number;
   skipped: number;
@@ -252,6 +252,12 @@ export interface ImportResult {
   finished_at: string;
   results: ImportResultItem[];
 }
+
+export type AccountExportFormat = "cpa" | "sub2api" | "cockpit" | "9router" | "codex" | "axonhub" | "codexmanager";
+
+export type ResultExportFormat = "json" | "csv" | "jsonl";
+
+export type ExportFormat = AccountExportFormat | ResultExportFormat;
 
 export interface Session {
   baseUrl: string;

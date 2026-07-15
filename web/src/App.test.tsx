@@ -116,6 +116,14 @@ describe("primary account batch flow", () => {
     expect(await screen.findByRole("complementary", { name: "批量任务" })).toBeInTheDocument();
     expect(screen.getAllByText("成功").length).toBeGreaterThan(0);
 
+    await user.click(screen.getByRole("button", { name: "导出结果" }));
+    expect(await screen.findByRole("dialog", { name: "导出结果" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "导出格式" })).toBeInTheDocument();
+    await user.click(screen.getByLabelText("关闭"));
+    await user.click(screen.getByLabelText("下载筛选账号凭据"));
+    expect(await screen.findByRole("dialog", { name: "下载账号凭据" })).toBeInTheDocument();
+    await user.click(screen.getByLabelText("关闭"));
+
     const previewRequest = requests.find((request) => request.url.includes("/batch/preview"));
     expect(previewRequest).toBeDefined();
     const body = JSON.parse(String(previewRequest?.init.body));
@@ -446,8 +454,8 @@ describe("primary account batch flow", () => {
     await user.type(await screen.findByLabelText("Management Key"), "management-secret");
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
     await user.click(await screen.findByRole("button", { name: "导入账号" }));
-    await user.click(screen.getByRole("button", { name: "粘贴 JSON" }));
-    fireEvent.change(screen.getByLabelText("JSON 内容"), { target: { value: rawJSON } });
+    await user.click(screen.getByRole("button", { name: "文本 JSON" }));
+    fireEvent.change(screen.getByLabelText("JSON 文本"), { target: { value: rawJSON } });
     await user.click(screen.getByRole("button", { name: "生成预览" }));
 
     expect(await screen.findByText("codex-import_example_com.json")).toBeInTheDocument();
@@ -461,7 +469,8 @@ describe("primary account batch flow", () => {
     const previewRequest = requests.find(({ url }) => url.includes("/import/preview"));
     expect(previewRequest?.init.body).toBeInstanceOf(FormData);
     const pastedFile = (previewRequest?.init.body as FormData).get("files") as File;
-    expect(pastedFile.name).toBe("pasted-import.json");
+    expect(pastedFile.name).toBe("pasted-import.txt");
+    expect(pastedFile.type).toBe("text/plain");
     expect(pastedFile.size).toBe(new Blob([rawJSON]).size);
     expect(new Headers(previewRequest?.init.headers).get("Content-Type")).toBeNull();
     expect(localStorage.length).toBe(0);

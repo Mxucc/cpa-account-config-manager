@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
 import { BatchEditor } from "./components/BatchEditor";
+import { ExportDialog } from "./components/ExportDialog";
 import { ForceSyncPreviewDialog } from "./components/ForceSyncPreviewDialog";
 import { IconButton } from "./components/IconButton";
 import { ImportDialog } from "./components/ImportDialog";
@@ -35,6 +36,7 @@ import { readPanelAuth } from "./store/panelAuth";
 import { clearSession, setSession } from "./store/session";
 import type {
   Account,
+  AccountExportFormat,
   AccountFilters,
   AccountListResponse,
   BatchPatch,
@@ -42,13 +44,32 @@ import type {
   DefaultPolicy,
   ForceSyncJobSnapshot,
   ForceSyncPreview,
+  ExportFormat,
   ImportPreview,
   ImportResult,
   JobSnapshot,
   PolicySnapshot,
+  ResultExportFormat,
 } from "./types";
 
 const PAGE_SIZE = 50;
+const exportFormatLabels: Record<ExportFormat, string> = {
+  cpa: "CPA",
+  sub2api: "sub2api",
+  cockpit: "Cockpit",
+  "9router": "9router",
+  codex: "Codex",
+  axonhub: "AxonHub",
+  codexmanager: "Codex-Manager",
+  json: "JSON",
+  csv: "CSV",
+  jsonl: "JSON Lines",
+};
+
+function formatLabel(format: ExportFormat): string {
+  return exportFormatLabels[format];
+}
+
 const providerOptions = [
   "antigravity",
   "aistudio",
@@ -112,6 +133,9 @@ export default function App() {
   const [importPreviewing, setImportPreviewing] = useState(false);
   const [importStarting, setImportStarting] = useState(false);
   const [importError, setImportError] = useState("");
+  const [exportTarget, setExportTarget] = useState<"accounts" | "results" | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [notice, setNotice] = useState("");
   const accountRequest = useRef(0);
 
@@ -528,6 +552,44 @@ export default function App() {
     }
   };
 
+  const openExport = (target: "accounts" | "results") => {
+    setExportTarget(target);
+    setExportError("");
+  };
+
+  const closeExport = () => {
+    setExportTarget(null);
+    setExportError("");
+  };
+
+  const confirmExport = async (format: ExportFormat) => {
+    if (!exportTarget) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const result = exportTarget === "accounts"
+        ? await api.downloadExport("accounts", format as AccountExportFormat, apiFilters)
+        : await api.downloadExport("results", format as ResultExportFormat);
+      if (exportTarget === "accounts") {
+        const count = result.exported === undefined ? "" : ` ${result.exported} 个账号`;
+        const skipped = result.skipped ? `，跳过 ${result.skipped} 个` : "";
+        setNotice(`已下载 ${formatLabel(format)} 凭据${count}${skipped}`);
+      } else {
+        setNotice(`已导出结果 ${formatLabel(format)}`);
+      }
+      closeExport();
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) {
+        closeExport();
+        handleAPIError(error);
+      } else {
+        setExportError(errorText(error));
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const scopeLabel = scopeMode === "selected" && selected.size > 0
     ? `已选 ${selected.size} 个账号`
     : `当前筛选 ${data.total} 个账号`;
@@ -551,7 +613,7 @@ export default function App() {
           {forceJob?.id ? <IconButton className="mobile-job-action" label="打开强制同步任务" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
           <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
           <IconButton label="导入账号" onClick={openImport}><Upload size={17} /></IconButton>
-          <IconButton className="export-action" label="导出筛选账号" onClick={() => void api.downloadExport("accounts", apiFilters).catch(handleAPIError)}><Download size={17} /></IconButton>
+          <IconButton className="export-action" label="下载筛选账号凭据" onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
           <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
         </div>
@@ -664,8 +726,9 @@ export default function App() {
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
       {editorOpen ? <BatchEditor scopeLabel={scopeLabel} onClose={() => setEditorOpen(false)} onSubmit={(patch) => { setEditorOpen(false); void beginPreview(patch); }} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
-      {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => void api.downloadExport("results").catch(handleAPIError)} onRefresh={() => void refreshJob()} /> : null}
+      {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
+      {exportTarget ? <ExportDialog kind={exportTarget} count={exportTarget === "accounts" ? data.total : job?.results?.length ?? job?.done ?? 0} exporting={exporting} error={exportError} onClose={closeExport} onExport={(format) => void confirmExport(format)} /> : null}
       {policyOpen && policySnapshot ? <PolicyDialog key={`${policySnapshot.policy.enabled}:${policySnapshot.policy.priority}:${policySnapshot.policy.websockets}:${policySnapshot.policy.scan_interval_seconds}`} snapshot={policySnapshot} saving={policySaving} scanning={policyScanning} forceLoading={forcePreviewLoading} error={policyError} onClose={() => setPolicyOpen(false)} onSave={(policy) => void savePolicy(policy)} onScan={() => void scanPolicy()} onForcePreview={() => void previewForceSync()} /> : null}
       {policyOpen && !policySnapshot ? (
         <Modal title="默认策略" onClose={() => setPolicyOpen(false)} footer={<button className="button" type="button" onClick={() => setPolicyOpen(false)}>关闭</button>}>

@@ -121,6 +121,45 @@ func TestImportParseArbitraryNestedJSON(t *testing.T) {
 	}
 }
 
+func TestImportMultiDocumentTextJSON(t *testing.T) {
+	raw := []byte(`{"email":"first@example.com","account_id":"account-1","access_token":"access-1"}
+{"wrapper":{"email":"second@example.com","account_id":"account-2","access_token":"access-2"}}`)
+
+	result, errParse := parseImportUpload(importUpload{Name: "accounts.txt", ContentType: "text/plain", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if result.SourceFiles != 1 || len(result.Candidates) != 2 {
+		t.Fatalf("result = %#v, want one source and two candidates", result)
+	}
+	if result.Candidates[0].SourcePath != "$document[0]" || result.Candidates[1].SourcePath != "$document[1].wrapper" {
+		t.Fatalf("source paths = %q, %q", result.Candidates[0].SourcePath, result.Candidates[1].SourcePath)
+	}
+	if got := importInputType(importUpload{Name: "accounts.ndjson", ContentType: "application/x-ndjson"}); got != "text" {
+		t.Fatalf("importInputType() = %q, want text", got)
+	}
+}
+
+func TestImportMultiDocumentTextRejectsInvalidTrailingDocument(t *testing.T) {
+	raw := []byte("{\"email\":\"valid@example.com\",\"access_token\":\"secret\"}\n{broken")
+	result, errParse := parseImportUpload(importUpload{Name: "broken.jsonl", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse == nil || !strings.Contains(errParse.Error(), "invalid JSON") {
+		t.Fatalf("error = %v, want invalid JSON", errParse)
+	}
+	if len(result.Candidates) != 0 {
+		t.Fatalf("invalid stream retained candidates: %#v", result.Candidates)
+	}
+}
+
+func TestImportMultiDocumentTextHonorsAggregateNodeLimit(t *testing.T) {
+	limits := defaultImportLimits()
+	limits.MaxJSONNodes = 2
+	_, errParse := parseImportUpload(importUpload{Name: "too-many.jsonl", Data: []byte("{}\n{}\n{}")}, limits, time.Unix(0, 0).UTC())
+	if errParse == nil || !strings.Contains(errParse.Error(), "node limit") {
+		t.Fatalf("error = %v, want node limit", errParse)
+	}
+}
+
 func TestImportZIPParsesJSONAndSkipsOtherEntries(t *testing.T) {
 	archive := importTestZIP(t, []importTestZIPEntry{
 		{Name: "nested/first.json", Content: `{"email":"zip@example.com","account_id":"zip-account","access_token":"zip-access"}`},
@@ -136,6 +175,24 @@ func TestImportZIPParsesJSONAndSkipsOtherEntries(t *testing.T) {
 	}
 	if result.Candidates[0].SourceName != "nested/first.json" || !strings.Contains(result.Skipped[0].Reason, "JSON") {
 		t.Fatalf("unexpected source/skip summary: %#v", result)
+	}
+}
+
+func TestImportZIPParsesTextJSONDocuments(t *testing.T) {
+	archive := importTestZIP(t, []importTestZIPEntry{
+		{Name: "nested/accounts.jsonl", Content: "{\"email\":\"one@example.com\",\"account_id\":\"one\",\"access_token\":\"one-secret\"}\n{\"email\":\"two@example.com\",\"account_id\":\"two\",\"access_token\":\"two-secret\"}"},
+		{Name: "nested/readme.md", Content: "not imported"},
+	})
+
+	result, errParse := parseImportUpload(importUpload{Name: "text-bundle.zip", ContentType: "application/zip", Data: archive}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if result.SourceFiles != 1 || len(result.Candidates) != 2 || len(result.Skipped) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Candidates[0].SourcePath != "$document[0]" || result.Candidates[1].SourcePath != "$document[1]" {
+		t.Fatalf("candidate paths = %#v", result.Candidates)
 	}
 }
 

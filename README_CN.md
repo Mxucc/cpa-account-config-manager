@@ -15,11 +15,12 @@
 - 提供独立的预览确认式强制同步，在操作员明确选择时覆盖所有可编辑 Auth 文件中的受管默认字段。
 - 写入前由服务端生成预览，显示目标数、可执行数、只读数、缺失数和物理文件数。
 - 后台异步执行、受限并发、逐账号结果、Revision 冲突检测、部分成功继续和仅重试失败项。
-- 导出脱敏后的筛选账号和任务结果。
-- 支持粘贴 JSON，或一次混合选择多份 JSON/ZIP 文件；服务端递归识别多种账号结构，转换成 CPA Codex Auth JSON，预览确认后导入且不覆盖现有 Auth 文件。
+- 把当前筛选账号直接下载为 CPA、sub2api、Cockpit、9router、Codex、AxonHub 或 Codex-Manager 凭据文件。
+- 把批量任务结果导出为脱敏 JSON、CSV 或 JSON Lines 报表。
+- 支持粘贴文本 JSON，或一次混合选择多份 JSON、JSON Lines、TXT、ZIP 文件；服务端递归识别多种账号结构，转换成 CPA Codex Auth JSON，预览确认后导入且不覆盖现有 Auth 文件。
 - React 单文件内嵌界面，支持官方 Management Center 的主题和同源认证状态。
 
-MVP 不提供删除账号、下载原始 Auth JSON、刷新 Token、OAuth 重新授权、无限制凭据编辑、额度巡检和调度功能。
+MVP 不提供删除账号、刷新 Token、OAuth 重新授权、无限制凭据编辑、额度巡检和调度功能。
 
 ## 兼容性
 
@@ -52,20 +53,20 @@ MVP 不提供删除账号、下载原始 Auth JSON、刷新 Token、OAuth 重新
 Linux：
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.3_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.5_linux_amd64.zip.sha256
 ```
 
 macOS：
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.3_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.5_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.3_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.3_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.5_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.5_windows_amd64.zip.sha256
 ```
 
 ### 2. 放置动态库
@@ -73,16 +74,16 @@ Get-Content .\cpa-account-config-manager_0.1.3_windows_amd64.zip.sha256
 解压后，将动态库放进 CLIProxyAPI 插件目录。推荐使用宿主优先扫描的平台子目录：
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.3.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.3.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.3.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.5.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.5.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.5.dll
 ```
 
 Linux/macOS 上确保 CLIProxyAPI 服务账号可读、可执行：
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so
 ```
 
 ### 3. 启用插件
@@ -136,9 +137,9 @@ CLIProxyAPI 进程需要：
 
 ## 账号导入
 
-在操作栏打开“导入账号”。文件模式一次最多混合选择 64 份 JSON 和 ZIP；粘贴 JSON 会作为一份仅存在于浏览器内存中的 JSON 文件提交。每份 JSON 可以是单账号、数组，或任意层级的对象与数组。转换器会递归识别 [`GPTSession2CPAandSub2API`](https://github.com/Mxucc/GPTSession2CPAandSub2API) 使用的 ChatGPT session、sub2api、9router、Codex、Codex-manager 和已有 CPA 字段别名。
+在操作栏打开“导入账号”。文件模式一次最多混合选择 64 份 JSON、JSON Lines、NDJSON、文本 JSON 和 ZIP；“文本 JSON”模式会把粘贴内容作为一份仅存在于浏览器内存中的文本来源提交。每份来源可以包含一个 JSON 值、多个顶层 JSON 值或逐行 JSON；每个值又可以是单账号、数组或任意层级的对象与数组。转换器会递归识别 [`GPTSession2CPAandSub2API`](https://github.com/Mxucc/GPTSession2CPAandSub2API) 使用的 ChatGPT session、sub2api、9router、Codex、Codex-manager 和已有 CPA 字段别名。
 
-每个 ZIP 可以包含多个目录和多份 JSON。目录和非 JSON 条目不会解压到磁盘，只会在预览中列为跳过；多文件请求中，单份 JSON 损坏时也会跳过该文件并继续处理其他有效来源。ZIP 路径穿越、符号链接、加密条目、不支持的压缩方法、异常压缩比或累计上限超标会在写入任何 Auth 文件前拒绝整批请求。
+每个 ZIP 可以包含多个目录以及 `.json`、`.jsonl`、`.ndjson`、`.txt` JSON 来源。目录和无关条目不会解压到磁盘，只会在预览中列为跳过；多文件请求中，单份来源损坏时也会跳过该文件并继续处理其他有效来源。ZIP 路径穿越、符号链接、加密条目、不支持的压缩方法、异常压缩比或累计上限超标会在写入任何 Auth 文件前拒绝整批请求。
 
 服务端预览只返回账号身份、来源位置、生成的 CPA 文件名和警告，不返回 Access Token、Refresh Token、ID Token、Session Token 或原始 JSON。转换后的凭据只保存在有界的 5 分钟进程内预览中，上传或粘贴的原始 JSON 不进入预览存储；服务端接受预览后，浏览器会清除粘贴文本和已选 `File` 引用。确认后，插件占用共享写入槽位并通过 `host.auth.save` 保存规范化的 `type: codex` 文档。
 
@@ -155,6 +156,26 @@ CLIProxyAPI 进程需要：
 | 转换账号数 | 500 |
 
 预览时会结合当前 Auth 列表预留目标文件名；正式保存前再次检查。同名文件只会跳过，不会调用宿主可覆盖保存接口。宿主 ABI 暂无 create-only Compare-and-swap，因此最终名称检查与保存之间仍存在很窄的外部竞态窗口。
+
+## 账号凭据与结果导出
+
+账号下载沿用当前筛选条件，并要求明确选择目标格式。CPA 会保留每个匹配的文件型 Auth JSON：单账号直接下载 `邮箱.json`，多账号下载 ZIP，压缩包内每个账号对应一个唯一且路径安全的 `邮箱.json`。
+
+| 账号格式 | 结构 |
+| --- | --- |
+| CPA | 原始 CPA Auth JSON；多账号自动打包 ZIP。 |
+| sub2api | 一个 `exported_at/proxies/accounts` 批量导入文档。 |
+| Cockpit | 扁平 Codex Token 对象；多账号为数组。 |
+| 9router | Codex OAuth 对象；多账号为数组。 |
+| Codex | 原生 `auth.json` 对象；多账号为数组。 |
+| AxonHub | AxonHub Codex Auth 对象；多账号为数组。 |
+| Codex-Manager | `tokens/meta` 对象；多账号为数组。 |
+
+除 CPA 外的目标只转换兼容的 Codex OAuth Auth 文件。运行时账号、无效文件、读取失败或不兼容记录会跳过；响应通过 `X-Exported-Accounts` 与 `X-Skipped-Accounts` 返回实际导出和跳过数量。
+
+这些下载包含 Token 等凭据；CPA 输出还可能包含原有代理凭据和 Header 值。凭据下载只走鉴权后的精确 Management 路由，必须显式选择格式，并设置 `Cache-Control: no-store` 与附件响应头；插件不会把生成文件写入状态目录或日志。
+
+批量任务结果仍是脱敏运维报表，支持 JSON、防公式注入的 CSV 和 JSON Lines，只包含现有结果白名单字段。
 
 ## Auth 文件默认策略
 
@@ -192,7 +213,8 @@ CLIProxyAPI 进程需要：
 
 ## 安全边界
 
-- 账号列表和导出使用显式白名单字段并脱敏。原始 Auth JSON、Token、Cookie、API Key、代理凭据、Header 值不会越过插件 API 边界。
+- 账号列表、预览、错误和批量结果导出使用显式白名单字段并脱敏，不包含原始 Auth JSON、Token、Cookie、API Key、代理凭据或 Header 值。
+- 凭据导出是单独且必须显式选择的 Management 下载；附件正文有意包含目标系统凭据，带 `no-store`，受账号数和体积限制，并且不会写入插件状态或日志。
 - 所有账号数据和写入接口都是 CLIProxyAPI 鉴权后的 Management 路由；未鉴权 Resource 路由只提供静态 HTML。
 - 手动输入的 Management Key 只在 JavaScript 内存中保存。插件可以读取官方面板已经保存的同源状态，但不会自行把 Key 写入 Local Storage。
 - Management Key 只在活动任务内存中存在，任务结束时会显式清空。完整 Patch 值仅在待确认预览、活动任务或“仅重试失败项”仍需要时保留在进程内存中，绝不落盘。落盘内容只有脱敏状态、字段名、计数和通用错误。
@@ -205,7 +227,7 @@ CLIProxyAPI 进程需要：
 
 ## 备份与回滚
 
-大批量修改前，请备份 CLIProxyAPI 的 `config.yaml` 和整个 Auth 目录。插件导出是脱敏审计数据，不是完整恢复备份，尤其无法还原旧代理凭据和旧 Header 值。
+大批量修改前，请备份 CLIProxyAPI 的 `config.yaml` 和整个 Auth 目录。CPA 凭据导出可以作为当前筛选文件型 Auth JSON 的便携快照，但不会保留完整目录布局、原文件名、运行时账号或非 Auth 配置；完整目录备份仍是权威回滚来源。
 
 普通元数据可通过再次批量填写旧值来反向修改。涉及秘密值时，应恢复备份的 Auth 文件并让 CLIProxyAPI 重新加载。
 
@@ -224,7 +246,7 @@ CLIProxyAPI 进程需要：
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -261,7 +283,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.3
+make package VERSION=0.1.5
 ```
 
 如果本地构建需要在插件元数据中显示仓库链接，可给 `make build` 或 `make package` 传入 `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager`。GitHub Actions 会自动注入实际仓库地址。

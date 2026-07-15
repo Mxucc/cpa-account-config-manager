@@ -118,8 +118,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/start", Description: "Start an approved batch account configuration patch."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/batch/status", Description: "Read current or last batch progress."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/retry", Description: "Retry the failed subset of the last in-memory batch."},
-			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export a redacted filtered account view."},
-			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export filtered account credentials for an explicitly selected target format."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/preview", Description: "Preview JSON or ZIP conversion into CPA Auth files."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/start", Description: "Import a confirmed converted Auth-file preview."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults", Description: "Read the default Auth-file policy and safe scan status."},
@@ -164,7 +164,7 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/export/accounts":
 		return a.handleExportAccounts(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/export/results":
-		return jsonDownloadResponse(http.StatusOK, "cpa-account-config-results.json", a.jobs.Snapshot(true))
+		return a.handleExportResults(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/import/preview":
 		return a.handleImportPreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/import/start":
@@ -377,26 +377,48 @@ func (a *App) handleRetry(ctx context.Context, req cpaapi.ManagementRequest) cpa
 }
 
 func (a *App) handleExportAccounts(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	format, errFormat := credentialExportFormatFromValues(req.Query)
+	if errFormat != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errFormat.Error()})
+	}
 	query, errQuery := listQueryFromValues(req.Query)
 	if errQuery != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errQuery.Error()})
 	}
-	accounts, errExport := a.accounts.Export(ctx, query.Filters)
+	collection, errExport := a.accounts.ExportCredentialSources(ctx, query.Filters)
 	if errExport != nil {
+		if errors.Is(errExport, ErrCredentialExportTooLarge) {
+			return jsonResponse(http.StatusRequestEntityTooLarge, map[string]any{"error": ErrCredentialExportTooLarge.Error()})
+		}
+		if errors.Is(errExport, ErrCredentialExportNoAccounts) {
+			return jsonResponse(http.StatusUnprocessableEntity, map[string]any{"error": ErrCredentialExportNoAccounts.Error()})
+		}
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to export accounts"})
 	}
-	payload := struct {
-		ExportedAt time.Time      `json:"exported_at"`
-		Filters    AccountFilters `json:"filters"`
-		Total      int            `json:"total"`
-		Accounts   []Account      `json:"accounts"`
-	}{
-		ExportedAt: time.Now().UTC(),
-		Filters:    query.Filters,
-		Total:      len(accounts),
-		Accounts:   accounts,
+	defer clearCredentialExportCollection(&collection)
+	download, errRender := renderCredentialExport(format, collection, time.Now().UTC())
+	if errRender != nil {
+		if errors.Is(errRender, ErrCredentialExportTooLarge) {
+			return jsonResponse(http.StatusRequestEntityTooLarge, map[string]any{"error": ErrCredentialExportTooLarge.Error()})
+		}
+		if errors.Is(errRender, ErrCredentialExportNoCompatible) {
+			return jsonResponse(http.StatusUnprocessableEntity, map[string]any{"error": ErrCredentialExportNoCompatible.Error()})
+		}
+		return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to encode account export"})
 	}
-	return jsonDownloadResponse(http.StatusOK, "cpa-account-config-accounts.json", payload)
+	return exportDownloadResponse(download)
+}
+
+func (a *App) handleExportResults(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	format, errFormat := resultExportFormatFromValues(req.Query)
+	if errFormat != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errFormat.Error()})
+	}
+	download, errRender := renderResultExport(format, a.jobs.Snapshot(true))
+	if errRender != nil {
+		return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to encode result export"})
+	}
+	return exportDownloadResponse(download)
 }
 
 func listQueryFromValues(values map[string][]string) (ListQuery, error) {
@@ -461,15 +483,6 @@ func jsonResponse(statusCode int, payload any) cpaapi.ManagementResponse {
 		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 		Body:       raw,
 	}
-}
-
-func jsonDownloadResponse(statusCode int, filename string, payload any) cpaapi.ManagementResponse {
-	response := jsonResponse(statusCode, payload)
-	if response.Headers == nil {
-		response.Headers = make(http.Header)
-	}
-	response.Headers.Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	return response
 }
 
 func decodeJSONRequest(raw []byte, destination any) error {

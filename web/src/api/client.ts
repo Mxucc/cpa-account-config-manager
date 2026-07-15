@@ -1,16 +1,19 @@
 import { getSession } from "../store/session";
 import type {
   AccountFilters,
+  AccountExportFormat,
   AccountListResponse,
   BatchPatch,
   BatchPreview,
 	DefaultPolicy,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
+  ExportFormat,
   ImportPreview,
   ImportResult,
   JobSnapshot,
-	PolicySnapshot,
+  PolicySnapshot,
+  ResultExportFormat,
   TargetScope,
 } from "../types";
 
@@ -154,21 +157,48 @@ export async function startImport(previewID: string): Promise<ImportResult> {
   });
 }
 
-export async function downloadExport(kind: "accounts" | "results", filters?: AccountFilters): Promise<void> {
+export interface ExportDownloadResult {
+  filename: string;
+  exported?: number;
+  skipped?: number;
+}
+
+export async function downloadExport(kind: "accounts", format: AccountExportFormat, filters?: AccountFilters): Promise<ExportDownloadResult>;
+export async function downloadExport(kind: "results", format: ResultExportFormat, filters?: undefined): Promise<ExportDownloadResult>;
+export async function downloadExport(kind: "accounts" | "results", format: ExportFormat, filters?: AccountFilters): Promise<ExportDownloadResult> {
   const session = getSession();
   if (!session) throw new APIError(401, "Management Key 未设置");
-  const query = kind === "accounts" && filters ? filtersQuery(filters) : undefined;
+  const query = kind === "accounts" && filters ? filtersQuery(filters) : new URLSearchParams();
+  query.set("format", format);
   const response = await fetch(buildURL(`/export/${kind}`, query), {
     headers: { Authorization: `Bearer ${session.managementKey}` },
   });
-  if (!response.ok) throw new APIError(response.status, `导出失败 (${response.status})`);
+  if (!response.ok) {
+    let message = `导出失败 (${response.status})`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      // Keep the status-only error when the response is not JSON.
+    }
+    throw new APIError(response.status, message);
+  }
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const match = disposition.match(/filename="?([^";]+)"?/i);
-  const filename = match?.[1] ?? `cpa-account-config-${kind}.json`;
+  const filename = match?.[1] ?? `cpa-account-config-${kind}.${format}`;
   const href = URL.createObjectURL(await response.blob());
   const anchor = document.createElement("a");
   anchor.href = href;
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(href);
+  const exported = numericHeader(response.headers.get("X-Exported-Accounts"));
+  const skipped = numericHeader(response.headers.get("X-Skipped-Accounts"));
+  return { filename, exported, skipped };
+}
+
+function numericHeader(value: string | null): number | undefined {
+  if (value === null || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }

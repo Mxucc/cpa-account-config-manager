@@ -313,6 +313,11 @@ func importInputType(upload importUpload) string {
 	if importUploadIsZIP(upload) {
 		return "zip"
 	}
+	extension := strings.ToLower(filepath.Ext(upload.Name))
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(upload.ContentType, ";")[0]))
+	if extension == ".txt" || extension == ".jsonl" || extension == ".ndjson" || contentType == "text/plain" || contentType == "application/x-ndjson" {
+		return "text"
+	}
 	return "json"
 }
 

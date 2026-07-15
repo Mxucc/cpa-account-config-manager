@@ -28,16 +28,18 @@ behavior in sub2api.
   counts before any write starts.
 - Bounded asynchronous jobs, per-account results, revision-conflict detection,
   best-effort continuation, and failed-only retry.
-- Redacted JSON exports for filtered accounts and sanitized job results.
-- Preview-confirmed account import from pasted JSON or mixed multi-file JSON
-  and ZIP selections, with recursive format conversion into CPA Codex Auth
-  JSON and no overwrite of existing Auth files.
+- Explicit target-system credential downloads for filtered accounts, including
+  CPA, sub2api, Cockpit, 9router, Codex, AxonHub, and Codex-Manager formats.
+- Sanitized JSON, CSV, and JSON Lines reports for batch results.
+- Preview-confirmed account import from pasted textual JSON or mixed multi-file
+  JSON, JSON Lines, text, and ZIP selections, with recursive format conversion
+  into CPA Codex Auth JSON and no overwrite of existing Auth files.
 - Embedded React UI with official Management Center theme and remembered-auth
   integration.
 
-The MVP intentionally does not expose account deletion, raw Auth JSON download,
-token refresh, OAuth reauthorization, unrestricted credential editing, quota
-inspection, or scheduling.
+The MVP intentionally does not expose account deletion, token refresh, OAuth
+reauthorization, unrestricted credential editing, quota inspection, or
+scheduling.
 
 ## Compatibility
 
@@ -75,20 +77,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.3_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.5_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.3_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.5_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.3_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.3_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.5_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.5_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -97,17 +99,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.3.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.3.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.3.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.5.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.5.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.5.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so
 ```
 
 ### 3. Enable the plugin
@@ -188,16 +190,18 @@ added.
 ## Account Import
 
 Open **Import accounts** from the operator toolbar. The file picker accepts up
-to 64 JSON and ZIP files in one mixed selection; pasted JSON is submitted as a
-single in-memory JSON file. Every JSON file may contain one account, an array,
-or arbitrarily nested objects and arrays. The converter recursively recognizes
-the common ChatGPT session, sub2api, 9router, Codex, Codex-manager, and
-already-CPA credential aliases used by
+to 64 JSON, JSON Lines, NDJSON, text JSON, and ZIP files in one mixed selection;
+the textual JSON mode submits pasted content as one in-memory text source. A
+source may contain one JSON value, multiple top-level JSON values, or JSON Lines;
+each value may be one account, an array, or arbitrarily nested objects and
+arrays. The converter recursively recognizes the common ChatGPT session,
+sub2api, 9router, Codex, Codex-manager, and already-CPA credential aliases used by
 [`GPTSession2CPAandSub2API`](https://github.com/Mxucc/GPTSession2CPAandSub2API).
 
-Each ZIP may contain multiple directories and JSON files. Directories and
-non-JSON entries are not extracted and are reported as skipped. A malformed
-individual JSON file is also skipped when other selected files remain usable.
+Each ZIP may contain multiple directories and `.json`, `.jsonl`, `.ndjson`, or
+`.txt` JSON sources. Directories and unrelated entries are not extracted and are
+reported as skipped. A malformed individual source is also skipped when other
+selected files remain usable.
 Unsafe paths, symbolic links, encrypted entries, unsupported compression,
 excessive expansion, and archive-limit violations reject the request before
 any Auth file is written.
@@ -228,6 +232,38 @@ The plugin rechecks names immediately before writes and skips a collision rather
 than calling the overwrite-capable host save operation. The host ABI does not
 provide create-only compare-and-swap, so a narrow external race remains between
 the final name check and save.
+
+## Account Credential and Result Export
+
+Account downloads retain the active filters and require an explicit target
+format. CPA exports preserve each matching file-backed Auth JSON object. One
+account downloads as `email.json`; multiple accounts download as a ZIP with one
+unique, path-safe `email.json` entry per account.
+
+| Account format | Shape |
+| --- | --- |
+| CPA | Original CPA Auth JSON; multiple accounts are packaged as ZIP. |
+| sub2api | One `exported_at/proxies/accounts` import document. |
+| Cockpit | Flat Codex token object, or an array for multiple accounts. |
+| 9router | Codex OAuth object, or an array for multiple accounts. |
+| Codex | Native `auth.json` object, or an array for multiple accounts. |
+| AxonHub | AxonHub Codex Auth object, or an array for multiple accounts. |
+| Codex-Manager | `tokens/meta` object, or an array for multiple accounts. |
+
+Non-CPA targets accept compatible Codex OAuth Auth files. Unsupported,
+runtime-only, invalid, or unreadable matches are skipped; the download response
+reports exported and skipped counts in `X-Exported-Accounts` and
+`X-Skipped-Accounts`.
+
+These files contain credentials, including tokens and, for CPA output, any
+stored proxy or header secrets. Credential downloads are authenticated exact
+Management routes, require explicit format selection, set `Cache-Control:
+no-store` and `Content-Disposition: attachment`, and are never persisted or
+logged by the plugin.
+
+Batch-result exports remain sanitized operational reports. They support JSON,
+formula-safe CSV, and JSON Lines, and use only the existing allow-listed result
+snapshot.
 
 ## Default Auth-File Policy
 
@@ -297,9 +333,13 @@ and otherwise unsupported records remain visible but read-only.
 
 ## Security Model
 
-- Account list and export models are allow-listed and redacted. Raw Auth JSON,
-  tokens, cookies, API keys, proxy credentials, and header values never cross
-  the plugin API boundary.
+- Account lists, previews, errors, and batch-result exports are allow-listed and
+  redacted. They never include raw Auth JSON, tokens, cookies, API keys, proxy
+  credentials, or header values.
+- Credential export is a separate, explicitly selected Management download.
+  Its attachment body intentionally contains target-system credentials, is
+  marked `no-store`, is size/count bounded, and is never written to plugin
+  state or logs.
 - Every account route is a CLIProxyAPI authenticated Management route. The
   unauthenticated resource route serves static HTML only.
 - A manually entered Management Key is held only in JavaScript memory. Reloading
@@ -331,8 +371,10 @@ Management Key independently of this plugin.
 ## Backup and Rollback
 
 Before a large batch, back up CLIProxyAPI's `config.yaml` and Auth directory.
-The plugin's account export is redacted and is not a complete restore backup,
-especially for proxy credentials and existing header values.
+CPA credential export can provide a portable snapshot of matching file-backed
+Auth JSON, but it does not preserve the complete directory layout, original
+filenames, runtime-only records, or non-Auth configuration. The full directory
+backup remains the authoritative rollback source.
 
 To reverse an ordinary metadata edit, create a new batch with the previous
 known values. To restore exact secret-bearing fields, restore the backed-up
@@ -357,7 +399,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.5.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -402,7 +444,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.3
+make package VERSION=0.1.5
 ```
 
 For a local build that should publish a repository link in plugin metadata,

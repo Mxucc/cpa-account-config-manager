@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createImportPreview, createPreview, listAccounts, saveDefaultPolicy, startImport } from "./client";
+import { createImportPreview, createPreview, downloadExport, listAccounts, saveDefaultPolicy, startImport } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
 describe("management API client", () => {
@@ -137,6 +137,37 @@ describe("management API client", () => {
     const [startURL, startInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(startURL).toContain("/import/start");
     expect(JSON.parse(String(startInit.body))).toEqual({ preview_id: "import-preview-1" });
+  });
+
+  it("downloads the selected credential target with current filters and account counts", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(new Response("PK\u0003\u0004credential-archive", {
+      status: 200,
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": 'attachment; filename="cpa-accounts.zip"',
+        "X-Exported-Accounts": "8",
+        "X-Skipped-Accounts": "1",
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const createObjectURL = vi.fn(() => "blob:export");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    const result = await downloadExport("accounts", "cpa", { provider: "codex", disabled: false });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/export/accounts?");
+    expect(url).toContain("format=cpa");
+    expect(url).toContain("provider=codex");
+    expect(url).toContain("disabled=false");
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:export");
+    expect(result).toEqual({ filename: "cpa-accounts.zip", exported: 8, skipped: 1 });
   });
 });
 

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   FileArchive,
   FileJson2,
+  FileText,
   Files,
   LoaderCircle,
   RotateCcw,
@@ -62,7 +63,7 @@ export function ImportDialog({
     const incoming = Array.from(selected);
     const invalid = incoming.find((file) => !isSupportedImportFile(file));
     if (invalid) {
-      setInputError(`${invalid.name} 不是 JSON 或 ZIP 文件`);
+      setInputError(`${invalid.name} 不是 JSON、文本 JSON 或 ZIP 文件`);
       return;
     }
     const merged = [...files];
@@ -95,7 +96,7 @@ export function ImportDialog({
     setInputError("");
     if (sourceMode === "files") {
       if (!files.length) {
-        setInputError("请选择 JSON 或 ZIP 文件");
+        setInputError("请选择 JSON、文本 JSON 或 ZIP 文件");
         return;
       }
       onPreview(files);
@@ -106,7 +107,7 @@ export function ImportDialog({
       setInputError("请输入 JSON 内容");
       return;
     }
-    const pasted = new File([body], "pasted-import.json", { type: "application/json" });
+    const pasted = new File([body], "pasted-import.txt", { type: "text/plain" });
     if (pasted.size > MAX_INPUT_BYTES) {
       setInputError("JSON 内容超过 12 MiB");
       return;
@@ -152,15 +153,15 @@ export function ImportDialog({
         <div className="import-input-stage">
           <div className="import-source-segment" role="group" aria-label="导入来源">
             <button type="button" aria-pressed={sourceMode === "files"} className={sourceMode === "files" ? "active" : ""} onClick={() => { setSourceMode("files"); setInputError(""); }}><Files size={15} />多文件</button>
-            <button type="button" aria-pressed={sourceMode === "paste"} className={sourceMode === "paste" ? "active" : ""} onClick={() => { setSourceMode("paste"); setInputError(""); }}><FileJson2 size={15} />粘贴 JSON</button>
+            <button type="button" aria-pressed={sourceMode === "paste"} className={sourceMode === "paste" ? "active" : ""} onClick={() => { setSourceMode("paste"); setInputError(""); }}><FileText size={15} />文本 JSON</button>
           </div>
 
           {sourceMode === "files" ? (
             <div className="import-file-input">
               <div className="import-file-toolbar">
                 <label className="button import-file-button">
-                  <Upload size={15} />选择 JSON / ZIP
-                  <input type="file" accept=".json,.zip,application/json,application/zip" multiple aria-label="选择 JSON 或 ZIP 文件" onChange={(event) => { selectFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
+                  <Upload size={15} />选择 JSON / 文本 / ZIP
+                  <input type="file" accept=".json,.jsonl,.ndjson,.txt,.zip,application/json,application/x-ndjson,text/plain,application/zip" multiple aria-label="选择 JSON、文本 JSON 或 ZIP 文件" onChange={(event) => { selectFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
                 </label>
                 <span>{files.length}/{MAX_UPLOAD_FILES}</span>
                 <span>{formatBytes(totalBytes)}</span>
@@ -168,17 +169,17 @@ export function ImportDialog({
               <div className="import-file-list" aria-label="已选导入文件">
                 {files.length ? files.map((file) => (
                   <div className="import-file-row" key={fileKey(file)}>
-                    {isZIPFile(file) ? <FileArchive size={17} /> : <FileJson2 size={17} />}
-                    <div><strong>{file.name}</strong><span>{isZIPFile(file) ? "ZIP" : "JSON"} · {formatBytes(file.size)}</span></div>
+                    {isZIPFile(file) ? <FileArchive size={17} /> : isTextJSONFile(file) ? <FileText size={17} /> : <FileJson2 size={17} />}
+                    <div><strong>{file.name}</strong><span>{importFileType(file)} · {formatBytes(file.size)}</span></div>
                     <IconButton label={`移除 ${file.name}`} onClick={() => removeFile(file)}><Trash2 size={15} /></IconButton>
                   </div>
-                )) : <div className="import-file-empty"><Files size={24} /><span>JSON / ZIP</span></div>}
+                )) : <div className="import-file-empty"><Files size={24} /><span>JSON / TEXT / ZIP</span></div>}
               </div>
             </div>
           ) : (
             <label className="import-json-input">
-              <span>JSON 内容</span>
-              <textarea aria-label="JSON 内容" value={jsonText} spellCheck={false} onChange={(event) => { setJSONText(event.target.value); setInputError(""); }} placeholder='{"accounts":[...]}' />
+              <span>JSON 文本</span>
+              <textarea aria-label="JSON 文本" value={jsonText} spellCheck={false} onChange={(event) => { setJSONText(event.target.value); setInputError(""); }} placeholder='{"accounts":[...]}' />
               <b>{formatBytes(new Blob([jsonText]).size)}</b>
             </label>
           )}
@@ -255,11 +256,23 @@ function ImportMetric({ label, value, tone = "" }: { label: string; value: numbe
 
 function isSupportedImportFile(file: File): boolean {
   const name = file.name.toLowerCase();
-  return name.endsWith(".json") || name.endsWith(".zip");
+  return [".json", ".jsonl", ".ndjson", ".txt", ".zip"].some((extension) => name.endsWith(extension));
 }
 
 function isZIPFile(file: File): boolean {
   return file.name.toLowerCase().endsWith(".zip");
+}
+
+function isTextJSONFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".txt") || name.endsWith(".jsonl") || name.endsWith(".ndjson");
+}
+
+function importFileType(file: File): string {
+  if (isZIPFile(file)) return "ZIP";
+  if (file.name.toLowerCase().endsWith(".jsonl") || file.name.toLowerCase().endsWith(".ndjson")) return "JSONL";
+  if (isTextJSONFile(file)) return "TEXT JSON";
+  return "JSON";
 }
 
 function fileKey(file: File): string {
@@ -285,7 +298,7 @@ function importMessage(message: string): string {
     "ID token was synthesized from account metadata": "已根据账号信息生成兼容 ID Token",
     "account ID is missing": "缺少 Account ID",
     "filename was adjusted to avoid an existing Auth file": "目标文件名已避让现有 Auth 文件",
-    "entry is not a JSON file": "ZIP 条目不是 JSON 文件",
+    "entry is not a JSON or text JSON file": "ZIP 条目不是 JSON 或文本 JSON 文件",
     "entry does not contain valid JSON": "ZIP 条目不是有效 JSON",
     "uploaded file does not contain valid JSON": "文件不是有效 JSON",
     "uploaded file is empty": "文件为空",

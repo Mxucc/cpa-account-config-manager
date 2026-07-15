@@ -63,6 +63,230 @@ function json(response, status, body, headers = {}) {
   response.end(JSON.stringify(body));
 }
 
+function textDownload(response, body, contentType, filename, headers = {}) {
+  response.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "X-Content-Type-Options": "nosniff",
+    ...headers,
+  });
+  response.end(body);
+}
+
+function csvDocument(headers, rows) {
+  const cell = (raw) => {
+    let value = raw === undefined || raw === null ? "" : String(raw);
+    if (/^[\s]*[=+\-@]/.test(value)) value = `'${value}`;
+    return `"${value.replaceAll('"', '""')}"`;
+  };
+  return [headers, ...rows].map((row) => row.map(cell).join(",")).join("\n") + "\n";
+}
+
+const zipCrc32Table = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function zipCrc32(bytes) {
+  let crc = 0xffffffff;
+  bytes.forEach((byte) => {
+    crc = zipCrc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createStoredZip(entries, now = new Date()) {
+  const chunks = [];
+  const centralDirectory = [];
+  const year = Math.max(1980, now.getFullYear());
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  let offset = 0;
+
+  entries.forEach((entry) => {
+    const name = Buffer.from(entry.name, "utf8");
+    const data = Buffer.from(entry.content, "utf8");
+    const crc = zipCrc32(data);
+    const local = Buffer.alloc(30 + name.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    name.copy(local, 30);
+
+    const central = Buffer.alloc(46 + name.length);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(dosTime, 12);
+    central.writeUInt16LE(dosDate, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    name.copy(central, 46);
+
+    chunks.push(local, data);
+    centralDirectory.push(central);
+    offset += local.length + data.length;
+  });
+
+  const centralSize = centralDirectory.reduce((size, entry) => size + entry.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...chunks, ...centralDirectory, end]);
+}
+
+function mockCPAAuth(account, index) {
+  const base = {
+    type: account.provider,
+    name: account.label,
+    email: account.email,
+    disabled: account.disabled,
+    priority: account.priority,
+    note: account.note,
+  };
+  if (account.provider !== "codex") return { ...base, api_key: `demo-${account.provider}-key-${index + 1}` };
+  return {
+    ...base,
+    type: "codex",
+    account_id: `demo-account-${index + 1}`,
+    chatgpt_account_id: `demo-account-${index + 1}`,
+    plan_type: index % 2 ? "team" : "plus",
+    access_token: `demo-access-token-${index + 1}`,
+    refresh_token: index % 3 ? `demo-refresh-token-${index + 1}` : "",
+    id_token: `demo.id-token-${index + 1}.signature`,
+    session_token: `demo-session-token-${index + 1}`,
+    last_refresh: new Date().toISOString(),
+    expired: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+  };
+}
+
+function mockCredentialRecord(account, index) {
+  const cpa = mockCPAAuth(account, index);
+  return {
+    cpa,
+    name: account.label,
+    email: account.email,
+    accountId: cpa.account_id,
+    planType: cpa.plan_type,
+    accessToken: cpa.access_token,
+    refreshToken: cpa.refresh_token,
+    idToken: cpa.id_token,
+    expiresAt: cpa.expired,
+    lastRefresh: cpa.last_refresh,
+  };
+}
+
+function mockCredentialDocument(format, records) {
+  const oneOrMany = (items) => items.length === 1 ? items[0] : items;
+  if (format === "sub2api") {
+    return {
+      exported_at: new Date().toISOString(),
+      proxies: [],
+      accounts: records.map((record) => ({
+        name: record.name,
+        platform: "openai",
+        type: "oauth",
+        concurrency: 10,
+        priority: 1,
+        credentials: {
+          access_token: record.accessToken,
+          chatgpt_account_id: record.accountId,
+          email: record.email,
+          expires_at: record.refreshToken ? undefined : record.expiresAt,
+          plan_type: record.planType,
+        },
+        extra: { email: record.email, name: record.name, source: "cpa", last_refresh: record.lastRefresh },
+      })),
+    };
+  }
+  if (format === "cockpit") return oneOrMany(records.map((record) => ({
+    type: "codex", id_token: record.idToken, access_token: record.accessToken, refresh_token: record.refreshToken,
+    account_id: record.accountId, last_refresh: record.lastRefresh, email: record.email, expired: record.expiresAt,
+  })));
+  if (format === "9router") return oneOrMany(records.map((record) => ({
+    accessToken: record.accessToken, refreshToken: record.refreshToken, expiresAt: record.expiresAt,
+    providerSpecificData: { chatgptAccountId: record.accountId, chatgptPlanType: record.planType },
+    id: record.accountId, provider: "codex", authType: "oauth", name: record.name, email: record.email,
+    priority: 9, isActive: true, createdAt: record.lastRefresh, updatedAt: record.lastRefresh, testStatus: "active",
+  })));
+  if (format === "codex") return oneOrMany(records.map((record) => ({
+    auth_mode: "chatgpt", OPENAI_API_KEY: null,
+    tokens: { id_token: record.idToken, access_token: record.accessToken, refresh_token: record.refreshToken, account_id: record.accountId },
+    last_refresh: record.lastRefresh,
+  })));
+  if (format === "axonhub") return oneOrMany(records.map((record) => ({
+    auth_mode: "chatgpt", last_refresh: record.lastRefresh,
+    tokens: { access_token: record.accessToken, refresh_token: record.refreshToken || "__missing_refresh_token__", id_token: record.idToken },
+    ...(record.refreshToken ? {} : { axonhub_refresh_token_placeholder: true }),
+  })));
+  return oneOrMany(records.map((record) => ({
+    tokens: { access_token: record.accessToken, refresh_token: record.refreshToken, id_token: record.idToken, account_id: record.accountId, chatgpt_account_id: record.accountId },
+    meta: { label: record.name, chatgpt_account_id: record.accountId, note: "Exported from CPA Account Config Manager" },
+  })));
+}
+
+function mockCredentialStem(value, fallback) {
+  const stem = String(value || "").trim().toLowerCase().replace(/[^a-z0-9@._+-]+/g, "-").replace(/^[.\-_]+|[.\-_]+$/g, "").slice(0, 96);
+  return stem || fallback;
+}
+
+function mockCredentialHeaders(exported, skipped) {
+  return {
+    "Cache-Control": "no-store, private, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Referrer-Policy": "no-referrer",
+    "X-Exported-Accounts": String(exported),
+    "X-Skipped-Accounts": String(skipped),
+    "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Accounts, X-Skipped-Accounts",
+  };
+}
+
+function mockAccountCount(value) {
+  if (Array.isArray(value)) return value.reduce((total, item) => total + mockAccountCount(item), 0);
+  if (!value || typeof value !== "object") return 0;
+  if (value.accessToken || value.access_token || value.tokens?.access_token || value.credentials?.access_token) return 1;
+  return Object.values(value).reduce((total, item) => total + mockAccountCount(item), 0);
+}
+
+async function mockTextImportCount(file) {
+  const content = (await file.text()).trim();
+  if (!content) return 0;
+  try {
+    return Math.max(1, mockAccountCount(JSON.parse(content)));
+  } catch {
+    const documents = content.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
+    return documents.reduce((total, document) => total + Math.max(1, mockAccountCount(document)), 0);
+  }
+}
+
+function mockImportType(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".zip")) return "zip";
+  if (name.endsWith(".txt") || name.endsWith(".jsonl") || name.endsWith(".ndjson")) return "text";
+  return "json";
+}
+
 function authorized(request) {
   return request.headers.authorization === `Bearer ${managementKey}`;
 }
@@ -224,7 +448,7 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host}`);
   if (!authorized(request)) return json(response, 401, { error: "invalid management key" });
 
-  if (request.method === "GET" && url.pathname.endsWith("/accounts")) {
+  if (request.method === "GET" && url.pathname.endsWith("/plugins/cpa-account-config-manager/accounts")) {
     return json(response, 200, listFromURL(url));
   }
   if (request.method === "POST" && url.pathname.endsWith("/batch/preview")) {
@@ -269,10 +493,54 @@ const server = http.createServer(async (request, response) => {
     return json(response, 400, { error: "no failed targets are available to retry" });
   }
   if (request.method === "GET" && url.pathname.endsWith("/export/accounts")) {
-    return json(response, 200, { exported_at: new Date().toISOString(), ...listFromURL(url) }, { "Content-Disposition": 'attachment; filename="demo-accounts.json"' });
+    const format = url.searchParams.get("format") || "";
+    const view = listFromURL(url);
+    const supported = new Set(["cpa", "sub2api", "cockpit", "9router", "codex", "axonhub", "codexmanager"]);
+    if (!supported.has(format)) return json(response, 400, { error: "请选择账号导出目标格式" });
+    const fileAccounts = view.accounts.filter((account) => !account.runtime_only && account.source === "file");
+    if (format === "cpa") {
+      if (!fileAccounts.length) return json(response, 422, { error: "当前筛选没有可导出的文件账号" });
+      const documents = fileAccounts.map((account, index) => ({ account, content: JSON.stringify(mockCPAAuth(account, index), null, 2) + "\n" }));
+      const headers = mockCredentialHeaders(documents.length, view.accounts.length - documents.length);
+      if (documents.length === 1) {
+        return textDownload(response, documents[0].content, "application/json; charset=utf-8", `${mockCredentialStem(documents[0].account.email, "account-001")}.json`, headers);
+      }
+      const used = new Set();
+      const entries = documents.map(({ account, content }, index) => {
+        const stem = mockCredentialStem(account.email, `account-${String(index + 1).padStart(3, "0")}`);
+        let candidate = stem;
+        let suffix = 1;
+        while (used.has(`${candidate}.json`)) {
+          suffix += 1;
+          candidate = `${stem}-${suffix}`;
+        }
+        used.add(`${candidate}.json`);
+        return { name: `${candidate}.json`, content };
+      });
+      return textDownload(response, createStoredZip(entries), "application/zip", "cpa-accounts.zip", headers);
+    }
+    const compatible = fileAccounts.filter((account) => account.provider === "codex");
+    if (!compatible.length) return json(response, 422, { error: "当前筛选没有兼容的 Codex OAuth 账号" });
+    const records = compatible.map(mockCredentialRecord);
+    const body = JSON.stringify(mockCredentialDocument(format, records), null, 2) + "\n";
+    const suffix = format === "codexmanager" ? "codex-manager" : format;
+    const filename = format === "codex" && records.length === 1 ? "auth.json" : `cpa-accounts.${suffix}.json`;
+    return textDownload(response, body, "application/json; charset=utf-8", filename, mockCredentialHeaders(records.length, view.accounts.length - records.length));
   }
   if (request.method === "GET" && url.pathname.endsWith("/export/results")) {
-    return json(response, 200, snapshotJob(true), { "Content-Disposition": 'attachment; filename="demo-results.json"' });
+    const format = url.searchParams.get("format") || "json";
+    const snapshot = snapshotJob(true);
+    const results = snapshot.results || [];
+    if (format === "csv") {
+      const headers = ["job_id", "job_state", "id", "name", "provider", "label", "status", "error", "applied_fields", "retryable"];
+      const rows = results.map((result) => [snapshot.id, snapshot.state, result.id, result.name, result.provider, result.label, result.status, result.error, result.applied_fields?.join(";"), result.retryable]);
+      return textDownload(response, csvDocument(headers, rows), "text/csv; charset=utf-8", "demo-results.csv");
+    }
+    if (format === "jsonl" || format === "ndjson") {
+      const body = results.map((result) => JSON.stringify({ job_id: snapshot.id, job_state: snapshot.state, ...result })).join("\n") + (results.length ? "\n" : "");
+      return textDownload(response, body, "application/x-ndjson; charset=utf-8", "demo-results.jsonl");
+    }
+    return json(response, 200, snapshot, { "Content-Disposition": 'attachment; filename="demo-results.json"', "X-Content-Type-Options": "nosniff" });
   }
   if (request.method === "POST" && url.pathname.endsWith("/import/preview")) {
     const formData = await readFormData(request);
@@ -280,9 +548,11 @@ const server = http.createServer(async (request, response) => {
     if (!files.length) return json(response, 400, { error: "multipart import contains no files" });
     const previewID = crypto.randomUUID();
     const items = [];
-    files.forEach((file, fileIndex) => {
+    let sourceFiles = 0;
+    for (const [fileIndex, file] of files.entries()) {
       const isZip = file.name.toLowerCase().endsWith(".zip");
-      const count = isZip ? 2 : 1;
+      const count = isZip ? 2 : await mockTextImportCount(file);
+      sourceFiles += isZip ? count : 1;
       for (let entryIndex = 0; entryIndex < count; entryIndex += 1) {
         const sequence = items.length + 1;
         const stem = file.name.replace(/\.[^.]+$/, "").replace(/[^a-z0-9]+/gi, "_").toLowerCase() || `import_${sequence}`;
@@ -290,7 +560,7 @@ const server = http.createServer(async (request, response) => {
         items.push({
           index: sequence,
           source_name: isZip ? `${file.name}/account-${entryIndex + 1}.json` : file.name,
-          source_path: isZip ? `$[${entryIndex}]` : "$",
+          source_path: isZip ? `$[${entryIndex}]` : count > 1 ? `$document[${entryIndex}]` : "$",
           target_name: `codex-${stem}_${entryIndex + 1}.json`,
           email,
           account_id: `demo-import-${fileIndex + 1}-${entryIndex + 1}`,
@@ -299,14 +569,14 @@ const server = http.createServer(async (request, response) => {
           warnings: ["ID token was synthesized from account metadata"],
         });
       }
-    });
-    const inputTypes = new Set(files.map((file) => file.name.toLowerCase().endsWith(".zip") ? "zip" : "json"));
+    }
+    const inputTypes = new Set(files.map(mockImportType));
     const preview = {
       id: previewID,
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 300_000).toISOString(),
       input_type: inputTypes.size > 1 ? "mixed" : [...inputTypes][0],
-      source_files: items.length,
+      source_files: sourceFiles,
       total: items.length,
       skipped: 0,
       warnings: ["existing Auth files will not be overwritten"],

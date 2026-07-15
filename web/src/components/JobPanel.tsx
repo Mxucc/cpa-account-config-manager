@@ -1,15 +1,32 @@
 import { Download, RefreshCw, RotateCcw, X } from "lucide-react";
 import { operatorMessage } from "../format/operatorMessage";
-import type { JobSnapshot } from "../types";
+import type { JobResult, JobState } from "../types";
 import { IconButton } from "./IconButton";
 
 interface JobPanelProps {
-  job: JobSnapshot;
-  retrying: boolean;
+	job: ResultJobSnapshot;
+	title?: string;
+	ariaLabel?: string;
+	retrying?: boolean;
+	fields?: string[];
   onClose: () => void;
-  onRetry: () => void;
-  onExport: () => void;
+	onRetry?: () => void;
+	onExport?: () => void;
   onRefresh: () => void;
+}
+
+interface ResultJobSnapshot {
+	id?: string;
+	state: JobState;
+	running: boolean;
+	total: number;
+	done: number;
+	succeeded: number;
+	failed: number;
+	conflicts: number;
+	skipped: number;
+	retry_available?: boolean;
+	results?: JobResult[];
 }
 
 const resultLabels: Record<string, string> = {
@@ -22,14 +39,14 @@ const resultLabels: Record<string, string> = {
   interrupted: "中断",
 };
 
-export function JobPanel({ job, retrying, onClose, onRetry, onExport, onRefresh }: JobPanelProps) {
+export function JobPanel({ job, title = "批量任务", ariaLabel = "批量任务", retrying = false, fields = [], onClose, onRetry, onExport, onRefresh }: JobPanelProps) {
   const progress = job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
   return (
-    <aside className="job-panel" aria-label="批量任务">
+    <aside className="job-panel" aria-label={ariaLabel}>
       <header className="job-header">
         <div>
-          <span className={`job-state state-${job.state}`}>{job.running ? "执行中" : stateLabel(job.state)}</span>
-          <h2>批量任务</h2>
+          <span className={`job-state state-${job.state}`}>{job.running ? "执行中" : jobStateLabel(job.state)}</span>
+          <h2>{title}</h2>
           <code>{job.id?.slice(0, 12) || "-"}</code>
         </div>
         <div className="job-header-actions">
@@ -47,12 +64,14 @@ export function JobPanel({ job, retrying, onClose, onRetry, onExport, onRefresh 
         <Count label="冲突" value={job.conflicts} tone={job.conflicts ? "warning" : ""} />
         <Count label="跳过" value={job.skipped} />
       </div>
-      <div className="job-toolbar">
-        <button className="button button-quiet" type="button" onClick={onExport}><Download size={15} />导出结果</button>
-        <button className="button button-primary" type="button" onClick={onRetry} disabled={!job.retry_available || job.running || retrying}>
-          <RotateCcw size={15} />{retrying ? "重试中" : "仅重试失败项"}
-        </button>
-      </div>
+      {onExport || onRetry ? (
+        <div className="job-toolbar">
+          {onExport ? <button className="button button-quiet" type="button" onClick={onExport}><Download size={15} />导出结果</button> : null}
+          {onRetry ? <button className="button button-primary" type="button" onClick={onRetry} disabled={!job.retry_available || job.running || retrying}><RotateCcw size={15} />{retrying ? "重试中" : "仅重试失败项"}</button> : null}
+        </div>
+      ) : (
+        <div className="job-toolbar force-job-toolbar"><span>覆盖字段</span>{fields.map((field) => <code key={field}>{field}</code>)}</div>
+      )}
       <div className="job-results">
         {(job.results ?? []).map((result) => (
           <div className="job-result" key={result.id}>
@@ -75,6 +94,6 @@ function Count({ label, value, tone = "" }: { label: string; value: string | num
   return <div className={tone}><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function stateLabel(state: JobSnapshot["state"]): string {
+export function jobStateLabel(state: JobState): string {
   return ({ idle: "空闲", completed: "已完成", partial: "部分完成", failed: "失败", interrupted: "已中断", running: "执行中" } as const)[state];
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,8 @@ const (
 	defaultManagementBaseURL = "http://127.0.0.1:8317"
 	maxManagementResponse    = 64 << 10
 )
+
+var ErrManagementBaseURLInvalid = errors.New("management_base_url is invalid; configure an HTTP(S) loopback URL")
 
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
@@ -108,9 +111,12 @@ func resolveManagementBaseURL(configured string) string {
 	if value := strings.TrimSpace(configured); value != "" {
 		return value
 	}
-	for _, environmentName := range []string{"CPA_MANAGEMENT_BASE_URL", "CPA_BASE_URL"} {
-		if value := strings.TrimSpace(os.Getenv(environmentName)); value != "" {
-			return value
+	if value := strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_BASE_URL")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(os.Getenv("CPA_BASE_URL")); value != "" {
+		if validated, errValidate := validateManagementBaseURL(value); errValidate == nil {
+			return validated
 		}
 	}
 	for _, environmentName := range []string{"PORT", "CPA_PORT"} {
@@ -128,16 +134,16 @@ func validateManagementBaseURL(raw string) (string, error) {
 	}
 	parsed, errParse := url.Parse(value)
 	if errParse != nil || parsed.Host == "" {
-		return "", fmt.Errorf("management_base_url must be a valid loopback URL")
+		return "", fmt.Errorf("%w: value must be a valid URL", ErrManagementBaseURLInvalid)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("management_base_url scheme must be http or https")
+		return "", fmt.Errorf("%w: scheme must be http or https", ErrManagementBaseURLInvalid)
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("management_base_url must not contain credentials, query parameters, or fragments")
+		return "", fmt.Errorf("%w: credentials, query parameters, and fragments are not allowed", ErrManagementBaseURLInvalid)
 	}
 	if parsed.EscapedPath() != "" && parsed.EscapedPath() != "/" {
-		return "", fmt.Errorf("management_base_url must not contain a path")
+		return "", fmt.Errorf("%w: paths are not allowed", ErrManagementBaseURLInvalid)
 	}
 	hostname := strings.TrimSpace(parsed.Hostname())
 	loopback := strings.EqualFold(hostname, "localhost")
@@ -145,7 +151,7 @@ func validateManagementBaseURL(raw string) (string, error) {
 		loopback = address.IsLoopback()
 	}
 	if !loopback {
-		return "", fmt.Errorf("management_base_url must use a loopback host")
+		return "", fmt.Errorf("%w: host must be localhost or a loopback IP", ErrManagementBaseURLInvalid)
 	}
 	parsed.Path = ""
 	return strings.TrimRight(parsed.String(), "/"), nil

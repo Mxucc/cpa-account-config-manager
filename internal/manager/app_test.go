@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +21,30 @@ import (
 func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
 	registration := app.ManagementRegistration()
-	if len(registration.Routes) != 7 {
-		t.Fatalf("routes len = %d, want 7", len(registration.Routes))
+	expected := map[string]struct{}{
+		http.MethodGet + " /plugins/cpa-account-config-manager/accounts":                {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/batch/preview":          {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/batch/start":            {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/batch/status":            {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/batch/retry":            {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/export/accounts":         {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/export/results":          {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/defaults":                {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/defaults":                {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/scan":          {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/preview": {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/start":   {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/defaults/force/status":   {},
+	}
+	if len(registration.Routes) != len(expected) {
+		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))
 	}
 	for _, route := range registration.Routes {
+		key := route.Method + " " + route.Path
+		if _, exists := expected[key]; !exists {
+			t.Fatalf("unexpected route %q", key)
+		}
+		delete(expected, key)
 		if route.Path == "" || route.Path[0] != '/' {
 			t.Fatalf("invalid route path %q", route.Path)
 		}
@@ -30,6 +53,9 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 				t.Fatalf("route %q contains dynamic marker %q", route.Path, forbidden)
 			}
 		}
+	}
+	if len(expected) != 0 {
+		t.Fatalf("missing routes = %#v", expected)
 	}
 	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" {
 		t.Fatalf("resources = %#v", registration.Resources)
@@ -205,5 +231,204 @@ func TestHandleManagementRunsPreviewStartStatusAndRedactedExports(t *testing.T) 
 		if strings.Contains(string(accountsExport.Body), secret) {
 			t.Fatalf("accounts export leaked %q: %s", secret, accountsExport.Body)
 		}
+	}
+}
+
+func TestHandleStartReturnsActionableStorageErrorAndKeepsPreview(t *testing.T) {
+	app := NewApp(twoEditableAccountsHost(), []byte("index"))
+	defer app.Close()
+
+	blockingPath := filepath.Join(t.TempDir(), "not-a-directory")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	app.Configure([]byte(fmt.Sprintf("workers: 1\ndata_dir: %q\nmanagement_base_url: %q\n", filepath.Join(blockingPath, "jobs"), defaultManagementBaseURL)))
+	writers := make([]*trackingWriter, 0, 2)
+	app.jobs.newWriter = func(_ string, key string, _ HTTPDoer) (ManagementWriter, error) {
+		writer := &trackingWriter{key: key}
+		writers = append(writers, writer)
+		return writer, nil
+	}
+
+	preview, errPreview := app.previews.Create(context.Background(), PreviewRequest{
+		Scope: TargetScope{Mode: "selected", IDs: []string{"a"}},
+		Patch: BatchPatch{Disabled: boolPointer(true)},
+	})
+	if errPreview != nil {
+		t.Fatalf("Create() error = %v", errPreview)
+	}
+	startBody, _ := json.Marshal(StartRequest{PreviewID: preview.ID})
+	startRequest := cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/batch/start",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    startBody,
+	}
+	response := app.HandleManagement(context.Background(), startRequest)
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+	}
+	if string(response.Body) != `{"error":"job result storage is unavailable; configure data_dir to a writable directory"}` {
+		t.Fatalf("body = %s", response.Body)
+	}
+	if strings.Contains(string(response.Body), blockingPath) || len(writers) != 1 || writers[0].key != "" {
+		t.Fatalf("failed start leaked a path or retained its key: body=%s writers=%#v", response.Body, writers)
+	}
+
+	app.Configure([]byte(fmt.Sprintf("workers: 1\ndata_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), defaultManagementBaseURL)))
+	retryResponse := app.HandleManagement(context.Background(), startRequest)
+	if retryResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("retry with the same preview = %d %s", retryResponse.StatusCode, retryResponse.Body)
+	}
+}
+
+func TestHandleStartReturnsActionableManagementURLConfigurationError(t *testing.T) {
+	app := NewApp(twoEditableAccountsHost(), []byte("index"))
+	defer app.Close()
+	unsafeURL := "https://public.example.com/private?token=deployment-secret"
+	app.Configure([]byte(fmt.Sprintf("data_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), unsafeURL)))
+
+	preview, errPreview := app.previews.Create(context.Background(), PreviewRequest{
+		Scope: TargetScope{Mode: "selected", IDs: []string{"a"}},
+		Patch: BatchPatch{Disabled: boolPointer(true)},
+	})
+	if errPreview != nil {
+		t.Fatalf("Create() error = %v", errPreview)
+	}
+	startBody, _ := json.Marshal(StartRequest{PreviewID: preview.ID})
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/batch/start",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    startBody,
+	})
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+	}
+	if string(response.Body) != `{"error":"management_base_url is invalid; configure an HTTP(S) loopback URL"}` {
+		t.Fatalf("body = %s", response.Body)
+	}
+	for _, forbidden := range []string{"public.example.com", "deployment-secret", "management-secret"} {
+		if strings.Contains(string(response.Body), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, response.Body)
+		}
+	}
+}
+
+func TestHandleDefaultPolicyAndForceSyncRoutes(t *testing.T) {
+	host := forceSyncHost()
+	app := NewApp(host, []byte("index"))
+	app.Configure([]byte(fmt.Sprintf("workers: 2\ndata_dir: %q\n", t.TempDir())))
+	defer app.Close()
+
+	policyBody := []byte(`{"enabled":true,"apply_mode":"missing","scan_interval_seconds":1,"priority":0,"websockets":false}`)
+	putResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults",
+		Body:   policyBody,
+	})
+	if putResponse.StatusCode != http.StatusOK {
+		t.Fatalf("PUT defaults = %d %s", putResponse.StatusCode, putResponse.Body)
+	}
+	var policySnapshot PolicySnapshot
+	if errDecode := json.Unmarshal(putResponse.Body, &policySnapshot); errDecode != nil {
+		t.Fatalf("decode policy response: %v", errDecode)
+	}
+	if !policySnapshot.Policy.Enabled || policySnapshot.Policy.ScanIntervalSeconds != minPolicyScanIntervalSeconds ||
+		policySnapshot.Policy.Priority == nil || *policySnapshot.Policy.Priority != 0 ||
+		policySnapshot.Policy.Websockets == nil || *policySnapshot.Policy.Websockets {
+		t.Fatalf("policy response = %#v", policySnapshot)
+	}
+
+	getResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults",
+	})
+	if getResponse.StatusCode != http.StatusOK || !bytes.Contains(getResponse.Body, []byte(`"apply_mode":"missing"`)) {
+		t.Fatalf("GET defaults = %d %s", getResponse.StatusCode, getResponse.Body)
+	}
+	scanResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults/scan",
+	})
+	if scanResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST scan = %d %s", scanResponse.StatusCode, scanResponse.Body)
+	}
+
+	previewResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults/force/preview",
+	})
+	if previewResponse.StatusCode != http.StatusOK {
+		t.Fatalf("POST force preview = %d %s", previewResponse.StatusCode, previewResponse.Body)
+	}
+	var preview ForceSyncPreview
+	if errDecode := json.Unmarshal(previewResponse.Body, &preview); errDecode != nil {
+		t.Fatalf("decode force preview: %v", errDecode)
+	}
+	startBody, _ := json.Marshal(StartRequest{PreviewID: preview.ID})
+	startResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults/force/start",
+		Body:   startBody,
+	})
+	if startResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST force start = %d %s", startResponse.StatusCode, startResponse.Body)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var forceStatus cpaapi.ManagementResponse
+	var terminalForce ForceSyncJobSnapshot
+	for time.Now().Before(deadline) {
+		forceStatus = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+			Method: http.MethodGet,
+			Path:   "/v0/management/plugins/cpa-account-config-manager/defaults/force/status",
+		})
+		if errDecode := json.Unmarshal(forceStatus.Body, &terminalForce); errDecode == nil && !terminalForce.Running && terminalForce.State != JobStateIdle {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if forceStatus.StatusCode != http.StatusOK {
+		t.Fatalf("GET force status = %d %s", forceStatus.StatusCode, forceStatus.Body)
+	}
+	if terminalForce.Running || terminalForce.State == JobStateIdle {
+		t.Fatalf("force sync did not reach terminal state: %s", forceStatus.Body)
+	}
+	for _, secret := range []string{"access-secret", "header-secret", "proxy-secret", "/auths"} {
+		if bytes.Contains(putResponse.Body, []byte(secret)) || bytes.Contains(previewResponse.Body, []byte(secret)) || bytes.Contains(forceStatus.Body, []byte(secret)) {
+			t.Fatalf("policy API leaked %q", secret)
+		}
+	}
+}
+
+func TestHandleDefaultPolicyReturnsSafeStorageAndValidationErrors(t *testing.T) {
+	blockingPath := filepath.Join(t.TempDir(), "not-a-directory")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	dataDir := filepath.Join(blockingPath, "policy")
+	app := NewApp(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}}, []byte("index"))
+	app.Configure([]byte(fmt.Sprintf("data_dir: %q\n", dataDir)))
+	defer app.Close()
+
+	storageResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults",
+		Body:   []byte(`{"enabled":false,"priority":0,"websockets":null}`),
+	})
+	if storageResponse.StatusCode != http.StatusServiceUnavailable || string(storageResponse.Body) != `{"error":"default policy storage is unavailable; configure data_dir to a writable directory"}` {
+		t.Fatalf("storage response = %d %s", storageResponse.StatusCode, storageResponse.Body)
+	}
+	if bytes.Contains(storageResponse.Body, []byte(dataDir)) {
+		t.Fatalf("storage response leaked its path: %s", storageResponse.Body)
+	}
+
+	validationResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults",
+		Body:   []byte(`{"enabled":true,"unknown":"secret-value"}`),
+	})
+	if validationResponse.StatusCode != http.StatusBadRequest || bytes.Contains(validationResponse.Body, []byte("secret-value")) {
+		t.Fatalf("validation response = %d %s", validationResponse.StatusCode, validationResponse.Body)
 	}
 }

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, FileJson2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, FileJson2 } from "lucide-react";
 import { operatorMessage } from "../format/operatorMessage";
 import type { BatchPreview } from "../types";
 import { Modal } from "./Modal";
@@ -6,6 +6,7 @@ import { Modal } from "./Modal";
 interface PreviewDialogProps {
   preview: BatchPreview;
   starting: boolean;
+  error?: string;
   onClose: () => void;
   onConfirm: () => void;
 }
@@ -20,7 +21,7 @@ const fieldLabels: Record<string, string> = {
   headers: "Headers",
 };
 
-export function PreviewDialog({ preview, starting, onClose, onConfirm }: PreviewDialogProps) {
+export function PreviewDialog({ preview, starting, error = "", onClose, onConfirm }: PreviewDialogProps) {
   const warnings = previewWarnings(preview);
   return (
     <Modal
@@ -32,7 +33,7 @@ export function PreviewDialog({ preview, starting, onClose, onConfirm }: Preview
           <span className="modal-scope">快照 {preview.id.slice(0, 8)}</span>
           <button className="button" type="button" onClick={onClose}>取消</button>
           <button className="button button-primary" type="button" disabled={starting || preview.eligible === 0} onClick={onConfirm}>
-            {starting ? "正在启动" : `执行 ${preview.eligible} 个账号`}
+            {starting ? "正在启动" : error ? `重新启动 ${preview.eligible} 个账号` : `执行 ${preview.eligible} 个账号`}
           </button>
         </>
       )}
@@ -47,6 +48,12 @@ export function PreviewDialog({ preview, starting, onClose, onConfirm }: Preview
       <div className="preview-fields" aria-label="变更字段">
         {preview.patch.fields.map((field) => <span className="field-chip" key={field}>{fieldLabels[field] ?? field}</span>)}
       </div>
+      {error ? (
+        <div className="preview-start-error" role="alert">
+          <AlertCircle size={18} />
+          <div><strong>任务未启动</strong><span>{error}</span></div>
+        </div>
+      ) : null}
       {warnings.length ? (
         <div className="warning-list">
           {warnings.map((warning) => <div key={warning}><AlertTriangle size={15} />{warning}</div>)}

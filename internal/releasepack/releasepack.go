@@ -53,9 +53,9 @@ func Pack(options Options) (Result, error) {
 	if errExtension != nil {
 		return Result{}, errExtension
 	}
-	expectedLibrary := options.PluginID + extension
-	if filepath.Base(options.Library) != expectedLibrary {
-		return Result{}, fmt.Errorf("library filename must be %s", expectedLibrary)
+	inputLibrary := options.PluginID + extension
+	if filepath.Base(options.Library) != inputLibrary {
+		return Result{}, fmt.Errorf("library filename must be %s", inputLibrary)
 	}
 	if options.OutputDir == "" {
 		options.OutputDir = "dist/release"
@@ -70,13 +70,14 @@ func Pack(options Options) (Result, error) {
 	}
 
 	archiveName := fmt.Sprintf("%s_%s_%s_%s.zip", options.PluginID, options.Version, options.GOOS, options.GOARCH)
+	archiveLibrary := fmt.Sprintf("%s-v%s%s", options.PluginID, options.Version, extension)
 	archivePath := filepath.Join(options.OutputDir, archiveName)
 	archive, errCreate := os.Create(archivePath)
 	if errCreate != nil {
 		return Result{}, fmt.Errorf("create archive: %w", errCreate)
 	}
 	zipWriter := zip.NewWriter(archive)
-	header := &zip.FileHeader{Name: expectedLibrary, Method: zip.Deflate}
+	header := &zip.FileHeader{Name: archiveLibrary, Method: zip.Deflate}
 	header.SetMode(0o755)
 	entry, errEntry := zipWriter.CreateHeader(header)
 	if errEntry == nil {

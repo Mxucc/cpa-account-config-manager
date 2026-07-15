@@ -45,16 +45,23 @@ type App struct {
 	accounts  *AccountService
 	previews  *PreviewService
 	jobs      *JobEngine
+	policies  *PolicyEngine
+	force     *ForceSyncEngine
 	indexHTML []byte
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
 	accounts := NewAccountService(host)
+	mutations := NewMutationCoordinator()
+	jobs := NewJobEngineWithCoordinator(accounts, mutations)
+	policies := NewPolicyEngineWithCoordinator(host, mutations)
 	return &App{
 		config:    normalizeConfig(Config{}),
 		accounts:  accounts,
 		previews:  NewPreviewService(accounts),
-		jobs:      NewJobEngine(accounts),
+		jobs:      jobs,
+		policies:  policies,
+		force:     NewForceSyncEngine(accounts, host, policies, mutations),
 		indexHTML: append([]byte(nil), indexHTML...),
 	}
 }
@@ -68,12 +75,16 @@ func (a *App) Configure(raw []byte) {
 	config := a.config
 	a.mu.Unlock()
 	a.jobs.Configure(config)
+	a.policies.Configure(config)
+	a.force.Configure(config)
 }
 
 func (a *App) Close() {
 	if a == nil || a.jobs == nil {
 		return
 	}
+	a.force.Shutdown()
+	a.policies.Shutdown()
 	a.jobs.Shutdown()
 	a.previews.Clear()
 }
@@ -87,9 +98,9 @@ func (a *App) Registration() Registration {
 			Author:           "cpa-account-config-manager contributors",
 			GitHubRepository: PluginRepository,
 			ConfigFields: []cpaapi.ConfigField{
-				{Name: "workers", Type: cpaapi.ConfigFieldTypeInteger, Description: "Maximum concurrent account mutations (1-16)."},
-				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Directory for sanitized terminal job state."},
-				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL."},
+				{Name: "workers", Type: cpaapi.ConfigFieldTypeInteger, Description: "Optional maximum concurrent account mutations (default 6, range 1-16)."},
+				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job and default-policy state."},
+				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL; defaults to http://127.0.0.1:8317."},
 			},
 		},
 		Capabilities: RegistrationCapabilities{ManagementAPI: true},
@@ -106,6 +117,12 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/retry", Description: "Retry the failed subset of the last in-memory batch."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export a redacted filtered account view."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults", Description: "Read the default Auth-file policy and safe scan status."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/defaults", Description: "Validate and save the default Auth-file policy."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/scan", Description: "Request an immediate missing-only Auth-file scan."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/preview", Description: "Preview force-syncing managed policy fields."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/start", Description: "Start an approved default-policy force sync."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults/force/status", Description: "Read current or last force-sync progress."},
 		},
 		Resources: []cpaapi.ResourceRoute{{
 			Path:        "/index.html",
@@ -143,6 +160,18 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleExportAccounts(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/export/results":
 		return jsonDownloadResponse(http.StatusOK, "cpa-account-config-results.json", a.jobs.Snapshot(true))
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults":
+		return jsonResponse(http.StatusOK, a.policies.Snapshot())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/defaults":
+		return a.handlePutDefaultPolicy(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/defaults/scan":
+		return jsonResponse(http.StatusAccepted, a.policies.RequestScan())
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/defaults/force/preview":
+		return a.handleForcePreview(ctx)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/defaults/force/start":
+		return a.handleForceStart(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults/force/status":
+		return jsonResponse(http.StatusOK, a.force.Snapshot(statusWantsResults(req.Query)))
 	default:
 		return jsonResponse(http.StatusNotFound, map[string]any{
 			"error":  "not found",
@@ -150,6 +179,61 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			"path":   path,
 		})
 	}
+}
+
+func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var policy DefaultPolicy
+	if errDecode := decodeJSONRequest(req.Body, &policy); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	saved, errSave := a.policies.SetPolicy(policy)
+	if errSave != nil {
+		if errors.Is(errSave, ErrPolicyStorageUnavailable) {
+			return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": ErrPolicyStorageUnavailable.Error()})
+		}
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
+	}
+	snapshot := a.policies.Snapshot()
+	snapshot.Policy = saved
+	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) handleForcePreview(ctx context.Context) cpaapi.ManagementResponse {
+	preview, errPreview := a.force.Preview(ctx)
+	if errPreview != nil {
+		switch {
+		case errors.Is(errPreview, ErrForcePolicyEmpty):
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": ErrForcePolicyEmpty.Error()})
+		case strings.Contains(errPreview.Error(), "resolve force-sync targets"):
+			return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to resolve force-sync targets"})
+		default:
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "no auth files are available for force sync"})
+		}
+	}
+	return jsonResponse(http.StatusOK, preview)
+}
+
+func (a *App) handleForceStart(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request StartRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	snapshot, errStart := a.force.Start(request.PreviewID)
+	if errStart != nil {
+		switch {
+		case errors.Is(errStart, ErrForcePreviewExpired):
+			return jsonResponse(http.StatusGone, map[string]any{"error": ErrForcePreviewExpired.Error()})
+		case errors.Is(errStart, ErrForcePreviewNotFound):
+			return jsonResponse(http.StatusNotFound, map[string]any{"error": ErrForcePreviewNotFound.Error()})
+		case errors.Is(errStart, ErrForcePreviewStale), errors.Is(errStart, ErrJobBusy):
+			return jsonResponse(http.StatusConflict, map[string]any{"error": errStart.Error()})
+		case errors.Is(errStart, ErrForceNoEligible):
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": ErrForceNoEligible.Error()})
+		default:
+			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to start force-sync job"})
+		}
+	}
+	return jsonResponse(http.StatusAccepted, snapshot)
 }
 
 func (a *App) handleListAccounts(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
@@ -201,11 +285,7 @@ func (a *App) handleStart(req cpaapi.ManagementRequest) cpaapi.ManagementRespons
 	managementKey = ""
 	if errStart != nil {
 		status := jobHTTPStatus(errStart)
-		message := errStart.Error()
-		if status == http.StatusInternalServerError {
-			message = "failed to start batch job"
-		}
-		return jsonResponse(status, map[string]any{"error": message})
+		return jsonResponse(status, map[string]any{"error": publicJobStartError(errStart, "failed to start batch job")})
 	}
 	a.previews.Delete(request.PreviewID)
 	return jsonResponse(http.StatusAccepted, snapshot)
@@ -228,11 +308,7 @@ func (a *App) handleRetry(ctx context.Context, req cpaapi.ManagementRequest) cpa
 	managementKey = ""
 	if errStart != nil {
 		status := jobHTTPStatus(errStart)
-		message := errStart.Error()
-		if status == http.StatusInternalServerError {
-			message = "failed to start retry job"
-		}
-		return jsonResponse(status, map[string]any{"error": message})
+		return jsonResponse(status, map[string]any{"error": publicJobStartError(errStart, "failed to start retry job")})
 	}
 	return jsonResponse(http.StatusAccepted, snapshot)
 }
@@ -350,4 +426,17 @@ func decodeJSONRequest(raw []byte, destination any) error {
 		return fmt.Errorf("request body must contain one JSON object")
 	}
 	return nil
+}
+
+func publicJobStartError(err error, fallback string) string {
+	switch {
+	case errors.Is(err, ErrJobStorageUnavailable):
+		return ErrJobStorageUnavailable.Error()
+	case errors.Is(err, ErrManagementBaseURLInvalid):
+		return ErrManagementBaseURLInvalid.Error()
+	case jobHTTPStatus(err) != http.StatusInternalServerError:
+		return err.Error()
+	default:
+		return fallback
+	}
 }

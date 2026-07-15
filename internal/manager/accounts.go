@@ -25,6 +25,7 @@ const (
 type AuthHost interface {
 	ListAuth(context.Context) ([]cpaapi.HostAuthFileEntry, error)
 	GetAuth(context.Context, string) (cpaapi.HostAuthGetResponse, error)
+	SaveAuth(context.Context, string, json.RawMessage) (cpaapi.HostAuthSaveResponse, error)
 }
 
 type AccountService struct {
@@ -166,14 +167,18 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 		return nil, fmt.Errorf("list host auth records: %w", errList)
 	}
 	pathCounts := make(map[string]int)
+	indexCounts := make(map[string]int)
 	for _, entry := range entries {
 		if path := normalizedPath(entry.Path); path != "" {
 			pathCounts[path]++
 		}
+		if authIndex := strings.TrimSpace(entry.AuthIndex); authIndex != "" {
+			indexCounts[authIndex]++
+		}
 	}
 	accounts := make([]Account, 0, len(entries))
 	for _, entry := range entries {
-		accounts = append(accounts, projectHostEntry(entry, pathCounts))
+		accounts = append(accounts, projectHostEntry(entry, pathCounts, indexCounts))
 	}
 	return accounts, nil
 }
@@ -217,10 +222,11 @@ func sortAccounts(accounts []Account) {
 	})
 }
 
-func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts map[string]int) Account {
+func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts map[string]int) Account {
 	provider := strings.TrimSpace(firstNonEmpty(entry.Provider, entry.Type))
+	authIndex := strings.TrimSpace(entry.AuthIndex)
 	account := Account{
-		ID:            strings.TrimSpace(entry.AuthIndex),
+		ID:            authIndex,
 		AuthID:        strings.TrimSpace(entry.ID),
 		Name:          strings.TrimSpace(entry.Name),
 		Provider:      provider,
@@ -265,10 +271,12 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts map[string]int)
 		account.ReadOnlyReason = "runtime-only account has no physical auth file"
 	case account.path == "" || !strings.EqualFold(account.Source, "file"):
 		account.ReadOnlyReason = "account is not backed by an editable auth file"
-	case account.ID == "":
+	case authIndex == "":
 		account.ReadOnlyReason = "account has no stable auth index"
-	case !strings.EqualFold(filepath.Ext(account.Name), ".json"):
-		account.ReadOnlyReason = "backing auth file is not JSON"
+	case indexCounts[authIndex] > 1:
+		account.ReadOnlyReason = "multiple runtime accounts share this auth index"
+	case !safeAuthJSONName(account.Name):
+		account.ReadOnlyReason = "backing auth file name is invalid"
 	case pathCounts[account.path] > 1:
 		account.ReadOnlyReason = "multiple runtime accounts share this source file"
 	default:
@@ -381,6 +389,11 @@ func normalizedPath(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
+}
+
+func safeAuthJSONName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name != "" && filepath.Base(name) == name && strings.EqualFold(filepath.Ext(name), ".json")
 }
 
 func revisionFor(raw []byte) string {

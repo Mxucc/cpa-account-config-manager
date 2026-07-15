@@ -20,6 +20,10 @@ behavior in sub2api.
   accounts matching the current filters.
 - Quick bulk enable/disable plus opt-in edits for `priority`, `note`, `prefix`,
   `proxy_url`, `websockets`, and custom headers.
+- Persistent default rules for `priority` and `websockets`, with missing-only
+  background reconciliation for existing and newly uploaded Auth files.
+- Explicit, preview-confirmed force sync when an operator deliberately wants
+  to overwrite the managed default fields across editable Auth files.
 - Server-side preview with editable, read-only, missing, and physical-file
   counts before any write starts.
 - Bounded asynchronous jobs, per-account results, revision-conflict detection,
@@ -38,7 +42,7 @@ The plugin uses CLIProxyAPI native plugin ABI/schema version 1 and requires a
 CLIProxyAPI build that provides:
 
 - native plugin discovery and Management/resource routes;
-- `host.auth.list` and `host.auth.get` callbacks;
+- `host.auth.list`, `host.auth.get`, and `host.auth.save` callbacks;
 - `PATCH /v0/management/auth-files/status`;
 - `PATCH /v0/management/auth-files/fields`.
 
@@ -49,10 +53,10 @@ Published releases target:
 
 | Platform | Architecture | Library | Release archive |
 | --- | --- | --- | --- |
-| Linux | amd64 | `cpa-account-config-manager.so` | `cpa-account-config-manager_*_linux_amd64.zip` |
-| Linux | arm64 | `cpa-account-config-manager.so` | `cpa-account-config-manager_*_linux_arm64.zip` |
-| macOS | arm64 | `cpa-account-config-manager.dylib` | `cpa-account-config-manager_*_darwin_arm64.zip` |
-| Windows | amd64 | `cpa-account-config-manager.dll` | `cpa-account-config-manager_*_windows_amd64.zip` |
+| Linux | amd64 | `cpa-account-config-manager-v<version>.so` | `cpa-account-config-manager_*_linux_amd64.zip` |
+| Linux | arm64 | `cpa-account-config-manager-v<version>.so` | `cpa-account-config-manager_*_linux_arm64.zip` |
+| macOS | arm64 | `cpa-account-config-manager-v<version>.dylib` | `cpa-account-config-manager_*_darwin_arm64.zip` |
+| Windows | amd64 | `cpa-account-config-manager-v<version>.dll` | `cpa-account-config-manager_*_windows_amd64.zip` |
 
 Dynamic libraries are platform- and architecture-specific. Do not copy a
 library built for a different target.
@@ -68,20 +72,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.0_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.3_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.0_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.3_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.0_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.0_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.3_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.3_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -90,17 +94,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager.so
-plugins/linux/arm64/cpa-account-config-manager.so
-plugins/darwin/arm64/cpa-account-config-manager.dylib
-plugins/windows/amd64/cpa-account-config-manager.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.3.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.3.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.3.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
 ```
 
 ### 3. Enable the plugin
@@ -115,27 +119,28 @@ plugins:
     cpa-account-config-manager:
       enabled: true
       priority: 20
-      workers: 6
-      data_dir: data/cpa-account-config-manager
-      management_base_url: http://127.0.0.1:8317
 ```
 
 Restart CLIProxyAPI. The Management Center should then show **Account Config
 Manager** in the plugin menu.
 
-If CLIProxyAPI is not listening on port `8317`, set `management_base_url` to
-the loopback URL used inside the CLIProxyAPI process environment. Only
-`http://` or `https://` loopback hosts (`localhost`, `127.0.0.0/8`, or `::1`)
-are accepted. Credentials, paths, query parameters, fragments, and remote
-hosts are rejected.
+The minimal configuration above is sufficient for the standard CLIProxyAPI
+layout. `workers`, `data_dir`, and `management_base_url` are optional
+overrides. If CLIProxyAPI is not listening on port `8317`, set
+`management_base_url` to the loopback URL used inside the CLIProxyAPI process
+environment. Use `http://127.0.0.1:<port>` from Docker as well; a Compose
+service name such as `http://cli-proxy-api:8317` is not loopback and is
+intentionally rejected. Only `http://` or `https://` loopback hosts
+(`localhost`, `127.0.0.0/8`, or `::1`) are accepted. Credentials, paths, query
+parameters, fragments, and remote hosts are rejected.
 
 ## Configuration
 
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `workers` | `6` | Concurrent account mutations. Values below 1 use 6; values above 16 are clamped to 16. |
-| `data_dir` | `data/cpa-account-config-manager` | Directory for sanitized terminal job state. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. |
-| `management_base_url` | `http://127.0.0.1:8317` | Loopback CLIProxyAPI Management API base used for canonical writes. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
+| `data_dir` | `data/cpa-account-config-manager` | Optional directory for sanitized terminal job state and `default-policy.json`. Override it only when the default working-directory path is not writable or must be mounted persistently. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. |
+| `management_base_url` | `http://127.0.0.1:8317` | Optional loopback CLIProxyAPI Management API base used by ordinary batch edits. Default-policy reconciliation and force sync use host Auth callbacks instead. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, a loopback-only `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
 
 The `enabled` and `priority` values in the same YAML object are owned by the
 CLIProxyAPI plugin host. Account `priority` is a separate field edited through
@@ -148,11 +153,15 @@ The CLIProxyAPI process needs:
 - read and execute access to the platform library;
 - read/write access to the CLIProxyAPI Auth directory, because CLIProxyAPI's
   canonical Management endpoints persist the requested account fields;
-- read/write access to `data_dir`.
+- read/write access to the effective `data_dir` when terminal job state or a
+  default policy is persisted. The default path is used when no override is
+  configured.
 
 The plugin creates `data_dir` with mode `0700` where supported and writes
-`results.json` through a temporary file with mode `0600`. Run CLIProxyAPI and
-the plugin under the same non-root service account where practical.
+`results.json` and `default-policy.json` through temporary files with mode
+`0600`. The policy file contains only policy values and sanitized scan counts,
+never raw Auth JSON. Run CLIProxyAPI and the plugin under the same non-root
+service account where practical.
 
 ## Operator Workflow
 
@@ -173,6 +182,33 @@ The preview expires after five minutes. Starting a preview consumes that fixed
 snapshot, so accounts that begin matching the filter later are not silently
 added.
 
+## Default Auth-File Policy
+
+Open **Default policy** in the operator toolbar to manage `priority` and
+`websockets` independently. An unchecked field is unmanaged; `priority: 0`
+and `websockets: false` are valid managed values and are not treated as empty.
+The policy cannot be enabled unless at least one field is managed.
+
+When enabled, the plugin scans immediately and then polls every 15 seconds by
+default. The operator may choose an interval from 5 through 300 seconds or
+request an immediate scan. Each automatic scan uses `host.auth.list/get/save`
+and fills only a managed key that is absent from the JSON object. Existing
+values, including values supplied by an upload or a later manual edit, remain
+authoritative. New Auth files become eligible on the next bounded scan; no
+CLIProxyAPI core patch or browser Management Key is required.
+
+**Force sync** is a separate destructive operation. It creates a five-minute
+preview, shows the exact managed values and read-only skips, and requires an
+explicit confirmation before starting. The job re-reads every eligible file,
+rejects revision conflicts, and overwrites only `priority` and/or `websockets`
+selected by the policy. It never changes `disabled`, proxy settings, headers,
+notes, prefixes, tokens, cookies, credentials, or other unknown fields.
+
+Saving a policy requires the effective `data_dir` to be writable, but the
+`data_dir` config field itself is optional when its default path works.
+`management_base_url` is not used by automatic scans or force sync; it remains
+an optional override for ordinary batch edits.
+
 ## Editable Fields
 
 | Field | Behavior |
@@ -190,7 +226,9 @@ and otherwise unsupported records remain visible but read-only.
 
 ## Concurrency and Failure Semantics
 
-- Only one mutation job can run at a time.
+- Only one Auth-file mutation path owns the writer slot at a time. Ordinary
+  batch jobs, missing-only default-policy reconciliation, and force sync are
+  serialized with each other.
 - Every target is preflighted. Invalid, missing, duplicated, or read-only
   targets are skipped while eligible targets continue.
 - The plugin records a SHA-256 revision during preview and re-reads the physical
@@ -201,6 +239,10 @@ and otherwise unsupported records remain visible but read-only.
   write. The plugin does not claim strict cross-file atomicity.
 - Successful writes are retained when other targets fail. There is no automatic
   cross-file rollback.
+- Background policy reconciliation is always missing-only, uses the shared
+  writer slot, retries shortly when that slot is occupied, and performs a final
+  Auth re-read before `host.auth.save`; it does not overwrite a managed key that
+  is already present.
 - A process restart cannot resume a running job because the Management Key and
   patch values are not persisted. Persisted running state is marked
   `interrupted`; exact failed-only retry is available only while the in-memory
@@ -227,6 +269,10 @@ and otherwise unsupported records remain visible but read-only.
   fallback; the plugin never writes those environment values to disk.
 - Nested Management calls accept only a loopback base URL and bound response
   reads to 64 KiB. Upstream response bodies are not copied into public errors.
+- Default-policy scans and force sync call `host.auth.list/get/save` directly,
+  so they neither request nor persist a browser Management Key. Raw Auth JSON
+  is transformed only in process and is never returned by policy routes or
+  written into plugin state.
 
 Do not expose the CLIProxyAPI Management API to untrusted networks. Protect the
 Management Key independently of this plugin.
@@ -247,8 +293,9 @@ To disable or remove the plugin itself:
 2. Restart CLIProxyAPI.
 3. Remove the dynamic library after the process has stopped. Windows must stop
    the process before replacing or deleting a loaded DLL.
-4. Optionally remove `data/cpa-account-config-manager/results.json`; it contains
-   sanitized job history only.
+4. Optionally remove `data/cpa-account-config-manager/results.json` and
+   `default-policy.json`. The first contains sanitized job history; deleting
+   the second resets the saved policy and sanitized scan summary.
 
 ## Docker
 
@@ -259,7 +306,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager.so:/app/plugins/linux/amd64/cpa-account-config-manager.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -270,7 +317,7 @@ upgrading the native library.
 
 ## Management Routes
 
-All privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 13 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
 - `POST /batch/preview`
@@ -279,6 +326,12 @@ All privileged routes are exact paths below `/v0/management/plugins/cpa-account-
 - `POST /batch/retry`
 - `GET /export/accounts`
 - `GET /export/results`
+- `GET /defaults`
+- `PUT /defaults`
+- `POST /defaults/scan`
+- `POST /defaults/force/preview`
+- `POST /defaults/force/start`
+- `GET /defaults/force/status`
 
 The static UI is served from
 `/v0/resource/plugins/cpa-account-config-manager/index.html`.
@@ -296,7 +349,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.0
+make package VERSION=0.1.3
 ```
 
 For a local build that should publish a repository link in plugin metadata,
@@ -304,8 +357,9 @@ pass `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager` to
 `make build` or `make package`. GitHub Actions injects the actual repository
 automatically.
 
-`make package` writes the native library to `dist/` and a plugin-store-compatible
-ZIP plus `.sha256` file to `dist/release/`.
+`make package` writes the build-stage native library to `dist/` and a
+plugin-store-compatible ZIP plus `.sha256` file to `dist/release/`. The ZIP
+contains one installable library named `<id>-v<version>.<ext>` at its root.
 
 ### Local UI demo
 
@@ -323,7 +377,7 @@ VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 
 Open `http://127.0.0.1:5175`, leave the CPA address on the same origin, and use
 the demo key `demo-key`. The mock contains synthetic accounts and simulates
-batch progress; it does not edit real credentials.
+batch/default-policy progress; it does not edit real credentials.
 
 ## Release Process
 
@@ -332,6 +386,7 @@ native runners for all supported targets, injects `X.Y.Z` into plugin metadata,
 and publishes:
 
 - one `<id>_<version>_<goos>_<goarch>.zip` per platform;
+- one versioned `<id>-v<version>.<ext>` library at each ZIP root;
 - one matching `.zip.sha256` file per archive;
 - aggregate `checksums.txt` required by the CLIProxyAPI plugin store.
 

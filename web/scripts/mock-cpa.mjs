@@ -4,6 +4,22 @@ const port = Number(process.env.MOCK_CPA_PORT || 8318);
 const managementKey = process.env.MOCK_CPA_KEY || "demo-key";
 const previews = new Map();
 let activeJob = null;
+const forcePreviews = new Map();
+let activeForceJob = null;
+let defaultPolicy = {
+  enabled: false,
+  apply_mode: "missing",
+  scan_interval_seconds: 15,
+  priority: null,
+  websockets: null,
+};
+let lastPolicyScan = {
+  scanned: 0,
+  eligible: 0,
+  changed: 0,
+  skipped: 0,
+  failed: 0,
+};
 
 const providers = ["codex", "claude", "gemini", "antigravity"];
 const accounts = Array.from({ length: 36 }, (_, index) => {
@@ -138,6 +154,59 @@ function snapshotJob(includeResults = true) {
   };
 }
 
+function forcePolicySummary() {
+  const fields = [];
+  if (defaultPolicy.priority !== null) fields.push("priority");
+  if (defaultPolicy.websockets !== null) fields.push("websockets");
+  return { fields, priority: defaultPolicy.priority, websockets: defaultPolicy.websockets };
+}
+
+function snapshotForceJob(includeResults = true) {
+  if (!activeForceJob) {
+    return {
+      state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+      failed: 0, conflicts: 0, skipped: 0, workers: 0,
+      policy: { fields: [], priority: null, websockets: null },
+    };
+  }
+  const elapsed = Date.now() - activeForceJob.started;
+  const done = Math.min(activeForceJob.targets.length, Math.floor(elapsed / 230));
+  const running = done < activeForceJob.targets.length;
+  const results = activeForceJob.targets.map((target, index) => ({
+    id: target.id,
+    name: target.name,
+    provider: target.provider,
+    label: target.label,
+    status: index < done ? "succeeded" : index === done && running ? "running" : "pending",
+    applied_fields: index < done ? activeForceJob.policy.fields : [],
+    retryable: false,
+  }));
+  if (!running && !activeForceJob.applied) {
+    activeForceJob.applied = true;
+    for (const target of activeForceJob.targets) {
+      if (activeForceJob.policy.priority !== null) target.priority = activeForceJob.policy.priority;
+      if (activeForceJob.policy.websockets !== null) target.websockets = activeForceJob.policy.websockets;
+    }
+  }
+  return {
+    id: activeForceJob.id,
+    state: running ? "running" : "completed",
+    running,
+    total: activeForceJob.targets.length,
+    eligible: activeForceJob.targets.length,
+    done,
+    succeeded: done,
+    failed: 0,
+    conflicts: 0,
+    skipped: 0,
+    workers: 6,
+    policy: activeForceJob.policy,
+    started_at: new Date(activeForceJob.started).toISOString(),
+    finished_at: running ? undefined : new Date().toISOString(),
+    ...(includeResults ? { results } : {}),
+  };
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host}`);
   if (!authorized(request)) return json(response, 401, { error: "invalid management key" });
@@ -191,6 +260,65 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname.endsWith("/export/results")) {
     return json(response, 200, snapshotJob(true), { "Content-Disposition": 'attachment; filename="demo-results.json"' });
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/defaults")) {
+    return json(response, 200, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });
+  }
+  if (request.method === "PUT" && url.pathname.endsWith("/defaults")) {
+    const body = await readJSON(request);
+    defaultPolicy = {
+      enabled: Boolean(body.enabled),
+      apply_mode: "missing",
+      scan_interval_seconds: Math.min(300, Math.max(5, Number(body.scan_interval_seconds) || 15)),
+      priority: body.priority === null ? null : Number(body.priority),
+      websockets: body.websockets === null ? null : Boolean(body.websockets),
+    };
+    return json(response, 200, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/defaults/scan")) {
+    const editable = accounts.filter((account) => account.editable);
+    lastPolicyScan = {
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      scanned: accounts.length,
+      eligible: editable.length,
+      changed: 0,
+      skipped: accounts.length,
+      failed: 0,
+    };
+    return json(response, 202, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/defaults/force/preview")) {
+    const policy = forcePolicySummary();
+    if (policy.fields.length === 0) return json(response, 400, { error: "default policy does not manage any fields" });
+    const previewID = crypto.randomUUID();
+    const editable = accounts.filter((account) => account.editable);
+    const readOnly = accounts.filter((account) => !account.editable);
+    const preview = {
+      id: previewID,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+      total: accounts.length,
+      eligible: editable.length,
+      read_only: readOnly.length,
+      physical_files: editable.length,
+      policy,
+      warnings: readOnly.length ? [`${readOnly.length} target(s) are read-only and will be skipped`] : [],
+      targets: accounts.map((target) => ({ id: target.id, name: target.name, provider: target.provider, label: target.label, eligible: target.editable, read_only_reason: target.read_only_reason })),
+    };
+    forcePreviews.set(previewID, { preview, targets: editable, policy });
+    return json(response, 200, preview);
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/defaults/force/start")) {
+    const body = await readJSON(request);
+    const stored = forcePreviews.get(body.preview_id);
+    if (!stored) return json(response, 404, { error: "force-sync preview not found" });
+    activeForceJob = { id: crypto.randomUUID(), started: Date.now(), targets: stored.targets, policy: stored.policy, applied: false };
+    forcePreviews.delete(body.preview_id);
+    return json(response, 202, snapshotForceJob(true));
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/defaults/force/status")) {
+    return json(response, 200, snapshotForceJob(url.searchParams.get("light") !== "1"));
   }
   return json(response, 404, { error: "not found" });
 });

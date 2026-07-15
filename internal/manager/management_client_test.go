@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -87,12 +88,23 @@ func TestManagementBaseURLRejectsNonLoopbackDestinations(t *testing.T) {
 		"http://user:password@127.0.0.1:8317",
 		"http://127.0.0.1:8317/management",
 	} {
-		if _, errValidate := validateManagementBaseURL(value); errValidate == nil {
-			t.Fatalf("validateManagementBaseURL(%q) unexpectedly succeeded", value)
+		if _, errValidate := validateManagementBaseURL(value); !errors.Is(errValidate, ErrManagementBaseURLInvalid) {
+			t.Fatalf("validateManagementBaseURL(%q) error = %v", value, errValidate)
 		}
 	}
 	if got, errValidate := validateManagementBaseURL("http://[::1]:8317"); errValidate != nil || got != "http://[::1]:8317" {
 		t.Fatalf("loopback URL = %q, %v", got, errValidate)
+	}
+}
+
+func TestResolveManagementBaseURLIgnoresRemoteGenericBaseURL(t *testing.T) {
+	t.Setenv("CPA_MANAGEMENT_BASE_URL", "")
+	t.Setenv("CPA_BASE_URL", "https://public.example.com")
+	t.Setenv("PORT", "9417")
+	t.Setenv("CPA_PORT", "")
+
+	if got := resolveManagementBaseURL(""); got != "http://127.0.0.1:9417" {
+		t.Fatalf("resolveManagementBaseURL() = %q", got)
 	}
 }
 

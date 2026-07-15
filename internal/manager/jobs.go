@@ -29,9 +29,10 @@ const (
 )
 
 var (
-	ErrJobBusy       = errors.New("a batch job is already running")
-	ErrRetryMissing  = errors.New("no failed targets are available to retry")
-	ErrNoEligibleJob = errors.New("preview contains no eligible targets")
+	ErrJobBusy               = errors.New("a batch job is already running")
+	ErrRetryMissing          = errors.New("no failed targets are available to retry")
+	ErrNoEligibleJob         = errors.New("preview contains no eligible targets")
+	ErrJobStorageUnavailable = errors.New("job result storage is unavailable; configure data_dir to a writable directory")
 )
 
 type StartRequest struct {
@@ -87,6 +88,7 @@ type JobEngine struct {
 	mu        sync.Mutex
 	wait      sync.WaitGroup
 	accounts  *AccountService
+	mutations *MutationCoordinator
 	config    Config
 	doer      HTTPDoer
 	newWriter func(string, string, HTTPDoer) (ManagementWriter, error)
@@ -100,9 +102,17 @@ type JobEngine struct {
 }
 
 func NewJobEngine(accounts *AccountService) *JobEngine {
+	return NewJobEngineWithCoordinator(accounts, NewMutationCoordinator())
+}
+
+func NewJobEngineWithCoordinator(accounts *AccountService, mutations *MutationCoordinator) *JobEngine {
+	if mutations == nil {
+		mutations = NewMutationCoordinator()
+	}
 	engine := &JobEngine{
-		accounts: accounts,
-		config:   normalizeConfig(Config{}),
+		accounts:  accounts,
+		mutations: mutations,
+		config:    normalizeConfig(Config{}),
 		newWriter: func(baseURL, key string, doer HTTPDoer) (ManagementWriter, error) {
 			return newManagementClient(baseURL, key, doer)
 		},
@@ -177,6 +187,16 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 		e.mu.Unlock()
 		return JobSnapshot{}, ErrJobBusy
 	}
+	if !e.mutations.TryAcquire(jobID) {
+		e.mu.Unlock()
+		return JobSnapshot{}, ErrJobBusy
+	}
+	mutationAcquired := true
+	defer func() {
+		if mutationAcquired {
+			e.mutations.Release(jobID)
+		}
+	}()
 	workers := config.Workers
 	if workers > len(preview.Targets) {
 		workers = len(preview.Targets)
@@ -225,7 +245,7 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 		cancel()
 		e.snapshot = JobSnapshot{State: JobStateIdle}
 		e.mu.Unlock()
-		return JobSnapshot{}, fmt.Errorf("persist job state: %w", errPersist)
+		return JobSnapshot{}, ErrJobStorageUnavailable
 	}
 	run := jobRun{
 		jobID:   jobID,
@@ -236,6 +256,7 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 	snapshot := cloneJobSnapshot(e.snapshot, true)
 	e.wait.Add(1)
 	writerTransferred = true
+	mutationAcquired = false
 	e.mu.Unlock()
 	go e.run(ctx, run, workers)
 	return snapshot, nil
@@ -295,6 +316,7 @@ func (e *JobEngine) configSnapshot() Config {
 func (e *JobEngine) run(ctx context.Context, run jobRun, workers int) {
 	defer e.wait.Done()
 	defer clearManagementWriterSecrets(run.writer)
+	defer e.mutations.Release(run.jobID)
 	jobs := make(chan Account)
 	var workerGroup sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {
@@ -559,6 +581,8 @@ func jobHTTPStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrRetryMissing), errors.Is(err, ErrNoEligibleJob):
 		return http.StatusBadRequest
+	case errors.Is(err, ErrJobStorageUnavailable), errors.Is(err, ErrManagementBaseURLInvalid):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

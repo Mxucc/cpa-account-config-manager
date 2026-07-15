@@ -217,4 +217,162 @@ describe("primary account batch flow", () => {
     await user.click(screen.getByRole("button", { name: "打开批量任务" }));
     expect(screen.getByRole("complementary", { name: "批量任务" })).toBeInTheDocument();
   });
+
+  it("keeps the preview open and shows an actionable inline error when start fails", async () => {
+    const user = userEvent.setup();
+    let startCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/batch/preview")) {
+        return jsonResponse({
+          id: "preview-storage",
+          created_at: "2026-07-15T10:00:00Z",
+          expires_at: "2026-07-15T10:05:00Z",
+          scope_mode: "filtered",
+          total: 1,
+          eligible: 1,
+          read_only: 0,
+          missing: 0,
+          physical_files: 1,
+          providers: { codex: 1 },
+          patch: { fields: ["disabled"], proxy_mutation: false },
+          targets: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", eligible: true }],
+        });
+      }
+      if (url.includes("/batch/start")) {
+        startCalls += 1;
+        if (startCalls === 1) {
+          return jsonResponse({ error: "job result storage is unavailable; configure data_dir to a writable directory" }, 503);
+        }
+        return jsonResponse({
+          id: "job-storage-retry",
+          state: "completed",
+          running: false,
+          total: 1,
+          eligible: 1,
+          done: 1,
+          succeeded: 1,
+          failed: 0,
+          conflicts: 0,
+          skipped: 0,
+          workers: 1,
+          patch: { fields: ["disabled"], proxy_mutation: false },
+          retry_available: false,
+          persisted: true,
+          results: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", status: "succeeded", applied_fields: ["disabled"], retryable: false }],
+        }, 202);
+      }
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: url.includes("page_size=1") ? 1 : 50, pages: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    await user.click(await screen.findByRole("button", { name: "批量启用" }));
+    await user.click(await screen.findByRole("button", { name: "执行 1 个账号" }));
+
+    expect(await screen.findByText("任务未启动")).toBeInTheDocument();
+    expect(screen.getByText(/data_dir/)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "变更预览" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新启动 1 个账号" }));
+
+    expect(await screen.findByRole("complementary", { name: "批量任务" })).toBeInTheDocument();
+    expect(startCalls).toBe(2);
+  });
+
+  it("edits the default policy, confirms force sync, and publishes terminal force results", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    let forceStarted = false;
+    let forceStatusCalls = 0;
+    const policySnapshot = {
+      policy: { enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: null, websockets: false },
+      running: false,
+      last_scan: { scanned: 1, eligible: 1, changed: 0, skipped: 1, failed: 0, finished_at: "2026-07-15T10:00:00Z" },
+    };
+    const forceJob = (running: boolean, includeResults: boolean) => ({
+      id: "force-job-1",
+      state: running ? "running" : "completed",
+      running,
+      total: 1,
+      eligible: 1,
+      done: running ? 0 : 1,
+      succeeded: running ? 0 : 1,
+      failed: 0,
+      conflicts: 0,
+      skipped: 0,
+      workers: 1,
+      policy: { fields: ["priority", "websockets"], priority: 0, websockets: false },
+      ...(includeResults ? { results: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", status: running ? "running" : "succeeded", applied_fields: running ? [] : ["priority", "websockets"], retryable: false }] } : {}),
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/defaults/force/preview")) {
+        return jsonResponse({
+          id: "force-preview-1",
+          created_at: "2026-07-15T10:00:00Z",
+          expires_at: "2026-07-15T10:05:00Z",
+          total: 1,
+          eligible: 1,
+          read_only: 0,
+          physical_files: 1,
+          policy: { fields: ["priority", "websockets"], priority: 0, websockets: false },
+          targets: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", eligible: true }],
+        });
+      }
+      if (url.includes("/defaults/force/start")) {
+        forceStarted = true;
+        return jsonResponse(forceJob(true, true), 202);
+      }
+      if (url.includes("/defaults/force/status")) {
+        if (!forceStarted) return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, policy: { fields: [], priority: null, websockets: null } });
+        forceStatusCalls += 1;
+        return jsonResponse(forceJob(false, !url.includes("light=1")));
+      }
+      if (url.endsWith("/defaults") && init.method === "PUT") {
+        const policy = JSON.parse(String(init.body));
+        return jsonResponse({ ...policySnapshot, policy });
+      }
+      if (url.endsWith("/defaults")) return jsonResponse(policySnapshot);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: url.includes("page_size=1") ? 1 : 50, pages: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    await user.click(await screen.findByRole("button", { name: "默认策略" }));
+    expect(await screen.findByRole("dialog", { name: "默认策略" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Priority" }));
+    const priority = screen.getByLabelText("默认 Priority");
+    await user.clear(priority);
+    await user.type(priority, "0");
+    await user.click(screen.getByRole("button", { name: "保存策略" }));
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT")).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "强制同步" }));
+    expect(await screen.findByRole("dialog", { name: "强制同步预览" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "覆盖 1 个文件" }));
+    expect(await screen.findByRole("complementary", { name: "默认策略强制同步" })).toBeInTheDocument();
+    expect(await screen.findByText("成功", { selector: ".result-status" }, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText("priority, websockets")).toBeInTheDocument();
+    expect(forceStatusCalls).toBeGreaterThanOrEqual(2);
+
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");
+    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false });
+    expect(localStorage.length).toBe(0);
+  });
 });

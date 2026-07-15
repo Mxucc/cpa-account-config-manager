@@ -130,3 +130,13 @@ type HostAuthGetResponse struct {
 	Path      string          `json:"path,omitempty"`
 	JSON      json.RawMessage `json:"json"`
 }
+
+type HostAuthSaveRequest struct {
+	Name string          `json:"name"`
+	JSON json.RawMessage `json:"json"`
+}
+
+type HostAuthSaveResponse struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}

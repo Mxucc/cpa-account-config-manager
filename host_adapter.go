@@ -33,3 +33,15 @@ func (hostAdapter) GetAuth(_ context.Context, authIndex string) (cpaapi.HostAuth
 	}
 	return response, nil
 }
+
+func (hostAdapter) SaveAuth(_ context.Context, name string, rawJSON json.RawMessage) (cpaapi.HostAuthSaveResponse, error) {
+	result, errCall := callHost(cpaapi.MethodHostAuthSave, cpaapi.HostAuthSaveRequest{Name: name, JSON: rawJSON})
+	if errCall != nil {
+		return cpaapi.HostAuthSaveResponse{}, errCall
+	}
+	var response cpaapi.HostAuthSaveResponse
+	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+		return cpaapi.HostAuthSaveResponse{}, fmt.Errorf("decode host auth save: %w", errUnmarshal)
+	}
+	return response, nil
+}

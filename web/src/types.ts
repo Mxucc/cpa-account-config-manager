@@ -135,6 +135,69 @@ export interface JobSnapshot {
   results?: JobResult[];
 }
 
+export interface DefaultPolicy {
+  enabled: boolean;
+  apply_mode: "missing";
+  scan_interval_seconds: number;
+  priority: number | null;
+  websockets: boolean | null;
+}
+
+export interface PolicyScanSummary {
+  started_at?: string;
+  finished_at?: string;
+  scanned: number;
+  eligible: number;
+  changed: number;
+  skipped: number;
+  failed: number;
+  error?: string;
+}
+
+export interface PolicySnapshot {
+  policy: DefaultPolicy;
+  running: boolean;
+  scan_started_at?: string;
+  last_scan: PolicyScanSummary;
+}
+
+export interface ForcePolicySummary {
+  fields: string[];
+  priority: number | null;
+  websockets: boolean | null;
+}
+
+export interface ForceSyncPreview {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  total: number;
+  eligible: number;
+  read_only: number;
+  physical_files: number;
+  policy: ForcePolicySummary;
+  warnings?: string[];
+  targets: PreviewTarget[];
+}
+
+export interface ForceSyncJobSnapshot {
+  id?: string;
+  state: JobState;
+  running: boolean;
+  total: number;
+  eligible: number;
+  done: number;
+  succeeded: number;
+  failed: number;
+  conflicts: number;
+  skipped: number;
+  workers: number;
+  policy: ForcePolicySummary;
+  started_at?: string;
+  finished_at?: string;
+  results?: JobResult[];
+}
+
 export interface Session {
   baseUrl: string;
   managementKey: string;

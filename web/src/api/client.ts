@@ -4,7 +4,11 @@ import type {
   AccountListResponse,
   BatchPatch,
   BatchPreview,
+	DefaultPolicy,
+	ForceSyncJobSnapshot,
+	ForceSyncPreview,
   JobSnapshot,
+	PolicySnapshot,
   TargetScope,
 } from "../types";
 
@@ -98,6 +102,38 @@ export async function getJobStatus(includeResults = true): Promise<JobSnapshot> 
 
 export async function retryBatch(): Promise<JobSnapshot> {
   return request<JobSnapshot>("/batch/retry", { method: "POST" });
+}
+
+export async function getDefaultPolicy(): Promise<PolicySnapshot> {
+	return request<PolicySnapshot>("/defaults");
+}
+
+export async function saveDefaultPolicy(policy: DefaultPolicy): Promise<PolicySnapshot> {
+	return request<PolicySnapshot>("/defaults", {
+		method: "PUT",
+		body: JSON.stringify(policy),
+	});
+}
+
+export async function scanDefaultPolicy(): Promise<PolicySnapshot> {
+	return request<PolicySnapshot>("/defaults/scan", { method: "POST" });
+}
+
+export async function createForceSyncPreview(): Promise<ForceSyncPreview> {
+	return request<ForceSyncPreview>("/defaults/force/preview", { method: "POST" });
+}
+
+export async function startForceSync(previewID: string): Promise<ForceSyncJobSnapshot> {
+	return request<ForceSyncJobSnapshot>("/defaults/force/start", {
+		method: "POST",
+		body: JSON.stringify({ preview_id: previewID }),
+	});
+}
+
+export async function getForceSyncStatus(includeResults = true): Promise<ForceSyncJobSnapshot> {
+	const query = new URLSearchParams();
+	if (!includeResults) query.set("light", "1");
+	return request<ForceSyncJobSnapshot>("/defaults/force/status", {}, query);
 }
 
 export async function downloadExport(kind: "accounts" | "results", filters?: AccountFilters): Promise<void> {

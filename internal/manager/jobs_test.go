@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -224,7 +225,7 @@ func TestJobEngineClearsManagementKeyWhenStartFails(t *testing.T) {
 		return writer, nil
 	}
 
-	if _, errStart := engine.Start(preview, "management-secret", ""); errStart == nil || !strings.Contains(errStart.Error(), "persist job state") {
+	if _, errStart := engine.Start(preview, "management-secret", ""); !errors.Is(errStart, ErrJobStorageUnavailable) {
 		t.Fatalf("Start() error = %v, want persistence failure", errStart)
 	}
 	if writer.key != "" {
@@ -244,6 +245,43 @@ func waitForTerminalJob(t *testing.T, engine *JobEngine) JobSnapshot {
 	}
 	t.Fatalf("job did not finish: %#v", engine.Snapshot(true))
 	return JobSnapshot{}
+}
+
+func TestJobEngineSharesMutationCoordinatorWithForceSync(t *testing.T) {
+	host := twoEditableAccountsHost()
+	accounts := NewAccountService(host)
+	disabled := true
+	preview, errPreview := NewPreviewService(accounts).BuildTransient(
+		context.Background(),
+		TargetScope{Mode: "selected", IDs: []string{"a"}},
+		BatchPatch{Disabled: &disabled},
+	)
+	if errPreview != nil {
+		t.Fatalf("BuildTransient() error = %v", errPreview)
+	}
+	coordinator := NewMutationCoordinator()
+	if !coordinator.TryAcquire("force-test") {
+		t.Fatal("failed to reserve mutation coordinator")
+	}
+	engine := NewJobEngineWithCoordinator(accounts, coordinator)
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+	writer := &trackingWriter{}
+	engine.newWriter = func(_ string, key string, _ HTTPDoer) (ManagementWriter, error) {
+		writer.key = key
+		return writer, nil
+	}
+	if _, errStart := engine.Start(preview, "management-secret", ""); !errors.Is(errStart, ErrJobBusy) {
+		t.Fatalf("Start() error = %v, want ErrJobBusy", errStart)
+	}
+	if writer.key != "" {
+		t.Fatal("busy start retained its Management Key")
+	}
+	coordinator.Release("force-test")
+	if _, errStart := engine.Start(preview, "management-secret", ""); errStart != nil {
+		t.Fatalf("Start() after release error = %v", errStart)
+	}
+	waitForTerminalJob(t, engine)
 }
 
 func twoEditableAccountsHost() *fakeAuthHost {

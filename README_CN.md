@@ -11,6 +11,8 @@
 - 账号列表、搜索以及 Provider、状态、启用状态、可编辑性筛选。
 - 本页多选、明确的“已选账号”范围，以及固定快照的“全部筛选结果”范围。
 - 批量启用、批量禁用，以及 `priority`、`note`、`prefix`、`proxy_url`、`websockets`、自定义 Header 的按字段批量编辑。
+- 为 `priority` 和 `websockets` 保存默认策略，后台只补齐已有及后续上传 Auth 文件中缺失的受管字段。
+- 提供独立的预览确认式强制同步，在操作员明确选择时覆盖所有可编辑 Auth 文件中的受管默认字段。
 - 写入前由服务端生成预览，显示目标数、可执行数、只读数、缺失数和物理文件数。
 - 后台异步执行、受限并发、逐账号结果、Revision 冲突检测、部分成功继续和仅重试失败项。
 - 导出脱敏后的筛选账号和任务结果。
@@ -23,7 +25,7 @@ MVP 不提供删除账号、上传或下载原始 Auth JSON、刷新 Token、OAu
 插件使用 CLIProxyAPI 原生插件 ABI/Schema v1，需要宿主具备：
 
 - 原生插件发现、Management 路由和 Resource 路由；
-- `host.auth.list` 与 `host.auth.get` 回调；
+- `host.auth.list`、`host.auth.get` 与 `host.auth.save` 回调；
 - `PATCH /v0/management/auth-files/status`；
 - `PATCH /v0/management/auth-files/fields`。
 
@@ -33,10 +35,10 @@ MVP 不提供删除账号、上传或下载原始 Auth JSON、刷新 Token、OAu
 
 | 平台 | 架构 | 动态库 | 发布压缩包 |
 | --- | --- | --- | --- |
-| Linux | amd64 | `cpa-account-config-manager.so` | `cpa-account-config-manager_*_linux_amd64.zip` |
-| Linux | arm64 | `cpa-account-config-manager.so` | `cpa-account-config-manager_*_linux_arm64.zip` |
-| macOS | arm64 | `cpa-account-config-manager.dylib` | `cpa-account-config-manager_*_darwin_arm64.zip` |
-| Windows | amd64 | `cpa-account-config-manager.dll` | `cpa-account-config-manager_*_windows_amd64.zip` |
+| Linux | amd64 | `cpa-account-config-manager-v<version>.so` | `cpa-account-config-manager_*_linux_amd64.zip` |
+| Linux | arm64 | `cpa-account-config-manager-v<version>.so` | `cpa-account-config-manager_*_linux_arm64.zip` |
+| macOS | arm64 | `cpa-account-config-manager-v<version>.dylib` | `cpa-account-config-manager_*_darwin_arm64.zip` |
+| Windows | amd64 | `cpa-account-config-manager-v<version>.dll` | `cpa-account-config-manager_*_windows_amd64.zip` |
 
 动态库与平台、架构强绑定，不能混用。
 
@@ -49,20 +51,20 @@ MVP 不提供删除账号、上传或下载原始 Auth JSON、刷新 Token、OAu
 Linux：
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.0_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.3_linux_amd64.zip.sha256
 ```
 
 macOS：
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.0_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.3_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.0_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.0_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.3_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.3_windows_amd64.zip.sha256
 ```
 
 ### 2. 放置动态库
@@ -70,16 +72,16 @@ Get-Content .\cpa-account-config-manager_0.1.0_windows_amd64.zip.sha256
 解压后，将动态库放进 CLIProxyAPI 插件目录。推荐使用宿主优先扫描的平台子目录：
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager.so
-plugins/linux/arm64/cpa-account-config-manager.so
-plugins/darwin/arm64/cpa-account-config-manager.dylib
-plugins/windows/amd64/cpa-account-config-manager.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.3.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.3.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.3.dll
 ```
 
 Linux/macOS 上确保 CLIProxyAPI 服务账号可读、可执行：
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so
 ```
 
 ### 3. 启用插件
@@ -94,22 +96,19 @@ plugins:
     cpa-account-config-manager:
       enabled: true
       priority: 20
-      workers: 6
-      data_dir: data/cpa-account-config-manager
-      management_base_url: http://127.0.0.1:8317
 ```
 
 重启 CLIProxyAPI 后，Management Center 的插件菜单中应出现 **Account Config Manager**。
 
-如果 CLIProxyAPI 不是监听 `8317`，请把 `management_base_url` 改成 CLIProxyAPI 进程内部可访问的回环地址。插件只接受 `http://` 或 `https://` 的 `localhost`、`127.0.0.0/8`、`::1`，拒绝远程主机、凭据、路径、查询参数和 Fragment，避免 Management Key 被转发到外部地址。
+标准 CLIProxyAPI 布局只需要上面的最小配置；`workers`、`data_dir` 和 `management_base_url` 都是可选覆盖项。如果 CLIProxyAPI 不是监听 `8317`，请把 `management_base_url` 改成 CLIProxyAPI 进程内部可访问的回环地址。Docker 中也应使用 `http://127.0.0.1:<端口>`；`http://cli-proxy-api:8317` 这类 Compose 服务名不是回环地址，会被有意拒绝。插件只接受 `http://` 或 `https://` 的 `localhost`、`127.0.0.0/8`、`::1`，拒绝远程主机、凭据、路径、查询参数和 Fragment，避免 Management Key 被转发到外部地址。
 
 ## 配置项
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `workers` | `6` | 同时执行的账号修改数。小于 1 时恢复为 6，大于 16 时限制为 16。 |
-| `data_dir` | `data/cpa-account-config-manager` | 保存脱敏终态任务结果的目录。字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。 |
-| `management_base_url` | `http://127.0.0.1:8317` | 插件调用 CLIProxyAPI 原生写入接口时使用的回环地址。还支持 `CPA_MANAGEMENT_BASE_URL`、`CPA_BASE_URL`、`PORT`、`CPA_PORT`。 |
+| `data_dir` | `data/cpa-account-config-manager` | 可选的脱敏终态任务结果及 `default-policy.json` 目录。仅当默认工作目录不可写或需要单独持久化挂载时覆盖；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。 |
+| `management_base_url` | `http://127.0.0.1:8317` | 普通批量编辑使用的可选 CLIProxyAPI 原生写入接口回环地址；默认策略补齐和强制同步改用宿主 Auth 回调。还支持 `CPA_MANAGEMENT_BASE_URL`、仅限回环地址的 `CPA_BASE_URL`、`PORT`、`CPA_PORT`。 |
 
 同一对象里的 `enabled` 和 `priority` 由 CLIProxyAPI 插件宿主管理；界面中编辑的账号 `priority` 是另一项账号字段。
 
@@ -119,9 +118,9 @@ CLIProxyAPI 进程需要：
 
 - 对动态库有读取和执行权限；
 - 对 Auth 目录有读写权限，因为真正的字段持久化由 CLIProxyAPI 原生 Management API 完成；
-- 对 `data_dir` 有读写权限。
+- 在保存终态任务或默认策略时，对实际生效的 `data_dir` 有读写权限。未配置覆盖路径时使用默认目录。
 
-支持权限位的平台上，插件以 `0700` 创建数据目录，通过临时文件原子替换 `results.json`，结果文件权限为 `0600`。建议让 CLIProxyAPI 和插件使用同一个非 root 服务账号运行。
+支持权限位的平台上，插件以 `0700` 创建数据目录，通过临时文件原子替换 `results.json` 与 `default-policy.json`，文件权限为 `0600`。策略文件只保存策略值和脱敏扫描计数，不保存原始 Auth JSON。建议让 CLIProxyAPI 和插件使用同一个非 root 服务账号运行。
 
 ## 使用流程
 
@@ -133,6 +132,16 @@ CLIProxyAPI 进程需要：
 6. 启动任务，查看逐账号进度。出现部分失败后，可用“仅重试失败项”重新处理失败或冲突账号。
 
 预览有效期为 5 分钟。执行时消费的是固定目标快照，后续新匹配筛选条件的账号不会被静默加入。
+
+## Auth 文件默认策略
+
+在操作栏打开“默认策略”，可以分别管理 `priority` 与 `websockets`。未勾选的字段不受策略管理；`priority: 0` 和 `websockets: false` 都是有效的明确值，不会被当成空值。启用策略时至少要管理一个字段。
+
+策略启用后会立即扫描，随后默认每 15 秒轮询一次；界面允许设置 5 到 300 秒，也可以手动“立即扫描”。自动扫描通过 `host.auth.list/get/save` 工作，只在 JSON 对象中完全没有对应 Key 时补齐。上传文件已带的值以及之后的手动修改始终优先，不会被后台覆盖。新上传的 Auth 文件会在下一次有界扫描中被发现，不需要修改 CLIProxyAPI 核心，也不需要浏览器 Management Key。
+
+“强制同步”是单独的覆盖操作。它先生成有效期 5 分钟的预览，明确展示受管字段的精确值和只读跳过项，确认后才启动。任务会逐文件重读并拒绝 Revision 冲突，只覆盖策略勾选的 `priority` 和/或 `websockets`；不会修改 `disabled`、代理、Header、备注、前缀、Token、Cookie、凭据或任何其他未知字段。
+
+保存策略要求实际生效的 `data_dir` 可写，但默认路径可用时无需填写 `data_dir` 配置项。自动扫描和强制同步都不使用 `management_base_url`；它仍只是普通批量编辑的可选覆盖项。
 
 ## 可编辑字段
 
@@ -150,11 +159,12 @@ CLIProxyAPI 进程需要：
 
 ## 并发、冲突与部分失败
 
-- 同一时间只运行一个写入任务。
+- 同一时间只有一个 Auth 文件写入路径占用写入槽位；普通批量任务、后台缺失字段补齐和默认策略强制同步彼此串行。
 - 所有目标先做 Preflight。无效、缺失、重复或只读目标跳过，其余可执行目标继续。
 - 预览时记录物理 Auth JSON 的 SHA-256 Revision；每次写入前立即重读。Revision 改变时返回冲突，不覆盖新内容。
 - 当前 ABI 没有宿主级 Compare-and-swap，因此最终 Revision 检查与 Management API 写入之间仍存在很窄的竞态窗口。插件不宣称跨文件严格事务。
 - 某些账号失败不会回滚已经成功的账号。
+- 后台默认策略始终只补缺失字段，使用共享写入槽位；槽位被占用时会短延迟重试，并在 `host.auth.save` 前再次读取 Auth。已存在的受管 Key 不会被覆盖。
 - 进程重启后无法继续正在运行的任务，因为 Management Key 和 Patch 值不会落盘。保存为 running 的任务会标记为 `interrupted`；只有内存中的 Patch Intent 仍存在时才能精确“仅重试失败项”。
 
 ## 安全边界
@@ -165,6 +175,7 @@ CLIProxyAPI 进程需要：
 - Management Key 只在活动任务内存中存在，任务结束时会显式清空。完整 Patch 值仅在待确认预览、活动任务或“仅重试失败项”仍需要时保留在进程内存中，绝不落盘。落盘内容只有脱敏状态、字段名、计数和通用错误。
 - 批量启动和重试优先使用请求携带的 Bearer Key。非浏览器调用也可以通过 `MANAGEMENT_PASSWORD` 或 `CPA_MANAGEMENT_KEY` 提供进程内回退；插件不会把这些环境变量写入磁盘。
 - 插件内部调用只允许回环地址，响应读取上限为 64 KiB，且不会把上游响应正文拼进公开错误。
+- 默认策略扫描和强制同步直接调用 `host.auth.list/get/save`，不读取也不保存浏览器 Management Key。原始 Auth JSON 只在进程内转换，不会由策略接口返回，也不会写入插件状态文件。
 
 不要把 CLIProxyAPI Management API 暴露到不可信网络，Management Key 仍需单独妥善保护。
 
@@ -179,7 +190,7 @@ CLIProxyAPI 进程需要：
 1. 把 `plugins.configs.cpa-account-config-manager.enabled` 改为 `false`。
 2. 重启 CLIProxyAPI。
 3. 进程停止后再删除动态库。Windows 加载中的 DLL 不能直接覆盖或删除。
-4. 如不需要历史，可删除 `data/cpa-account-config-manager/results.json`；该文件只包含脱敏任务结果。
+4. 如不再需要，可删除 `data/cpa-account-config-manager/results.json` 和 `default-policy.json`。前者只包含脱敏任务结果，删除后者会重置已保存的策略和脱敏扫描摘要。
 
 ## Docker
 
@@ -189,11 +200,31 @@ CLIProxyAPI 进程需要：
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager.so:/app/plugins/linux/amd64/cpa-account-config-manager.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.3.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
 路径以实际镜像为准。插件和 CLIProxyAPI 在同一容器内运行时，`http://127.0.0.1:8317` 通常仍是正确的内部 Management 地址。安装或升级动态库后需重启容器。
+
+## Management 路由
+
+以下 13 条鉴权路由都是 `/v0/management/plugins/cpa-account-config-manager` 下的固定精确路径：
+
+- `GET /accounts`
+- `POST /batch/preview`
+- `POST /batch/start`
+- `GET /batch/status`
+- `POST /batch/retry`
+- `GET /export/accounts`
+- `GET /export/results`
+- `GET /defaults`
+- `PUT /defaults`
+- `POST /defaults/scan`
+- `POST /defaults/force/preview`
+- `POST /defaults/force/start`
+- `GET /defaults/force/status`
+
+静态界面由 `/v0/resource/plugins/cpa-account-config-manager/index.html` 提供。
 
 ## 开发与本地演示
 
@@ -204,12 +235,12 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.0
+make package VERSION=0.1.3
 ```
 
 如果本地构建需要在插件元数据中显示仓库链接，可给 `make build` 或 `make package` 传入 `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager`。GitHub Actions 会自动注入实际仓库地址。
 
-`make package` 在 `dist/` 生成动态库，在 `dist/release/` 生成 CLIProxyAPI 插件商店兼容的 ZIP 和 `.sha256`。
+`make package` 在 `dist/` 生成构建阶段动态库，在 `dist/release/` 生成 CLIProxyAPI 插件商店兼容的 ZIP 和 `.sha256`。ZIP 根目录只包含一个可直接安装的 `<id>-v<version>.<ext>` 动态库。
 
 本地 UI 演示需要两个终端：
 
@@ -223,11 +254,11 @@ cd web
 VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 ```
 
-打开 `http://127.0.0.1:5175`，CPA 地址保持页面同源，Management Key 使用 `demo-key`。Mock 仅包含合成账号并模拟任务进度，不会修改真实凭据。
+打开 `http://127.0.0.1:5175`，CPA 地址保持页面同源，Management Key 使用 `demo-key`。Mock 仅包含合成账号并模拟批量任务及默认策略进度，不会修改真实凭据。
 
 ## 发布
 
-推送 `vX.Y.Z` Tag 后，GitHub Actions 会执行完整验证，并在原生 Runner 上构建四个平台，注入 `X.Y.Z` 插件版本，发布每个平台的 ZIP、对应 `.zip.sha256` 和插件商店需要的聚合 `checksums.txt`。
+推送 `vX.Y.Z` Tag 后，GitHub Actions 会执行完整验证，并在原生 Runner 上构建四个平台，注入 `X.Y.Z` 插件版本。每个平台 ZIP 根目录包含一个 `<id>-v<version>.<ext>` 动态库，同时发布对应 `.zip.sha256` 和插件商店需要的聚合 `checksums.txt`。
 
 ## License
 

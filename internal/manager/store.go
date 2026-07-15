@@ -38,16 +38,20 @@ func loadJobSnapshot(path string) (JobSnapshot, error) {
 }
 
 func saveJobSnapshot(path string, snapshot JobSnapshot) error {
+	return savePrivateJSON(path, persistedJobSnapshot{Version: jobStoreVersion, Job: snapshot})
+}
+
+func savePrivateJSON(path string, payload any) error {
 	if errMkdir := os.MkdirAll(filepath.Dir(path), 0o700); errMkdir != nil {
-		return fmt.Errorf("create job data directory: %w", errMkdir)
+		return fmt.Errorf("create private data directory: %w", errMkdir)
 	}
-	raw, errEncode := json.Marshal(persistedJobSnapshot{Version: jobStoreVersion, Job: snapshot})
+	raw, errEncode := json.Marshal(payload)
 	if errEncode != nil {
-		return fmt.Errorf("encode job state: %w", errEncode)
+		return fmt.Errorf("encode private data: %w", errEncode)
 	}
 	temporaryPath := path + ".tmp"
 	if errWrite := os.WriteFile(temporaryPath, raw, 0o600); errWrite != nil {
-		return fmt.Errorf("write job state: %w", errWrite)
+		return fmt.Errorf("write private data: %w", errWrite)
 	}
 	if errRename := os.Rename(temporaryPath, path); errRename != nil {
 		if _, errStat := os.Stat(path); errStat == nil {
@@ -58,10 +62,10 @@ func saveJobSnapshot(path string, snapshot JobSnapshot) error {
 			}
 		}
 		_ = os.Remove(temporaryPath)
-		return fmt.Errorf("replace job state: %w", errRename)
+		return fmt.Errorf("replace private data: %w", errRename)
 	}
 	if errChmod := os.Chmod(path, 0o600); errChmod != nil && !errors.Is(errChmod, os.ErrPermission) {
-		return fmt.Errorf("protect job state: %w", errChmod)
+		return fmt.Errorf("protect private data: %w", errChmod)
 	}
 	return nil
 }

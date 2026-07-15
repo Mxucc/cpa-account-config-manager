@@ -5,26 +5,72 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
 type fakeAuthHost struct {
-	entries []cpaapi.HostAuthFileEntry
-	details map[string]cpaapi.HostAuthGetResponse
-	errors  map[string]error
+	mu         sync.Mutex
+	entries    []cpaapi.HostAuthFileEntry
+	details    map[string]cpaapi.HostAuthGetResponse
+	listError  error
+	errors     map[string]error
+	saveErrors map[string]error
+	saveCalls  map[string]int
+	saves      []cpaapi.HostAuthSaveRequest
 }
 
 func (f *fakeAuthHost) ListAuth(context.Context) ([]cpaapi.HostAuthFileEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listError != nil {
+		return nil, f.listError
+	}
 	return append([]cpaapi.HostAuthFileEntry(nil), f.entries...), nil
 }
 
 func (f *fakeAuthHost) GetAuth(_ context.Context, authIndex string) (cpaapi.HostAuthGetResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if err := f.errors[authIndex]; err != nil {
 		return cpaapi.HostAuthGetResponse{}, err
 	}
-	return f.details[authIndex], nil
+	detail := f.details[authIndex]
+	detail.JSON = append(json.RawMessage(nil), detail.JSON...)
+	return detail, nil
+}
+
+func (f *fakeAuthHost) SaveAuth(_ context.Context, name string, rawJSON json.RawMessage) (cpaapi.HostAuthSaveResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveCalls == nil {
+		f.saveCalls = make(map[string]int)
+	}
+	f.saveCalls[name]++
+	if err := f.saveErrors[name]; err != nil {
+		return cpaapi.HostAuthSaveResponse{}, err
+	}
+	request := cpaapi.HostAuthSaveRequest{Name: name, JSON: append(json.RawMessage(nil), rawJSON...)}
+	f.saves = append(f.saves, request)
+	for authIndex, detail := range f.details {
+		if detail.Name != name {
+			continue
+		}
+		detail.JSON = append(json.RawMessage(nil), rawJSON...)
+		f.details[authIndex] = detail
+	}
+	for index := range f.entries {
+		if f.entries[index].Name != name {
+			continue
+		}
+		f.entries[index].Size = int64(len(rawJSON))
+		f.entries[index].ModTime = time.Now().UTC()
+	}
+	return cpaapi.HostAuthSaveResponse{Name: name, Path: "/auths/" + name}, nil
 }
 
 func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
@@ -147,6 +193,40 @@ func TestAccountServiceMarksSharedSourceAndMissingFileReadOnly(t *testing.T) {
 		}
 		if account.ReadOnlyReason == "" {
 			t.Fatalf("account %s missing read-only reason", account.ID)
+		}
+	}
+}
+
+func TestAccountServiceRejectsAmbiguousAuthIndexesAndUnsafeFileNames(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "duplicate", Name: "first.json", Source: "file", Path: "/auths/first.json"},
+			{AuthIndex: "duplicate", Name: "second.json", Source: "file", Path: "/auths/second.json"},
+			{AuthIndex: "unsafe", Name: "../escape.json", Source: "file", Path: "/auths/escape.json"},
+			{Name: "missing-index.json", Source: "file", Path: "/auths/missing-index.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{},
+	}
+
+	response, errList := NewAccountService(host).List(context.Background(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if len(response.Accounts) != 4 {
+		t.Fatalf("accounts len = %d, want 4", len(response.Accounts))
+	}
+	wantReason := map[string]string{
+		"first.json":         "auth index",
+		"second.json":        "auth index",
+		"../escape.json":     "name is invalid",
+		"missing-index.json": "stable auth index",
+	}
+	for _, account := range response.Accounts {
+		if account.Editable {
+			t.Fatalf("account %s unexpectedly editable", account.Name)
+		}
+		if !strings.Contains(account.ReadOnlyReason, wantReason[account.Name]) {
+			t.Fatalf("account %s reason = %q", account.Name, account.ReadOnlyReason)
 		}
 	}
 }

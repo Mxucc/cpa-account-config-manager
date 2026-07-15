@@ -21,14 +21,28 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
 import { BatchEditor } from "./components/BatchEditor";
+import { ForceSyncPreviewDialog } from "./components/ForceSyncPreviewDialog";
 import { IconButton } from "./components/IconButton";
-import { JobPanel } from "./components/JobPanel";
+import { JobPanel, jobStateLabel } from "./components/JobPanel";
 import { LoginDialog } from "./components/LoginDialog";
+import { Modal } from "./components/Modal";
+import { PolicyDialog } from "./components/PolicyDialog";
 import { PreviewDialog } from "./components/PreviewDialog";
 import { operatorMessage } from "./format/operatorMessage";
 import { readPanelAuth } from "./store/panelAuth";
 import { clearSession, setSession } from "./store/session";
-import type { Account, AccountFilters, AccountListResponse, BatchPatch, BatchPreview, JobSnapshot } from "./types";
+import type {
+  Account,
+  AccountFilters,
+  AccountListResponse,
+  BatchPatch,
+  BatchPreview,
+  DefaultPolicy,
+  ForceSyncJobSnapshot,
+  ForceSyncPreview,
+  JobSnapshot,
+  PolicySnapshot,
+} from "./types";
 
 const PAGE_SIZE = 50;
 const providerOptions = [
@@ -70,11 +84,24 @@ export default function App() {
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
   const [editorOpen, setEditorOpen] = useState(false);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
+  const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [job, setJob] = useState<JobSnapshot | null>(null);
   const [jobOpen, setJobOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [policySnapshot, setPolicySnapshot] = useState<PolicySnapshot | null>(null);
+  const [policyLoading, setPolicyLoading] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyScanning, setPolicyScanning] = useState(false);
+  const [policyError, setPolicyError] = useState("");
+  const [forcePreview, setForcePreview] = useState<ForceSyncPreview | null>(null);
+  const [forcePreviewLoading, setForcePreviewLoading] = useState(false);
+  const [forcePreviewError, setForcePreviewError] = useState("");
+  const [forceStarting, setForceStarting] = useState(false);
+  const [forceJob, setForceJob] = useState<ForceSyncJobSnapshot | null>(null);
+  const [forceJobOpen, setForceJobOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const accountRequest = useRef(0);
 
@@ -124,7 +151,7 @@ export default function App() {
       setAuthError(operatorMessage(error.message));
       return;
     }
-    setNotice(error instanceof Error ? operatorMessage(error.message) : "请求失败");
+    setNotice(errorText(error));
   }, []);
 
   const refreshAccounts = useCallback(async () => {
@@ -185,6 +212,54 @@ export default function App() {
     };
   }, [handleAPIError, job?.id, job?.running, refreshAccounts]);
 
+  useEffect(() => {
+    if (!forceJob?.running) return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const light = await api.getForceSyncStatus(false);
+        if (cancelled) return;
+        if (light.running) {
+          setForceJob((current) => ({ ...light, results: current?.results }));
+          timer = window.setTimeout(poll, 850);
+          return;
+        }
+        const full = await api.getForceSyncStatus(true);
+        if (!cancelled) {
+          setForceJob(full);
+          void refreshAccounts();
+          void api.getDefaultPolicy().then(setPolicySnapshot).catch(() => undefined);
+        }
+      } catch (error) {
+        if (!cancelled) handleAPIError(error);
+      }
+    };
+    timer = window.setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [forceJob?.id, forceJob?.running, handleAPIError, refreshAccounts]);
+
+  useEffect(() => {
+    if (!policyOpen || authState !== "ready" || !policySnapshot) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const snapshot = await api.getDefaultPolicy();
+        if (!cancelled) setPolicySnapshot(snapshot);
+      } catch (error) {
+        if (!cancelled && error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [authState, handleAPIError, policyOpen, policySnapshot !== null]);
+
   const login = async (baseURL: string, managementKey: string) => {
     setAuthLoading(true);
     setAuthError("");
@@ -238,6 +313,7 @@ export default function App() {
 
   const beginPreview = async (patch: BatchPatch) => {
     setPreviewLoading(true);
+    setPreviewError("");
     try {
       const response = await api.createPreview(targetScope(), patch);
       setPreview(response);
@@ -251,13 +327,19 @@ export default function App() {
   const confirmPreview = async () => {
     if (!preview) return;
     setStarting(true);
+    setPreviewError("");
     try {
       const snapshot = await api.startBatch(preview.id);
       setPreview(null);
       setJob(snapshot);
+      setForceJobOpen(false);
       setJobOpen(true);
     } catch (error) {
-      handleAPIError(error);
+      if (error instanceof api.APIError && error.status === 401) {
+        handleAPIError(error);
+      } else {
+        setPreviewError(errorText(error));
+      }
     } finally {
       setStarting(false);
     }
@@ -268,6 +350,7 @@ export default function App() {
     try {
       const snapshot = await api.retryBatch();
       setJob(snapshot);
+      setForceJobOpen(false);
       setJobOpen(true);
     } catch (error) {
       handleAPIError(error);
@@ -284,24 +367,119 @@ export default function App() {
     }
   };
 
+  const openPolicy = async () => {
+    setPolicyOpen(true);
+    setPolicyLoading(true);
+    setPolicyError("");
+    try {
+      const [snapshot, lastForceJob] = await Promise.all([
+        api.getDefaultPolicy(),
+        api.getForceSyncStatus(true),
+      ]);
+      setPolicySnapshot(snapshot);
+      if (lastForceJob.id) setForceJob(lastForceJob);
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) {
+        setPolicyOpen(false);
+        handleAPIError(error);
+      } else {
+        setPolicyError(errorText(error));
+      }
+    } finally {
+      setPolicyLoading(false);
+    }
+  };
+
+  const savePolicy = async (policy: DefaultPolicy) => {
+    setPolicySaving(true);
+    setPolicyError("");
+    try {
+      setPolicySnapshot(await api.saveDefaultPolicy(policy));
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      else setPolicyError(errorText(error));
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
+  const scanPolicy = async () => {
+    setPolicyScanning(true);
+    setPolicyError("");
+    try {
+      const accepted = await api.scanDefaultPolicy();
+      setPolicySnapshot({ ...accepted, running: true });
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      else setPolicyError(errorText(error));
+    } finally {
+      setPolicyScanning(false);
+    }
+  };
+
+  const previewForceSync = async () => {
+    setForcePreviewLoading(true);
+    setPolicyError("");
+    setForcePreviewError("");
+    try {
+      setForcePreview(await api.createForceSyncPreview());
+      setPolicyOpen(false);
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      else setPolicyError(errorText(error));
+    } finally {
+      setForcePreviewLoading(false);
+    }
+  };
+
+  const confirmForceSync = async () => {
+    if (!forcePreview) return;
+    setForceStarting(true);
+    setForcePreviewError("");
+    try {
+      const snapshot = await api.startForceSync(forcePreview.id);
+      setForcePreview(null);
+      setForceJob(snapshot);
+      setJobOpen(false);
+      setForceJobOpen(true);
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      else setForcePreviewError(errorText(error));
+    } finally {
+      setForceStarting(false);
+    }
+  };
+
+  const refreshForceJob = async () => {
+    try {
+      setForceJob(await api.getForceSyncStatus(true));
+    } catch (error) {
+      handleAPIError(error);
+    }
+  };
+
   const scopeLabel = scopeMode === "selected" && selected.size > 0
     ? `已选 ${selected.size} 个账号`
     : `当前筛选 ${data.total} 个账号`;
   const hasActiveFilters = Object.values(filters).some(Boolean) || Boolean(searchDraft);
+  const panelOpen = Boolean(jobOpen && job || forceJobOpen && forceJob);
 
   return (
-    <div className={`app-shell ${jobOpen && job ? "with-job-panel" : ""}`}>
+    <div className={`app-shell ${panelOpen ? "with-job-panel" : ""}`}>
       <header className="app-header">
         <div className="brand-block">
           <span className="brand-icon"><FileCog size={21} /></span>
-          <div><h1>CPA Account Config Manager</h1><span>ACCOUNT CONTROL SURFACE</span></div>
+          <div><h1>CPA Account Config Manager</h1><span>ACCOUNT CONFIGURATION</span></div>
         </div>
         <div className="header-status">
-          <span><ShieldCheck size={15} />{data.total} accounts</span>
-          {job?.id ? <button type="button" onClick={() => setJobOpen(true)}><Activity size={15} />{job.running ? `${job.done}/${job.total}` : job.state}</button> : null}
+          <span><ShieldCheck size={15} />{data.total} 个账号</span>
+          {job?.id ? <button type="button" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={15} />{job.running ? `${job.done}/${job.total}` : jobStateLabel(job.state)}</button> : null}
+          {forceJob?.id ? <button type="button" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={15} />{forceJob.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel(forceJob.state)}</button> : null}
         </div>
         <div className="header-actions">
-          {job?.id ? <IconButton className="mobile-job-action" label="打开批量任务" onClick={() => setJobOpen(true)}><Activity size={17} /></IconButton> : null}
+          {job?.id ? <IconButton className="mobile-job-action" label="打开批量任务" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
+          {forceJob?.id ? <IconButton className="mobile-job-action" label="打开强制同步任务" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
+          <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
           <IconButton className="export-action" label="导出筛选账号" onClick={() => void api.downloadExport("accounts", apiFilters).catch(handleAPIError)}><Download size={17} /></IconButton>
           <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
@@ -345,7 +523,7 @@ export default function App() {
       <main className="account-workspace">
         <div className="table-meta">
           <span>账号列表</span>
-          <span>{data.total} records · page {data.page || 1}/{data.pages || 1}</span>
+          <span>{data.total} 条记录 · 第 {data.page || 1}/{data.pages || 1} 页</span>
         </div>
         <div className="table-scroll">
           <table className="account-table">
@@ -394,25 +572,36 @@ export default function App() {
 
       {data.total > 0 ? (
         <footer className="bulk-bar">
-          <div className="scope-segment" aria-label="批量范围">
-            <button type="button" className={scopeMode === "selected" ? "active" : ""} disabled={selected.size === 0} onClick={() => setScopeMode("selected")}>已选 <strong>{selected.size}</strong></button>
-            <button type="button" className={scopeMode === "filtered" ? "active" : ""} onClick={() => setScopeMode("filtered")}>全部筛选 <strong>{data.total}</strong></button>
+          <div className="bulk-scope-line">
+            <div className="scope-segment" aria-label="批量范围">
+              <button type="button" className={scopeMode === "selected" ? "active" : ""} disabled={selected.size === 0} onClick={() => setScopeMode("selected")}>已选 <strong>{selected.size}</strong></button>
+              <button type="button" className={scopeMode === "filtered" ? "active" : ""} onClick={() => setScopeMode("filtered")}>全部筛选 <strong>{data.total}</strong></button>
+            </div>
+            {selected.size > 0 ? <IconButton className="clear-selection" label="清空选择" onClick={() => { setSelected(new Set()); setScopeMode("filtered"); }}><X size={16} /></IconButton> : null}
           </div>
-          <span className="bulk-divider" />
-          <button className="button button-success" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: false })}><Power size={16} />批量启用</button>
-          <button className="button button-danger" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: true })}><PowerOff size={16} />批量禁用</button>
-          <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorOpen(true)}>
-            {previewLoading ? <LoaderCircle className="spin" size={16} /> : <SlidersHorizontal size={16} />}批量编辑
-          </button>
-          {selected.size > 0 ? <button className="button button-quiet" type="button" onClick={() => { setSelected(new Set()); setScopeMode("filtered"); }}>清空选择</button> : null}
+          <div className="bulk-actions">
+            <button className="button button-success" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: false })}><Power size={16} />批量启用</button>
+            <button className="button button-danger" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: true })}><PowerOff size={16} />批量禁用</button>
+            <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorOpen(true)}>
+              {previewLoading ? <LoaderCircle className="spin" size={16} /> : <SlidersHorizontal size={16} />}批量编辑
+            </button>
+          </div>
         </footer>
       ) : null}
 
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
       {editorOpen ? <BatchEditor scopeLabel={scopeLabel} onClose={() => setEditorOpen(false)} onSubmit={(patch) => { setEditorOpen(false); void beginPreview(patch); }} /> : null}
-      {preview ? <PreviewDialog preview={preview} starting={starting} onClose={() => setPreview(null)} onConfirm={() => void confirmPreview()} /> : null}
+      {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => void api.downloadExport("results").catch(handleAPIError)} onRefresh={() => void refreshJob()} /> : null}
+      {policyOpen && policySnapshot ? <PolicyDialog key={`${policySnapshot.policy.enabled}:${policySnapshot.policy.priority}:${policySnapshot.policy.websockets}:${policySnapshot.policy.scan_interval_seconds}`} snapshot={policySnapshot} saving={policySaving} scanning={policyScanning} forceLoading={forcePreviewLoading} error={policyError} onClose={() => setPolicyOpen(false)} onSave={(policy) => void savePolicy(policy)} onScan={() => void scanPolicy()} onForcePreview={() => void previewForceSync()} /> : null}
+      {policyOpen && !policySnapshot ? (
+        <Modal title="默认策略" onClose={() => setPolicyOpen(false)} footer={<button className="button" type="button" onClick={() => setPolicyOpen(false)}>关闭</button>}>
+          <div className="policy-loading">{policyLoading ? <><LoaderCircle className="spin" size={22} /><span>正在读取策略</span></> : <><span>{policyError || "策略不可用"}</span><button className="button" type="button" onClick={() => void openPolicy()}>重试</button></>}</div>
+        </Modal>
+      ) : null}
+      {forcePreview ? <ForceSyncPreviewDialog preview={forcePreview} starting={forceStarting} error={forcePreviewError} onClose={() => { setForcePreview(null); setForcePreviewError(""); setPolicyOpen(true); }} onConfirm={() => void confirmForceSync()} /> : null}
+      {forceJobOpen && forceJob ? <JobPanel job={forceJob} title="默认策略同步" ariaLabel="默认策略强制同步" fields={forceJob.policy.fields} onClose={() => setForceJobOpen(false)} onRefresh={() => void refreshForceJob()} /> : null}
     </div>
   );
 }
@@ -448,4 +637,8 @@ function formatDate(value?: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? operatorMessage(error.message) : "请求失败";
 }

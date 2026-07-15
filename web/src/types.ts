@@ -1,0 +1,141 @@
+export interface Account {
+  id: string;
+  auth_id?: string;
+  name: string;
+  provider?: string;
+  type?: string;
+  label?: string;
+  email?: string;
+  project_id?: string;
+  account_type?: string;
+  status?: string;
+  status_message?: string;
+  disabled: boolean;
+  unavailable: boolean;
+  runtime_only: boolean;
+  source?: string;
+  priority?: number;
+  note?: string;
+  prefix?: string;
+  proxy?: string;
+  proxy_configured: boolean;
+  websockets?: boolean;
+  header_names?: string[];
+  header_count: number;
+  editable: boolean;
+  read_only_reason?: string;
+  success: number;
+  failed: number;
+  updated_at?: string;
+  last_refresh?: string;
+}
+
+export interface AccountFilters {
+  provider?: string;
+  type?: string;
+  status?: string;
+  disabled?: boolean;
+  editability?: string;
+  source?: string;
+  search?: string;
+}
+
+export interface AccountListResponse {
+  accounts: Account[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
+export interface HeaderPatch {
+  set?: Record<string, string>;
+  remove?: string[];
+}
+
+export interface BatchPatch {
+  disabled?: boolean;
+  priority?: number;
+  note?: string;
+  prefix?: string;
+  proxy_url?: string;
+  websockets?: boolean;
+  headers?: HeaderPatch;
+}
+
+export interface TargetScope {
+  mode: "selected" | "filtered";
+  ids?: string[];
+  filters?: AccountFilters;
+}
+
+export interface PatchSummary {
+  fields: string[];
+  header_set?: string[];
+  header_remove?: string[];
+  proxy_mutation: boolean;
+}
+
+export interface PreviewTarget {
+  id: string;
+  name?: string;
+  provider?: string;
+  label?: string;
+  eligible: boolean;
+  read_only_reason?: string;
+}
+
+export interface BatchPreview {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  scope_mode: string;
+  total: number;
+  eligible: number;
+  read_only: number;
+  missing: number;
+  physical_files: number;
+  providers: Record<string, number>;
+  patch: PatchSummary;
+  warnings?: string[];
+  targets: PreviewTarget[];
+}
+
+export type JobState = "idle" | "running" | "completed" | "partial" | "failed" | "interrupted";
+
+export interface JobResult {
+  id: string;
+  name?: string;
+  provider?: string;
+  label?: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "conflict" | "skipped" | "interrupted";
+  error?: string;
+  applied_fields?: string[];
+  retryable: boolean;
+}
+
+export interface JobSnapshot {
+  id?: string;
+  parent_job_id?: string;
+  state: JobState;
+  running: boolean;
+  total: number;
+  eligible: number;
+  done: number;
+  succeeded: number;
+  failed: number;
+  conflicts: number;
+  skipped: number;
+  workers: number;
+  patch: PatchSummary;
+  started_at?: string;
+  finished_at?: string;
+  retry_available: boolean;
+  persisted: boolean;
+  results?: JobResult[];
+}
+
+export interface Session {
+  baseUrl: string;
+  managementKey: string;
+}

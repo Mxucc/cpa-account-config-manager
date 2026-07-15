@@ -1,0 +1,20 @@
+# Build output
+/dist/
+*.so
+*.dylib
+*.dll
+*.h
+
+# Runtime state
+data/
+
+# Frontend
+web/node_modules/
+/web/dist/
+web/coverage/
+*.tsbuildinfo
+
+# Tooling
+.DS_Store
+.gocache/
+.playwright-cli/

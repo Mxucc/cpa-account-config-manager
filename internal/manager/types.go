@@ -12,6 +12,7 @@ type Account struct {
 	Email           string                `json:"email,omitempty"`
 	ProjectID       string                `json:"project_id,omitempty"`
 	AccountType     string                `json:"account_type,omitempty"`
+	PlanType        string                `json:"plan_type,omitempty"`
 	Status          string                `json:"status,omitempty"`
 	StatusMessage   string                `json:"status_message,omitempty"`
 	Disabled        bool                  `json:"disabled"`

@@ -23,6 +23,7 @@ let lastPolicyScan = {
 };
 
 const providers = ["codex", "claude", "gemini", "antigravity"];
+const planTypes = ["free", "plus", "pro", "team", "business", "enterprise", "edu", "k12"];
 const accounts = Array.from({ length: 36 }, (_, index) => {
   const provider = providers[index % providers.length];
   const readOnly = index % 11 === 0;
@@ -69,6 +70,7 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
     label: `operator-${String(index + 1).padStart(2, "0")}@example.com`,
     email: `operator-${String(index + 1).padStart(2, "0")}@example.com`,
     account_type: index % 3 === 0 ? "oauth" : "api_key",
+    plan_type: provider === "codex" ? planTypes[Math.floor(index / providers.length) % planTypes.length] : undefined,
     status: disabled ? "disabled" : index % 9 === 0 ? "error" : "active",
     status_message: index % 9 === 0 ? "upstream temporarily unavailable" : "",
     disabled,
@@ -206,7 +208,7 @@ function mockCPAAuth(account, index) {
     type: "codex",
     account_id: `demo-account-${index + 1}`,
     chatgpt_account_id: `demo-account-${index + 1}`,
-    plan_type: index % 2 ? "team" : "plus",
+    plan_type: account.plan_type || (index % 2 ? "team" : "plus"),
     access_token: `demo-access-token-${index + 1}`,
     refresh_token: index % 3 ? `demo-refresh-token-${index + 1}` : "",
     id_token: `demo.id-token-${index + 1}.signature`,
@@ -348,13 +350,14 @@ async function readFormData(request) {
 function filterAccounts(filters) {
   return accounts.filter((account) => {
     if (filters.provider && account.provider !== filters.provider) return false;
+    if (filters.type && ![account.plan_type, account.account_type, account.type].includes(filters.type)) return false;
     if (filters.status && account.status !== filters.status) return false;
     if (filters.disabled !== undefined && account.disabled !== filters.disabled) return false;
     if (filters.editability === "editable" && !account.editable) return false;
     if ((filters.editability === "read_only" || filters.editability === "readonly") && account.editable) return false;
     if (filters.search) {
       const search = String(filters.search).toLowerCase();
-      if (!`${account.id}\n${account.name}\n${account.label}\n${account.provider}\n${account.note}`.toLowerCase().includes(search)) return false;
+      if (!`${account.id}\n${account.name}\n${account.label}\n${account.provider}\n${account.plan_type}\n${account.account_type}\n${account.note}`.toLowerCase().includes(search)) return false;
     }
     return true;
   });
@@ -362,7 +365,7 @@ function filterAccounts(filters) {
 
 function listFromURL(url) {
   const filters = {};
-  for (const key of ["provider", "status", "editability", "search"]) {
+  for (const key of ["provider", "type", "status", "editability", "search"]) {
     if (url.searchParams.get(key)) filters[key] = url.searchParams.get(key);
   }
   if (url.searchParams.has("disabled")) filters.disabled = url.searchParams.get("disabled") === "true";
@@ -635,6 +638,7 @@ const server = http.createServer(async (request, response) => {
         label: item.label,
         email: item.email,
         account_type: "oauth",
+        plan_type: "k12",
         status: "active",
         status_message: "",
         disabled: false,

@@ -41,6 +41,7 @@ func TestImportConvertReferenceFormats(t *testing.T) {
 						"id_token":           "real.header.signature",
 						"chatgpt_account_id": "sub2api-account",
 						"email":              "sub2api@example.com",
+						"plan_type":          "k12",
 					},
 				},
 				map[string]any{
@@ -76,6 +77,9 @@ func TestImportConvertReferenceFormats(t *testing.T) {
 	if first["access_token"] != accessToken || first["refresh_token"] != "refresh-secret" || first["id_token"] != "real.header.signature" {
 		t.Fatalf("first candidate credentials were not preserved: %#v", first)
 	}
+	if first["plan_type"] != "k12" || first["chatgpt_plan_type"] != "k12" {
+		t.Fatalf("first candidate plan type = %#v", first)
+	}
 	if _, exists := first["expired"]; exists {
 		t.Fatalf("refreshable candidate should not carry access-token expiry: %#v", first)
 	}
@@ -93,6 +97,9 @@ func TestImportConvertReferenceFormats(t *testing.T) {
 	}
 	if second["last_refresh"] != now.Format(time.RFC3339) {
 		t.Fatalf("last_refresh = %#v, want %q", second["last_refresh"], now.Format(time.RFC3339))
+	}
+	if second["plan_type"] != "team" || second["chatgpt_plan_type"] != "team" {
+		t.Fatalf("second candidate plan type = %#v", second)
 	}
 }
 

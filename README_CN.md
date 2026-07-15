@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 账号列表、搜索以及 Provider、状态、启用状态、可编辑性筛选。
+- 账号列表独立显示账号/套餐 Type，并支持搜索以及 Provider、Type、状态、启用状态、可编辑性筛选；sub2api 导入的 `plan_type` 会保留并优先于 OAuth/API Key 类型显示。
 - 使用 CPA 原生数据被动展示每个账号的累计/近期请求、累计 Token，以及可用时的 Codex 5 小时和 7 天额度进度。
 - 本页多选、明确的“已选账号”范围，以及固定快照的“全部筛选结果”范围。
 - 批量启用、批量禁用，以及 `priority`、`note`、`prefix`、`proxy_url`、`websockets`、自定义 Header 的按字段批量编辑。
@@ -56,20 +56,20 @@ Token 累计和 Codex 额度进度还会使用原生 Usage Plugin 的 `usage.han
 Linux：
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.6_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.7_linux_amd64.zip.sha256
 ```
 
 macOS：
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.6_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.7_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.6_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.6_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.7_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.7_windows_amd64.zip.sha256
 ```
 
 ### 2. 放置动态库
@@ -77,16 +77,16 @@ Get-Content .\cpa-account-config-manager_0.1.6_windows_amd64.zip.sha256
 解压后，将动态库放进 CLIProxyAPI 插件目录。推荐使用宿主优先扫描的平台子目录：
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.6.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.6.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.6.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.7.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.7.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.7.dll
 ```
 
 Linux/macOS 上确保 CLIProxyAPI 服务账号可读、可执行：
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so
 ```
 
 ### 3. 启用插件
@@ -162,7 +162,7 @@ CLIProxyAPI 进程需要：
 
 ## 账号凭据与结果导出
 
-账号下载沿用当前筛选条件，并要求明确选择目标格式。CPA 会保留每个匹配的文件型 Auth JSON：单账号直接下载 `邮箱.json`，多账号下载 ZIP，压缩包内每个账号对应一个唯一且路径安全的 `邮箱.json`。
+账号下载沿用包括 Type 在内的当前筛选条件，并在下载对话框中要求明确选择目标格式。CPA 会保留每个匹配的文件型 Auth JSON：单账号直接下载 `邮箱.json`，多账号下载 ZIP，压缩包内每个账号对应一个唯一且路径安全的 `邮箱.json`。
 
 | 账号格式 | 结构 |
 | --- | --- |
@@ -250,7 +250,7 @@ CLIProxyAPI 进程需要：
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -287,7 +287,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.6
+make package VERSION=0.1.7
 ```
 
 如果本地构建需要在插件元数据中显示仓库链接，可给 `make build` 或 `make package` 传入 `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager`。GitHub Actions 会自动注入实际仓库地址。

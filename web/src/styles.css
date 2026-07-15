@@ -83,9 +83,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .icon-button:hover:not(:disabled) { color: var(--ink); border-color: var(--line); background: var(--surface-2); }
 .icon-button:disabled { opacity: 0.38; cursor: not-allowed; }
 
-.filter-bar { min-height: 54px; display: grid; grid-template-columns: minmax(250px, 1.8fr) repeat(4, minmax(125px, 0.7fr)) auto; gap: 8px; align-items: center; padding: 9px 22px; border-bottom: 1px solid var(--line); background: var(--surface); box-shadow: 0 5px 14px rgba(23, 36, 41, 0.035); position: sticky; top: 62px; z-index: 25; }
+.filter-bar { min-height: 54px; display: grid; grid-template-columns: minmax(250px, 1.8fr) repeat(5, minmax(112px, 0.65fr)) auto; gap: 8px; align-items: center; padding: 9px 22px; border-bottom: 1px solid var(--line); background: var(--surface); box-shadow: 0 5px 14px rgba(23, 36, 41, 0.035); position: sticky; top: 62px; z-index: 25; }
 .filter-bar > * { min-width: 0; }
 .filter-bar select, .filter-bar input, .edit-control input, .edit-control select, .header-row input, .header-row select, .field-block input { height: 34px; width: 100%; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface); color: var(--ink); padding: 0 10px; }
+.filter-bar select, .filter-bar input { font-size: 12px; }
 .filter-bar select { min-width: 0; }
 .with-job-panel .filter-bar { grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(120px, 0.7fr)); }
 .with-job-panel .filter-bar .reset-filters { justify-self: start; }
@@ -110,10 +111,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .table-meta { height: 39px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 11px; font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }
 .table-meta span:first-child { color: var(--ink); font-family: "Avenir Next", sans-serif; font-size: 12px; font-weight: 700; }
 .table-scroll { max-width: 100%; overflow: auto; overscroll-behavior-inline: contain; background: var(--surface); }
-.account-table { width: 100%; min-width: 1300px; border-collapse: collapse; table-layout: fixed; }
+.account-table { width: 100%; min-width: 1405px; border-collapse: collapse; table-layout: fixed; }
 .account-table .col-select { width: 42px; }
 .account-table .col-identity { width: 260px; }
 .account-table .col-provider { width: 130px; }
+.account-table .col-type { width: 105px; }
 .account-table .col-state { width: 155px; }
 .account-table .col-priority { width: 78px; }
 .account-table .col-routing { width: 215px; }
@@ -138,7 +140,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .identity-cell span, .identity-cell small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .identity-cell small { color: var(--faint); }
 .provider-tag { display: inline-flex; align-items: center; max-width: 100%; height: 21px; padding: 0 7px; border-radius: 3px; background: var(--blue-soft); color: var(--blue); font-size: 10px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-type { display: block; margin-top: 4px; color: var(--faint); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-cell { min-width: 0; display: grid; gap: 3px; font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }
+.type-cell strong, .type-cell span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-cell strong { color: var(--ink); font-size: 10px; }
+.type-cell span { color: var(--faint); font-size: 8px; }
 .state-cell { display: grid; grid-template-columns: 8px 1fr; align-items: center; gap: 3px 7px; min-width: 0; }
 .state-cell strong { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .state-cell > span:last-child { grid-column: 2; color: var(--faint); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -364,19 +369,22 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .export-summary .export-redacted strong { display: inline-flex; align-items: center; gap: 5px; color: var(--success); }
 .export-summary .export-sensitive strong { display: inline-flex; align-items: center; gap: 5px; color: var(--danger); }
 .export-format-options { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line-strong); border-radius: 4px; overflow: hidden; }
-.export-format-options > button { min-width: 0; min-height: 88px; display: grid; grid-template-columns: 24px minmax(0, 1fr); grid-template-rows: auto auto; align-content: center; align-items: center; gap: 5px 8px; padding: 10px 11px; border: none; border-right: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; text-align: left; }
-.export-format-options > button:last-child { border-right: none; }
-.export-format-options > button:hover { background: var(--surface-2); color: var(--ink); }
-.export-format-options > button.active { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); color: var(--accent); }
-.export-format-options > button > svg { grid-row: 1 / -1; }
-.export-format-options > button > span { min-width: 0; display: grid; gap: 2px; }
+.export-format-options > label { min-width: 0; min-height: 88px; display: grid; grid-template-columns: 16px 24px minmax(0, 1fr) auto 16px; align-content: center; align-items: center; gap: 5px 8px; padding: 10px 11px; border: none; border-right: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; text-align: left; }
+.export-format-options > label:last-child { border-right: none; }
+.export-format-options > label:hover { background: var(--surface-2); color: var(--ink); }
+.export-format-options > label.active { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); color: var(--accent); }
+.export-format-options input[type="radio"] { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.export-format-options input[type="radio"]:disabled { cursor: wait; }
+.export-format-options > label > span:not(.export-selected-check) { min-width: 0; display: grid; gap: 2px; }
+.export-format-icon { color: currentColor; }
+.export-selected-check { width: 15px; height: 15px; color: var(--accent); }
 .export-format-options strong, .export-format-options small, .export-format-options code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .export-format-options strong { color: var(--ink); font-size: 11px; }
 .export-format-options small { color: var(--faint); font-size: 8px; }
 .export-format-options code { color: var(--muted); font-size: 8px; }
 .credential-export .export-format-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); }
-.credential-export .export-format-options > button { min-height: 68px; border: none; }
-.credential-export .export-format-options > button:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.credential-export .export-format-options > label { min-height: 68px; border: none; }
+.credential-export .export-format-options > label:last-child:nth-child(odd) { grid-column: 1 / -1; }
 
 .job-panel { min-width: 0; max-width: 100vw; overflow: hidden; position: fixed; z-index: 60; inset: 0 0 0 auto; width: 450px; display: grid; grid-template-rows: auto 4px auto auto minmax(0, 1fr); border-left: 1px solid var(--line-strong); background: var(--surface); box-shadow: -12px 0 38px rgba(20, 30, 34, 0.14); animation: drawerIn 160ms ease-out; }
 .job-header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
@@ -514,9 +522,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .import-result-row small { grid-column: 2 / -1; }
   .export-format-options { grid-template-columns: 1fr; }
   .credential-export .export-format-options { grid-template-columns: 1fr; }
-  .export-format-options > button { min-height: 58px; grid-template-columns: 24px minmax(0, 1fr) auto; grid-template-rows: auto; border-right: none; border-bottom: 1px solid var(--line); }
-  .export-format-options > button:last-child { border-bottom: none; }
-  .export-format-options > button > svg { grid-row: auto; }
+  .export-format-options > label { min-height: 58px; grid-template-columns: 16px 24px minmax(0, 1fr) auto 16px; border-right: none; border-bottom: 1px solid var(--line); }
+  .export-format-options > label:last-child { border-bottom: none; }
   .job-counts { grid-template-columns: repeat(3, 1fr); }
   .job-result { grid-template-columns: 54px minmax(0, 1fr) 64px; gap: 7px; padding-inline: 10px; }
 }

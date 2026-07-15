@@ -8,6 +8,7 @@ export interface Account {
   email?: string;
   project_id?: string;
   account_type?: string;
+  plan_type?: string;
   status?: string;
   status_message?: string;
   disabled: boolean;

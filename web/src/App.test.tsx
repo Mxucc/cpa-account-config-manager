@@ -11,6 +11,8 @@ const account = {
   type: "codex",
   label: "operator@example.com",
   email: "operator@example.com",
+  account_type: "oauth",
+  plan_type: "k12",
   status: "active",
   disabled: false,
   unavailable: false,
@@ -97,12 +99,21 @@ describe("primary account batch flow", () => {
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
 
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+    expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
     const resetFilters = screen.getByRole("button", { name: "重置" });
     const providerFilter = screen.getByLabelText("Provider");
     expect(resetFilters).toBeDisabled();
     await user.type(providerFilter, "custom-provider");
     expect(resetFilters).toBeEnabled();
     await user.clear(providerFilter);
+    expect(resetFilters).toBeDisabled();
+
+    const typeFilter = screen.getByLabelText("Type");
+    await user.type(typeFilter, "k12");
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("type=k12"))).toBe(true));
+    expect(resetFilters).toBeEnabled();
+    await user.clear(typeFilter);
     expect(resetFilters).toBeDisabled();
 
     await user.click(screen.getByLabelText("选择 operator@example.com"));

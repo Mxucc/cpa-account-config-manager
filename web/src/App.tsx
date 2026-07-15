@@ -87,15 +87,29 @@ const providerOptions = [
   "xai",
 ];
 
+const typeOptions = [
+  "free",
+  "plus",
+  "pro",
+  "team",
+  "business",
+  "enterprise",
+  "edu",
+  "k12",
+  "oauth",
+  "api_key",
+];
+
 interface FilterState {
   search: string;
   provider: string;
+  type: string;
   status: string;
   disabled: string;
   editability: string;
 }
 
-const emptyFilters: FilterState = { search: "", provider: "", status: "", disabled: "", editability: "" };
+const emptyFilters: FilterState = { search: "", provider: "", type: "", status: "", disabled: "", editability: "" };
 
 export default function App() {
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
@@ -143,6 +157,7 @@ export default function App() {
   const apiFilters = useMemo<AccountFilters>(() => ({
     ...(filters.search ? { search: filters.search } : {}),
     ...(filters.provider ? { provider: filters.provider } : {}),
+    ...(filters.type ? { type: filters.type } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.disabled ? { disabled: filters.disabled === "true" } : {}),
     ...(filters.editability ? { editability: filters.editability } : {}),
@@ -623,12 +638,16 @@ export default function App() {
       <section className="filter-bar" aria-label="账号筛选">
         <label className="search-box">
           <Search size={16} />
-          <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索账号、邮箱、文件名" aria-label="搜索账号" />
+          <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索账号、邮箱、文件名、类型" aria-label="搜索账号" />
           {searchDraft ? <button type="button" aria-label="清空搜索" onClick={() => setSearchDraft("")}><X size={14} /></button> : null}
         </label>
         <input list="provider-options" value={filters.provider} onChange={(event) => updateFilter("provider", event.target.value)} placeholder="全部 Provider" aria-label="Provider" />
         <datalist id="provider-options">
           {providerOptions.map((provider) => <option key={provider} value={provider} />)}
+        </datalist>
+        <input list="type-options" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)} placeholder="全部 Type" aria-label="Type" />
+        <datalist id="type-options">
+          {typeOptions.map((type) => <option key={type} value={type} />)}
         </datalist>
         <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value)} aria-label="状态">
           <option value="">全部状态</option>
@@ -663,13 +682,13 @@ export default function App() {
           <table className="account-table">
             <colgroup>
               <col className="col-select" /><col className="col-identity" /><col className="col-provider" />
-              <col className="col-state" /><col className="col-priority" /><col className="col-routing" />
+              <col className="col-type" /><col className="col-state" /><col className="col-priority" /><col className="col-routing" />
               <col className="col-activity" /><col className="col-updated" /><col className="col-access" />
             </colgroup>
             <thead>
               <tr>
                 <th><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label="选择本页可编辑账号" /></th>
-                <th>账号</th><th>Provider</th><th>状态</th><th>Priority</th><th>路由配置</th><th>用量</th><th>更新时间</th><th>权限</th>
+                <th>账号</th><th>Provider</th><th>Type</th><th>状态</th><th>Priority</th><th>路由配置</th><th>用量</th><th>更新时间</th><th>权限</th>
               </tr>
             </thead>
             <tbody>
@@ -683,7 +702,8 @@ export default function App() {
                       {account.note ? <small>{account.note}</small> : null}
                     </div>
                   </td>
-                  <td><span className="provider-tag">{account.provider || account.type || "unknown"}</span><small className="account-type">{account.account_type || account.type}</small></td>
+                  <td><span className="provider-tag">{account.provider || account.type || "unknown"}</span></td>
+                  <td><AccountTypeCell account={account} /></td>
                   <td><StateCell account={account} /></td>
                   <td><code className="priority-value">{account.priority ?? "-"}</code></td>
                   <td><RoutingCell account={account} /></td>
@@ -692,7 +712,7 @@ export default function App() {
                   <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />可编辑</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason)}><LockKeyhole size={13} />只读</span>}</td>
                 </tr>
               ))}
-              {!loading && data.accounts.length === 0 ? <tr><td colSpan={9}><div className="empty-state">没有匹配账号</div></td></tr> : null}
+              {!loading && data.accounts.length === 0 ? <tr><td colSpan={10}><div className="empty-state">没有匹配账号</div></td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -742,6 +762,17 @@ export default function App() {
   );
 }
 
+function AccountTypeCell({ account }: { account: Account }) {
+  const primary = account.plan_type || account.account_type || account.type || "-";
+  const secondary = account.plan_type ? account.account_type || account.type : "";
+  return (
+    <div className="type-cell" title={secondary ? `${primary} / ${secondary}` : primary}>
+      <strong className="account-plan-type">{primary}</strong>
+      {secondary && secondary !== primary ? <span>{secondary}</span> : null}
+    </div>
+  );
+}
+
 function StateCell({ account }: { account: Account }) {
   const status = account.disabled ? "disabled" : account.unavailable ? "unavailable" : account.status || "unknown";
   return (
@@ -765,7 +796,7 @@ function RoutingCell({ account }: { account: Account }) {
 }
 
 function LoadingRows() {
-  return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={9}><span /></td></tr>)}</>;
+  return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={10}><span /></td></tr>)}</>;
 }
 
 function formatDate(value?: string): string {

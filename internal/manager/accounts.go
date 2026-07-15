@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	defaultPageSize = 50
-	maxPageSize     = 200
+	defaultPageSize          = 50
+	maxPageSize              = 200
+	maxAccountPlanTypeLength = 64
 )
 
 type AuthHost interface {
@@ -56,7 +57,7 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 	if errAccounts != nil {
 		return ListResponse{}, errAccounts
 	}
-	if strings.TrimSpace(query.Filters.Editability) != "" {
+	if filtersRequireAccountDetail(query.Filters) {
 		s.enrichEditableAccounts(ctx, accounts)
 	}
 	accounts = filterAccounts(accounts, query.Filters)
@@ -121,7 +122,7 @@ func (s *AccountService) ResolveTargets(ctx context.Context, scope TargetScope) 
 			resolved = append(resolved, account)
 		}
 	} else {
-		if strings.TrimSpace(scope.Filters.Editability) != "" {
+		if filtersRequireAccountDetail(scope.Filters) {
 			s.enrichEditableAccounts(ctx, accounts)
 		}
 		resolved = filterAccounts(accounts, scope.Filters)
@@ -346,6 +347,9 @@ func enrichAccount(account *Account, detail cpaapi.HostAuthGetResponse) error {
 	if websockets, ok := boolValue(metadata["websockets"]); ok {
 		account.Websockets = &websockets
 	}
+	if planType := safeAccountPlanType(metadata["plan_type"], metadata["chatgpt_plan_type"]); planType != "" {
+		account.PlanType = planType
+	}
 	account.HeaderNames = safeHeaderNames(metadata["headers"])
 	account.HeaderCount = len(account.HeaderNames)
 	return nil
@@ -355,7 +359,10 @@ func matchesFilters(account Account, filters AccountFilters) bool {
 	if value := strings.TrimSpace(filters.Provider); value != "" && !strings.EqualFold(account.Provider, value) {
 		return false
 	}
-	if value := strings.TrimSpace(filters.Type); value != "" && !strings.EqualFold(account.Type, value) && !strings.EqualFold(account.AccountType, value) {
+	if value := strings.TrimSpace(filters.Type); value != "" &&
+		!strings.EqualFold(account.PlanType, value) &&
+		!strings.EqualFold(account.AccountType, value) &&
+		!strings.EqualFold(account.Type, value) {
 		return false
 	}
 	if value := strings.TrimSpace(filters.Status); value != "" && !strings.EqualFold(account.Status, value) {
@@ -390,10 +397,17 @@ func matchesFilters(account Account, filters AccountFilters) bool {
 		account.Email,
 		account.ProjectID,
 		account.AccountType,
+		account.PlanType,
 		account.Status,
 		account.Note,
 	}, "\n"))
 	return strings.Contains(haystack, search)
+}
+
+func filtersRequireAccountDetail(filters AccountFilters) bool {
+	return strings.TrimSpace(filters.Type) != "" ||
+		strings.TrimSpace(filters.Editability) != "" ||
+		strings.TrimSpace(filters.Search) != ""
 }
 
 func normalizePage(page, pageSize int) (int, int) {
@@ -479,6 +493,36 @@ func safeHeaderNames(value any) []string {
 		return strings.ToLower(names[i]) < strings.ToLower(names[j])
 	})
 	return names
+}
+
+func safeAccountPlanType(values ...any) string {
+	for _, value := range values {
+		raw, ok := value.(string)
+		if !ok {
+			continue
+		}
+		planType := strings.ToLower(strings.TrimSpace(raw))
+		if planType == "" || len(planType) > maxAccountPlanTypeLength {
+			continue
+		}
+		valid := true
+		for _, char := range planType {
+			if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' {
+				continue
+			}
+			switch char {
+			case '-', '_', '.':
+				continue
+			default:
+				valid = false
+			}
+			break
+		}
+		if valid {
+			return planType
+		}
+	}
+	return ""
 }
 
 func validHeaderName(name string) bool {

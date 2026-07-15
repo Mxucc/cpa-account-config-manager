@@ -93,6 +93,9 @@ func (s *AccountService) ExportCredentialSources(ctx context.Context, filters Ac
 	if errAccounts != nil {
 		return credentialExportCollection{}, errAccounts
 	}
+	if filtersRequireAccountDetail(filters) {
+		s.enrichEditableAccounts(ctx, accounts)
+	}
 	accounts = filterAccounts(accounts, filters)
 	sortAccounts(accounts)
 	if len(accounts) > maxCredentialExportAccounts {

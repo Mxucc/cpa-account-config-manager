@@ -14,8 +14,9 @@ behavior in sub2api.
 
 ## Features
 
-- Redacted account list with search and provider, status, disabled, and
-  editability filters.
+- Redacted account list with a visible account/plan type, plus search and
+  provider, type, status, disabled, and editability filters. Imported sub2api
+  `plan_type` metadata is preserved and shown ahead of the OAuth/API-key type.
 - Passive per-account activity and usage from CPA native data: cumulative and
   recent request counts, cumulative Token counters, and Codex 5-hour/7-day
   quota progress when the upstream response headers are available.
@@ -85,20 +86,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.6_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.7_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.6_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.7_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.6_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.6_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.7_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.7_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -107,17 +108,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.6.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.6.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.6.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.7.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.7.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.7.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so
 ```
 
 ### 3. Enable the plugin
@@ -245,8 +246,9 @@ the final name check and save.
 
 ## Account Credential and Result Export
 
-Account downloads retain the active filters and require an explicit target
-format. CPA exports preserve each matching file-backed Auth JSON object. One
+Account downloads retain the active filters, including the type filter, and
+require an explicit target format selected in the download dialog. CPA exports
+preserve each matching file-backed Auth JSON object. One
 account downloads as `email.json`; multiple accounts download as a ZIP with one
 unique, path-safe `email.json` entry per account.
 
@@ -413,7 +415,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.6.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -458,7 +460,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.6
+make package VERSION=0.1.7
 ```
 
 For a local build that should publish a repository link in plugin metadata,

@@ -103,6 +103,7 @@ func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 					"proxy_url":"http://user:password@127.0.0.1:7890?token=secret",
 					"headers":{"Authorization":"Bearer secret","X-Team":"alpha"},
 					"priority":7,
+					"plan_type":"K12",
 					"websockets":false
 				}`),
 			},
@@ -123,6 +124,9 @@ func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 	if account.HeaderCount != 2 || len(account.HeaderNames) != 2 {
 		t.Fatalf("header summary = %d %#v", account.HeaderCount, account.HeaderNames)
 	}
+	if account.PlanType != "k12" {
+		t.Fatalf("plan type = %q, want k12", account.PlanType)
+	}
 	encoded, errMarshal := json.Marshal(account)
 	if errMarshal != nil {
 		t.Fatalf("Marshal() error = %v", errMarshal)
@@ -139,6 +143,89 @@ func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 		if bytes.Contains(encoded, []byte(emptyTime)) {
 			t.Fatalf("public account contained empty timestamp %q: %s", emptyTime, encoded)
 		}
+	}
+}
+
+func TestAccountServicePlanTypeProjectionAndFilteringStayConsistent(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "k12", Name: "k12.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/k12.json"},
+			{AuthIndex: "plus", Name: "plus.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/plus.json"},
+			{AuthIndex: "unsafe", Name: "unsafe.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/unsafe.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"k12": {
+				AuthIndex: "k12", Name: "k12.json", Path: "/auths/k12.json",
+				JSON: json.RawMessage(`{"type":"codex","plan_type":"K12","access_token":"secret-k12"}`),
+			},
+			"plus": {
+				AuthIndex: "plus", Name: "plus.json", Path: "/auths/plus.json",
+				JSON: json.RawMessage(`{"type":"codex","chatgpt_plan_type":"plus","access_token":"secret-plus"}`),
+			},
+			"unsafe": {
+				AuthIndex: "unsafe", Name: "unsafe.json", Path: "/auths/unsafe.json",
+				JSON: json.RawMessage(`{"type":"codex","plan_type":"Bearer secret-plan-value","access_token":"secret-unsafe"}`),
+			},
+		},
+	}
+	service := NewAccountService(host)
+
+	listed, errList := service.List(t.Context(), ListQuery{Page: 1, PageSize: 20, Filters: AccountFilters{Type: "k12"}})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if listed.Total != 1 || len(listed.Accounts) != 1 || listed.Accounts[0].ID != "k12" || listed.Accounts[0].PlanType != "k12" {
+		t.Fatalf("plan-filtered list = %#v", listed)
+	}
+
+	searched, errSearch := service.List(t.Context(), ListQuery{Page: 1, PageSize: 20, Filters: AccountFilters{Search: "plus"}})
+	if errSearch != nil {
+		t.Fatalf("search List() error = %v", errSearch)
+	}
+	if searched.Total != 1 || searched.Accounts[0].ID != "plus" || searched.Accounts[0].PlanType != "plus" {
+		t.Fatalf("plan-searched list = %#v", searched)
+	}
+
+	exported, errExport := service.Export(t.Context(), AccountFilters{Type: "plus"})
+	if errExport != nil {
+		t.Fatalf("Export() error = %v", errExport)
+	}
+	if len(exported) != 1 || exported[0].ID != "plus" {
+		t.Fatalf("plan-filtered export = %#v", exported)
+	}
+
+	resolved, errResolve := service.ResolveTargets(t.Context(), TargetScope{Mode: "filtered", Filters: AccountFilters{Type: "k12"}})
+	if errResolve != nil {
+		t.Fatalf("ResolveTargets() error = %v", errResolve)
+	}
+	if len(resolved.Accounts) != 1 || resolved.Accounts[0].ID != "k12" {
+		t.Fatalf("plan-filtered targets = %#v", resolved)
+	}
+
+	credentials, errCredentials := service.ExportCredentialSources(t.Context(), AccountFilters{Type: "k12"})
+	if errCredentials != nil {
+		t.Fatalf("ExportCredentialSources() error = %v", errCredentials)
+	}
+	defer clearCredentialExportCollection(&credentials)
+	if len(credentials.Sources) != 1 || credentials.Sources[0].Account.ID != "k12" {
+		t.Fatalf("plan-filtered credential sources = %#v", credentials)
+	}
+
+	all, errAll := service.List(t.Context(), ListQuery{Page: 1, PageSize: 20})
+	if errAll != nil {
+		t.Fatalf("unfiltered List() error = %v", errAll)
+	}
+	for _, account := range all.Accounts {
+		if account.ID == "unsafe" && account.PlanType != "" {
+			t.Fatalf("unsafe plan type was projected: %q", account.PlanType)
+		}
+	}
+	encoded, errMarshal := json.Marshal(all)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+	if bytes.Contains(encoded, []byte("secret-plan-value")) || bytes.Contains(encoded, []byte("secret-unsafe")) {
+		t.Fatalf("account projection leaked unsafe metadata: %s", encoded)
 	}
 }
 

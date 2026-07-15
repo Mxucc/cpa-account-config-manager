@@ -1,6 +1,7 @@
 import {
   Archive,
   Boxes,
+  Check,
   Download,
   FileJson2,
   FolderCog,
@@ -81,19 +82,26 @@ export function ExportDialog({ kind, count, exporting, error = "", onClose, onEx
         <div className="export-format-options" role="radiogroup" aria-label="导出格式">
           {formats.map((option) => {
             const FormatIcon = option.icon;
+            const active = format === option.id;
             return (
-              <button
+              <label
                 key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={format === option.id}
-                className={format === option.id ? "active" : ""}
-                onClick={() => setFormat(option.id)}
+                className={active ? "active" : ""}
               >
-                <FormatIcon size={19} />
+                <input
+                  type="radio"
+                  name={`export-format-${kind}`}
+                  value={option.id}
+                  checked={active}
+                  disabled={exporting}
+                  aria-label={`${option.label} ${option.detail} ${option.extension}`}
+                  onChange={() => setFormat(option.id)}
+                />
+                <FormatIcon className="export-format-icon" size={19} aria-hidden="true" />
                 <span><strong>{option.label}</strong><small>{option.detail}</small></span>
                 <code>{option.extension}</code>
-              </button>
+                {active ? <Check className="export-selected-check" size={15} aria-hidden="true" /> : <span className="export-selected-check" aria-hidden="true" />}
+              </label>
             );
           })}
         </div>

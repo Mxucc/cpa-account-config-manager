@@ -16,11 +16,12 @@ describe("management API client", () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await listAccounts(2, 50, { provider: "codex", disabled: false, search: "operator" });
+    await listAccounts(2, 50, { provider: "codex", type: "k12", disabled: false, search: "operator" });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/accounts?");
     expect(url).toContain("provider=codex");
+    expect(url).toContain("type=k12");
     expect(url).toContain("disabled=false");
     expect(url).toContain("page=2");
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
@@ -156,12 +157,13 @@ describe("management API client", () => {
     vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-    const result = await downloadExport("accounts", "cpa", { provider: "codex", disabled: false });
+    const result = await downloadExport("accounts", "cpa", { provider: "codex", type: "k12", disabled: false });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/export/accounts?");
     expect(url).toContain("format=cpa");
     expect(url).toContain("provider=codex");
+    expect(url).toContain("type=k12");
     expect(url).toContain("disabled=false");
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(createObjectURL).toHaveBeenCalledTimes(1);

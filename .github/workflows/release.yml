@@ -207,3 +207,4 @@ jobs:
               assets/*.zip \
               assets/*.sha256 \
               assets/checksums.txt
+          fi

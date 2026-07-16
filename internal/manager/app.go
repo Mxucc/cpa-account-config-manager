@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.1.0-dev"
+	PluginVersion    = "0.2.0-dev"
 	PluginRepository = ""
 )
 
@@ -124,7 +124,7 @@ func (a *App) Registration() Registration {
 			GitHubRepository: PluginRepository,
 			ConfigFields: []cpaapi.ConfigField{
 				{Name: "workers", Type: cpaapi.ConfigFieldTypeInteger, Description: "Optional maximum concurrent account mutations (default 6, range 1-16)."},
-				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job, default-policy, and usage snapshot state."},
+				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job state plus policy-scan and usage caches."},
 				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL; defaults to http://127.0.0.1:8317."},
 			},
 		},
@@ -143,6 +143,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/batch/status", Description: "Read current or last batch progress."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/retry", Description: "Retry the failed subset of the last in-memory batch."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export filtered account credentials for an explicitly selected target format."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/export/accounts", Description: "Export selected account credentials for an explicitly selected target format."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/preview", Description: "Preview JSON or ZIP conversion into CPA Auth files."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/start", Description: "Import a confirmed converted Auth-file preview."},
@@ -155,7 +156,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 		},
 		Resources: []cpaapi.ResourceRoute{{
 			Path:        "/index.html",
-			Menu:        "Account Config Manager",
+			Menu:        "账号管理",
 			Description: "List, filter, and safely batch-edit CLIProxyAPI account configuration.",
 		}},
 	}
@@ -190,6 +191,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/retry":
 		return a.handleRetry(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/export/accounts":
+		return a.handleExportAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/export/accounts":
 		return a.handleExportAccounts(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/export/results":
 		return a.handleExportResults(req)
@@ -467,11 +470,28 @@ func (a *App) handleExportAccounts(ctx context.Context, req cpaapi.ManagementReq
 	if errFormat != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errFormat.Error()})
 	}
-	query, errQuery := listQueryFromValues(req.Query)
-	if errQuery != nil {
-		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errQuery.Error()})
+	var collection credentialExportCollection
+	var errExport error
+	if strings.EqualFold(strings.TrimSpace(req.Method), http.MethodPost) {
+		var request CredentialExportRequest
+		if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+		}
+		scope, errScope := request.Scope.Validate()
+		if errScope != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errScope.Error()})
+		}
+		if scope.Mode != "selected" {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "credential export scope must be selected"})
+		}
+		collection, errExport = a.accounts.ExportSelectedCredentialSources(ctx, scope)
+	} else {
+		query, errQuery := listQueryFromValues(req.Query)
+		if errQuery != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errQuery.Error()})
+		}
+		collection, errExport = a.accounts.ExportCredentialSources(ctx, query.Filters)
 	}
-	collection, errExport := a.accounts.ExportCredentialSources(ctx, query.Filters)
 	if errExport != nil {
 		if errors.Is(errExport, ErrCredentialExportTooLarge) {
 			return jsonResponse(http.StatusRequestEntityTooLarge, map[string]any{"error": ErrCredentialExportTooLarge.Error()})

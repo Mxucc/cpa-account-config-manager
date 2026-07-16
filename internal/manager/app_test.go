@@ -31,6 +31,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodGet + " /plugins/cpa-account-config-manager/batch/status":             {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/batch/retry":             {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/export/accounts":          {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/export/accounts":         {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/export/results":           {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/import/preview":          {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/import/start":            {},
@@ -62,7 +63,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	if len(expected) != 0 {
 		t.Fatalf("missing routes = %#v", expected)
 	}
-	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" {
+	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" || registration.Resources[0].Menu != "账号管理" {
 		t.Fatalf("resources = %#v", registration.Resources)
 	}
 }
@@ -413,7 +414,7 @@ func TestHandleDefaultPolicyAndForceSyncRoutes(t *testing.T) {
 	}
 }
 
-func TestHandleDefaultPolicyReturnsSafeStorageAndValidationErrors(t *testing.T) {
+func TestHandleDefaultPolicyUsesSafeBestEffortLocalStorageAndValidationErrors(t *testing.T) {
 	blockingPath := filepath.Join(t.TempDir(), "not-a-directory")
 	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
 		t.Fatalf("WriteFile() error = %v", errWrite)
@@ -428,7 +429,7 @@ func TestHandleDefaultPolicyReturnsSafeStorageAndValidationErrors(t *testing.T) 
 		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults",
 		Body:   []byte(`{"enabled":false,"priority":0,"websockets":null}`),
 	})
-	if storageResponse.StatusCode != http.StatusServiceUnavailable || string(storageResponse.Body) != `{"error":"default policy storage is unavailable; configure data_dir to a writable directory"}` {
+	if storageResponse.StatusCode != http.StatusOK || !bytes.Contains(storageResponse.Body, []byte(policyLocalStoreError)) {
 		t.Fatalf("storage response = %d %s", storageResponse.StatusCode, storageResponse.Body)
 	}
 	if bytes.Contains(storageResponse.Body, []byte(dataDir)) {

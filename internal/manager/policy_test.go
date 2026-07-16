@@ -122,6 +122,76 @@ func TestPolicyStatePersistsReloadsAndUsesPrivatePermissions(t *testing.T) {
 	}
 }
 
+func TestConfiguredPolicyOverridesStaleFileAndSurvivesFreshEngine(t *testing.T) {
+	dataDir := t.TempDir()
+	stalePriority := 1
+	if errSave := savePolicyState(policyStorePath(dataDir), normalizeDefaultPolicy(DefaultPolicy{
+		Enabled:  true,
+		Priority: &stalePriority,
+	}), PolicyScanSummary{Scanned: 2}); errSave != nil {
+		t.Fatalf("savePolicyState() error = %v", errSave)
+	}
+
+	configuredPriority := 7
+	configuredWebsockets := false
+	config := ParseConfig([]byte("data_dir: " + dataDir + "\ndefault_policy:\n  enabled: true\n  scan_interval_seconds: 30\n  priority: 7\n  websockets: false\n"))
+	if config.DefaultPolicy == nil || config.DefaultPolicy.Priority == nil || *config.DefaultPolicy.Priority != configuredPriority ||
+		config.DefaultPolicy.Websockets == nil || *config.DefaultPolicy.Websockets != configuredWebsockets {
+		t.Fatalf("parsed default policy = %#v", config.DefaultPolicy)
+	}
+
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(config)
+	defer engine.Shutdown()
+	snapshot := engine.Snapshot()
+	if !snapshot.Policy.Enabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != configuredPriority ||
+		snapshot.Policy.Websockets == nil || *snapshot.Policy.Websockets != configuredWebsockets || snapshot.Policy.ScanIntervalSeconds != 30 {
+		t.Fatalf("configured snapshot = %#v", snapshot)
+	}
+}
+
+func TestPolicyEngineAppliesConfiguredPolicyDuringSameStoreReconfigure(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+
+	priority := 4
+	policy := normalizeDefaultPolicy(DefaultPolicy{Enabled: true, Priority: &priority, ScanIntervalSeconds: 45})
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &policy})
+	snapshot := engine.Snapshot()
+	if !snapshot.Policy.Enabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != 4 || snapshot.Policy.ScanIntervalSeconds != 45 {
+		t.Fatalf("reconfigured snapshot = %#v", snapshot)
+	}
+}
+
+func TestPolicyEngineSameStoreReconfigureClearsOnlyConfiguredPolicyError(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+
+	invalid := DefaultPolicy{Enabled: true}
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &invalid})
+	if got := engine.Snapshot().LastScan.Error; got != configuredPolicyError {
+		t.Fatalf("invalid configured policy error = %q, want %q", got, configuredPolicyError)
+	}
+
+	valid := normalizeDefaultPolicy(DefaultPolicy{})
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &valid})
+	if got := engine.Snapshot().LastScan.Error; got != "" {
+		t.Fatalf("valid configured policy retained stale error %q", got)
+	}
+
+	engine.mu.Lock()
+	engine.lastScan.Error = "auth file scan failed"
+	engine.mu.Unlock()
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &valid})
+	if got := engine.Snapshot().LastScan.Error; got != "auth file scan failed" {
+		t.Fatalf("valid configured policy replaced scan error with %q", got)
+	}
+}
+
 func TestPolicyEngineReconcilesMissingFieldsAndDetectsNewFiles(t *testing.T) {
 	modTime := time.Now().UTC().Add(-time.Minute)
 	host := &fakeAuthHost{

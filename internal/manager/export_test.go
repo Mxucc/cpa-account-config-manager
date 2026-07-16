@@ -119,6 +119,28 @@ func TestCredentialExportTargetMappingsMatchReferenceShapes(t *testing.T) {
 	}
 }
 
+func TestSelectedCredentialExportUsesOnlyFixedIDsAndCountsMissingTargets(t *testing.T) {
+	service := NewAccountService(credentialExportHost())
+	collection, errSources := service.ExportSelectedCredentialSources(t.Context(), TargetScope{
+		Mode: "selected",
+		IDs:  []string{"b", "missing", "b"},
+	})
+	if errSources != nil {
+		t.Fatalf("ExportSelectedCredentialSources() error = %v", errSources)
+	}
+	defer clearCredentialExportCollection(&collection)
+	if len(collection.Sources) != 1 || collection.Sources[0].Account.ID != "b" || collection.Skipped != 1 {
+		t.Fatalf("selected collection = %#v", collection)
+	}
+	download, errRender := renderCredentialExport(CredentialExportFormatCPA, collection, time.Now())
+	if errRender != nil {
+		t.Fatalf("render selected export: %v", errRender)
+	}
+	if !bytes.Contains(download.Body, []byte("access-secret-b")) || bytes.Contains(download.Body, []byte("access-secret-a")) {
+		t.Fatalf("selected export contained the wrong account: %s", download.Body)
+	}
+}
+
 func TestCredentialExportTargetFormatsSkipNonCodexAccessTokens(t *testing.T) {
 	host := credentialExportHost()
 	host.entries = append(host.entries, cpaapi.HostAuthFileEntry{
@@ -203,6 +225,29 @@ func TestCredentialExportRoutesRequireExplicitFormatAndDoNotLeakErrors(t *testin
 	})
 	if valid.StatusCode != http.StatusOK || valid.Headers.Get("Cache-Control") == "" || valid.Headers.Get("X-Exported-Accounts") != "1" {
 		t.Fatalf("valid credential response = %d %#v %s", valid.StatusCode, valid.Headers, valid.Body)
+	}
+	selectedBody, errSelectedBody := json.Marshal(CredentialExportRequest{Scope: TargetScope{Mode: "selected", IDs: []string{"b"}}})
+	if errSelectedBody != nil {
+		t.Fatalf("marshal selected export request: %v", errSelectedBody)
+	}
+	selected := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   path,
+		Query:  map[string][]string{"format": {"cpa"}},
+		Body:   selectedBody,
+	})
+	if selected.StatusCode != http.StatusOK || selected.Headers.Get("X-Exported-Accounts") != "1" ||
+		!bytes.Contains(selected.Body, []byte("access-secret-b")) || bytes.Contains(selected.Body, []byte("access-secret-a")) {
+		t.Fatalf("selected credential response = %d %#v %s", selected.StatusCode, selected.Headers, selected.Body)
+	}
+	filteredPost := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   path,
+		Query:  map[string][]string{"format": {"cpa"}},
+		Body:   []byte(`{"scope":{"mode":"filtered"}}`),
+	})
+	if filteredPost.StatusCode != http.StatusBadRequest {
+		t.Fatalf("filtered POST response = %d %s", filteredPost.StatusCode, filteredPost.Body)
 	}
 
 	failingHost := credentialExportHost()

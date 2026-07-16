@@ -5,7 +5,7 @@ import {
   Download,
   Eye,
   FileCog,
-  KeyRound,
+  Github,
   LoaderCircle,
   LockKeyhole,
   Power,
@@ -38,6 +38,13 @@ import { PolicyDialog } from "./components/PolicyDialog";
 import { PreviewDialog } from "./components/PreviewDialog";
 import { DeleteAccountDialog } from "./components/DeleteAccountDialog";
 import { operatorMessage } from "./format/operatorMessage";
+import {
+  ACCOUNT_PAGE_SIZE_OPTIONS,
+  DEFAULT_ACCOUNT_PAGE_SIZE,
+  isAccountPageSize,
+  readAccountPageSize,
+  writeAccountPageSize,
+} from "./store/accountPageSize";
 import { readPanelAuth } from "./store/panelAuth";
 import { clearSession, setSession } from "./store/session";
 import type {
@@ -60,7 +67,6 @@ import type {
   TargetScope,
 } from "./types";
 
-const PAGE_SIZE = 50;
 const exportFormatLabels: Record<ExportFormat, string> = {
   cpa: "CPA",
   sub2api: "sub2api",
@@ -131,7 +137,8 @@ export default function App() {
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [searchDraft, setSearchDraft] = useState("");
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<AccountListResponse>({ accounts: [], total: 0, page: 1, page_size: PAGE_SIZE, pages: 0 });
+  const [pageSize, setPageSize] = useState(readAccountPageSize);
+  const [data, setData] = useState<AccountListResponse>({ accounts: [], total: 0, page: 1, page_size: DEFAULT_ACCOUNT_PAGE_SIZE, pages: 0 });
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
@@ -168,6 +175,7 @@ export default function App() {
   const [importStarting, setImportStarting] = useState(false);
   const [importError, setImportError] = useState("");
   const [exportTarget, setExportTarget] = useState<"accounts" | "results" | null>(null);
+  const [accountExportScope, setAccountExportScope] = useState<TargetScope | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [notice, setNotice] = useState("");
@@ -230,7 +238,7 @@ export default function App() {
     accountRequest.current = requestID;
     setLoading(true);
     try {
-      const response = await api.listAccounts(page, PAGE_SIZE, apiFilters);
+      const response = await api.listAccounts(page, pageSize, apiFilters);
       if (requestID !== accountRequest.current) return;
       setData(response);
       if (response.pages > 0 && page > response.pages) setPage(response.pages);
@@ -240,7 +248,7 @@ export default function App() {
     } finally {
       if (requestID === accountRequest.current) setLoading(false);
     }
-  }, [apiFilters, authState, handleAPIError, page]);
+  }, [apiFilters, authState, handleAPIError, page, pageSize]);
 
   useEffect(() => {
     void refreshAccounts();
@@ -349,6 +357,14 @@ export default function App() {
     setFilters((current) => ({ ...current, [key]: value }));
     setPage(1);
     setSelected(new Set());
+  };
+
+  const updatePageSize = (value: string) => {
+    const nextPageSize = Number(value);
+    if (!isAccountPageSize(nextPageSize) || nextPageSize === pageSize) return;
+    writeAccountPageSize(nextPageSize);
+    setPageSize(nextPageSize);
+    setPage(1);
   };
 
   const toggleAccount = (account: Account) => {
@@ -658,13 +674,15 @@ export default function App() {
     }
   };
 
-  const openExport = (target: "accounts" | "results") => {
+  const openExport = (target: "accounts" | "results", scope?: TargetScope) => {
     setExportTarget(target);
+    setAccountExportScope(target === "accounts" ? scope ?? { mode: "filtered", filters: apiFilters } : null);
     setExportError("");
   };
 
   const closeExport = () => {
     setExportTarget(null);
+    setAccountExportScope(null);
     setExportError("");
   };
 
@@ -674,7 +692,7 @@ export default function App() {
     setExportError("");
     try {
       const result = exportTarget === "accounts"
-        ? await api.downloadExport("accounts", format as AccountExportFormat, apiFilters)
+        ? await api.downloadExport("accounts", format as AccountExportFormat, accountExportScope ?? { mode: "filtered", filters: apiFilters })
         : await api.downloadExport("results", format as ResultExportFormat);
       if (exportTarget === "accounts") {
         const count = result.exported === undefined ? "" : ` ${result.exported} 个账号`;
@@ -699,6 +717,12 @@ export default function App() {
   const scopeLabel = scopeMode === "selected" && selected.size > 0
     ? `已选 ${selected.size} 个账号`
     : `当前筛选 ${data.total} 个账号`;
+  const exportCount = exportTarget === "accounts"
+    ? accountExportScope?.mode === "selected" ? accountExportScope.ids?.length ?? 0 : data.total
+    : job?.results?.length ?? job?.done ?? 0;
+  const exportScopeLabel = exportTarget === "accounts" && accountExportScope?.mode === "selected"
+    ? "已选账号"
+    : undefined;
   const hasActiveFilters = Object.values(filters).some(Boolean) || Boolean(searchDraft);
   const panelOpen = Boolean(jobOpen && job || forceJobOpen && forceJob);
 
@@ -722,7 +746,7 @@ export default function App() {
             <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
             <IconButton className="export-action" label="下载筛选账号凭据" onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
             <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
-            <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
+            <a className="icon-button" href="https://github.com/Mxucc/cpa-account-config-manager/" target="_blank" rel="noopener noreferrer" aria-label="打开项目 GitHub" title="打开项目 GitHub"><Github size={17} /></a>
           </div>
         </header>
 
@@ -843,7 +867,12 @@ export default function App() {
           {!loading && data.accounts.length === 0 ? <div className="empty-state" role="status">没有匹配账号</div> : null}
         </div>
         <div className="pagination">
-          <span>每页 {PAGE_SIZE}</span>
+          <label className="page-size-control">
+            <span>每页</span>
+            <select aria-label="每页账号数" value={pageSize} onChange={(event) => updatePageSize(event.target.value)}>
+              {ACCOUNT_PAGE_SIZE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
           <IconButton label="上一页" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={17} /></IconButton>
           <strong>{page}</strong>
           <IconButton label="下一页" disabled={data.pages === 0 || page >= data.pages} onClick={() => setPage((value) => value + 1)}><ChevronRight size={17} /></IconButton>
@@ -859,7 +888,14 @@ export default function App() {
               <button type="button" className={scopeMode === "selected" ? "active" : ""} disabled={selected.size === 0} onClick={() => setScopeMode("selected")}>已选 <strong>{selected.size}</strong></button>
               <button type="button" className={scopeMode === "filtered" ? "active" : ""} onClick={() => setScopeMode("filtered")}>全部筛选 <strong>{data.total}</strong></button>
             </div>
-            {selected.size > 0 ? <IconButton className="clear-selection" label="清空选择" onClick={() => { setSelected(new Set()); setScopeMode("filtered"); }}><X size={16} /></IconButton> : null}
+            {selected.size > 0 ? (
+              <div className="selection-actions">
+                <button className="button button-quiet selection-export" type="button" title="导出选中账号" aria-label="导出选中账号" onClick={() => openExport("accounts", { mode: "selected", ids: Array.from(selected) })}>
+                  <Download size={16} /><span>导出选中</span>
+                </button>
+                <IconButton className="clear-selection" label="清空选择" onClick={() => { setSelected(new Set()); setScopeMode("filtered"); }}><X size={16} /></IconButton>
+              </div>
+            ) : null}
           </div>
           <div className="bulk-actions">
             <button className="button button-success" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: false })}><Power size={16} />批量启用</button>
@@ -879,7 +915,7 @@ export default function App() {
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
-      {exportTarget ? <ExportDialog kind={exportTarget} count={exportTarget === "accounts" ? data.total : job?.results?.length ?? job?.done ?? 0} exporting={exporting} error={exportError} onClose={closeExport} onExport={(format) => void confirmExport(format)} /> : null}
+      {exportTarget ? <ExportDialog kind={exportTarget} count={exportCount} scopeLabel={exportScopeLabel} exporting={exporting} error={exportError} onClose={closeExport} onExport={(format) => void confirmExport(format)} /> : null}
       {policyOpen && policySnapshot ? <PolicyDialog key={`${policySnapshot.policy.enabled}:${policySnapshot.policy.priority}:${policySnapshot.policy.websockets}:${policySnapshot.policy.scan_interval_seconds}`} snapshot={policySnapshot} saving={policySaving} scanning={policyScanning} forceLoading={forcePreviewLoading} error={policyError} onClose={() => setPolicyOpen(false)} onSave={(policy) => void savePolicy(policy)} onScan={() => void scanPolicy()} onForcePreview={() => void previewForceSync()} /> : null}
       {policyOpen && !policySnapshot ? (
         <Modal title="默认策略" onClose={() => setPolicyOpen(false)} footer={<button className="button" type="button" onClick={() => setPolicyOpen(false)}>关闭</button>}>

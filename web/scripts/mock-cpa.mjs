@@ -575,9 +575,17 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname.endsWith("/batch/retry")) {
     return json(response, 400, { error: "no failed targets are available to retry" });
   }
-  if (request.method === "GET" && url.pathname.endsWith("/export/accounts")) {
+  if ((request.method === "GET" || request.method === "POST") && url.pathname.endsWith("/export/accounts")) {
     const format = url.searchParams.get("format") || "";
-    const view = listFromURL(url);
+    let view = listFromURL(url);
+    if (request.method === "POST") {
+      const body = await readJSON(request);
+      if (body.scope?.mode !== "selected" || !Array.isArray(body.scope.ids) || body.scope.ids.length === 0) {
+        return json(response, 400, { error: "selected scope requires at least one account id" });
+      }
+      const ids = new Set(body.scope.ids);
+      view = { accounts: accounts.filter((account) => ids.has(account.id)), total: ids.size };
+    }
     const supported = new Set(["cpa", "sub2api", "cockpit", "9router", "codex", "axonhub", "codexmanager"]);
     if (!supported.has(format)) return json(response, 400, { error: "请选择账号导出目标格式" });
     const fileAccounts = view.accounts.filter((account) => !account.runtime_only && account.source === "file");
@@ -720,6 +728,19 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname.endsWith("/defaults")) {
     return json(response, 200, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });
+  }
+  if (request.method === "PATCH" && url.pathname.endsWith("/plugins/cpa-account-config-manager/config")) {
+    const body = await readJSON(request);
+    if (body.default_policy) {
+      defaultPolicy = {
+        enabled: Boolean(body.default_policy.enabled),
+        apply_mode: "missing",
+        scan_interval_seconds: Math.min(300, Math.max(5, Number(body.default_policy.scan_interval_seconds) || 15)),
+        priority: body.default_policy.priority === null ? null : Number(body.default_policy.priority),
+        websockets: body.default_policy.websockets === null ? null : Boolean(body.default_policy.websockets),
+      };
+    }
+    return json(response, 200, { status: "ok" });
   }
   if (request.method === "PUT" && url.pathname.endsWith("/defaults")) {
     const body = await readJSON(request);

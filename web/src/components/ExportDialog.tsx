@@ -22,6 +22,7 @@ import { Modal } from "./Modal";
 interface ExportDialogProps {
   kind: "accounts" | "results";
   count: number;
+  scopeLabel?: string;
   exporting: boolean;
   error?: string;
   onClose: () => void;
@@ -52,7 +53,7 @@ const resultFormats: Array<FormatOption & { id: ResultExportFormat }> = [
   { id: "jsonl", label: "JSON Lines", extension: ".jsonl", detail: "逐行", icon: Rows3 },
 ];
 
-export function ExportDialog({ kind, count, exporting, error = "", onClose, onExport }: ExportDialogProps) {
+export function ExportDialog({ kind, count, scopeLabel, exporting, error = "", onClose, onExport }: ExportDialogProps) {
   const formats: FormatOption[] = kind === "accounts" ? accountFormats : resultFormats;
   const [format, setFormat] = useState<ExportFormat>(kind === "accounts" ? "cpa" : "json");
   const selected = formats.find((option) => option.id === format) ?? formats[0];
@@ -72,7 +73,7 @@ export function ExportDialog({ kind, count, exporting, error = "", onClose, onEx
     >
       <div className={`export-dialog ${kind === "accounts" ? "credential-export" : "result-export"}`}>
         <div className="export-summary">
-          <div><span>范围</span><strong>{kind === "accounts" ? "当前筛选" : "当前任务"}</strong></div>
+          <div><span>范围</span><strong>{scopeLabel ?? (kind === "accounts" ? "当前筛选" : "当前任务")}</strong></div>
           <div><span>账号 / 记录</span><strong>{count}</strong></div>
           <div className={kind === "accounts" ? "export-sensitive" : "export-redacted"}>
             <span>内容</span>

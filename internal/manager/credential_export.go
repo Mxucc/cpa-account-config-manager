@@ -29,8 +29,8 @@ const (
 )
 
 var (
-	ErrCredentialExportNoAccounts   = errors.New("no file-backed accounts match the current filters")
-	ErrCredentialExportNoCompatible = errors.New("no compatible Codex OAuth accounts match the current filters")
+	ErrCredentialExportNoAccounts   = errors.New("the export scope contains no file-backed accounts")
+	ErrCredentialExportNoCompatible = errors.New("the export scope contains no compatible Codex OAuth accounts")
 	ErrCredentialExportTooLarge     = errors.New("credential export exceeds the configured limit")
 )
 
@@ -42,6 +42,10 @@ type credentialExportSource struct {
 type credentialExportCollection struct {
 	Sources []credentialExportSource
 	Skipped int
+}
+
+type CredentialExportRequest struct {
+	Scope TargetScope `json:"scope"`
 }
 
 type credentialExportRecord struct {
@@ -98,11 +102,34 @@ func (s *AccountService) ExportCredentialSources(ctx context.Context, filters Ac
 	}
 	accounts = filterAccounts(accounts, filters)
 	sortAccounts(accounts)
+	return s.collectCredentialExportSources(ctx, accounts, 0)
+}
+
+func (s *AccountService) ExportSelectedCredentialSources(ctx context.Context, scope TargetScope) (credentialExportCollection, error) {
+	validated, errScope := scope.Validate()
+	if errScope != nil {
+		return credentialExportCollection{}, errScope
+	}
+	if validated.Mode != "selected" {
+		return credentialExportCollection{}, fmt.Errorf("credential export scope must be selected")
+	}
+	if len(validated.IDs) > maxCredentialExportAccounts {
+		return credentialExportCollection{}, ErrCredentialExportTooLarge
+	}
+	resolved, errResolve := s.ResolveTargets(ctx, validated)
+	if errResolve != nil {
+		return credentialExportCollection{}, errResolve
+	}
+	sortAccounts(resolved.Accounts)
+	return s.collectCredentialExportSources(ctx, resolved.Accounts, len(resolved.MissingIDs))
+}
+
+func (s *AccountService) collectCredentialExportSources(ctx context.Context, accounts []Account, initialSkipped int) (credentialExportCollection, error) {
 	if len(accounts) > maxCredentialExportAccounts {
 		return credentialExportCollection{}, ErrCredentialExportTooLarge
 	}
 
-	collection := credentialExportCollection{Sources: make([]credentialExportSource, 0, len(accounts))}
+	collection := credentialExportCollection{Sources: make([]credentialExportSource, 0, len(accounts)), Skipped: initialSkipped}
 	var aggregateBytes int64
 	for _, account := range accounts {
 		if errContext := ctx.Err(); errContext != nil {

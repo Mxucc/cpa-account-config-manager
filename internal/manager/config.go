@@ -13,9 +13,10 @@ const (
 )
 
 type Config struct {
-	Workers           int    `yaml:"workers"`
-	DataDir           string `yaml:"data_dir"`
-	ManagementBaseURL string `yaml:"management_base_url"`
+	Workers           int            `yaml:"workers"`
+	DataDir           string         `yaml:"data_dir"`
+	ManagementBaseURL string         `yaml:"management_base_url"`
+	DefaultPolicy     *DefaultPolicy `yaml:"default_policy,omitempty"`
 }
 
 func ParseConfig(raw []byte) Config {
@@ -41,5 +42,9 @@ func normalizeConfig(cfg Config) Config {
 		cfg.DataDir = "data/cpa-account-config-manager"
 	}
 	cfg.ManagementBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ManagementBaseURL), "/")
+	if cfg.DefaultPolicy != nil {
+		policy := cloneDefaultPolicy(*cfg.DefaultPolicy)
+		cfg.DefaultPolicy = &policy
+	}
 	return cfg
 }

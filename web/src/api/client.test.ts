@@ -102,7 +102,9 @@ describe("management API client", () => {
 			running: false,
 			last_scan: { scanned: 0, eligible: 0, changed: 0, skipped: 0, failed: 0 },
 		};
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(responseBody));
+		const fetchMock = vi.fn(async (input: RequestInfo | URL, _init: RequestInit = {}) => String(input).endsWith("/config")
+			? jsonResponse({ status: "ok" })
+			: jsonResponse(responseBody));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await saveDefaultPolicy({
@@ -113,10 +115,21 @@ describe("management API client", () => {
 			websockets: false,
 		});
 
-		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-		expect(url).toContain("/defaults");
-		expect(init.method).toBe("PUT");
-		expect(JSON.parse(String(init.body))).toEqual({
+		const [configURL, configInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(configURL).toContain("/plugins/cpa-account-config-manager/config");
+		expect(configInit.method).toBe("PATCH");
+		expect(JSON.parse(String(configInit.body))).toEqual({ default_policy: {
+			enabled: true,
+			apply_mode: "missing",
+			scan_interval_seconds: 15,
+			priority: 0,
+			websockets: false,
+		} });
+
+		const [policyURL, policyInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+		expect(policyURL).toContain("/defaults");
+		expect(policyInit.method).toBe("PUT");
+		expect(JSON.parse(String(policyInit.body))).toEqual({
 			enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
@@ -189,7 +202,7 @@ describe("management API client", () => {
     vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-    const result = await downloadExport("accounts", "cpa", { provider: "codex", type: "k12", disabled: false });
+    const result = await downloadExport("accounts", "cpa", { mode: "filtered", filters: { provider: "codex", type: "k12", disabled: false } });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/export/accounts?");
@@ -202,6 +215,30 @@ describe("management API client", () => {
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:export");
     expect(result).toEqual({ filename: "cpa-accounts.zip", exported: 8, skipped: 1 });
+  });
+
+  it("posts selected account ids without placing them in the download URL", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": 'attachment; filename="selected.json"',
+        "X-Exported-Accounts": "1",
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:selected"), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    await downloadExport("accounts", "cpa", { mode: "selected", ids: ["auth-2", "auth-1"] });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("format=cpa");
+    expect(url).not.toContain("auth-1");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(String(init.body))).toEqual({ scope: { mode: "selected", ids: ["auth-2", "auth-1"] } });
   });
 });
 

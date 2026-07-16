@@ -24,20 +24,23 @@ behavior in sub2api.
 - First-class row actions for redacted account details, fixed-scope
   single-account editing, and filename-confirmed deletion of eligible physical
   Auth files; the visible **Add account** action reuses the secure converter.
-- Page selection, explicit selected-account scope, and a fixed snapshot of all
-  accounts matching the current filters.
+- Page selection, explicit selected-account scope, selected-account credential
+  downloads, a remembered 20/50/100/200 page-size preference, and a fixed
+  snapshot of all accounts matching the current filters.
 - Quick bulk enable/disable plus opt-in edits for `priority`, `note`, `prefix`,
   `proxy_url`, `websockets`, and custom headers.
-- Persistent default rules for `priority` and `websockets`, with missing-only
-  background reconciliation for existing and newly uploaded Auth files.
+- Persistent default rules for `priority` and `websockets`, stored in CPA's
+  host-owned plugin config so they survive restarts and plugin upgrades, with
+  missing-only reconciliation for existing and newly uploaded Auth files.
 - Explicit, preview-confirmed force sync when an operator deliberately wants
   to overwrite the managed default fields across editable Auth files.
 - Server-side preview with editable, read-only, missing, and physical-file
   counts before any write starts.
 - Bounded asynchronous jobs, per-account results, revision-conflict detection,
   best-effort continuation, and failed-only retry.
-- Explicit target-system credential downloads for filtered accounts, including
-  CPA, sub2api, Cockpit, 9router, Codex, AxonHub, and Codex-Manager formats.
+- Explicit target-system credential downloads for filtered or selected
+  accounts, including CPA, sub2api, Cockpit, 9router, Codex, AxonHub, and
+  Codex-Manager formats.
 - Sanitized JSON, CSV, and JSON Lines reports for batch results.
 - Preview-confirmed account import from pasted textual JSON or mixed multi-file
   JSON, JSON Lines, text, and ZIP selections, with recursive format conversion
@@ -92,20 +95,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.9_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.2.0_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.9_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.2.0_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.9_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.9_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.2.0_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.2.0_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -114,17 +117,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.9.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.9.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.9.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so
+plugins/linux/arm64/cpa-account-config-manager-v0.2.0.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.2.0.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.2.0.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so
 ```
 
 ### 3. Enable the plugin
@@ -141,8 +144,8 @@ plugins:
       priority: 20
 ```
 
-Restart CLIProxyAPI. The Management Center should then show **Account Config
-Manager** in the plugin menu.
+Restart CLIProxyAPI. The Management Center should then show **账号管理** in the
+plugin menu.
 
 The minimal configuration above is sufficient for the standard CLIProxyAPI
 layout. `workers`, `data_dir`, and `management_base_url` are optional
@@ -159,12 +162,20 @@ parameters, fragments, and remote hosts are rejected.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `workers` | `6` | Concurrent account mutations. Values below 1 use 6; values above 16 are clamped to 16. |
-| `data_dir` | `data/cpa-account-config-manager` | Optional directory for sanitized terminal job state, `default-policy.json`, and `usage-snapshots.json`. Override it only when the default working-directory path is not writable or must be mounted persistently. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. |
+| `data_dir` | `data/cpa-account-config-manager` | Optional directory for sanitized terminal job state, the backward-compatible `default-policy.json` policy/scan cache, and `usage-snapshots.json`. Override it when terminal jobs must be retained or the default path is not writable. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. |
 | `management_base_url` | `http://127.0.0.1:8317` | Optional loopback CLIProxyAPI Management API base used by ordinary batch edits and confirmed account deletion. Default-policy reconciliation and force sync use host Auth callbacks instead. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, a loopback-only `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
 
 The `enabled` and `priority` values in the same YAML object are owned by the
 CLIProxyAPI plugin host. Account `priority` is a separate field edited through
 the operator UI.
+
+The operator UI automatically shallow-patches a non-secret `default_policy`
+object into `plugins.configs.cpa-account-config-manager`. CPA persists that
+object in its own `config.yaml`, so the enabled state, managed fields, values,
+and scan interval survive process restarts and plugin-version replacement.
+Manual YAML editing is not required. The private `default-policy.json` remains
+a backward-compatible fallback and scan-summary cache; configured policy is
+authoritative when both copies exist.
 
 ## Permissions
 
@@ -173,9 +184,9 @@ The CLIProxyAPI process needs:
 - read and execute access to the platform library;
 - read/write access to the CLIProxyAPI Auth directory, because CLIProxyAPI's
   canonical Management endpoints persist the requested account fields;
-- read/write access to the effective `data_dir` when terminal job state, a
-  default policy, or sanitized usage aggregates are persisted. The default path
-  is used when no override is configured.
+- read/write access to the effective `data_dir` when terminal job state must be
+  retained. Policy scan-cache and sanitized usage snapshots use the same path
+  on a best-effort basis; the durable policy itself lives in CPA config.
 
 The plugin creates `data_dir` with mode `0700` where supported and writes
 `results.json`, `default-policy.json`, and `usage-snapshots.json` through
@@ -187,17 +198,19 @@ where practical.
 
 ## Operator Workflow
 
-1. Open **Account Config Manager** in the CLIProxyAPI Management Center.
+1. Open **账号管理** in the CLIProxyAPI Management Center.
 2. If the official panel already remembered its Management Key, the embedded
    same-origin page reuses that session. Otherwise enter the CPA address and
    Management Key; the manually entered key stays in browser memory only.
 3. Filter the account list and select either explicit editable rows or
    **All filtered**.
-4. Choose bulk enable, bulk disable, or batch edit. Batch-edit fields are
+4. Use **Export selected** to download only the checked account IDs, or use the
+   header download action for all current filter matches.
+5. Choose bulk enable, bulk disable, or batch edit. Batch-edit fields are
    omitted unless their checkbox is enabled.
-5. Review the server-created target snapshot, read-only/missing counts, patch
+6. Review the server-created target snapshot, read-only/missing counts, patch
    field names, and warnings.
-6. Start the job and inspect per-account progress. After a mixed result, use
+7. Start the job and inspect per-account progress. After a mixed result, use
    **Retry failed only** to target only failed or conflicting accounts.
 
 The preview expires after five minutes. Starting a preview consumes that fixed
@@ -277,11 +290,13 @@ the final name check and save.
 
 ## Account Credential and Result Export
 
-Account downloads retain the active filters, including the type filter, and
-require an explicit target format selected in the download dialog. CPA exports
-preserve each matching file-backed Auth JSON object. One
-account downloads as `email.json`; multiple accounts download as a ZIP with one
-unique, path-safe `email.json` entry per account.
+Account downloads use either the active filters, including the type filter, or
+a fixed set of checked account IDs. Both paths require an explicit target
+format in the download dialog. Selected IDs are sent in an authenticated POST
+body rather than a potentially oversized URL. CPA exports preserve each
+matching file-backed Auth JSON object. One account downloads as `email.json`;
+multiple accounts download as a ZIP with one unique, path-safe `email.json`
+entry per account.
 
 | Account format | Shape |
 | --- | --- |
@@ -330,10 +345,11 @@ rejects revision conflicts, and overwrites only `priority` and/or `websockets`
 selected by the policy. It never changes `disabled`, proxy settings, headers,
 notes, prefixes, tokens, cookies, credentials, or other unknown fields.
 
-Saving a policy requires the effective `data_dir` to be writable, but the
-`data_dir` config field itself is optional when its default path works.
-`management_base_url` is not used by automatic scans or force sync; it remains
-an optional override for ordinary batch edits.
+Saving through the operator UI first writes the complete non-secret policy to
+CPA's host-owned plugin config and then applies it immediately in the plugin.
+The local policy/scan cache is best-effort and does not block saving when
+`data_dir` is unavailable. `management_base_url` is not used by automatic
+scans or force sync; it remains an optional override for ordinary batch edits.
 
 ## Editable Fields
 
@@ -450,7 +466,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -461,7 +477,7 @@ upgrading the native library.
 
 ## Management Routes
 
-All 17 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 18 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
 - `POST /accounts/delete/preview`
@@ -471,6 +487,7 @@ All 17 privileged routes are exact paths below `/v0/management/plugins/cpa-accou
 - `GET /batch/status`
 - `POST /batch/retry`
 - `GET /export/accounts`
+- `POST /export/accounts`
 - `GET /export/results`
 - `POST /import/preview`
 - `POST /import/start`
@@ -497,7 +514,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.9
+make package VERSION=0.2.0
 ```
 
 For a local build that should publish a repository link in plugin metadata,

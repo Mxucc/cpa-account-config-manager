@@ -6,9 +6,11 @@ import { ExportDialog } from "./ExportDialog";
 it("selects a target credential format for account downloads", async () => {
   const user = userEvent.setup();
   const onExport = vi.fn();
-  render(<ExportDialog kind="accounts" count={36} exporting={false} onClose={() => undefined} onExport={onExport} />);
+  render(<ExportDialog kind="accounts" count={2} scopeLabel="已选账号" exporting={false} onClose={() => undefined} onExport={onExport} />);
 
   expect(screen.getByRole("dialog", { name: "下载账号凭据" })).toBeInTheDocument();
+  expect(screen.getByText("已选账号")).toBeInTheDocument();
+  expect(screen.getByText("2")).toBeInTheDocument();
   expect(screen.getByText("包含凭据")).toBeInTheDocument();
   expect(screen.getByRole("radio", { name: "CPA 多账号 ZIP .json / .zip" })).toBeChecked();
   expect(screen.queryByRole("radio", { name: /CSV/ })).not.toBeInTheDocument();

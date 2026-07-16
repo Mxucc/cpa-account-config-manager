@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
 import { _resetSessionForTest } from "./store/session";
 
 const account = {
@@ -100,10 +101,15 @@ describe("primary account batch flow", () => {
 
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "账号管理" })).toBeInTheDocument();
+    const githubLink = screen.getByRole("link", { name: "打开项目 GitHub" });
+    expect(githubLink).toHaveAttribute("href", "https://github.com/Mxucc/cpa-account-config-manager/");
+    expect(githubLink).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.queryByRole("button", { name: "退出管理认证" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "账号筛选" })).toBeInTheDocument();
     expect(screen.getByText("账号列表")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
     expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
+    expect(screen.getByLabelText("每页账号数")).toHaveValue("50");
     const resetFilters = screen.getByRole("button", { name: "重置" });
     const providerFilter = screen.getByLabelText("Provider");
     expect(resetFilters).toBeDisabled();
@@ -120,6 +126,10 @@ describe("primary account batch flow", () => {
     expect(resetFilters).toBeDisabled();
 
     await user.click(screen.getByLabelText("选择 operator@example.com"));
+    await user.click(screen.getByRole("button", { name: "导出选中账号" }));
+    expect(await screen.findByRole("dialog", { name: "下载账号凭据" })).toBeInTheDocument();
+    expect(screen.getByText("已选账号")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("关闭"));
     await user.click(screen.getByRole("button", { name: "批量编辑" }));
     await user.click(screen.getByLabelText("Note"));
     await user.type(screen.getByLabelText("Note 值"), "rotated pool");
@@ -145,6 +155,45 @@ describe("primary account batch flow", () => {
     expect(body.patch).toEqual({ note: "rotated pool" });
     await waitFor(() => expect(new Headers(previewRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret"));
     expect(localStorage.getItem("management-secret")).toBeNull();
+  });
+
+  it("restores and persists the selected account page size", async () => {
+    const user = userEvent.setup();
+    const requests: string[] = [];
+    writeAccountPageSize(100);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      const parsed = new URL(url, "http://localhost");
+      const page = Number(parsed.searchParams.get("page") || 1);
+      const pageSize = Number(parsed.searchParams.get("page_size") || 50);
+      return jsonResponse({ accounts: [account], total: 400, page, page_size: pageSize, pages: Math.ceil(400 / pageSize) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    const pageSizeSelect = screen.getByLabelText("每页账号数");
+    expect(pageSizeSelect).toHaveValue("100");
+    await waitFor(() => expect(requests.some((url) => url.includes("page=1") && url.includes("page_size=100"))).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await waitFor(() => expect(requests.some((url) => url.includes("page=2") && url.includes("page_size=100"))).toBe(true));
+    await user.selectOptions(pageSizeSelect, "200");
+
+    await waitFor(() => expect(requests.some((url) => url.includes("page=1") && url.includes("page_size=200"))).toBe(true));
+    expect(pageSizeSelect).toHaveValue("200");
+    expect(localStorage.getItem(ACCOUNT_PAGE_SIZE_STORAGE_KEY)).toBe("200");
   });
 
   it("views, edits, and deletes one account from its row without changing bulk selection", async () => {
@@ -461,6 +510,9 @@ describe("primary account batch flow", () => {
         forceStatusCalls += 1;
         return jsonResponse(forceJob(false, !url.includes("light=1")));
       }
+      if (url.endsWith("/config") && init.method === "PATCH") {
+        return jsonResponse({ status: "ok" });
+      }
       if (url.endsWith("/defaults") && init.method === "PUT") {
         const policy = JSON.parse(String(init.body));
         return jsonResponse({ ...policySnapshot, policy });
@@ -496,6 +548,9 @@ describe("primary account batch flow", () => {
 
     const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");
     expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false });
+    const configRequest = requests.find(({ url, init }) => url.endsWith("/config") && init.method === "PATCH");
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false } });
+    expect(requests.indexOf(configRequest!)).toBeLessThan(requests.indexOf(putRequest!));
     expect(localStorage.length).toBe(0);
   });
 

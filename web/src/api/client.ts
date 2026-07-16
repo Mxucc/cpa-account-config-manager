@@ -130,6 +130,10 @@ export async function getDefaultPolicy(): Promise<PolicySnapshot> {
 }
 
 export async function saveDefaultPolicy(policy: DefaultPolicy): Promise<PolicySnapshot> {
+	await request<{ status: string }>("/config", {
+		method: "PATCH",
+		body: JSON.stringify({ default_policy: policy }),
+	});
 	return request<PolicySnapshot>("/defaults", {
 		method: "PUT",
 		body: JSON.stringify(policy),
@@ -179,15 +183,20 @@ export interface ExportDownloadResult {
   skipped?: number;
 }
 
-export async function downloadExport(kind: "accounts", format: AccountExportFormat, filters?: AccountFilters): Promise<ExportDownloadResult>;
+export async function downloadExport(kind: "accounts", format: AccountExportFormat, scope?: TargetScope): Promise<ExportDownloadResult>;
 export async function downloadExport(kind: "results", format: ResultExportFormat, filters?: undefined): Promise<ExportDownloadResult>;
-export async function downloadExport(kind: "accounts" | "results", format: ExportFormat, filters?: AccountFilters): Promise<ExportDownloadResult> {
+export async function downloadExport(kind: "accounts" | "results", format: ExportFormat, scope?: TargetScope): Promise<ExportDownloadResult> {
   const session = getSession();
   if (!session) throw new APIError(401, "Management Key 未设置");
-  const query = kind === "accounts" && filters ? filtersQuery(filters) : new URLSearchParams();
+  const query = kind === "accounts" && scope?.mode === "filtered" ? filtersQuery(scope.filters ?? {}) : new URLSearchParams();
   query.set("format", format);
+  const headers = new Headers({ Authorization: `Bearer ${session.managementKey}` });
+  const selected = kind === "accounts" && scope?.mode === "selected";
+  if (selected) headers.set("Content-Type", "application/json");
   const response = await fetch(buildURL(`/export/${kind}`, query), {
-    headers: { Authorization: `Bearer ${session.managementKey}` },
+    method: selected ? "POST" : "GET",
+    headers,
+    ...(selected ? { body: JSON.stringify({ scope }) } : {}),
   });
   if (!response.ok) {
     let message = `导出失败 (${response.status})`;

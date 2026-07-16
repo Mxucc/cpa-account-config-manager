@@ -24,16 +24,18 @@ const (
 	policyFieldPriority   = "priority"
 	policyFieldWebsockets = "websockets"
 	policyMutationOwner   = "default-policy-scan"
+	policyLocalStoreError = "default policy scan status could not be persisted locally"
+	configuredPolicyError = "configured default policy could not be loaded"
 )
 
 var ErrPolicyStorageUnavailable = errors.New("default policy storage is unavailable; configure data_dir to a writable directory")
 
 type DefaultPolicy struct {
-	Enabled             bool   `json:"enabled"`
-	ApplyMode           string `json:"apply_mode"`
-	ScanIntervalSeconds int    `json:"scan_interval_seconds"`
-	Priority            *int   `json:"priority"`
-	Websockets          *bool  `json:"websockets"`
+	Enabled             bool   `json:"enabled" yaml:"enabled"`
+	ApplyMode           string `json:"apply_mode" yaml:"apply_mode"`
+	ScanIntervalSeconds int    `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
+	Priority            *int   `json:"priority" yaml:"priority"`
+	Websockets          *bool  `json:"websockets" yaml:"websockets"`
 }
 
 type PolicyScanSummary struct {
@@ -116,6 +118,7 @@ func (e *PolicyEngine) Configure(config Config) {
 	}
 	config = normalizeConfig(config)
 	storePath := policyStorePath(config.DataDir)
+	configuredPolicy, hasConfiguredPolicy, errConfiguredPolicy := policyFromConfig(config)
 
 	e.operationMu.Lock()
 	e.mu.RLock()
@@ -125,6 +128,21 @@ func (e *PolicyEngine) Configure(config Config) {
 	if sameStore {
 		e.mu.Lock()
 		e.config = config
+		if hasConfiguredPolicy {
+			if errConfiguredPolicy != nil {
+				e.policy = normalizeDefaultPolicy(DefaultPolicy{})
+				e.lastScan.Error = configuredPolicyError
+				e.fingerprints = make(map[string]authFingerprint)
+			} else {
+				if e.lastScan.Error == configuredPolicyError {
+					e.lastScan.Error = ""
+				}
+				if !defaultPolicyEqual(e.policy, configuredPolicy) {
+					e.policy = configuredPolicy
+					e.fingerprints = make(map[string]authFingerprint)
+				}
+			}
+		}
 		e.mu.Unlock()
 		e.operationMu.Unlock()
 		e.requestScan()
@@ -133,12 +151,23 @@ func (e *PolicyEngine) Configure(config Config) {
 
 	policy := normalizeDefaultPolicy(DefaultPolicy{})
 	lastScan := PolicyScanSummary{}
-	loadedPolicy, loadedScan, errLoad := loadPolicyState(storePath)
-	if errLoad == nil {
-		policy = loadedPolicy
-		lastScan = loadedScan
-	} else if !errors.Is(errLoad, os.ErrNotExist) {
-		lastScan.Error = "stored default policy could not be loaded"
+	if hasConfiguredPolicy {
+		if errConfiguredPolicy != nil {
+			lastScan.Error = configuredPolicyError
+		} else {
+			policy = configuredPolicy
+			if _, loadedScan, errLoad := loadPolicyState(storePath); errLoad == nil {
+				lastScan = loadedScan
+			}
+		}
+	} else {
+		loadedPolicy, loadedScan, errLoad := loadPolicyState(storePath)
+		if errLoad == nil {
+			policy = loadedPolicy
+			lastScan = loadedScan
+		} else if !errors.Is(errLoad, os.ErrNotExist) {
+			lastScan.Error = "stored default policy could not be loaded"
+		}
 	}
 
 	e.mu.Lock()
@@ -161,6 +190,17 @@ func (e *PolicyEngine) Configure(config Config) {
 	if !start {
 		e.requestScan()
 	}
+}
+
+func policyFromConfig(config Config) (DefaultPolicy, bool, error) {
+	if config.DefaultPolicy == nil {
+		return DefaultPolicy{}, false, nil
+	}
+	policy, errValidate := validateDefaultPolicy(*config.DefaultPolicy)
+	if errValidate != nil {
+		return DefaultPolicy{}, true, errValidate
+	}
+	return policy, true, nil
 }
 
 func (e *PolicyEngine) Snapshot() PolicySnapshot {
@@ -196,13 +236,15 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 		e.operationMu.Unlock()
 		return DefaultPolicy{}, ErrPolicyStorageUnavailable
 	}
-	if errSave := savePolicyState(storePath, normalized, lastScan); errSave != nil {
-		e.operationMu.Unlock()
-		return DefaultPolicy{}, ErrPolicyStorageUnavailable
-	}
+	errSave := savePolicyState(storePath, normalized, lastScan)
 	e.mu.Lock()
 	e.policy = normalized
 	e.fingerprints = make(map[string]authFingerprint)
+	if errSave != nil {
+		e.lastScan.Error = policyLocalStoreError
+	} else if e.lastScan.Error == policyLocalStoreError {
+		e.lastScan.Error = ""
+	}
 	e.mu.Unlock()
 	e.operationMu.Unlock()
 
@@ -323,7 +365,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	}
 	if errSave := savePolicyState(storePath, currentPolicy, lastScan); errSave != nil {
 		e.mu.Lock()
-		e.lastScan.Error = "default policy status could not be persisted"
+		e.lastScan.Error = policyLocalStoreError
 		e.mu.Unlock()
 	}
 	return false
@@ -477,6 +519,13 @@ func cloneDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
 		clone.Websockets = &value
 	}
 	return clone
+}
+
+func defaultPolicyEqual(left, right DefaultPolicy) bool {
+	left = normalizeDefaultPolicy(left)
+	right = normalizeDefaultPolicy(right)
+	return left.Enabled == right.Enabled && left.ApplyMode == right.ApplyMode &&
+		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right)
 }
 
 func clampPolicyScanInterval(seconds int) int {

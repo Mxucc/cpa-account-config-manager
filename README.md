@@ -42,8 +42,9 @@ behavior in sub2api.
 - Preview-confirmed account import from pasted textual JSON or mixed multi-file
   JSON, JSON Lines, text, and ZIP selections, with recursive format conversion
   into CPA Codex Auth JSON and no overwrite of existing Auth files.
-- Embedded React UI with official Management Center theme and remembered-auth
-  integration.
+- Embedded React UI aligned with the Management Center page hierarchy,
+  controls, dense tables, dialogs, and light/white/dark themes, with
+  remembered-auth integration.
 
 The plugin intentionally does not expose token refresh, OAuth reauthorization,
 unrestricted credential editing, active provider quota probing, or scheduling.
@@ -91,20 +92,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.8_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.9_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.8_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.9_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.8_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.8_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.9_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.9_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -113,17 +114,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.8.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.8.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.8.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.9.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.9.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.9.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so
 ```
 
 ### 3. Enable the plugin
@@ -449,7 +450,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -496,7 +497,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.8
+make package VERSION=0.1.9
 ```
 
 For a local build that should publish a repository link in plugin metadata,

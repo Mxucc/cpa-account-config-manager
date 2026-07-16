@@ -99,6 +99,9 @@ describe("primary account batch flow", () => {
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
 
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "账号管理" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "账号筛选" })).toBeInTheDocument();
+    expect(screen.getByText("账号列表")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
     expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
     const resetFilters = screen.getByRole("button", { name: "重置" });

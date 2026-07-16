@@ -20,7 +20,7 @@
 - 把当前筛选账号直接下载为 CPA、sub2api、Cockpit、9router、Codex、AxonHub 或 Codex-Manager 凭据文件。
 - 把批量任务结果导出为脱敏 JSON、CSV 或 JSON Lines 报表。
 - 支持粘贴文本 JSON，或一次混合选择多份 JSON、JSON Lines、TXT、ZIP 文件；服务端递归识别多种账号结构，转换成 CPA Codex Auth JSON，预览确认后导入且不覆盖现有 Auth 文件。
-- React 单文件内嵌界面，支持官方 Management Center 的主题和同源认证状态。
+- React 单文件内嵌界面，页面层级、控件、密集表格、弹窗以及浅色、纯白、深色主题均与 Management Center 保持一致，并支持同源认证状态。
 
 插件仍不提供刷新 Token、OAuth 重新授权、无限制凭据编辑、主动供应商额度巡检和调度功能。
 
@@ -58,20 +58,20 @@ Token 累计和 Codex 额度进度还会使用原生 Usage Plugin 的 `usage.han
 Linux：
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.8_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.9_linux_amd64.zip.sha256
 ```
 
 macOS：
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.8_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.9_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.8_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.8_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.9_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.9_windows_amd64.zip.sha256
 ```
 
 ### 2. 放置动态库
@@ -79,16 +79,16 @@ Get-Content .\cpa-account-config-manager_0.1.8_windows_amd64.zip.sha256
 解压后，将动态库放进 CLIProxyAPI 插件目录。推荐使用宿主优先扫描的平台子目录：
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.8.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.8.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.8.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.9.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.9.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.9.dll
 ```
 
 Linux/macOS 上确保 CLIProxyAPI 服务账号可读、可执行：
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so
 ```
 
 ### 3. 启用插件
@@ -262,7 +262,7 @@ CLIProxyAPI 进程需要：
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.9.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -301,7 +301,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.8
+make package VERSION=0.1.9
 ```
 
 如果本地构建需要在插件元数据中显示仓库链接，可给 `make build` 或 `make package` 传入 `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager`。GitHub Actions 会自动注入实际仓库地址。

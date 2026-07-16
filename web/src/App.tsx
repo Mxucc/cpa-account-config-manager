@@ -704,68 +704,93 @@ export default function App() {
 
   return (
     <div className={`app-shell ${panelOpen ? "with-job-panel" : ""}`}>
-      <header className="app-header">
-        <div className="brand-block">
-          <span className="brand-icon"><FileCog size={21} /></span>
-          <div><h1>CPA Account Config Manager</h1><span>ACCOUNT CONFIGURATION</span></div>
-        </div>
-        <div className="header-status">
-          <span><ShieldCheck size={15} />{data.total} 个账号</span>
-          {job?.id ? <button type="button" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={15} />{job.running ? `${job.done}/${job.total}` : jobStateLabel(job.state)}</button> : null}
-          {forceJob?.id ? <button type="button" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={15} />{forceJob.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel(forceJob.state)}</button> : null}
-        </div>
-        <div className="header-actions">
-          {job?.id ? <IconButton className="mobile-job-action" label="打开批量任务" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
-          {forceJob?.id ? <IconButton className="mobile-job-action" label="打开强制同步任务" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
-          <button className="button button-primary header-add-account" type="button" title="添加账号" aria-label="添加账号" onClick={openImport}><UserPlus size={16} /><span>添加账号</span></button>
-          <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
-          <IconButton className="export-action" label="下载筛选账号凭据" onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
-          <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
-          <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
-        </div>
-      </header>
+      <div className="page-frame">
+        <header className="app-header">
+          <div className="brand-block">
+            <span className="brand-icon"><FileCog size={21} /></span>
+            <div><h1>账号管理</h1><span>CPA Account Config Manager</span></div>
+          </div>
+          <div className="header-status">
+            <span><ShieldCheck size={15} />{data.total} 个账号</span>
+            {job?.id ? <button type="button" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={15} />{job.running ? `${job.done}/${job.total}` : jobStateLabel(job.state)}</button> : null}
+            {forceJob?.id ? <button type="button" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={15} />{forceJob.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel(forceJob.state)}</button> : null}
+          </div>
+          <div className="header-actions">
+            {job?.id ? <IconButton className="mobile-job-action" label="打开批量任务" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
+            {forceJob?.id ? <IconButton className="mobile-job-action" label="打开强制同步任务" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
+            <button className="button button-primary header-add-account" type="button" title="添加账号" aria-label="添加账号" onClick={openImport}><UserPlus size={16} /><span>添加账号</span></button>
+            <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
+            <IconButton className="export-action" label="下载筛选账号凭据" onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
+            <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
+            <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
+          </div>
+        </header>
 
-      <section className="filter-bar" aria-label="账号筛选">
-        <label className="search-box">
-          <Search size={16} />
-          <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索账号、邮箱、文件名、类型" aria-label="搜索账号" />
-          {searchDraft ? <button type="button" aria-label="清空搜索" onClick={() => setSearchDraft("")}><X size={14} /></button> : null}
-        </label>
-        <input list="provider-options" value={filters.provider} onChange={(event) => updateFilter("provider", event.target.value)} placeholder="全部 Provider" aria-label="Provider" />
-        <datalist id="provider-options">
-          {providerOptions.map((provider) => <option key={provider} value={provider} />)}
-        </datalist>
-        <input list="type-options" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)} placeholder="全部 Type" aria-label="Type" />
-        <datalist id="type-options">
-          {typeOptions.map((type) => <option key={type} value={type} />)}
-        </datalist>
-        <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value)} aria-label="状态">
-          <option value="">全部状态</option>
-          <option value="active">active</option>
-          <option value="disabled">disabled</option>
-          <option value="error">error</option>
-          <option value="unavailable">unavailable</option>
-        </select>
-        <select value={filters.disabled} onChange={(event) => updateFilter("disabled", event.target.value)} aria-label="启用状态">
-          <option value="">启用与禁用</option>
-          <option value="false">仅启用</option>
-          <option value="true">仅禁用</option>
-        </select>
-        <select value={filters.editability} onChange={(event) => updateFilter("editability", event.target.value)} aria-label="可编辑性">
-          <option value="">全部来源</option>
-          <option value="editable">可编辑</option>
-          <option value="read_only">只读</option>
-        </select>
-        <button className="button button-quiet reset-filters" type="button" disabled={!hasActiveFilters} onClick={() => { setFilters(emptyFilters); setSearchDraft(""); setPage(1); setSelected(new Set()); }}>
-          重置
-        </button>
-      </section>
+        <section className="account-panel">
+          <section className="filter-bar" aria-label="账号筛选">
+            <div className="filter-heading">
+              <div><strong>筛选账号</strong><span>{hasActiveFilters ? "已应用筛选条件" : "全部账号"}</span></div>
+              <button className="button button-quiet reset-filters" type="button" disabled={!hasActiveFilters} onClick={() => { setFilters(emptyFilters); setSearchDraft(""); setPage(1); setSelected(new Set()); }}>
+                重置
+              </button>
+            </div>
+            <div className="filter-grid">
+              <div className="filter-control filter-search-control">
+                <span>搜索</span>
+                <label className="search-box">
+                  <Search size={16} />
+                  <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="账号、邮箱、文件名或类型" aria-label="搜索账号" />
+                  {searchDraft ? <button type="button" aria-label="清空搜索" onClick={() => setSearchDraft("")}><X size={14} /></button> : null}
+                </label>
+              </div>
+              <label className="filter-control">
+                <span>Provider</span>
+                <input list="provider-options" value={filters.provider} onChange={(event) => updateFilter("provider", event.target.value)} placeholder="全部 Provider" aria-label="Provider" />
+              </label>
+              <datalist id="provider-options">
+                {providerOptions.map((provider) => <option key={provider} value={provider} />)}
+              </datalist>
+              <label className="filter-control">
+                <span>Type</span>
+                <input list="type-options" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)} placeholder="全部 Type" aria-label="Type" />
+              </label>
+              <datalist id="type-options">
+                {typeOptions.map((type) => <option key={type} value={type} />)}
+              </datalist>
+              <label className="filter-control">
+                <span>状态</span>
+                <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value)} aria-label="状态">
+                  <option value="">全部状态</option>
+                  <option value="active">active</option>
+                  <option value="disabled">disabled</option>
+                  <option value="error">error</option>
+                  <option value="unavailable">unavailable</option>
+                </select>
+              </label>
+              <label className="filter-control">
+                <span>启用状态</span>
+                <select value={filters.disabled} onChange={(event) => updateFilter("disabled", event.target.value)} aria-label="启用状态">
+                  <option value="">启用与禁用</option>
+                  <option value="false">仅启用</option>
+                  <option value="true">仅禁用</option>
+                </select>
+              </label>
+              <label className="filter-control">
+                <span>可编辑性</span>
+                <select value={filters.editability} onChange={(event) => updateFilter("editability", event.target.value)} aria-label="可编辑性">
+                  <option value="">全部来源</option>
+                  <option value="editable">可编辑</option>
+                  <option value="read_only">只读</option>
+                </select>
+              </label>
+            </div>
+          </section>
 
-      {notice ? <div className="notice-bar" role="alert"><span>{notice}</span><IconButton label="关闭提示" onClick={() => setNotice("")}><X size={15} /></IconButton></div> : null}
+          {notice ? <div className="notice-bar" role="alert"><span>{notice}</span><IconButton label="关闭提示" onClick={() => setNotice("")}><X size={15} /></IconButton></div> : null}
 
-      <main className="account-workspace">
+          <main className="account-workspace">
         <div className="table-meta">
-          <span>账号列表</span>
+          <div className="table-title"><span>账号列表</span><strong>{data.total}</strong></div>
           <span>{data.total} 条记录 · 第 {data.page || 1}/{data.pages || 1} 页</span>
         </div>
         <div className="table-scroll">
@@ -823,7 +848,9 @@ export default function App() {
           <strong>{page}</strong>
           <IconButton label="下一页" disabled={data.pages === 0 || page >= data.pages} onClick={() => setPage((value) => value + 1)}><ChevronRight size={17} /></IconButton>
         </div>
-      </main>
+          </main>
+        </section>
+      </div>
 
       {data.total > 0 ? (
         <footer className="bulk-bar">

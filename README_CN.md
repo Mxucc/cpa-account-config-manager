@@ -330,6 +330,10 @@ VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 
 推送 `vX.Y.Z` Tag 后，GitHub Actions 会执行完整验证，并在原生 Runner 上构建四个平台，注入 `X.Y.Z` 插件版本。每个平台 ZIP 根目录包含一个 `<id>-v<version>.<ext>` 动态库，同时发布对应 `.zip.sha256` 和插件商店需要的聚合 `checksums.txt`。
 
+## 友链
+
+- [LINUX DO](https://linux.do/) - 我们认可并感谢的社区。
+
 ## License
 
 MIT。参见 [LICENSE](LICENSE) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

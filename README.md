@@ -556,6 +556,10 @@ and publishes:
 - one matching `.zip.sha256` file per archive;
 - aggregate `checksums.txt` required by the CLIProxyAPI plugin store.
 
+## Friends
+
+- [LINUX DO](https://linux.do/) - A community we recognize and appreciate.
+
 ## License
 
 MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

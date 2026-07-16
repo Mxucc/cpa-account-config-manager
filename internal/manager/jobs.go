@@ -447,6 +447,9 @@ func (e *JobEngine) finish(run jobRun, interrupted bool) {
 	if e.snapshot.ID != run.jobID {
 		return
 	}
+	// Release the shared write slot before publishing a terminal snapshot so an
+	// immediate failed-only retry cannot observe an idle job with a busy slot.
+	e.mutations.Release(run.jobID)
 	e.running = false
 	e.cancel = nil
 	e.snapshot.Running = false

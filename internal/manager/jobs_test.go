@@ -117,6 +117,36 @@ func TestJobEngineContinuesAfterFailurePersistsRedactedStateAndRetriesFailedOnly
 	}
 }
 
+func TestJobEngineFinishReleasesMutationBeforePublishingTerminalState(t *testing.T) {
+	mutations := NewMutationCoordinator()
+	engine := NewJobEngineWithCoordinator(NewAccountService(&fakeAuthHost{}), mutations)
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+
+	const jobID = "job-release-order"
+	if !mutations.TryAcquire(jobID) {
+		t.Fatal("failed to acquire the initial mutation slot")
+	}
+	engine.mu.Lock()
+	engine.running = true
+	engine.snapshot = JobSnapshot{
+		ID:      jobID,
+		State:   JobStateRunning,
+		Running: true,
+		Results: []JobResult{{ID: "a", Status: ResultSucceeded}},
+	}
+	engine.mu.Unlock()
+
+	engine.finish(jobRun{jobID: jobID}, false)
+	if snapshot := engine.Snapshot(true); snapshot.Running || snapshot.State != JobStateCompleted {
+		t.Fatalf("terminal snapshot = %#v", snapshot)
+	}
+	if !mutations.TryAcquire("next-job") {
+		t.Fatal("terminal snapshot was visible before the mutation slot was released")
+	}
+	mutations.Release("next-job")
+}
+
 func TestJobEngineReportsRevisionConflictWithoutWriting(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{AuthIndex: "a", Name: "a.json", Provider: "codex", Source: "file", Path: "/auths/a.json"}},

@@ -3,6 +3,7 @@ import http from "node:http";
 const port = Number(process.env.MOCK_CPA_PORT || 8318);
 const managementKey = process.env.MOCK_CPA_KEY || "demo-key";
 const previews = new Map();
+const deletePreviews = new Map();
 let activeJob = null;
 const importPreviews = new Map();
 const forcePreviews = new Map();
@@ -489,6 +490,49 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "GET" && url.pathname.endsWith("/plugins/cpa-account-config-manager/accounts")) {
     return json(response, 200, listFromURL(url));
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/accounts/delete/preview")) {
+    const body = await readJSON(request);
+    const account = accounts.find((candidate) => candidate.id === body.id);
+    if (!account) return json(response, 404, { error: "account was not found" });
+    if (!account.editable || account.runtime_only || account.source !== "file") {
+      return json(response, 400, { error: "account is read-only and cannot be deleted" });
+    }
+    const previewID = crypto.randomUUID();
+    const preview = {
+      id: previewID,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+      account: {
+        id: account.id,
+        name: account.name,
+        provider: account.provider,
+        type: account.type,
+        plan_type: account.plan_type,
+        label: account.label,
+        email: account.email,
+        status: account.status,
+        source: account.source,
+      },
+    };
+    deletePreviews.set(previewID, { accountID: account.id, name: account.name, preview });
+    return json(response, 200, preview);
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/accounts/delete/start")) {
+    const body = await readJSON(request);
+    const stored = deletePreviews.get(body.preview_id);
+    if (!stored) return json(response, 404, { error: "delete preview not found" });
+    const accountIndex = accounts.findIndex((candidate) => candidate.id === stored.accountID && candidate.name === stored.name);
+    if (accountIndex < 0 || !accounts[accountIndex].editable) {
+      return json(response, 409, { error: "account changed after delete preview" });
+    }
+    accounts.splice(accountIndex, 1);
+    deletePreviews.delete(body.preview_id);
+    return json(response, 200, {
+      status: "deleted",
+      deleted_at: new Date().toISOString(),
+      account: stored.preview.account,
+    });
   }
   if (request.method === "POST" && url.pathname.endsWith("/batch/preview")) {
     const body = await readJSON(request);

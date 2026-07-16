@@ -4,8 +4,9 @@
 
 `cpa-account-config-manager` is a standalone native plugin for
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It provides a
-dense account list and safe, previewed batch edits for account metadata that
-would otherwise require repetitive Auth JSON changes.
+dense account list, in-plugin account creation/details/editing/deletion, and
+safe previewed batch edits that would otherwise require switching pages or
+repetitive Auth JSON changes.
 
 The plugin is modeled on the native plugin and background-job architecture of
 [`ywddd/grok-inspection`](https://github.com/ywddd/grok-inspection), while its
@@ -20,6 +21,9 @@ behavior in sub2api.
 - Passive per-account activity and usage from CPA native data: cumulative and
   recent request counts, cumulative Token counters, and Codex 5-hour/7-day
   quota progress when the upstream response headers are available.
+- First-class row actions for redacted account details, fixed-scope
+  single-account editing, and filename-confirmed deletion of eligible physical
+  Auth files; the visible **Add account** action reuses the secure converter.
 - Page selection, explicit selected-account scope, and a fixed snapshot of all
   accounts matching the current filters.
 - Quick bulk enable/disable plus opt-in edits for `priority`, `note`, `prefix`,
@@ -41,9 +45,8 @@ behavior in sub2api.
 - Embedded React UI with official Management Center theme and remembered-auth
   integration.
 
-The MVP intentionally does not expose account deletion, token refresh, OAuth
-reauthorization, unrestricted credential editing, active provider quota
-probing, or scheduling.
+The plugin intentionally does not expose token refresh, OAuth reauthorization,
+unrestricted credential editing, active provider quota probing, or scheduling.
 
 ## Compatibility
 
@@ -53,7 +56,9 @@ CLIProxyAPI build that provides:
 - native plugin discovery and Management/resource routes;
 - `host.auth.list`, `host.auth.get`, and `host.auth.save` callbacks;
 - `PATCH /v0/management/auth-files/status`;
-- `PATCH /v0/management/auth-files/fields`.
+- `PATCH /v0/management/auth-files/fields`;
+- authenticated `DELETE /v0/management/auth-files?name=<file.json>` for
+  confirmed account deletion.
 
 Token totals and Codex quota bars additionally use the native Usage Plugin
 `usage.handle` callback. On a host that does not dispatch usage records, the
@@ -86,20 +91,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.1.7_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.1.8_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.1.7_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.1.8_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.1.7_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.1.7_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.1.8_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.1.8_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -108,17 +113,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so
-plugins/linux/arm64/cpa-account-config-manager-v0.1.7.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.1.7.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.1.7.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so
+plugins/linux/arm64/cpa-account-config-manager-v0.1.8.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.1.8.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.1.8.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so
 ```
 
 ### 3. Enable the plugin
@@ -154,7 +159,7 @@ parameters, fragments, and remote hosts are rejected.
 | --- | --- | --- |
 | `workers` | `6` | Concurrent account mutations. Values below 1 use 6; values above 16 are clamped to 16. |
 | `data_dir` | `data/cpa-account-config-manager` | Optional directory for sanitized terminal job state, `default-policy.json`, and `usage-snapshots.json`. Override it only when the default working-directory path is not writable or must be mounted persistently. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. |
-| `management_base_url` | `http://127.0.0.1:8317` | Optional loopback CLIProxyAPI Management API base used by ordinary batch edits. Default-policy reconciliation and force sync use host Auth callbacks instead. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, a loopback-only `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
+| `management_base_url` | `http://127.0.0.1:8317` | Optional loopback CLIProxyAPI Management API base used by ordinary batch edits and confirmed account deletion. Default-policy reconciliation and force sync use host Auth callbacks instead. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, a loopback-only `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
 
 The `enabled` and `priority` values in the same YAML object are owned by the
 CLIProxyAPI plugin host. Account `priority` is a separate field edited through
@@ -198,9 +203,34 @@ The preview expires after five minutes. Starting a preview consumes that fixed
 snapshot, so accounts that begin matching the filter later are not silently
 added.
 
+## Account CRUD
+
+- **Add:** use the visible **Add account** toolbar action. It accepts pasted
+  text JSON, mixed files, and ZIP archives through the conversion/import flow
+  described below.
+- **View:** the eye action opens an allow-listed detail view containing account
+  identity, filename, provider/type, status, routing configuration, redacted
+  proxy address, header names, request/usage counters, timestamps, and
+  editability. Raw Auth JSON and credential values are never requested by the
+  browser.
+- **Edit:** the pencil action opens the existing opt-in editor with a fixed
+  `selected` scope containing only that row. It uses the same server preview,
+  physical revision check, shared writer slot, job results, and conflict
+  handling as batch editing without changing the table's bulk selection.
+- **Delete:** the trash action first creates a five-minute server preview for
+  one editable file-backed account. The operator must type the exact `.json`
+  filename. Start then acquires the shared writer slot, re-reads and compares
+  the physical revision, and calls CPA's authenticated loopback Auth-file
+  delete endpoint. A changed, missing, duplicated, runtime-only, or otherwise
+  read-only target is not deleted.
+
+Deletion is intentionally single-account only. There is no bulk
+"delete filtered accounts" action, and a successful delete cannot be undone by
+the plugin; back up the Auth directory or export the account before deleting it.
+
 ## Account Import
 
-Open **Import accounts** from the operator toolbar. The file picker accepts up
+Open **Add account** from the operator toolbar. The file picker accepts up
 to 64 JSON, JSON Lines, NDJSON, text JSON, and ZIP files in one mixed selection;
 the textual JSON mode submits pasted content as one in-memory text source. A
 source may contain one JSON value, multiple top-level JSON values, or JSON Lines;
@@ -322,8 +352,8 @@ and otherwise unsupported records remain visible but read-only.
 ## Concurrency and Failure Semantics
 
 - Only one Auth-file mutation path owns the writer slot at a time. Ordinary
-  batch jobs, imports, missing-only default-policy reconciliation, and force
-  sync are serialized with each other.
+  batch jobs, single-account deletion, imports, missing-only default-policy
+  reconciliation, and force sync are serialized with each other.
 - Every target is preflighted. Invalid, missing, duplicated, or read-only
   targets are skipped while eligible targets continue.
 - The plugin records a SHA-256 revision during preview and re-reads the physical
@@ -362,16 +392,20 @@ and otherwise unsupported records remain visible but read-only.
   the page clears it. If the official panel remembered a key, the plugin reads
   that existing same-origin panel state but never writes its own credential to
   storage.
-- The Management Key exists only in memory for an active job and is explicitly
-  cleared when the job ends. Full patch values remain in process memory only
+- The Management Key exists only in memory for an active mutation and is
+  explicitly cleared when that operation ends. Full patch values remain in process memory only
   while needed by a pending preview, an active job, or failed-only retry; they
   are never persisted. Persisted job state contains sanitized status, field
   names, counters, and generic errors, not secret values.
-- Batch start/retry uses the request bearer key first. For non-browser callers,
+- Batch start/retry and delete start use the request bearer key first. For non-browser callers,
   `MANAGEMENT_PASSWORD` or `CPA_MANAGEMENT_KEY` may provide an in-process
   fallback; the plugin never writes those environment values to disk.
 - Nested Management calls accept only a loopback base URL and bound response
   reads to 64 KiB. Upstream response bodies are not copied into public errors.
+- Delete preview/start are authenticated Management routes. A preview stores
+  the private path/revision only in bounded process memory, exposes a safe
+  identity summary, and is consumed only after CPA confirms deletion. The
+  Management Key is cleared from the loopback client after every attempt.
 - Default-policy scans and force sync call `host.auth.list/get/save` directly,
   so they neither request nor persist a browser Management Key. Raw Auth JSON
   is transformed only in process and is never returned by policy routes or
@@ -415,7 +449,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.7.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.1.8.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -426,9 +460,11 @@ upgrading the native library.
 
 ## Management Routes
 
-All 15 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 17 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
+- `POST /accounts/delete/preview`
+- `POST /accounts/delete/start`
 - `POST /batch/preview`
 - `POST /batch/start`
 - `GET /batch/status`
@@ -460,7 +496,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.1.7
+make package VERSION=0.1.8
 ```
 
 For a local build that should publish a repository link in plugin metadata,
@@ -488,8 +524,8 @@ VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 
 Open `http://127.0.0.1:5175`, leave the CPA address on the same origin, and use
 the demo key `demo-key`. The mock contains synthetic accounts and simulates
-batch/default-policy progress plus mixed JSON/ZIP imports; it does not edit real
-credentials.
+row details/edit/delete, batch/default-policy progress, and mixed JSON/ZIP
+imports; it does not edit real credentials.
 
 ## Release Process
 

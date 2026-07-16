@@ -14,6 +14,7 @@ interface HeaderRow {
 }
 
 interface BatchEditorProps {
+  title?: string;
   scopeLabel: string;
   onClose: () => void;
   onSubmit: (patch: BatchPatch) => void;
@@ -29,7 +30,7 @@ const initialEnabled: Record<FieldName, boolean> = {
   headers: false,
 };
 
-export function BatchEditor({ scopeLabel, onClose, onSubmit }: BatchEditorProps) {
+export function BatchEditor({ title = "批量编辑", scopeLabel, onClose, onSubmit }: BatchEditorProps) {
   const [enabled, setEnabled] = useState(initialEnabled);
   const [disabled, setDisabled] = useState(false);
   const [priority, setPriority] = useState("0");
@@ -97,7 +98,7 @@ export function BatchEditor({ scopeLabel, onClose, onSubmit }: BatchEditorProps)
 
   return (
     <Modal
-      title="批量编辑"
+      title={title}
       wide
       onClose={onClose}
       footer={(

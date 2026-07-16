@@ -3,24 +3,28 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Eye,
   FileCog,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
   Power,
   PowerOff,
+  Pencil,
   RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
-  Upload,
+  Trash2,
+  UserPlus,
   Wifi,
   WifiOff,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
+import { AccountDetailsDialog } from "./components/AccountDetailsDialog";
 import { BatchEditor } from "./components/BatchEditor";
 import { AccountUsageCell } from "./components/AccountUsageCell";
 import { ExportDialog } from "./components/ExportDialog";
@@ -32,11 +36,13 @@ import { LoginDialog } from "./components/LoginDialog";
 import { Modal } from "./components/Modal";
 import { PolicyDialog } from "./components/PolicyDialog";
 import { PreviewDialog } from "./components/PreviewDialog";
+import { DeleteAccountDialog } from "./components/DeleteAccountDialog";
 import { operatorMessage } from "./format/operatorMessage";
 import { readPanelAuth } from "./store/panelAuth";
 import { clearSession, setSession } from "./store/session";
 import type {
   Account,
+  AccountDeletePreview,
   AccountExportFormat,
   AccountFilters,
   AccountListResponse,
@@ -51,6 +57,7 @@ import type {
   JobSnapshot,
   PolicySnapshot,
   ResultExportFormat,
+  TargetScope,
 } from "./types";
 
 const PAGE_SIZE = 50;
@@ -111,6 +118,12 @@ interface FilterState {
 
 const emptyFilters: FilterState = { search: "", provider: "", type: "", status: "", disabled: "", editability: "" };
 
+interface EditorContext {
+  title: string;
+  scopeLabel: string;
+  scope?: TargetScope;
+}
+
 export default function App() {
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
   const [authLoading, setAuthLoading] = useState(false);
@@ -122,7 +135,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorContext, setEditorContext] = useState<EditorContext | null>(null);
+  const [detailAccount, setDetailAccount] = useState<Account | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
+  const [deletePreview, setDeletePreview] = useState<AccountDeletePreview | null>(null);
+  const [deletePreviewing, setDeletePreviewing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -153,6 +172,7 @@ export default function App() {
   const [exportError, setExportError] = useState("");
   const [notice, setNotice] = useState("");
   const accountRequest = useRef(0);
+  const deleteRequest = useRef(0);
 
   const apiFilters = useMemo<AccountFilters>(() => ({
     ...(filters.search ? { search: filters.search } : {}),
@@ -361,16 +381,86 @@ export default function App() {
     return { mode: "filtered" as const, filters: apiFilters };
   };
 
-  const beginPreview = async (patch: BatchPatch) => {
+  const beginPreview = async (patch: BatchPatch, explicitScope?: TargetScope) => {
     setPreviewLoading(true);
     setPreviewError("");
     try {
-      const response = await api.createPreview(targetScope(), patch);
+      const response = await api.createPreview(explicitScope ?? targetScope(), patch);
       setPreview(response);
     } catch (error) {
       handleAPIError(error);
     } finally {
       setPreviewLoading(false);
+    }
+  };
+
+  const openAccountEditor = (account: Account) => {
+    if (!account.editable) return;
+    setDetailAccount(null);
+    setEditorContext({
+      title: "编辑账号",
+      scopeLabel: account.label || account.email || account.name || account.id,
+      scope: { mode: "selected", ids: [account.id] },
+    });
+  };
+
+  const closeDelete = () => {
+    deleteRequest.current += 1;
+    setDeleteTarget(null);
+    setDeletePreview(null);
+    setDeletePreviewing(false);
+    setDeleting(false);
+    setDeleteError("");
+  };
+
+  const openDelete = async (account: Account) => {
+    if (!account.editable) return;
+    const requestID = deleteRequest.current + 1;
+    deleteRequest.current = requestID;
+    setDeleteTarget(account);
+    setDeletePreview(null);
+    setDeleteError("");
+    setDeletePreviewing(true);
+    try {
+      const response = await api.createAccountDeletePreview(account.id);
+      if (requestID === deleteRequest.current) setDeletePreview(response);
+    } catch (error) {
+      if (requestID !== deleteRequest.current) return;
+      if (error instanceof api.APIError && error.status === 401) {
+        closeDelete();
+        handleAPIError(error);
+      } else {
+        setDeleteError(errorText(error));
+      }
+    } finally {
+      if (requestID === deleteRequest.current) setDeletePreviewing(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deletePreview) return;
+    const deletedID = deletePreview.account.id;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const result = await api.deleteAccount(deletePreview.id);
+      closeDelete();
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(deletedID);
+        return next;
+      });
+      setNotice(`已删除账号 ${result.account.label || result.account.email || result.account.name}`);
+      await refreshAccounts();
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) {
+        closeDelete();
+        handleAPIError(error);
+      } else {
+        setDeleteError(errorText(error));
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -554,7 +644,7 @@ export default function App() {
       const result = await api.startImport(importPreview.id);
       setImportPreview(null);
       setImportResult(result);
-      setNotice(`已导入 ${result.imported} 个账号${result.failed || result.skipped ? `，${result.failed + result.skipped} 个未写入` : ""}`);
+      setNotice(`已添加 ${result.imported} 个账号${result.failed || result.skipped ? `，${result.failed + result.skipped} 个未写入` : ""}`);
       void refreshAccounts();
     } catch (error) {
       if (error instanceof api.APIError && error.status === 401) {
@@ -627,8 +717,8 @@ export default function App() {
         <div className="header-actions">
           {job?.id ? <IconButton className="mobile-job-action" label="打开批量任务" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
           {forceJob?.id ? <IconButton className="mobile-job-action" label="打开强制同步任务" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
+          <button className="button button-primary header-add-account" type="button" title="添加账号" aria-label="添加账号" onClick={openImport}><UserPlus size={16} /><span>添加账号</span></button>
           <IconButton label="默认策略" onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
-          <IconButton label="导入账号" onClick={openImport}><Upload size={17} /></IconButton>
           <IconButton className="export-action" label="下载筛选账号凭据" onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
           <IconButton label="刷新账号" onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton label="退出管理认证" onClick={() => { clearSession(); setAuthState("login"); }}><KeyRound size={17} /></IconButton>
@@ -683,19 +773,22 @@ export default function App() {
             <colgroup>
               <col className="col-select" /><col className="col-identity" /><col className="col-provider" />
               <col className="col-type" /><col className="col-state" /><col className="col-priority" /><col className="col-routing" />
-              <col className="col-activity" /><col className="col-updated" /><col className="col-access" />
+              <col className="col-activity" /><col className="col-updated" /><col className="col-access" /><col className="col-actions" />
             </colgroup>
             <thead>
               <tr>
-                <th><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label="选择本页可编辑账号" /></th>
-                <th>账号</th><th>Provider</th><th>Type</th><th>状态</th><th>Priority</th><th>路由配置</th><th>用量</th><th>更新时间</th><th>权限</th>
+                <th className="select-header"><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label="选择本页可编辑账号" /></th>
+                <th className="identity-header">账号</th><th>Provider</th><th>Type</th><th>状态</th><th>Priority</th><th>路由配置</th><th>用量</th><th>更新时间</th><th>权限</th><th className="actions-header">操作</th>
               </tr>
             </thead>
             <tbody>
-              {loading ? <LoadingRows /> : data.accounts.map((account) => (
+              {loading ? <LoadingRows /> : data.accounts.map((account) => {
+                const identity = account.label || account.email || account.name || account.id;
+                const readOnlyReason = operatorMessage(account.read_only_reason) || "该账号为只读";
+                return (
                 <tr key={account.id} className={`${selected.has(account.id) ? "is-selected" : ""} ${!account.editable ? "is-readonly" : ""}`}>
-                  <td><input type="checkbox" checked={selected.has(account.id)} disabled={!account.editable} onChange={() => toggleAccount(account)} aria-label={`选择 ${account.label || account.name || account.id}`} title={operatorMessage(account.read_only_reason)} /></td>
-                  <td>
+                  <td className="select-cell"><input type="checkbox" checked={selected.has(account.id)} disabled={!account.editable} onChange={() => toggleAccount(account)} aria-label={`选择 ${account.label || account.name || account.id}`} title={operatorMessage(account.read_only_reason)} /></td>
+                  <td className="identity-column-cell">
                     <div className="identity-cell">
                       <strong>{account.label || account.email || account.name || account.id}</strong>
                       <span>{account.email && account.label !== account.email ? account.email : account.name}</span>
@@ -710,11 +803,19 @@ export default function App() {
                   <td><AccountUsageCell account={account} /></td>
                   <td><time>{formatDate(account.updated_at || account.last_refresh)}</time></td>
                   <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />可编辑</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason)}><LockKeyhole size={13} />只读</span>}</td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <IconButton label={`查看 ${identity}`} onClick={() => setDetailAccount(account)}><Eye size={15} /></IconButton>
+                      <IconButton label={account.editable ? `编辑 ${identity}` : readOnlyReason} disabled={!account.editable} onClick={() => openAccountEditor(account)}><Pencil size={15} /></IconButton>
+                      <IconButton className="row-delete-action" label={account.editable ? `删除 ${identity}` : readOnlyReason} disabled={!account.editable} onClick={() => void openDelete(account)}><Trash2 size={15} /></IconButton>
+                    </div>
+                  </td>
                 </tr>
-              ))}
-              {!loading && data.accounts.length === 0 ? <tr><td colSpan={10}><div className="empty-state">没有匹配账号</div></td></tr> : null}
+                );
+              })}
             </tbody>
           </table>
+          {!loading && data.accounts.length === 0 ? <div className="empty-state" role="status">没有匹配账号</div> : null}
         </div>
         <div className="pagination">
           <span>每页 {PAGE_SIZE}</span>
@@ -736,7 +837,7 @@ export default function App() {
           <div className="bulk-actions">
             <button className="button button-success" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: false })}><Power size={16} />批量启用</button>
             <button className="button button-danger" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: true })}><PowerOff size={16} />批量禁用</button>
-            <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorOpen(true)}>
+            <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorContext({ title: "批量编辑", scopeLabel })}>
               {previewLoading ? <LoaderCircle className="spin" size={16} /> : <SlidersHorizontal size={16} />}批量编辑
             </button>
           </div>
@@ -745,7 +846,9 @@ export default function App() {
 
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
-      {editorOpen ? <BatchEditor scopeLabel={scopeLabel} onClose={() => setEditorOpen(false)} onSubmit={(patch) => { setEditorOpen(false); void beginPreview(patch); }} /> : null}
+      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
+      {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
+      {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
@@ -796,7 +899,7 @@ function RoutingCell({ account }: { account: Account }) {
 }
 
 function LoadingRows() {
-  return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={10}><span /></td></tr>)}</>;
+  return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={11}><span /></td></tr>)}</>;
 }
 
 function formatDate(value?: string): string {

@@ -58,7 +58,7 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 		return ListResponse{}, errAccounts
 	}
 	if filtersRequireAccountDetail(query.Filters) {
-		s.enrichEditableAccounts(ctx, accounts)
+		s.enrichAccountDetails(ctx, accounts)
 	}
 	accounts = filterAccounts(accounts, query.Filters)
 	sortAccounts(accounts)
@@ -74,7 +74,7 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 		end = total
 	}
 	pageAccounts := append([]Account(nil), accounts[start:end]...)
-	s.enrichEditableAccounts(ctx, pageAccounts)
+	s.enrichAccountDetails(ctx, pageAccounts)
 
 	pages := 0
 	if total > 0 {
@@ -94,7 +94,7 @@ func (s *AccountService) Export(ctx context.Context, filters AccountFilters) ([]
 	if errAccounts != nil {
 		return nil, errAccounts
 	}
-	s.enrichEditableAccounts(ctx, accounts)
+	s.enrichAccountDetails(ctx, accounts)
 	accounts = filterAccounts(accounts, filters)
 	sortAccounts(accounts)
 	return accounts, nil
@@ -123,13 +123,13 @@ func (s *AccountService) ResolveTargets(ctx context.Context, scope TargetScope) 
 		}
 	} else {
 		if filtersRequireAccountDetail(scope.Filters) {
-			s.enrichEditableAccounts(ctx, accounts)
+			s.enrichAccountDetails(ctx, accounts)
 		}
 		resolved = filterAccounts(accounts, scope.Filters)
 		sortAccounts(resolved)
 	}
 
-	s.enrichEditableAccounts(ctx, resolved)
+	s.enrichAccountDetails(ctx, resolved)
 	paths := make(map[string]struct{}, len(resolved))
 	for index := range resolved {
 		account := &resolved[index]
@@ -193,20 +193,39 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	return accounts, nil
 }
 
-func (s *AccountService) enrichEditableAccounts(ctx context.Context, accounts []Account) {
+func (s *AccountService) enrichAccountDetails(ctx context.Context, accounts []Account) {
 	for index := range accounts {
-		if !accounts[index].Editable || accounts[index].revision != "" {
+		account := &accounts[index]
+		if account.detailAuthIndex == "" || account.revision != "" {
 			continue
 		}
-		detail, errGet := s.host.GetAuth(ctx, accounts[index].ID)
+		detail, errGet := s.host.GetAuth(ctx, account.detailAuthIndex)
 		if errGet != nil {
-			accounts[index].Editable = false
-			accounts[index].ReadOnlyReason = "physical auth file is unavailable"
+			if account.Editable {
+				account.Editable = false
+				account.ReadOnlyReason = "physical auth file is unavailable"
+			}
 			continue
 		}
-		if errEnrich := enrichAccount(&accounts[index], detail); errEnrich != nil {
-			accounts[index].Editable = false
-			accounts[index].ReadOnlyReason = "physical auth file is invalid"
+		if returnedIndex := strings.TrimSpace(detail.AuthIndex); returnedIndex != "" && returnedIndex != account.detailAuthIndex {
+			if account.Editable {
+				account.Editable = false
+				account.ReadOnlyReason = "physical auth file is unavailable"
+			}
+			continue
+		}
+		if detailPath := normalizedPath(detail.Path); account.path != "" && detailPath != "" && detailPath != account.path {
+			if account.Editable {
+				account.Editable = false
+				account.ReadOnlyReason = "physical auth file is unavailable"
+			}
+			continue
+		}
+		if errEnrich := enrichAccount(account, detail); errEnrich != nil {
+			if account.Editable {
+				account.Editable = false
+				account.ReadOnlyReason = "physical auth file is invalid"
+			}
 		}
 	}
 }
@@ -291,6 +310,9 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 	websockets := entry.Websockets
 	if entry.Websockets {
 		account.Websockets = &websockets
+	}
+	if !account.RuntimeOnly && account.path != "" && strings.EqualFold(account.Source, "file") && authIndex != "" && indexCounts[authIndex] == 1 {
+		account.detailAuthIndex = authIndex
 	}
 
 	switch {

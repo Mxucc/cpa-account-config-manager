@@ -82,6 +82,39 @@ func TestManagementClientDoesNotExposeErrorResponseBody(t *testing.T) {
 	}
 }
 
+func TestManagementClientDeletesSafeAuthFile(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		called = true
+		if request.Method != http.MethodDelete {
+			t.Errorf("method = %s", request.Method)
+		}
+		if request.URL.Path != "/v0/management/auth-files" || request.URL.Query().Get("name") != "operator+codex.json" {
+			t.Errorf("URL = %s", request.URL.String())
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer management-secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"status":"ok"}`)
+	}))
+	defer server.Close()
+
+	client, errClient := newManagementClient(server.URL, "management-secret", server.Client())
+	if errClient != nil {
+		t.Fatalf("newManagementClient() error = %v", errClient)
+	}
+	if errDelete := client.DeleteAuthFile(context.Background(), "operator+codex.json"); errDelete != nil {
+		t.Fatalf("DeleteAuthFile() error = %v", errDelete)
+	}
+	if !called {
+		t.Fatal("management delete endpoint was not called")
+	}
+	if errDelete := client.DeleteAuthFile(context.Background(), "../operator.json"); errDelete == nil {
+		t.Fatal("DeleteAuthFile() accepted an unsafe file name")
+	}
+}
+
 func TestManagementBaseURLRejectsNonLoopbackDestinations(t *testing.T) {
 	for _, value := range []string{
 		"https://example.com",

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -142,6 +142,107 @@ describe("primary account batch flow", () => {
     expect(body.patch).toEqual({ note: "rotated pool" });
     await waitFor(() => expect(new Headers(previewRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret"));
     expect(localStorage.getItem("management-secret")).toBeNull();
+  });
+
+  it("views, edits, and deletes one account from its row without changing bulk selection", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    let deleted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      if (url.includes("/batch/preview")) {
+        return jsonResponse({
+          id: "row-preview-1",
+          created_at: "2026-07-15T10:00:00Z",
+          expires_at: "2026-07-15T10:05:00Z",
+          scope_mode: "selected",
+          total: 1,
+          eligible: 1,
+          read_only: 0,
+          missing: 0,
+          physical_files: 1,
+          providers: { codex: 1 },
+          patch: { fields: ["note"], proxy_mutation: false },
+          targets: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", eligible: true }],
+        });
+      }
+      if (url.includes("/accounts/delete/preview")) {
+        return jsonResponse({
+          id: "delete-preview-1",
+          created_at: "2026-07-15T10:00:00Z",
+          expires_at: "2026-07-15T10:05:00Z",
+          account: { id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", email: "operator@example.com", source: "file" },
+        });
+      }
+      if (url.includes("/accounts/delete/start")) {
+        deleted = true;
+        return jsonResponse({
+          status: "deleted",
+          deleted_at: "2026-07-15T10:01:00Z",
+          account: { id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", email: "operator@example.com" },
+        });
+      }
+      return jsonResponse({
+        accounts: deleted ? [] : [{ ...account, header_names: ["X-Team"], header_count: 1 }],
+        total: deleted ? 0 : 1,
+        page: 1,
+        page_size: url.includes("page_size=1") ? 1 : 50,
+        pages: deleted ? 0 : 1,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "查看 operator@example.com" }));
+    const details = await screen.findByRole("dialog", { name: "账号详情" });
+    expect(within(details).getAllByText("operator.json").length).toBeGreaterThan(0);
+    expect(within(details).getByText("k12")).toBeInTheDocument();
+    expect(within(details).getByText("X-Team")).toBeInTheDocument();
+    await user.click(within(details).getByLabelText("关闭"));
+
+    expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "编辑 operator@example.com" }));
+    const editor = await screen.findByRole("dialog", { name: "编辑账号" });
+    await user.click(within(editor).getByLabelText("Note"));
+    await user.type(within(editor).getByLabelText("Note 值"), "single edit");
+    await user.click(within(editor).getByRole("button", { name: "生成预览" }));
+    const rowPreview = await screen.findByRole("dialog", { name: "变更预览" });
+    const rowPreviewRequest = requests.find(({ url }) => url.includes("/batch/preview"));
+    expect(JSON.parse(String(rowPreviewRequest?.init.body))).toEqual({
+      scope: { mode: "selected", ids: ["auth-1"] },
+      patch: { note: "single edit" },
+    });
+    expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
+    await user.click(within(rowPreview).getByLabelText("关闭"));
+
+    await user.click(screen.getByRole("button", { name: "删除 operator@example.com" }));
+    const deleteDialog = await screen.findByRole("dialog", { name: "删除账号" });
+    const confirmation = await within(deleteDialog).findByLabelText("确认删除文件名");
+    const deleteButton = within(deleteDialog).getByRole("button", { name: "删除账号" });
+    expect(deleteButton).toBeDisabled();
+    await user.type(confirmation, "operator.json");
+    expect(deleteButton).toBeEnabled();
+    await user.click(deleteButton);
+
+    expect(await screen.findByText("没有匹配账号")).toBeInTheDocument();
+    expect(screen.getByText("已删除账号 operator@example.com")).toBeInTheDocument();
+    const deletePreviewRequest = requests.find(({ url }) => url.includes("/accounts/delete/preview"));
+    const deleteStartRequest = requests.find(({ url }) => url.includes("/accounts/delete/start"));
+    expect(JSON.parse(String(deletePreviewRequest?.init.body))).toEqual({ id: "auth-1" });
+    expect(JSON.parse(String(deleteStartRequest?.init.body))).toEqual({ preview_id: "delete-preview-1" });
+    expect(new Headers(deleteStartRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 
   it("keeps the newest account result when an older filter request finishes later", async () => {
@@ -464,7 +565,7 @@ describe("primary account batch flow", () => {
     render(<App />);
     await user.type(await screen.findByLabelText("Management Key"), "management-secret");
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
-    await user.click(await screen.findByRole("button", { name: "导入账号" }));
+    await user.click(await screen.findByRole("button", { name: "添加账号" }));
     await user.click(screen.getByRole("button", { name: "文本 JSON" }));
     fireEvent.change(screen.getByLabelText("JSON 文本"), { target: { value: rawJSON } });
     await user.click(screen.getByRole("button", { name: "生成预览" }));
@@ -472,7 +573,7 @@ describe("primary account batch flow", () => {
     expect(await screen.findByText("codex-import_example_com.json")).toBeInTheDocument();
     expect(screen.queryByDisplayValue(rawJSON)).not.toBeInTheDocument();
     expect(screen.queryByText("browser-access-secret")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "导入 1 个账号" }));
+    await user.click(screen.getByRole("button", { name: "添加 1 个账号" }));
 
     expect(await screen.findByText("导入完成")).toBeInTheDocument();
     expect(screen.getAllByText("codex-import_example_com.json").length).toBeGreaterThan(0);

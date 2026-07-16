@@ -125,12 +125,12 @@ export function ImportDialog({
 
   return (
     <Modal
-      title="导入账号"
+      title="添加账号"
       wide
       onClose={onClose}
       footer={result ? (
         <>
-          <button className="button" type="button" onClick={reset}><RotateCcw size={15} />继续导入</button>
+          <button className="button" type="button" onClick={reset}><RotateCcw size={15} />继续添加</button>
           <button className="button button-primary" type="button" onClick={onClose}>关闭</button>
         </>
       ) : preview ? (
@@ -138,7 +138,7 @@ export function ImportDialog({
           <span className="modal-scope">快照 {preview.id.slice(0, 8)}</span>
           <button className="button" type="button" disabled={importing} onClick={reset}>重新选择</button>
           <button className="button button-primary" type="button" disabled={importing || preview.total === 0} onClick={onImport}>
-            {importing ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}导入 {preview.total} 个账号
+            {importing ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}添加 {preview.total} 个账号
           </button>
         </>
       ) : (

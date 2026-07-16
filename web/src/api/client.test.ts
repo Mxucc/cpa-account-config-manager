@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createImportPreview, createPreview, downloadExport, listAccounts, saveDefaultPolicy, startImport } from "./client";
+import { createAccountDeletePreview, createImportPreview, createPreview, deleteAccount, downloadExport, listAccounts, saveDefaultPolicy, startImport } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
 describe("management API client", () => {
@@ -55,6 +55,38 @@ describe("management API client", () => {
     const body = JSON.parse(String(init.body));
     expect(body.scope).toEqual({ mode: "selected", ids: ["auth-1"] });
     expect(body.patch.headers.set.Authorization).toBe("Bearer upstream-secret");
+  });
+
+  it("creates and starts an authenticated single-account delete preview", async () => {
+    setSession("", "management-secret");
+    const previewBody = {
+      id: "delete-preview-1",
+      created_at: "2026-07-15T00:00:00Z",
+      expires_at: "2026-07-15T00:05:00Z",
+      account: { id: "auth-1", name: "operator.json", provider: "codex" },
+    };
+    const resultBody = {
+      status: "deleted",
+      deleted_at: "2026-07-15T00:00:01Z",
+      account: previewBody.account,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(previewBody))
+      .mockResolvedValueOnce(jsonResponse(resultBody));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createAccountDeletePreview("auth-1");
+    await deleteAccount("delete-preview-1");
+
+    const [previewURL, previewInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(previewURL).toContain("/accounts/delete/preview");
+    expect(JSON.parse(String(previewInit.body))).toEqual({ id: "auth-1" });
+    expect(new Headers(previewInit.headers).get("Authorization")).toBe("Bearer management-secret");
+
+    const [startURL, startInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(startURL).toContain("/accounts/delete/start");
+    expect(JSON.parse(String(startInit.body))).toEqual({ preview_id: "delete-preview-1" });
+    expect(new Headers(startInit.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 
 	it("preserves zero, false, and unmanaged null values in a default policy", async () => {

@@ -23,21 +23,23 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	defer app.Close()
 	registration := app.ManagementRegistration()
 	expected := map[string]struct{}{
-		http.MethodGet + " /plugins/cpa-account-config-manager/accounts":                {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/batch/preview":          {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/batch/start":            {},
-		http.MethodGet + " /plugins/cpa-account-config-manager/batch/status":            {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/batch/retry":            {},
-		http.MethodGet + " /plugins/cpa-account-config-manager/export/accounts":         {},
-		http.MethodGet + " /plugins/cpa-account-config-manager/export/results":          {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/import/preview":         {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/import/start":           {},
-		http.MethodGet + " /plugins/cpa-account-config-manager/defaults":                {},
-		http.MethodPut + " /plugins/cpa-account-config-manager/defaults":                {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/scan":          {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/preview": {},
-		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/start":   {},
-		http.MethodGet + " /plugins/cpa-account-config-manager/defaults/force/status":   {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/accounts":                 {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/delete/preview": {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/delete/start":   {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/batch/preview":           {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/batch/start":             {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/batch/status":             {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/batch/retry":             {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/export/accounts":          {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/export/results":           {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/import/preview":          {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/import/start":            {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/defaults":                 {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/defaults":                 {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/scan":           {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/preview":  {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/start":    {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/defaults/force/status":    {},
 	}
 	if len(registration.Routes) != len(expected) {
 		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))

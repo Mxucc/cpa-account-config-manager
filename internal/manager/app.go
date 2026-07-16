@@ -44,6 +44,7 @@ type App struct {
 	mu        sync.RWMutex
 	config    Config
 	accounts  *AccountService
+	deletions *AccountDeleteService
 	previews  *PreviewService
 	jobs      *JobEngine
 	policies  *PolicyEngine
@@ -62,6 +63,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	return &App{
 		config:    normalizeConfig(Config{}),
 		accounts:  accounts,
+		deletions: NewAccountDeleteService(accounts, mutations),
 		previews:  NewPreviewService(accounts),
 		jobs:      jobs,
 		policies:  policies,
@@ -86,6 +88,12 @@ func (a *App) Configure(raw []byte) {
 	a.usage.Configure(config)
 }
 
+func (a *App) configSnapshot() Config {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.config
+}
+
 func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	if a == nil || a.usage == nil {
 		return
@@ -100,6 +108,7 @@ func (a *App) Close() {
 	a.force.Shutdown()
 	a.policies.Shutdown()
 	a.jobs.Shutdown()
+	a.deletions.Clear()
 	a.previews.Clear()
 	a.imports.Clear()
 	a.usage.Close()
@@ -127,6 +136,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/preview", Description: "Preview deletion of one editable physical Auth file."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/start", Description: "Delete one confirmed unchanged physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/preview", Description: "Preview a batch account configuration patch."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/start", Description: "Start an approved batch account configuration patch."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/batch/status", Description: "Read current or last batch progress."},
@@ -166,6 +177,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		}
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/accounts":
 		return a.handleListAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/preview":
+		return a.handleAccountDeletePreview(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/start":
+		return a.handleAccountDeleteStart(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/preview":
 		return a.handlePreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/start":
@@ -322,6 +337,64 @@ func (a *App) handleListAccounts(ctx context.Context, req cpaapi.ManagementReque
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to load accounts"})
 	}
 	return jsonResponse(http.StatusOK, response)
+}
+
+func (a *App) handleAccountDeletePreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request AccountDeletePreviewRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	if strings.TrimSpace(request.ID) == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "account id is required"})
+	}
+	preview, errPreview := a.deletions.Preview(ctx, request)
+	if errPreview != nil {
+		switch {
+		case errors.Is(errPreview, ErrAccountDeleteTargetNotFound):
+			return jsonResponse(http.StatusNotFound, map[string]any{"error": ErrAccountDeleteTargetNotFound.Error()})
+		case errors.Is(errPreview, ErrAccountDeleteTargetReadOnly):
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": ErrAccountDeleteTargetReadOnly.Error()})
+		case strings.Contains(errPreview.Error(), "resolve account for deletion"):
+			return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to resolve account for deletion"})
+		default:
+			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to create delete preview"})
+		}
+	}
+	return jsonResponse(http.StatusOK, preview)
+}
+
+func (a *App) handleAccountDeleteStart(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request AccountDeleteStartRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	if strings.TrimSpace(request.PreviewID) == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "preview_id is required"})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	config := a.configSnapshot()
+	result, errDelete := a.deletions.Start(ctx, request.PreviewID, config.ManagementBaseURL, managementKey)
+	managementKey = ""
+	if errDelete != nil {
+		switch {
+		case errors.Is(errDelete, ErrAccountDeletePreviewExpired):
+			return jsonResponse(http.StatusGone, map[string]any{"error": "delete preview expired; create a new preview"})
+		case errors.Is(errDelete, ErrAccountDeletePreviewNotFound):
+			return jsonResponse(http.StatusNotFound, map[string]any{"error": ErrAccountDeletePreviewNotFound.Error()})
+		case errors.Is(errDelete, ErrAccountDeletePreviewStale), errors.Is(errDelete, ErrAccountDeleteBusy):
+			return jsonResponse(http.StatusConflict, map[string]any{"error": errDelete.Error()})
+		case errors.Is(errDelete, ErrManagementBaseURLInvalid):
+			return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": ErrManagementBaseURLInvalid.Error()})
+		case errors.Is(errDelete, ErrAccountDeleteFailed):
+			return jsonResponse(http.StatusBadGateway, map[string]any{"error": ErrAccountDeleteFailed.Error()})
+		default:
+			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to delete account"})
+		}
+	}
+	return jsonResponse(http.StatusOK, result)
 }
 
 func (a *App) handlePreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

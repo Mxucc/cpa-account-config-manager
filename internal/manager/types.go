@@ -37,8 +37,9 @@ type Account struct {
 	UpdatedAt       *time.Time            `json:"updated_at,omitempty"`
 	LastRefresh     *time.Time            `json:"last_refresh,omitempty"`
 
-	path     string
-	revision string
+	detailAuthIndex string
+	path            string
+	revision        string
 }
 
 type RecentRequestEntry struct {

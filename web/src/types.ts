@@ -83,6 +83,31 @@ export interface AccountListResponse {
   pages: number;
 }
 
+export interface AccountDeleteTarget {
+  id: string;
+  name: string;
+  provider?: string;
+  type?: string;
+  plan_type?: string;
+  label?: string;
+  email?: string;
+  status?: string;
+  source?: string;
+}
+
+export interface AccountDeletePreview {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  account: AccountDeleteTarget;
+}
+
+export interface AccountDeleteResult {
+  status: "deleted";
+  deleted_at: string;
+  account: AccountDeleteTarget;
+}
+
 export interface HeaderPatch {
   set?: Record<string, string>;
   remove?: string[];

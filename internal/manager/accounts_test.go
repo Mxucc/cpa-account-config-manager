@@ -363,8 +363,11 @@ func TestAccountServiceMarksSharedSourceAndMissingFileReadOnly(t *testing.T) {
 			{AuthIndex: "virtual-2", Name: "source.json", Provider: "sample", Source: "file", Path: "/auths/source.json"},
 			{AuthIndex: "missing", Name: "missing.json", Provider: "codex", Source: "file", Path: "/auths/missing.json"},
 		},
-		details: map[string]cpaapi.HostAuthGetResponse{},
-		errors:  map[string]error{"missing": errors.New("not found")},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"virtual-1": {AuthIndex: "virtual-1", Path: "/auths/source.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"k12"}`)},
+			"virtual-2": {AuthIndex: "virtual-2", Path: "/auths/source.json", JSON: json.RawMessage(`{"type":"codex","chatgpt_plan_type":"k12"}`)},
+		},
+		errors: map[string]error{"missing": errors.New("not found")},
 	}
 
 	response, errList := NewAccountService(host).List(context.Background(), ListQuery{Page: 1, PageSize: 20})
@@ -378,6 +381,21 @@ func TestAccountServiceMarksSharedSourceAndMissingFileReadOnly(t *testing.T) {
 		if account.ReadOnlyReason == "" {
 			t.Fatalf("account %s missing read-only reason", account.ID)
 		}
+		if strings.HasPrefix(account.ID, "virtual-") && account.PlanType != "k12" {
+			t.Fatalf("read-only account %s plan type = %q, want k12", account.ID, account.PlanType)
+		}
+	}
+
+	filtered, errFiltered := NewAccountService(host).List(context.Background(), ListQuery{
+		Page:     1,
+		PageSize: 20,
+		Filters:  AccountFilters{Type: "k12"},
+	})
+	if errFiltered != nil {
+		t.Fatalf("filtered List() error = %v", errFiltered)
+	}
+	if filtered.Total != 2 || len(filtered.Accounts) != 2 {
+		t.Fatalf("read-only plan-filtered list = %#v", filtered)
 	}
 }
 

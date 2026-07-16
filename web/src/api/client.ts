@@ -1,5 +1,7 @@
 import { getSession } from "../store/session";
 import type {
+  AccountDeletePreview,
+  AccountDeleteResult,
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
@@ -83,6 +85,20 @@ export async function listAccounts(
   query.set("page", String(page));
   query.set("page_size", String(pageSize));
   return request<AccountListResponse>("/accounts", {}, query);
+}
+
+export async function createAccountDeletePreview(accountID: string): Promise<AccountDeletePreview> {
+  return request<AccountDeletePreview>("/accounts/delete/preview", {
+    method: "POST",
+    body: JSON.stringify({ id: accountID }),
+  });
+}
+
+export async function deleteAccount(previewID: string): Promise<AccountDeleteResult> {
+  return request<AccountDeleteResult>("/accounts/delete/start", {
+    method: "POST",
+    body: JSON.stringify({ preview_id: previewID }),
+  });
 }
 
 export async function createPreview(scope: TargetScope, patch: BatchPatch): Promise<BatchPreview> {

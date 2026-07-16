@@ -31,6 +31,10 @@ type ManagementWriter interface {
 	PatchDisabled(context.Context, string, bool) error
 }
 
+type ManagementAuthFileDeleter interface {
+	DeleteAuthFile(context.Context, string) error
+}
+
 type managementClient struct {
 	baseURL string
 	key     string
@@ -73,18 +77,32 @@ func (c *managementClient) PatchDisabled(ctx context.Context, name string, disab
 	})
 }
 
+func (c *managementClient) DeleteAuthFile(ctx context.Context, name string) error {
+	if !safeAuthJSONName(name) {
+		return fmt.Errorf("auth file name is invalid")
+	}
+	query := url.Values{"name": []string{name}}
+	return c.request(ctx, http.MethodDelete, "/v0/management/auth-files?"+query.Encode(), nil, "")
+}
+
 func (c *managementClient) patch(ctx context.Context, path string, payload any) error {
 	raw, errMarshal := json.Marshal(payload)
 	if errMarshal != nil {
 		return fmt.Errorf("encode management request: %w", errMarshal)
 	}
-	request, errRequest := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+path, bytes.NewReader(raw))
+	return c.request(ctx, http.MethodPatch, path, bytes.NewReader(raw), "application/json")
+}
+
+func (c *managementClient) request(ctx context.Context, method, path string, body io.Reader, contentType string) error {
+	request, errRequest := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if errRequest != nil {
 		return fmt.Errorf("create management request: %w", errRequest)
 	}
 	request.Header.Set("Authorization", "Bearer "+c.key)
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
 
 	response, errDo := c.doer.Do(request)
 	if errDo != nil {
@@ -94,11 +112,11 @@ func (c *managementClient) patch(ctx context.Context, path string, payload any) 
 		_ = response.Body.Close()
 	}()
 	limited := io.LimitReader(response.Body, maxManagementResponse+1)
-	body, errRead := io.ReadAll(limited)
+	responseBody, errRead := io.ReadAll(limited)
 	if errRead != nil {
 		return fmt.Errorf("read management API response: %w", errRead)
 	}
-	if len(body) > maxManagementResponse {
+	if len(responseBody) > maxManagementResponse {
 		return fmt.Errorf("management API response exceeded the size limit")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {

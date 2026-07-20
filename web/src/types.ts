@@ -475,6 +475,21 @@ export interface InspectionRunSummary {
   error?: string;
 }
 
+export interface InspectionRunRecord {
+  id: string;
+  mode: "native" | "full" | "incremental" | "scoped" | "retry";
+  source: "manual" | "scheduled" | "anomaly";
+  status: "running" | "completed" | "failed" | "waiting_for_auth" | "stopped";
+  phase?: "listing" | "primary" | "retry" | "stopped" | "completed";
+  started_at: string;
+  finished_at?: string;
+  primary_total: number;
+  primary_completed: number;
+  retry_total: number;
+  retry_completed: number;
+  summary: InspectionRunSummary;
+}
+
 export interface InspectionSnapshot {
   policy: InspectionPolicy;
   running: boolean;
@@ -490,7 +505,7 @@ export interface InspectionSnapshot {
   probe_sweep_total?: number;
   probe_sweep_completed?: number;
   probe_sweep_source?: "manual" | "scheduled" | "anomaly";
-  probe_sweep_status?: "running" | "completed" | "failed" | "waiting_for_auth";
+  probe_sweep_status?: "running" | "completed" | "failed" | "waiting_for_auth" | "stopped";
   probe_sweep_started_at?: string;
   anomaly_eligible: number;
   anomaly_count: number;
@@ -498,6 +513,18 @@ export interface InspectionSnapshot {
   anomaly_trigger_pending: boolean;
   last_anomaly_trigger_at?: string;
   storage_error?: string;
+  run_mode?: "native" | "full" | "incremental" | "scoped" | "retry";
+  probe_phase?: "listing" | "primary" | "retry" | "stopped" | "completed";
+  retry_total?: number;
+  retry_completed?: number;
+  stop_requested?: boolean;
+  recent_runs?: InspectionRunRecord[];
+}
+
+export interface InspectionRunRequest {
+  mode: "full" | "incremental" | "scoped" | "retry";
+  health?: InspectionHealth[];
+  selected?: string[];
 }
 
 export interface InspectionResult {
@@ -530,6 +557,9 @@ export interface InspectionResult {
   probe_latency_ms?: number;
   auto_action_status?: "pending" | "succeeded" | "failed" | "skipped";
   signal_source?: "native" | "passive" | "active_probe";
+  status_code?: number;
+  review_status?: "pending" | "resolved" | "ignored";
+  reviewed_at?: string;
   circuit_open?: boolean;
   circuit_reason_code?: string;
 }
@@ -547,7 +577,7 @@ export interface InspectionAction {
   account_id: string;
   name?: string;
   provider?: string;
-  action: "disable" | "enable" | "delete" | "delete_candidate";
+  action: "disable" | "enable" | "delete" | "delete_candidate" | "review_resolve" | "review_ignore" | "review_reopen";
   status: "pending" | "succeeded" | "failed" | "skipped";
   reason_code: string;
   created_at: string;

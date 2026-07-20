@@ -26,6 +26,7 @@ const inspectionSnapshot = {
 describe("InspectionWorkspace", () => {
   beforeEach(() => {
     _resetSessionForTest();
+    localStorage.clear();
     setSession("", "management-secret");
     vi.restoreAllMocks();
   });
@@ -39,7 +40,7 @@ describe("InspectionWorkspace", () => {
       requests.push({ url, init });
       if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "auth-1", name: "operator.json", provider: "codex", type: "codex", plan_type: "k12", health: "invalid_credentials", reason_code: "invalid_credentials", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 2, healthy_streak: 0, last_checked_at: "2026-07-20T08:00:00Z" }], total: 1, page: 1, page_size: 50, pages: 1 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [{ id: "action-1", account_id: "auth-1", name: "operator.json", provider: "codex", action: "disable", status: "pending", reason_code: "invalid_credentials", created_at: "2026-07-20T08:00:00Z" }] });
-      if (url.endsWith("/inspection/scan")) return jsonResponse({ ...inspectionSnapshot, pending: true }, 202);
+      if (url.endsWith("/inspection/run")) return jsonResponse({ ...inspectionSnapshot, pending: true, run_mode: "full", probe_phase: "listing" }, 202);
       if (url.endsWith("/inspection")) return jsonResponse(inspectionSnapshot);
       if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.2.0", latest_version: "0.3.0", update_available: true, release_url: "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.3.0", checking: false, pending: false, checked_at: "2026-07-20T08:00:00Z" });
       if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] });
@@ -56,7 +57,7 @@ describe("InspectionWorkspace", () => {
     expect(await screen.findByText("发现版本 0.3.0")).toBeInTheDocument();
     expect(screen.getByText("已完成 2/5 · 剩余 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "快速巡检" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "全量服务器巡检" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "开始巡检" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "更新" }));
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("0.3.0")));
@@ -65,8 +66,10 @@ describe("InspectionWorkspace", () => {
     expect(JSON.parse(String(installRequest?.init.body))).toEqual({ version: "0.3.0" });
     expect(new Headers(installRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret");
 
-    await user.click(screen.getByRole("button", { name: "全量服务器巡检" }));
-    expect(requests.some(({ url }) => url.endsWith("/inspection/scan"))).toBe(true);
+    await user.click(screen.getByRole("button", { name: "开始巡检" }));
+    const runRequest = requests.find(({ url }) => url.endsWith("/inspection/run"));
+    expect(runRequest).toBeDefined();
+    expect(JSON.parse(String(runRequest?.init.body))).toEqual({ mode: "full" });
   });
 
   it("uses the plugin store version when direct GitHub release discovery fails", async () => {
@@ -86,5 +89,36 @@ describe("InspectionWorkspace", () => {
     expect(await screen.findByText("发现版本 0.2.4")).toBeInTheDocument();
     expect(screen.getByText("GitHub 元数据不可用，已使用 CPA 插件商店版本")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更新" })).toBeEnabled();
+  });
+
+  it("exposes safe operator actions for bare 401 review results and persists page size", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "review-1", name: "review.json", provider: "codex", type: "codex", plan_type: "k12", health: "review", reason_code: "authentication_review", confidence: "low", recommendation: "review", disabled: false, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T08:00:00Z", status_code: 401, review_status: "pending", signal_source: "passive" }], total: 1, page: 1, page_size: url.includes("page_size=100") ? 100 : 50, pages: 1 });
+      if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
+      if (url.endsWith("/inspection/review")) return jsonResponse({ id: "review-1", health: "review", review_status: "resolved" });
+      if (url.endsWith("/inspection")) return jsonResponse({ ...inspectionSnapshot, probe_sweep_remaining: 0, probe_sweep_total: 0, probe_sweep_completed: 0, probe_sweep_status: "completed" });
+      if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.4", update_available: false, checking: false, pending: false });
+      if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [] });
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+    expect(await screen.findByText("HTTP 401", { exact: false })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "账号处置" }));
+    expect(screen.getByText("仅凭 HTTP 状态不足以执行破坏性操作，请重新测试或明确选择人工处置。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新测试模型" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "禁用" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "删除" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "标记已解决" }));
+    await waitFor(() => expect(requests.some(({ url }) => url.endsWith("/inspection/review"))).toBe(true));
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "每页巡检结果数" }), "100");
+    await waitFor(() => expect(requests.some(({ url }) => url.includes("page_size=100"))).toBe(true));
+    expect(localStorage.getItem("cpa-account-config-manager:inspection-page-size")).toBe("100");
   });
 });

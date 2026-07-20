@@ -146,6 +146,12 @@ func operationFromInspectionAction(action InspectionAction) (OperationEntry, boo
 		journalAction = OperationActionDeleteCandidate
 	case InspectionActionDelete:
 		journalAction = OperationActionAutoDelete
+	case InspectionActionReviewResolve:
+		journalAction = OperationActionReviewResolve
+	case InspectionActionReviewIgnore:
+		journalAction = OperationActionReviewIgnore
+	case InspectionActionReviewReopen:
+		journalAction = OperationActionReviewReopen
 	}
 	status := ""
 	switch action.Status {

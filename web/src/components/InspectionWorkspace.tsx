@@ -2,9 +2,11 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  CheckSquare2,
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Download,
   ExternalLink,
   LoaderCircle,
   RefreshCw,
@@ -15,27 +17,43 @@ import {
   ShieldCheck,
   Trash2,
   UploadCloud,
+  Wrench,
   X,
+  XSquare,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import type {
+  Account,
+  AccountDeletePreview,
+  BatchPreview,
   InspectionAction,
   InspectionHealth,
   InspectionPolicy,
   InspectionResult,
   InspectionResultList,
   InspectionSnapshot,
+  ModelTestResult,
   UpdatePolicy,
   UpdateSnapshot,
 } from "../types";
 import { AutomationSettingsDialog } from "./AutomationSettingsDialog";
 import { IconButton } from "./IconButton";
+import { DeleteAccountDialog } from "./DeleteAccountDialog";
+import { Modal } from "./Modal";
+import { ModelTestDialog } from "./ModelTestDialog";
+import { PreviewDialog } from "./PreviewDialog";
 import { useI18n } from "../i18n";
 import type { Locale } from "../i18n";
 import { translateUI, type UIMessageKey } from "../i18n/uiText";
+import {
+  INSPECTION_PAGE_SIZE_OPTIONS,
+  readInspectionPageSize,
+  type InspectionPageSize,
+  writeInspectionPageSize,
+} from "../store/inspectionPageSize";
 
 interface InspectionWorkspaceProps {
   onAPIError: (error: unknown) => void;
@@ -63,11 +81,31 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [actions, setActions] = useState<InspectionAction[]>([]);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<InspectionPageSize>(() => readInspectionPageSize());
   const [health, setHealth] = useState<"" | InspectionHealth>("");
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [scanningMode, setScanningMode] = useState<"native" | "full" | "">("");
+  const [scanningMode, setScanningMode] = useState<"native" | "active" | "stop" | "">("");
+  const [runMode, setRunMode] = useState<"full" | "incremental" | "retry" | "filtered" | "selected">("full");
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [actionTarget, setActionTarget] = useState<InspectionResult | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [modelAccount, setModelAccount] = useState<Account | null>(null);
+  const [modelResult, setModelResult] = useState<ModelTestResult | null>(null);
+  const [modelTesting, setModelTesting] = useState(false);
+  const [modelError, setModelError] = useState("");
+  const [batchPreview, setBatchPreview] = useState<BatchPreview | null>(null);
+  const [batchStarting, setBatchStarting] = useState(false);
+  const [batchError, setBatchError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
+  const [deletePreview, setDeletePreview] = useState<AccountDeletePreview | null>(null);
+  const [deletePreviewing, setDeletePreviewing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [exportFormat, setExportFormat] = useState<"json" | "csv" | "jsonl">("json");
+  const [exporting, setExporting] = useState(false);
+  const [resolvingFiltered, setResolvingFiltered] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -108,13 +146,13 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
 
   const refreshResults = useCallback(async () => {
     try {
-      const next = await api.listInspectionResults(page, 50, health, search);
+      const next = await api.listInspectionResults(page, pageSize, health, search);
       setResults(next);
       if (next.pages > 0 && page > next.pages) setPage(next.pages);
     } catch (caught) {
       handleError(caught);
     }
-  }, [handleError, health, page, search]);
+  }, [handleError, health, page, pageSize, search]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -198,15 +236,205 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     void installUpdate(true);
   }, [installUpdate, updates]);
 
-  const runScan = async (mode: "native" | "full") => {
-    setScanningMode(mode);
+  const runNativeScan = async () => {
+    setScanningMode("native");
     setError("");
     try {
-      setSnapshot(mode === "native" ? await api.scanNativeInspection() : await api.scanFullInspection());
+      setSnapshot(await api.scanNativeInspection());
     } catch (caught) {
       handleError(caught);
     } finally {
       setScanningMode("");
+    }
+  };
+
+  const runActiveInspection = async (requestedMode = runMode) => {
+    setScanningMode("active");
+    setError("");
+    try {
+      if (requestedMode === "filtered" && !health) throw new Error(tx("ui.select_health_filter_before_scoped_inspection"));
+      if (requestedMode === "selected" && selected.size === 0) throw new Error(tx("ui.select_accounts_before_scoped_inspection"));
+      const request = requestedMode === "filtered"
+        ? { mode: "scoped" as const, health: [health as InspectionHealth] }
+        : requestedMode === "selected"
+          ? { mode: "scoped" as const, selected: [...selected] }
+          : { mode: requestedMode };
+      setSnapshot(await api.startInspectionRun(request));
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setScanningMode("");
+    }
+  };
+
+  const stopActiveInspection = async () => {
+    setScanningMode("stop");
+    setError("");
+    try {
+      setSnapshot(await api.stopInspectionRun());
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setScanningMode("");
+    }
+  };
+
+  const updatePageSize = (next: InspectionPageSize) => {
+    writeInspectionPageSize(next);
+    setPageSize(next);
+    setPage(1);
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleCurrentPage = () => {
+    const editableIDs = results.results.filter((result) => result.editable).map((result) => result.id);
+    const allSelected = editableIDs.length > 0 && editableIDs.every((id) => selected.has(id));
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const id of editableIDs) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const previewAccountChange = async (ids: string[], disabled: boolean) => {
+    setBatchError("");
+    try {
+      setBatchPreview(await api.createPreview({ mode: "selected", ids }, { disabled }));
+      setActionTarget(null);
+    } catch (caught) {
+      handleError(caught);
+    }
+  };
+
+  const previewFilteredAccountChange = async (disabled: boolean) => {
+    setResolvingFiltered(true);
+    setError("");
+    try {
+      const ids: string[] = [];
+      let currentPage = 1;
+      let pages = 1;
+      do {
+        const batch = await api.listInspectionResults(currentPage, 200, health, search);
+        ids.push(...batch.results.filter((result) => result.editable).map((result) => result.id));
+        pages = Math.min(50, batch.pages);
+        currentPage++;
+      } while (currentPage <= pages && ids.length < 10_000);
+      if (ids.length === 0) throw new Error(tx("ui.no_editable_inspection_results"));
+      await previewAccountChange(ids.slice(0, 10_000), disabled);
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setResolvingFiltered(false);
+    }
+  };
+
+  const startAccountChange = async () => {
+    if (!batchPreview) return;
+    setBatchStarting(true);
+    setBatchError("");
+    try {
+      await api.startBatch(batchPreview.id);
+      setBatchPreview(null);
+      setSelected(new Set());
+      onNotice(tx("ui.change_started"));
+      window.setTimeout(() => void Promise.all([refreshOverview(), refreshResults()]), 500);
+    } catch (caught) {
+      setBatchError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setBatchStarting(false);
+    }
+  };
+
+  const openModelTest = (result: InspectionResult) => {
+    setActionTarget(null);
+    setModelResult(null);
+    setModelError("");
+    setModelAccount(inspectionResultAccount(result));
+  };
+
+  const testModel = async (model: string) => {
+    if (!modelAccount) return;
+    setModelTesting(true);
+    setModelError("");
+    try {
+      setModelResult(await api.testAccountModel(modelAccount.id, model));
+      await Promise.all([refreshOverview(), refreshResults()]);
+    } catch (caught) {
+      setModelError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setModelTesting(false);
+    }
+  };
+
+  const updateReview = async (result: InspectionResult, action: "resolve" | "ignore" | "reopen") => {
+    setReviewing(true);
+    setError("");
+    try {
+      await api.updateInspectionReview(result.id, action);
+      setActionTarget(null);
+      onNotice(tx("ui.review_updated"));
+      await Promise.all([refreshOverview(), refreshResults()]);
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const openDelete = async (result: InspectionResult) => {
+    const account = inspectionResultAccount(result);
+    setActionTarget(null);
+    setDeleteTarget(account);
+    setDeletePreview(null);
+    setDeleteError("");
+    setDeletePreviewing(true);
+    try {
+      setDeletePreview(await api.createAccountDeletePreview(result.id));
+    } catch (caught) {
+      setDeleteError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setDeletePreviewing(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deletePreview) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const deleted = await api.deleteAccount(deletePreview.id);
+      onNotice(tx("ui.deleted_account_account", { account: deleted.account.label || deleted.account.email || deleted.account.name }));
+      setDeleteTarget(null);
+      setDeletePreview(null);
+      await Promise.all([refreshOverview(), refreshResults()]);
+    } catch (caught) {
+      setDeleteError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const exportInspectionResults = async () => {
+    setExporting(true);
+    setError("");
+    try {
+      const download = await api.downloadInspectionExport(exportFormat, health, search);
+      onNotice(tx("ui.inspection_results_exported_as_file", { file: download.filename }));
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -257,12 +485,23 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           <div><strong>{tx("ui.account_health_inspection")}</strong><span>{snapshot?.running || snapshot?.pending ? tx("ui.reading_cpa_status") : tx("ui.last_completed_time", { time: formatDateTime(lastRun?.finished_at) })}</span></div>
         </div>
         <div className="automation-toolbar-actions">
-          <button className="button inspection-mode-button" type="button" disabled={inspectionBusy} onClick={() => void runScan("native")}>
+          <button className="button inspection-mode-button" type="button" disabled={inspectionBusy} onClick={() => void runNativeScan()}>
             {scanningMode === "native" ? <LoaderCircle className="spin" size={16} /> : <Activity size={16} />}{tx("ui.quick_native_inspection")}
           </button>
-          <button className="button button-primary inspection-mode-button" type="button" disabled={inspectionBusy} onClick={() => void runScan("full")}>
-            {scanningMode === "full" ? <LoaderCircle className="spin" size={16} /> : <ScanSearch size={16} />}{tx("ui.full_server_inspection")}
+          <label className="inspection-run-mode">
+            <span>{tx("ui.inspection_run_mode")}</span>
+            <select value={runMode} disabled={inspectionBusy} onChange={(event) => setRunMode(event.target.value as typeof runMode)}>
+              <option value="full">{tx("ui.full_inspection")}</option>
+              <option value="incremental">{tx("ui.incremental_inspection")}</option>
+              <option value="retry">{tx("ui.retry_review_accounts")}</option>
+              <option value="filtered" disabled={!health}>{tx("ui.reinspect_current_health")}</option>
+              <option value="selected" disabled={selected.size === 0}>{tx("ui.reinspect_selected")}</option>
+            </select>
+          </label>
+          <button className="button button-primary inspection-mode-button" type="button" disabled={inspectionBusy || (runMode === "filtered" && !health) || (runMode === "selected" && selected.size === 0)} onClick={() => void runActiveInspection()}>
+            {scanningMode === "active" ? <LoaderCircle className="spin" size={16} /> : <ScanSearch size={16} />}{tx("ui.start_inspection")}
           </button>
+          {snapshot?.running || snapshot?.pending ? <IconButton label={tx("ui.stop_inspection")} disabled={scanningMode === "stop"} onClick={() => void stopActiveInspection()}>{scanningMode === "stop" ? <LoaderCircle className="spin" size={17} /> : <XSquare size={17} />}</IconButton> : null}
           <IconButton label={tx("ui.refresh_inspection")} disabled={loading} onClick={() => void Promise.all([refreshOverview(), refreshResults()])}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton label={tx("ui.inspection_and_automation_settings")} disabled={!snapshot || !updates} onClick={() => { setSettingsError(""); setSettingsOpen(true); }}><Settings2 size={17} /></IconButton>
         </div>
@@ -284,11 +523,12 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
       {snapshot?.probe_sweep_source && sweepStatus ? (
         <div className={`inspection-sweep-progress sweep-${sweepStatus}`} role="status">
           <div>
-            <strong>{tx("ui.full_server_inspection")}</strong>
-            <span>{sweepSourceLabel(snapshot.probe_sweep_source, locale)} · {sweepStatusLabel(sweepStatus, locale)}</span>
+            <strong>{runModeLabel(snapshot.run_mode, locale)}</strong>
+            <span>{sweepSourceLabel(snapshot.probe_sweep_source, locale)} · {sweepStatusLabel(sweepStatus, locale)} · {probePhaseLabel(snapshot.probe_phase, locale)}</span>
           </div>
           <progress max={Math.max(1, sweepTotal)} value={Math.min(sweepCompleted, Math.max(1, sweepTotal))} aria-label={tx("ui.full_server_inspection_progress")} />
           <code>{tx("ui.completed_count_of_total_remaining_remaining", { completed: sweepCompleted, total: sweepTotal, remaining: sweepRemaining })}</code>
+          <small>{tx("ui.retry_progress", { completed: snapshot.retry_completed ?? 0, total: snapshot.retry_total ?? 0 })}</small>
         </div>
       ) : null}
 
@@ -320,13 +560,42 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           <select aria-label={tx("ui.inspection_health")} value={health} onChange={(event) => { setHealth(event.target.value as "" | InspectionHealth); setPage(1); }}>
             {healthOptions.map((option) => <option key={option.value || "all"} value={option.value}>{option.value ? healthLabel(option.value, locale) : tx(option.label)}</option>)}
           </select>
+          <label className="inspection-page-size">
+            <span>{tx("ui.per_page")}</span>
+            <select aria-label={tx("ui.inspection_results_per_page")} value={pageSize} onChange={(event) => updatePageSize(Number(event.target.value) as InspectionPageSize)}>
+              {INSPECTION_PAGE_SIZE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+          <label className="inspection-export-format">
+            <span>{tx("ui.format")}</span>
+            <select aria-label={tx("ui.export_inspection_results")} value={exportFormat} onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)}>
+              <option value="json">JSON</option><option value="csv">CSV</option><option value="jsonl">JSONL</option>
+            </select>
+          </label>
+          <IconButton label={tx("ui.export_inspection_results")} disabled={exporting} onClick={() => void exportInspectionResults()}>{exporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}</IconButton>
           <span>{tx("ui.count_results", { count: results.total })}</span>
         </div>
+        {results.total > 0 ? (
+          <div className="inspection-filter-actions" role="toolbar" aria-label={tx("ui.filtered_results")}>
+            <span>{tx("ui.filtered_results")} · {tx("ui.count_results", { count: results.total })}</span>
+            <button className="button button-quiet" type="button" disabled={resolvingFiltered} onClick={() => void previewFilteredAccountChange(false)}>{resolvingFiltered ? <LoaderCircle className="spin" size={15} /> : <CheckSquare2 size={15} />}{tx("ui.enable_filtered_results")}</button>
+            <button className="button button-quiet" type="button" disabled={resolvingFiltered} onClick={() => void previewFilteredAccountChange(true)}>{resolvingFiltered ? <LoaderCircle className="spin" size={15} /> : <XSquare size={15} />}{tx("ui.disable_filtered_results")}</button>
+          </div>
+        ) : null}
+        {selected.size > 0 ? (
+          <div className="inspection-selection-bar" role="toolbar" aria-label={tx("ui.selected_accounts") }>
+            <strong>{tx("ui.selected_count", { count: selected.size })}</strong>
+            <button className="button button-quiet" type="button" onClick={() => void previewAccountChange([...selected], false)}><CheckSquare2 size={15} />{tx("ui.enable_selected")}</button>
+            <button className="button button-quiet" type="button" onClick={() => void previewAccountChange([...selected], true)}><XSquare size={15} />{tx("ui.disable_selected")}</button>
+            <button className="button button-quiet" type="button" disabled={inspectionBusy} onClick={() => { setRunMode("selected"); void runActiveInspection("selected"); }}><ScanSearch size={15} />{tx("ui.inspect_selected")}</button>
+            <button className="button button-quiet" type="button" onClick={() => setSelected(new Set())}>{tx("ui.clear_selection")}</button>
+          </div>
+        ) : null}
         <div className="inspection-table-scroll">
           <table className="inspection-table">
-            <thead><tr><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.model_probe")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th></tr></thead>
+            <thead><tr><th className="inspection-select-cell"><input type="checkbox" aria-label={tx("ui.select_current_page")} checked={results.results.some((result) => result.editable) && results.results.filter((result) => result.editable).every((result) => selected.has(result.id))} onChange={toggleCurrentPage} /></th><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.model_probe")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th><th>{tx("ui.actions")}</th></tr></thead>
             <tbody>
-              {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} />)}
+              {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} selected={selected.has(result.id)} onSelect={() => toggleSelected(result.id)} onAction={() => setActionTarget(result)} />)}
             </tbody>
           </table>
           {!loading && results.results.length === 0 ? <div className="empty-state">{tx("ui.no_matching_inspection_results")}</div> : null}
@@ -338,6 +607,24 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           <IconButton label={tx("ui.next_inspection_page")} disabled={results.pages === 0 || page >= results.pages} onClick={() => setPage((current) => current + 1)}><ChevronRight size={17} /></IconButton>
         </div>
       </section>
+
+      {snapshot?.recent_runs?.length ? (
+        <section className="inspection-run-history" aria-label={tx("ui.inspection_run_history")}>
+          <header><strong>{tx("ui.inspection_run_history")}</strong><span>{tx("ui.latest_count", { count: snapshot.recent_runs.length })}</span></header>
+          <div>
+            {snapshot.recent_runs.slice(0, 6).map((run) => (
+              <div className={`inspection-run-row run-${run.status}`} key={run.id}>
+                <span className="inspection-run-dot" />
+                <strong>{runModeLabel(run.mode, locale)}</strong>
+                <span>{sweepStatusLabel(run.status, locale)} · {probePhaseLabel(run.phase, locale)}</span>
+                <code>{run.primary_completed}/{run.primary_total}</code>
+                <code>{tx("ui.retry_progress", { completed: run.retry_completed, total: run.retry_total })}</code>
+                <time>{formatDateTime(run.finished_at || run.started_at)}</time>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="automation-lower-grid">
         <section className="action-history">
@@ -371,6 +658,21 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           onSave={(inspection, updatePolicy, confirmDelete, confirmDeleteInvalid, confirmUpdate) => void saveSettings(inspection, updatePolicy, confirmDelete, confirmDeleteInvalid, confirmUpdate)}
         />
       ) : null}
+      {actionTarget ? (
+        <InspectionActionDialog
+          result={actionTarget}
+          reviewing={reviewing}
+          onClose={() => setActionTarget(null)}
+          onModelTest={() => openModelTest(actionTarget)}
+          onDisable={() => void previewAccountChange([actionTarget.id], true)}
+          onEnable={() => void previewAccountChange([actionTarget.id], false)}
+          onDelete={() => void openDelete(actionTarget)}
+          onReview={(action) => void updateReview(actionTarget, action)}
+        />
+      ) : null}
+      {modelAccount ? <ModelTestDialog account={modelAccount} result={modelResult} error={modelError} testing={modelTesting} onClose={() => setModelAccount(null)} onTest={(model) => void testModel(model)} /> : null}
+      {batchPreview ? <PreviewDialog preview={batchPreview} starting={batchStarting} error={batchError} onClose={() => setBatchPreview(null)} onConfirm={() => void startAccountChange()} /> : null}
+      {deleteTarget ? <DeleteAccountDialog account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={() => { setDeleteTarget(null); setDeletePreview(null); }} onConfirm={() => void confirmDelete()} /> : null}
     </section>
   );
 }
@@ -379,20 +681,62 @@ function InspectionMetric({ label, value, detail, tone = "", icon }: { label: st
   return <div className={tone}><span>{icon}{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>;
 }
 
-function InspectionRow({ result }: { result: InspectionResult }) {
+function InspectionRow({ result, selected, onSelect, onAction }: { result: InspectionResult; selected: boolean; onSelect: () => void; onAction: () => void }) {
   const { locale, formatDateTime, tx } = useI18n();
   return (
     <tr>
+      <td className="inspection-select-cell"><input type="checkbox" aria-label={tx("ui.select_account", { account: result.name || result.id })} checked={selected} disabled={!result.editable} onChange={onSelect} /></td>
       <td><span className={`health-badge health-${result.health}`}><span />{healthLabel(result.health, locale)}</span></td>
       <td><div className="inspection-account"><strong>{result.name || result.id}</strong><code>{result.id}</code></div></td>
       <td><div className="inspection-type"><strong>{result.provider || tx("ui.unknown")}</strong><span>{result.plan_type || result.type || "-"}</span></div></td>
-      <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{confidenceLabel(result.confidence, locale)}{result.signal_source ? ` · ${signalSourceLabel(result.signal_source, locale)}` : ""}</span></div></td>
+      <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{result.status_code ? `HTTP ${result.status_code} · ` : ""}{confidenceLabel(result.confidence, locale)}{result.signal_source ? ` · ${signalSourceLabel(result.signal_source, locale)}` : ""}</span>{result.review_status ? <small className={`review-state review-${result.review_status}`}>{reviewStatusLabel(result.review_status, locale)}</small> : null}</div></td>
       <td><div className={`inspection-probe probe-${result.probe_status || "none"}`}><strong>{result.probe_reason_code ? reasonLabel(result.probe_reason_code, locale) : tx("ui.no_probe_result")}</strong><span>{result.probe_model || "-"}{result.probe_latency_ms ? ` · ${result.probe_latency_ms} ms` : ""}</span>{result.probe_tested_at ? <time title={tx("ui.last_model_probe_time", { time: formatDateTime(result.probe_tested_at) })}>{formatDateTime(result.probe_tested_at)}</time> : null}</div></td>
       <td><div className="inspection-streak"><span className="danger">{tx("ui.failures_count", { count: result.failure_streak })}</span><span className="success">{tx("ui.recovery_count", { count: result.healthy_streak })}</span></div></td>
       <td><span className={`recommendation recommendation-${result.recommendation}`}>{recommendationLabel(result.recommendation, locale)}</span></td>
       <td><div className="inspection-action-state"><strong>{result.circuit_open ? tx("ui.passive_temporary_circuit") : actionLabel(result.auto_action, locale)}</strong><span>{result.circuit_open && result.recover_after ? tx("ui.circuit_recovers_at_time", { time: formatDateTime(result.recover_after) }) : actionStatusLabel(result.auto_action_status, result.owned_disable, locale)}</span></div></td>
       <td><time>{formatDateTime(result.last_checked_at)}</time></td>
+      <td><IconButton label={tx("ui.account_action")} onClick={onAction}><Wrench size={16} /></IconButton></td>
     </tr>
+  );
+}
+
+function InspectionActionDialog({ result, reviewing, onClose, onModelTest, onDisable, onEnable, onDelete, onReview }: {
+  result: InspectionResult;
+  reviewing: boolean;
+  onClose: () => void;
+  onModelTest: () => void;
+  onDisable: () => void;
+  onEnable: () => void;
+  onDelete: () => void;
+  onReview: (action: "resolve" | "ignore" | "reopen") => void;
+}) {
+  const { locale, tx, formatDateTime } = useI18n();
+  const reviewStatus = result.review_status || "pending";
+  return (
+    <Modal title={tx("ui.account_action")} onClose={onClose} footer={<button className="button" type="button" disabled={reviewing} onClick={onClose}>{tx("ui.close")}</button>}>
+      <div className="inspection-action-dialog">
+        <header><div><strong>{result.name || result.id}</strong><code>{result.id}</code></div><span className={`health-badge health-${result.health}`}><span />{healthLabel(result.health, locale)}</span></header>
+        <dl>
+          <div><dt>{tx("ui.http_status")}</dt><dd>{result.status_code ? `HTTP ${result.status_code}` : "-"}</dd></div>
+          <div><dt>{tx("ui.decision")}</dt><dd>{reasonLabel(result.reason_code, locale)}</dd></div>
+          <div><dt>{tx("ui.recommendation")}</dt><dd>{recommendationLabel(result.recommendation, locale)}</dd></div>
+          <div><dt>{tx("ui.review_state")}</dt><dd>{reviewStatusLabel(reviewStatus, locale)}{result.reviewed_at ? ` · ${formatDateTime(result.reviewed_at)}` : ""}</dd></div>
+        </dl>
+        {(result.status_code === 401 || result.status_code === 402 || result.health === "review") ? <p className="inspection-safety-note"><ShieldAlert size={17} />{tx("ui.review_safety_note")}</p> : null}
+        <div className="inspection-action-grid">
+          <button className="button button-primary" type="button" onClick={onModelTest}><Activity size={15} />{tx("ui.model_retest")}</button>
+          <button className="button" type="button" disabled={!result.editable || result.disabled} onClick={onDisable}><XSquare size={15} />{tx("ui.disable")}</button>
+          <button className="button" type="button" disabled={!result.editable || !result.disabled} onClick={onEnable}><CheckSquare2 size={15} />{tx("ui.enable")}</button>
+          <button className="button button-danger" type="button" disabled={!result.editable} onClick={onDelete}><Trash2 size={15} />{tx("ui.delete")}</button>
+        </div>
+        {result.health === "review" ? <div className="inspection-review-actions">
+          {reviewStatus === "pending" ? <>
+            <button className="button button-quiet" type="button" disabled={reviewing} onClick={() => onReview("resolve")}>{tx("ui.mark_resolved")}</button>
+            <button className="button button-quiet" type="button" disabled={reviewing} onClick={() => onReview("ignore")}>{tx("ui.ignore_result")}</button>
+          </> : <button className="button button-quiet" type="button" disabled={reviewing} onClick={() => onReview("reopen")}>{tx("ui.reopen_review")}</button>}
+        </div> : null}
+      </div>
+    </Modal>
   );
 }
 
@@ -409,7 +753,25 @@ function ActionHistoryRow({ action }: { action: InspectionAction }) {
 }
 
 function InspectionLoadingRows() {
-  return <>{Array.from({ length: 5 }, (_, index) => <tr className="inspection-loading-row" key={index}><td colSpan={9}><span /></td></tr>)}</>;
+  return <>{Array.from({ length: 5 }, (_, index) => <tr className="inspection-loading-row" key={index}><td colSpan={11}><span /></td></tr>)}</>;
+}
+
+function inspectionResultAccount(result: InspectionResult): Account {
+  return {
+    id: result.id,
+    name: result.name || result.id,
+    provider: result.provider,
+    type: result.type,
+    plan_type: result.plan_type,
+    disabled: result.disabled,
+    unavailable: result.health === "unavailable",
+    runtime_only: !result.editable,
+    proxy_configured: false,
+    header_count: 0,
+    editable: result.editable,
+    success: 0,
+    failed: result.failure_streak,
+  };
 }
 
 function healthLabel(value: InspectionHealth, locale: Locale): string {
@@ -441,7 +803,21 @@ function sweepSourceLabel(value: NonNullable<InspectionSnapshot["probe_sweep_sou
 }
 
 function sweepStatusLabel(value: NonNullable<InspectionSnapshot["probe_sweep_status"]>, locale: Locale): string {
-  return translateUI(locale, ({ running: "ui.inspection_running", completed: "ui.inspection_completed", failed: "ui.inspection_failed", waiting_for_auth: "ui.inspection_waiting_for_auth" } satisfies Record<NonNullable<InspectionSnapshot["probe_sweep_status"]>, UIMessageKey>)[value]);
+  return translateUI(locale, ({ running: "ui.inspection_running", completed: "ui.inspection_completed", failed: "ui.inspection_failed", waiting_for_auth: "ui.inspection_waiting_for_auth", stopped: "ui.stopped" } satisfies Record<NonNullable<InspectionSnapshot["probe_sweep_status"]>, UIMessageKey>)[value]);
+}
+
+function runModeLabel(value: InspectionSnapshot["run_mode"], locale: Locale): string {
+  const key = ({ native: "ui.quick_native_inspection", full: "ui.full_inspection", incremental: "ui.incremental_inspection", scoped: "ui.reinspect_selected", retry: "ui.retry_review_accounts" } satisfies Record<NonNullable<InspectionSnapshot["run_mode"]>, UIMessageKey>)[value || "full"];
+  return translateUI(locale, key);
+}
+
+function probePhaseLabel(value: InspectionSnapshot["probe_phase"], locale: Locale): string {
+  const key = ({ listing: "ui.inspection_phase_listing", primary: "ui.inspection_phase_primary", retry: "ui.inspection_phase_retry", stopped: "ui.inspection_phase_stopped", completed: "ui.inspection_phase_completed" } satisfies Record<NonNullable<InspectionSnapshot["probe_phase"]>, UIMessageKey>)[value || "listing"];
+  return translateUI(locale, key);
+}
+
+function reviewStatusLabel(value: NonNullable<InspectionResult["review_status"]>, locale: Locale): string {
+  return translateUI(locale, ({ pending: "ui.pending_review", resolved: "ui.review_resolved", ignored: "ui.review_ignored" } satisfies Record<NonNullable<InspectionResult["review_status"]>, UIMessageKey>)[value]);
 }
 
 function confidenceLabel(value: string, locale: Locale): string {
@@ -453,7 +829,7 @@ function recommendationLabel(value: InspectionResult["recommendation"], locale: 
 }
 
 function actionLabel(value: string | undefined, locale: Locale): string {
-  const source = ({ disable: "ui.auto_disable", enable: "ui.auto_enable", delete: "ui.auto_delete", delete_candidate: "ui.pending_deletion_2" } satisfies Record<string, UIMessageKey>)[value || ""] || "ui.not_run";
+  const source = ({ disable: "ui.auto_disable", enable: "ui.auto_enable", delete: "ui.auto_delete", delete_candidate: "ui.pending_deletion_2", review_resolve: "ui.mark_resolved", review_ignore: "ui.ignore_result", review_reopen: "ui.reopen_review" } satisfies Record<string, UIMessageKey>)[value || ""] || "ui.not_run";
   return translateUI(locale, source);
 }
 

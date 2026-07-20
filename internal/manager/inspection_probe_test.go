@@ -60,24 +60,127 @@ func TestInspectionProbeEligibilityRespectsManualDisablePolicyAndOwnership(t *te
 	}
 }
 
-func TestInspectionProbeDecisionIsConservative(t *testing.T) {
+func TestInspectionRunTargetModesAndInvalidHealthBoundaries(t *testing.T) {
+	accounts := []Account{{ID: "healthy"}, {ID: "review"}, {ID: "new"}, {ID: "manual", Disabled: true}}
+	records := map[string]inspectionRecord{
+		"healthy": {Result: InspectionResult{ID: "healthy", Health: InspectionHealthHealthy, LastCheckedAt: time.Now()}},
+		"review":  {Result: InspectionResult{ID: "review", Health: InspectionHealthReview, LastCheckedAt: time.Now()}},
+	}
+	if targets := inspectionRunTargetIDs(InspectionRunModeFull, accounts, records, false); len(targets) != 3 {
+		t.Fatalf("full targets = %#v", targets)
+	}
+	if targets := inspectionRunTargetIDs(InspectionRunModeIncremental, accounts, records, false); len(targets) != 1 || targets[0] != "new" {
+		t.Fatalf("incremental targets = %#v", targets)
+	}
+	if health := normalizeInspectionRunHealth([]string{" review ", "not-a-health", "unknown", "review"}); len(health) != 2 || health[0] != "review" || health[1] != "unknown" {
+		t.Fatalf("normalized health = %#v", health)
+	}
+}
+
+func TestStoppedInspectionSweepDoesNotResumeAfterRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	startedAt := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.UTC)
+	state := persistedInspectionState{
+		Version: inspectionStoreVersion, Policy: defaultInspectionPolicy(), Records: map[string]inspectionRecord{},
+		ProbeSweepTotal: 4, ProbeSweepCompleted: 1, ProbeSweepRemaining: 3,
+		ProbeSweepSource: InspectionSweepSourceManual, ProbeSweepStatus: InspectionSweepStatusStopped,
+		ProbeSweepStartedAt: startedAt, ProbeSweepTargets: []string{"a", "b", "c", "d"},
+		RunMode: InspectionRunModeFull, ProbePhase: InspectionProbePhaseStopped, StopRequested: true,
+	}
+	if errSave := saveInspectionState(inspectionStorePath(dataDir), state); errSave != nil {
+		t.Fatalf("save stopped inspection: %v", errSave)
+	}
+	engine := NewInspectionEngine(NewAccountService(&fakeAuthHost{}), &fakeAuthHost{}, NewMutationCoordinator())
+	engine.SetModelTestService(NewModelTestService(engine.accounts))
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	snapshot := engine.Snapshot()
+	if snapshot.ProbeSweepStatus != InspectionSweepStatusStopped || snapshot.ProbePhase != InspectionProbePhaseStopped ||
+		!snapshot.StopRequested || snapshot.Pending || snapshot.Running || snapshot.ProbeSweepRemaining != 3 {
+		t.Fatalf("reloaded stopped sweep = %#v", snapshot)
+	}
+	engine.ArmModelProbes("management-secret")
+	afterArm := engine.Snapshot()
+	if afterArm.Pending || afterArm.Running || afterArm.ProbeSweepStatus != InspectionSweepStatusStopped {
+		t.Fatalf("arming resumed stopped sweep = %#v", afterArm)
+	}
+}
+
+func TestInspectionProbeDecisionDisablesEveryCompletedAbnormalModelTest(t *testing.T) {
 	now := time.Date(2026, time.July, 21, 3, 0, 0, 0, time.UTC)
 	tests := []struct {
 		reason      string
 		health      string
 		autoDisable bool
+		recommend   string
 	}{
-		{reason: "model_response_ok", health: InspectionHealthHealthy},
-		{reason: "authentication_failed", health: InspectionHealthInvalidCredentials, autoDisable: true},
-		{reason: "quota_limited", health: InspectionHealthReview},
-		{reason: "model_not_found", health: InspectionHealthReview},
-		{reason: "upstream_unavailable", health: InspectionHealthReview},
+		{reason: "model_response_ok", health: InspectionHealthHealthy, recommend: InspectionRecommendationKeep},
+		{reason: "authentication_failed", health: InspectionHealthInvalidCredentials, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "quota_limited", health: InspectionHealthQuotaLimited, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "model_not_found", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "request_timeout", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "upstream_unavailable", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "invalid_response", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
 	}
 	for _, test := range tests {
 		decision, ok := decisionFromModelProbe(inspectionProbeSignal{ReasonCode: test.reason, TestedAt: now}, now)
-		if !ok || decision.Health != test.health || decision.AutoDisableEligible != test.autoDisable {
+		if !ok || decision.Health != test.health || decision.AutoDisableEligible != test.autoDisable || decision.Recommendation != test.recommend {
 			t.Errorf("decision for %s = %#v, ok=%v", test.reason, decision, ok)
 		}
+	}
+	if _, ok := decisionFromModelProbe(inspectionProbeSignal{Status: "unsupported", ReasonCode: "unsupported_provider", TestedAt: now}, now); ok {
+		t.Fatal("unsupported provider was treated as a completed abnormal model test")
+	}
+}
+
+func TestCompletedAbnormalModelProbeBypassesOrdinaryFailureThreshold(t *testing.T) {
+	policy := defaultInspectionPolicy()
+	policy.AutoDisable = true
+	policy.FailureThreshold = 3
+	record := inspectionRecord{
+		Result: InspectionResult{
+			Health: InspectionHealthUnavailable, ReasonCode: "upstream_unavailable", Recommendation: InspectionRecommendationDisable,
+			Editable: true, AutoDisableEligible: true, FailureStreak: 1, SignalSource: InspectionSignalActiveProbe,
+		},
+		Probe: inspectionProbeSignal{Status: "unavailable", ReasonCode: "upstream_unavailable", ConsecutiveFailures: 1},
+	}
+	if !shouldAutoDisableInspection(policy, Account{ID: "active-probe", Editable: true}, record) {
+		t.Fatal("completed abnormal model probe did not request immediate disable")
+	}
+	record.Probe.Status = "unsupported"
+	if shouldAutoDisableInspection(policy, Account{ID: "unsupported", Editable: true}, record) {
+		t.Fatal("unsupported provider requested an automatic disable")
+	}
+}
+
+func TestCompletedAbnormalModelProbeActuallyDisablesEditableAccount(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 13, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+	engine.mu.Lock()
+	engine.policy = InspectionPolicy{
+		ScanIntervalMinutes: 30, FailureThreshold: 3, RecoveryThreshold: 2,
+		AutoDisable: true, DeleteGraceHours: 168, DeleteBatchSize: 10,
+	}
+	engine.records["inspection-account"] = inspectionRecord{Probe: inspectionProbeSignal{
+		Status: "unavailable", ReasonCode: "upstream_unavailable", Model: "gpt-test",
+		TestedAt: now, ConsecutiveFailures: 1,
+	}}
+	engine.mu.Unlock()
+
+	engine.scan(context.Background())
+	result := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 20}).Results[0]
+	if !result.Disabled || !result.OwnedDisable || result.AutoAction != InspectionActionDisable ||
+		result.AutoActionStatus != InspectionActionSucceeded || result.ReasonCode != "upstream_unavailable" || result.FailureStreak != 1 {
+		t.Fatalf("active-probe disable result = %#v", result)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.saves) != 1 || !bytes.Contains(host.saves[0].JSON, []byte(`"disabled":true`)) {
+		t.Fatalf("active-probe disable writes = %#v", host.saves)
 	}
 }
 

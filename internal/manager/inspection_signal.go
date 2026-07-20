@@ -345,18 +345,20 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 	case "authentication_failed":
 		return inspectionDecision{
 			Health: InspectionHealthInvalidCredentials, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDisable,
 			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "quota_limited":
 		return inspectionDecision{
-			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationReview, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+			Health: InspectionHealthQuotaLimited, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationDisable,
+			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "model_not_found", "request_timeout", "upstream_unavailable", "invalid_response":
 		return inspectionDecision{
-			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+			Health: InspectionHealthUnavailable, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationDisable,
+			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	default:
 		return inspectionDecision{}, false

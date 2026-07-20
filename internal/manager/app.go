@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.4"
+	PluginVersion    = "0.2.5"
 	PluginRepository = DefaultPluginRepository
 )
 
@@ -184,7 +184,11 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/inspection", Description: "Validate and save the account inspection policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan", Description: "Request an immediate account inspection scan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan/native", Description: "Request an immediate full CPA-native account census without model probes."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/run", Description: "Start a full, incremental, retry, or scoped active inspection."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/stop", Description: "Stop the current manual active inspection."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/results", Description: "List redacted account inspection results."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/export", Description: "Export filtered sanitized inspection results as JSON, CSV, or JSON Lines."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/review", Description: "Resolve, ignore, or reopen one sanitized inspection review result."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/actions", Description: "List sanitized automatic action history."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/auto-delete", Description: "Execute due opt-in deletion candidates with the current Management credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/updates", Description: "Read plugin release and update-check status."},
@@ -278,8 +282,16 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return jsonResponse(http.StatusAccepted, snapshot)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/scan/native":
 		return jsonResponse(http.StatusAccepted, a.inspection.RequestScan())
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/run":
+		return a.handleInspectionRun(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/stop":
+		return jsonResponse(http.StatusAccepted, a.inspection.StopRun())
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/results":
 		return a.handleListInspectionResults(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/export":
+		return a.handleExportInspection(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/review":
+		return a.handleInspectionReview(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/actions":
 		return a.handleListInspectionActions(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/auto-delete":
@@ -304,6 +316,33 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			"method": method,
 			"path":   path,
 		})
+	}
+}
+
+func (a *App) handleExportInspection(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	format := firstQuery(req.Query, "format")
+	if format == "" {
+		format = "json"
+	}
+	query := InspectionResultQuery{Page: 1, PageSize: maxInspectionResultPageSize, Health: firstQuery(req.Query, "health"), Search: firstQuery(req.Query, "search")}
+	response := a.inspection.ListResults(query)
+	results := append([]InspectionResult(nil), response.Results...)
+	for page := 2; page <= response.Pages && len(results) < maxInspectionAccounts; page++ {
+		query.Page = page
+		results = append(results, a.inspection.ListResults(query).Results...)
+	}
+	download, errRender := renderInspectionExport(format, results, time.Now().UTC())
+	if errRender != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errRender.Error()})
+	}
+	return cpaapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":                  []string{download.ContentType},
+			"Content-Disposition":           []string{fmt.Sprintf(`attachment; filename="%s"`, download.Filename)},
+			"X-Exported-Inspection-Results": []string{strconv.Itoa(download.Count)},
+		},
+		Body: download.Body,
 	}
 }
 
@@ -774,6 +813,46 @@ func (a *App) handleListInspectionResults(req cpaapi.ManagementRequest) cpaapi.M
 		Search:   firstQuery(req.Query, "search"),
 	}
 	return jsonResponse(http.StatusOK, a.inspection.ListResults(query))
+}
+
+func (a *App) handleInspectionReview(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request InspectionReviewRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	result, errUpdate := a.inspection.UpdateReview(request)
+	if errUpdate != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(errUpdate.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(errUpdate.Error(), "does not require review") {
+			status = http.StatusConflict
+		}
+		return jsonResponse(status, map[string]any{"error": errUpdate.Error()})
+	}
+	a.reconcileOperationSources()
+	return jsonResponse(http.StatusOK, result)
+}
+
+func (a *App) handleInspectionRun(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request InspectionRunRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	snapshot, errRun := a.inspection.RequestRun(request, managementKey)
+	managementKey = ""
+	if errRun != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(errRun.Error(), "already running") {
+			status = http.StatusConflict
+		}
+		return jsonResponse(status, map[string]any{"error": errRun.Error()})
+	}
+	return jsonResponse(http.StatusAccepted, snapshot)
 }
 
 func (a *App) handleListInspectionActions(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

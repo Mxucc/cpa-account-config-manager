@@ -34,6 +34,7 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 		}
 	}
 	a.recordModelTest(result)
+	_ = a.inspection.RecordManualModelTest(ctx, result)
 	return jsonResponse(http.StatusOK, result)
 }
 

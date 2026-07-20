@@ -135,6 +135,75 @@ func inspectionProbeAccountsForTargets(accounts []Account, targets []string) []A
 	return out
 }
 
+func inspectionRunTargetIDs(mode string, accounts []Account, records map[string]inspectionRecord, scanManuallyDisabled bool) []string {
+	eligible := inspectionProbeEligibleAccountIDs(accounts, records, scanManuallyDisabled)
+	if mode != InspectionRunModeIncremental {
+		return eligible
+	}
+	out := make([]string, 0, len(eligible))
+	for _, id := range eligible {
+		if record, exists := records[id]; !exists || record.Result.LastCheckedAt.IsZero() {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func retryInspectionProbeResults(ctx context.Context, service *ModelTestService, accounts []Account, results []ModelTestResult, policy InspectionPolicy, managementBaseURL, managementKey string) ([]ModelTestResult, int) {
+	if service == nil || strings.TrimSpace(managementKey) == "" {
+		return nil, 0
+	}
+	byID := make(map[string]Account, len(accounts))
+	for _, account := range accounts {
+		byID[account.ID] = account
+	}
+	retry := make([]ModelTestResult, 0)
+	completed := 0
+	for _, result := range results {
+		if result.ReasonCode != "request_timeout" && result.ReasonCode != "upstream_unavailable" && result.ReasonCode != "invalid_response" {
+			continue
+		}
+		account, exists := byID[result.AccountID]
+		if !exists || ctx.Err() != nil {
+			continue
+		}
+		model := inspectionProbeModel(account, policy.ModelProbeModels)
+		completed++
+		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model}, managementBaseURL, managementKey)
+		if errRun != nil {
+			continue
+		}
+		retry = append(retry, next)
+	}
+	return retry, completed
+}
+
+func inspectionProbeRetryCount(results []ModelTestResult) int {
+	count := 0
+	for _, result := range results {
+		if result.ReasonCode == "request_timeout" || result.ReasonCode == "upstream_unavailable" || result.ReasonCode == "invalid_response" {
+			count++
+		}
+	}
+	return count
+}
+
+func mergeInspectionProbeResults(primary, retry []ModelTestResult) []ModelTestResult {
+	byID := make(map[string]ModelTestResult, len(primary)+len(retry))
+	for _, result := range primary {
+		byID[result.AccountID] = result
+	}
+	for _, result := range retry {
+		byID[result.AccountID] = result
+	}
+	out := make([]ModelTestResult, 0, len(byID))
+	for _, result := range byID {
+		out = append(out, result)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AccountID < out[j].AccountID })
+	return out
+}
+
 func inspectionProbeProvider(account Account) string {
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)))
 	switch provider {

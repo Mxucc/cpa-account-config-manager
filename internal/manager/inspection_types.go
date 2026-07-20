@@ -9,6 +9,7 @@ import (
 const (
 	maxInspectionAccounts       = 10_000
 	maxInspectionActions        = 500
+	maxInspectionRuns           = 50
 	defaultInspectionInterval   = 30
 	defaultModelProbeInterval   = 60
 	defaultModelProbeBatchSize  = 20
@@ -53,11 +54,18 @@ const (
 	InspectionActionEnable          = "enable"
 	InspectionActionDelete          = "delete"
 	InspectionActionDeleteCandidate = "delete_candidate"
+	InspectionActionReviewResolve   = "review_resolve"
+	InspectionActionReviewIgnore    = "review_ignore"
+	InspectionActionReviewReopen    = "review_reopen"
 
 	InspectionActionPending   = "pending"
 	InspectionActionSucceeded = "succeeded"
 	InspectionActionFailed    = "failed"
 	InspectionActionSkipped   = "skipped"
+
+	InspectionReviewPending  = "pending"
+	InspectionReviewResolved = "resolved"
+	InspectionReviewIgnored  = "ignored"
 
 	InspectionSignalNative      = "native"
 	InspectionSignalPassive     = "passive"
@@ -71,6 +79,19 @@ const (
 	InspectionSweepStatusCompleted      = "completed"
 	InspectionSweepStatusFailed         = "failed"
 	InspectionSweepStatusWaitingForAuth = "waiting_for_auth"
+	InspectionSweepStatusStopped        = "stopped"
+
+	InspectionRunModeFull        = "full"
+	InspectionRunModeNative      = "native"
+	InspectionRunModeIncremental = "incremental"
+	InspectionRunModeScoped      = "scoped"
+	InspectionRunModeRetry       = "retry"
+
+	InspectionProbePhaseListing = "listing"
+	InspectionProbePhasePrimary = "primary"
+	InspectionProbePhaseRetry   = "retry"
+	InspectionProbePhaseStopped = "stopped"
+	InspectionProbePhaseDone    = "completed"
 )
 
 type InspectionPolicy struct {
@@ -134,29 +155,50 @@ type InspectionRunSummary struct {
 	Error              string    `json:"error,omitempty"`
 }
 
+type InspectionRunRecord struct {
+	ID           string               `json:"id"`
+	Mode         string               `json:"mode"`
+	Source       string               `json:"source"`
+	Status       string               `json:"status"`
+	Phase        string               `json:"phase,omitempty"`
+	StartedAt    time.Time            `json:"started_at"`
+	FinishedAt   time.Time            `json:"finished_at,omitempty"`
+	PrimaryTotal int                  `json:"primary_total"`
+	PrimaryDone  int                  `json:"primary_completed"`
+	RetryTotal   int                  `json:"retry_total"`
+	RetryDone    int                  `json:"retry_completed"`
+	Summary      InspectionRunSummary `json:"summary"`
+}
+
 type InspectionSnapshot struct {
-	Policy                InspectionPolicy     `json:"policy"`
-	Running               bool                 `json:"running"`
-	Pending               bool                 `json:"pending"`
-	ScanStartedAt         time.Time            `json:"scan_started_at,omitempty"`
-	LastRun               InspectionRunSummary `json:"last_run"`
-	Total                 int                  `json:"total"`
-	ActionCount           int                  `json:"action_count"`
-	ActiveProbeArmed      bool                 `json:"active_probe_armed"`
-	LastNativeRunAt       time.Time            `json:"last_native_run_at,omitempty"`
-	LastProbeRunAt        time.Time            `json:"last_probe_run_at,omitempty"`
-	ProbeSweepRemaining   int                  `json:"probe_sweep_remaining"`
-	ProbeSweepTotal       int                  `json:"probe_sweep_total"`
-	ProbeSweepCompleted   int                  `json:"probe_sweep_completed"`
-	ProbeSweepSource      string               `json:"probe_sweep_source,omitempty"`
-	ProbeSweepStatus      string               `json:"probe_sweep_status,omitempty"`
-	ProbeSweepStartedAt   time.Time            `json:"probe_sweep_started_at,omitempty"`
-	AnomalyEligible       int                  `json:"anomaly_eligible"`
-	AnomalyCount          int                  `json:"anomaly_count"`
-	AnomalyPercent        int                  `json:"anomaly_percent"`
-	AnomalyTriggerPending bool                 `json:"anomaly_trigger_pending"`
-	LastAnomalyTriggerAt  time.Time            `json:"last_anomaly_trigger_at,omitempty"`
-	StorageError          string               `json:"storage_error,omitempty"`
+	Policy                InspectionPolicy      `json:"policy"`
+	Running               bool                  `json:"running"`
+	Pending               bool                  `json:"pending"`
+	ScanStartedAt         time.Time             `json:"scan_started_at,omitempty"`
+	LastRun               InspectionRunSummary  `json:"last_run"`
+	Total                 int                   `json:"total"`
+	ActionCount           int                   `json:"action_count"`
+	ActiveProbeArmed      bool                  `json:"active_probe_armed"`
+	LastNativeRunAt       time.Time             `json:"last_native_run_at,omitempty"`
+	LastProbeRunAt        time.Time             `json:"last_probe_run_at,omitempty"`
+	ProbeSweepRemaining   int                   `json:"probe_sweep_remaining"`
+	ProbeSweepTotal       int                   `json:"probe_sweep_total"`
+	ProbeSweepCompleted   int                   `json:"probe_sweep_completed"`
+	ProbeSweepSource      string                `json:"probe_sweep_source,omitempty"`
+	ProbeSweepStatus      string                `json:"probe_sweep_status,omitempty"`
+	ProbeSweepStartedAt   time.Time             `json:"probe_sweep_started_at,omitempty"`
+	AnomalyEligible       int                   `json:"anomaly_eligible"`
+	AnomalyCount          int                   `json:"anomaly_count"`
+	AnomalyPercent        int                   `json:"anomaly_percent"`
+	AnomalyTriggerPending bool                  `json:"anomaly_trigger_pending"`
+	LastAnomalyTriggerAt  time.Time             `json:"last_anomaly_trigger_at,omitempty"`
+	StorageError          string                `json:"storage_error,omitempty"`
+	RunMode               string                `json:"run_mode,omitempty"`
+	ProbePhase            string                `json:"probe_phase,omitempty"`
+	RetryTotal            int                   `json:"retry_total"`
+	RetryCompleted        int                   `json:"retry_completed"`
+	StopRequested         bool                  `json:"stop_requested"`
+	RecentRuns            []InspectionRunRecord `json:"recent_runs"`
 }
 
 type InspectionResult struct {
@@ -189,6 +231,9 @@ type InspectionResult struct {
 	ProbeTestedAt       *time.Time `json:"probe_tested_at,omitempty"`
 	ProbeLatencyMS      int64      `json:"probe_latency_ms,omitempty"`
 	SignalSource        string     `json:"signal_source,omitempty"`
+	StatusCode          int        `json:"status_code,omitempty"`
+	ReviewStatus        string     `json:"review_status,omitempty"`
+	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
 	CircuitOpen         bool       `json:"circuit_open"`
 	CircuitReasonCode   string     `json:"circuit_reason_code,omitempty"`
 }
@@ -262,6 +307,17 @@ type InspectionResultList struct {
 	Page     int                `json:"page"`
 	PageSize int                `json:"page_size"`
 	Pages    int                `json:"pages"`
+}
+
+type InspectionReviewRequest struct {
+	AccountID string `json:"account_id"`
+	Action    string `json:"action"`
+}
+
+type InspectionRunRequest struct {
+	Mode     string   `json:"mode"`
+	Health   []string `json:"health,omitempty"`
+	Selected []string `json:"selected,omitempty"`
 }
 
 func defaultInspectionPolicy() InspectionPolicy {

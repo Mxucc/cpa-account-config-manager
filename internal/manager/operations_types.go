@@ -35,6 +35,9 @@ const (
 	OperationActionAutoEnable      = "auto_enable"
 	OperationActionDeleteCandidate = "delete_candidate"
 	OperationActionAutoDelete      = "auto_delete"
+	OperationActionReviewResolve   = "review_resolve"
+	OperationActionReviewIgnore    = "review_ignore"
+	OperationActionReviewReopen    = "review_reopen"
 	OperationActionUpdateSave      = "update_policy_save"
 	OperationActionUpdateCheck     = "update_check"
 	OperationActionUpdateInstall   = "update_install"
@@ -184,6 +187,7 @@ func normalizeOperationAction(value string) string {
 		OperationActionPolicyScan, OperationActionForceSync, OperationActionInspectionSave,
 		OperationActionInspectionScan, OperationActionAutoDisable, OperationActionAutoEnable,
 		OperationActionDeleteCandidate, OperationActionAutoDelete, OperationActionUpdateSave,
+		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
 		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:

@@ -65,6 +65,15 @@ type persistedInspectionState struct {
 	ProbeSweepTargets     []string                    `json:"probe_sweep_targets,omitempty"`
 	AnomalyTriggerPending bool                        `json:"anomaly_trigger_pending,omitempty"`
 	LastAnomalyTriggerAt  time.Time                   `json:"last_anomaly_trigger_at,omitempty"`
+	RunMode               string                      `json:"run_mode,omitempty"`
+	RunHealth             []string                    `json:"run_health,omitempty"`
+	RunSelected           []string                    `json:"run_selected,omitempty"`
+	ProbePhase            string                      `json:"probe_phase,omitempty"`
+	RetryTotal            int                         `json:"retry_total,omitempty"`
+	RetryCompleted        int                         `json:"retry_completed,omitempty"`
+	StopRequested         bool                        `json:"stop_requested,omitempty"`
+	Runs                  []InspectionRunRecord       `json:"runs,omitempty"`
+	ActiveRunID           string                      `json:"active_run_id,omitempty"`
 }
 
 func inspectionStorePath(dataDir string) string {
@@ -104,6 +113,13 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 	state.ProbeSweepSource = normalizeInspectionSweepSource(state.ProbeSweepSource)
 	state.ProbeSweepStatus = normalizeInspectionSweepStatus(state.ProbeSweepStatus)
 	state.ProbeSweepTargets = sanitizeInspectionSweepTargets(state.ProbeSweepTargets)
+	state.RunMode = normalizeInspectionRunMode(state.RunMode)
+	state.RunHealth = normalizeInspectionRunHealth(state.RunHealth)
+	state.RunSelected = sanitizeInspectionSweepTargets(state.RunSelected)
+	state.ProbePhase = normalizeInspectionProbePhase(state.ProbePhase)
+	state.Runs = sanitizeInspectionRuns(state.Runs)
+	state.ActiveRunID = safeOperationIdentifier(state.ActiveRunID, 128)
+	state.RetryTotal, state.RetryCompleted, _ = normalizeInspectionSweepCounts(state.RetryTotal, state.RetryCompleted, max(0, state.RetryTotal-state.RetryCompleted))
 	if state.ProbeSweepTotal == 0 && state.ProbeSweepRemaining == 0 {
 		state.ProbeSweepCompleted = 0
 	}
@@ -116,7 +132,32 @@ func saveInspectionState(path string, state persistedInspectionState) error {
 	state.Records = cloneInspectionRecords(state.Records)
 	state.Actions = append([]InspectionAction(nil), state.Actions...)
 	state.ProbeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)
+	state.RunHealth = append([]string(nil), state.RunHealth...)
+	state.RunSelected = append([]string(nil), state.RunSelected...)
+	state.Runs = append([]InspectionRunRecord(nil), state.Runs...)
 	return savePrivateJSON(path, state)
+}
+
+func sanitizeInspectionRuns(runs []InspectionRunRecord) []InspectionRunRecord {
+	if len(runs) > maxInspectionRuns {
+		runs = runs[len(runs)-maxInspectionRuns:]
+	}
+	out := make([]InspectionRunRecord, 0, len(runs))
+	for _, run := range runs {
+		run.ID = safeOperationIdentifier(run.ID, 128)
+		run.Mode = normalizeInspectionRunMode(run.Mode)
+		run.Source = normalizeInspectionSweepSource(run.Source)
+		run.Status = normalizeInspectionSweepStatus(run.Status)
+		run.Phase = normalizeInspectionProbePhase(run.Phase)
+		run.PrimaryTotal, run.PrimaryDone, _ = normalizeInspectionSweepCounts(run.PrimaryTotal, run.PrimaryDone, max(0, run.PrimaryTotal-run.PrimaryDone))
+		run.RetryTotal, run.RetryDone, _ = normalizeInspectionSweepCounts(run.RetryTotal, run.RetryDone, max(0, run.RetryTotal-run.RetryDone))
+		run.Summary.Error = safeInspectionError(run.Summary.Error)
+		if run.ID == "" || run.Mode == "" || run.Source == "" || run.Status == "" || run.StartedAt.IsZero() {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
 }
 
 func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]inspectionRecord {
@@ -166,6 +207,11 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Result.ProbeLatencyMS = record.Probe.LatencyMS
 		record.DisableReason = safeInspectionReason(record.DisableReason)
 		record.Result.SignalSource = normalizeInspectionSignalSource(record.Result.SignalSource)
+		record.Result.StatusCode = boundedHTTPStatus(record.Result.StatusCode)
+		record.Result.ReviewStatus = normalizeInspectionReviewStatus(record.Result.ReviewStatus, record.Result.Health)
+		if record.Result.ReviewStatus == "" {
+			record.Result.ReviewedAt = nil
+		}
 		record.Result.CircuitReasonCode = safeOptionalInspectionReason(record.Result.CircuitReasonCode)
 		if record.DisableReason != "passive_circuit_open" {
 			record.Result.CircuitOpen = false
@@ -212,6 +258,7 @@ func cloneInspectionResult(result InspectionResult) InspectionResult {
 	clone.RecoverAfter = cloneTimePointer(result.RecoverAfter)
 	clone.DeleteEligibleAt = cloneTimePointer(result.DeleteEligibleAt)
 	clone.ProbeTestedAt = cloneTimePointer(result.ProbeTestedAt)
+	clone.ReviewedAt = cloneTimePointer(result.ReviewedAt)
 	return clone
 }
 
@@ -278,10 +325,23 @@ func normalizeInspectionRecommendation(value string) string {
 
 func normalizeInspectionAction(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case InspectionActionDisable, InspectionActionEnable, InspectionActionDelete, InspectionActionDeleteCandidate:
+	case InspectionActionDisable, InspectionActionEnable, InspectionActionDelete, InspectionActionDeleteCandidate,
+		InspectionActionReviewResolve, InspectionActionReviewIgnore, InspectionActionReviewReopen:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
+	}
+}
+
+func normalizeInspectionReviewStatus(value, health string) string {
+	if normalizeInspectionHealth(health) != InspectionHealthReview {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionReviewResolved, InspectionReviewIgnored:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return InspectionReviewPending
 	}
 }
 
@@ -368,7 +428,7 @@ func normalizeInspectionSweepSource(value string) string {
 
 func normalizeInspectionSweepStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case InspectionSweepStatusRunning, InspectionSweepStatusCompleted, InspectionSweepStatusFailed, InspectionSweepStatusWaitingForAuth:
+	case InspectionSweepStatusRunning, InspectionSweepStatusCompleted, InspectionSweepStatusFailed, InspectionSweepStatusWaitingForAuth, InspectionSweepStatusStopped:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""

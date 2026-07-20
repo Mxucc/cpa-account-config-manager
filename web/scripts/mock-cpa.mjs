@@ -253,9 +253,9 @@ function mockInspectionResults() {
   const checkedAt = new Date().toISOString();
   const states = [
     ["deactivated", "workspace_deactivated", "high", "delete", true],
-    ["invalid_credentials", "invalid_credentials", "high", "reauth", true],
+    ["invalid_credentials", "invalid_credentials", "high", "disable", true],
     ["quota_limited", "quota_exhausted", "high", "disable", true],
-    ["review", "authentication_review", "medium", "review", false],
+    ["unavailable", "upstream_unavailable", "low", "disable", true],
     ["unavailable", "native_unavailable", "medium", "review", false],
   ];
   return accounts.slice(0, 12).map((account, index) => {
@@ -283,6 +283,8 @@ function mockInspectionResults() {
       probe_tested_at: checkedAt,
       probe_latency_ms: 180 + index * 17,
       signal_source: index < 5 ? "active_probe" : "native",
+      status_code: index === 3 ? 503 : index === 2 ? 402 : undefined,
+      review_status: state[0] === "review" ? "pending" : undefined,
       circuit_open: circuit,
       circuit_reason_code: circuit ? "invalid_response" : undefined,
       recover_after: circuit ? new Date(Date.now() + 11 * 60_000).toISOString() : undefined,
@@ -321,12 +323,21 @@ function mockInspectionSnapshot(pending = false) {
     active_probe_armed: true,
     last_native_run_at: new Date().toISOString(),
     last_probe_run_at: new Date(Date.now() - 60_000).toISOString(),
-    probe_sweep_remaining: 7,
+    probe_sweep_remaining: pending ? 7 : 0,
     probe_sweep_total: 12,
-    probe_sweep_completed: 5,
+    probe_sweep_completed: pending ? 5 : 12,
     probe_sweep_source: "manual",
-    probe_sweep_status: "running",
+    probe_sweep_status: pending ? "running" : "completed",
     probe_sweep_started_at: new Date(Date.now() - 35_000).toISOString(),
+    run_mode: "full",
+    probe_phase: pending ? "primary" : "completed",
+    retry_total: 2,
+    retry_completed: 1,
+    stop_requested: false,
+    recent_runs: [
+      { id: "demo-run-current", mode: "full", source: "manual", status: pending ? "running" : "completed", phase: pending ? "primary" : "completed", started_at: new Date(Date.now() - 35_000).toISOString(), finished_at: pending ? undefined : new Date().toISOString(), primary_total: 12, primary_completed: pending ? 5 : 12, retry_total: 2, retry_completed: pending ? 1 : 2, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
+      { id: "demo-run-native", mode: "native", source: "manual", status: "completed", phase: "completed", started_at: new Date(Date.now() - 3_600_000).toISOString(), finished_at: new Date(Date.now() - 3_599_000).toISOString(), primary_total: 12, primary_completed: 12, retry_total: 0, retry_completed: 0, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
+    ],
     anomaly_eligible: 10,
     anomaly_count: 5,
     anomaly_percent: 50,
@@ -1220,6 +1231,35 @@ const server = http.createServer(async (request, response) => {
         { id: "demo-action-delete", account_id: results[0].id, name: results[0].name, provider: results[0].provider, action: "delete_candidate", status: "pending", reason_code: results[0].reason_code, created_at: createdAt },
       ],
     });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/run")) {
+    const body = await readJSON(request);
+    return json(response, 202, { ...mockInspectionSnapshot(true), run_mode: body.mode || "full", probe_phase: "listing" });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/stop")) {
+    return json(response, 202, { ...mockInspectionSnapshot(false), probe_sweep_status: "stopped", probe_phase: "stopped", stop_requested: true });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/review")) {
+    const body = await readJSON(request);
+    const result = mockInspectionResults().find((entry) => entry.id === body.account_id);
+    if (!result) return json(response, 404, { error: "inspection result was not found" });
+    return json(response, 200, { ...result, review_status: body.action === "reopen" ? "pending" : body.action === "ignore" ? "ignored" : "resolved", reviewed_at: new Date().toISOString() });
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/inspection/export")) {
+    const format = url.searchParams.get("format") || "json";
+    const exported = mockInspectionResults();
+    const headers = {
+      "Content-Disposition": `attachment; filename="cpa-account-inspection-demo.${format}"`,
+      "X-Exported-Inspection-Results": String(exported.length),
+    };
+    if (format === "csv") {
+      const body = ["id,name,health,reason_code,status_code", ...exported.map((entry) => [entry.id, entry.name, entry.health, entry.reason_code, entry.status_code || ""].join(","))].join("\n");
+      return textDownload(response, body, "text/csv; charset=utf-8", `cpa-account-inspection-demo.${format}`, { "X-Exported-Inspection-Results": String(exported.length) });
+    }
+    if (format === "jsonl") {
+      return textDownload(response, exported.map((entry) => JSON.stringify(entry)).join("\n"), "application/x-ndjson; charset=utf-8", `cpa-account-inspection-demo.${format}`, { "X-Exported-Inspection-Results": String(exported.length) });
+    }
+    return json(response, 200, { exported_at: new Date().toISOString(), count: exported.length, results: exported }, headers);
   }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/scan")) {
     return json(response, 202, mockInspectionSnapshot(true));

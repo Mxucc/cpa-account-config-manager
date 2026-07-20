@@ -30,6 +30,8 @@ type InspectionEngine struct {
 	policy                InspectionPolicy
 	records               map[string]inspectionRecord
 	actions               []InspectionAction
+	runs                  []InspectionRunRecord
+	activeRunID           string
 	lastRun               InspectionRunSummary
 	probeCursor           int
 	lastNativeRunAt       time.Time
@@ -51,6 +53,14 @@ type InspectionEngine struct {
 	pending               bool
 	pendingProbe          bool
 	pendingProbeSweep     bool
+	runMode               string
+	runHealth             []string
+	runSelected           []string
+	probePhase            string
+	retryTotal            int
+	retryCompleted        int
+	stopRequested         bool
+	activeCancel          context.CancelFunc
 	scanStarted           time.Time
 	storageErr            string
 	dirty                 bool
@@ -138,6 +148,8 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.policy = state.Policy
 	e.records = state.Records
 	e.actions = state.Actions
+	e.runs = state.Runs
+	e.activeRunID = state.ActiveRunID
 	e.lastRun = state.LastRun
 	e.probeCursor = state.ProbeCursor
 	e.lastNativeRunAt = state.LastNativeRunAt
@@ -149,11 +161,18 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.probeSweepStatus = state.ProbeSweepStatus
 	e.probeSweepStartedAt = state.ProbeSweepStartedAt
 	e.probeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)
-	if e.probeSweepRemaining > 0 {
+	if e.probeSweepRemaining > 0 && e.probeSweepStatus != InspectionSweepStatusStopped {
 		e.probeSweepStatus = InspectionSweepStatusWaitingForAuth
 	}
 	e.anomalyTriggerPending = state.AnomalyTriggerPending
 	e.lastAnomalyTriggerAt = state.LastAnomalyTriggerAt
+	e.runMode = state.RunMode
+	e.runHealth = append([]string(nil), state.RunHealth...)
+	e.runSelected = append([]string(nil), state.RunSelected...)
+	e.probePhase = state.ProbePhase
+	e.retryTotal = state.RetryTotal
+	e.retryCompleted = state.RetryCompleted
+	e.stopRequested = state.StopRequested
 	e.managementKey = ""
 	e.storageErr = storageErr
 	e.dirty = false
@@ -199,7 +218,182 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 		AnomalyTriggerPending: e.anomalyTriggerPending,
 		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
 		StorageError:          e.storageErr,
+		RunMode:               e.runMode,
+		ProbePhase:            e.probePhase,
+		RetryTotal:            e.retryTotal,
+		RetryCompleted:        e.retryCompleted,
+		StopRequested:         e.stopRequested,
+		RecentRuns:            recentInspectionRuns(e.runs, 10),
 	}
+}
+
+func (e *InspectionEngine) RequestRun(request InspectionRunRequest, managementKey string) (InspectionSnapshot, error) {
+	if e == nil {
+		return InspectionSnapshot{}, fmt.Errorf("inspection engine is unavailable")
+	}
+	mode := strings.ToLower(strings.TrimSpace(request.Mode))
+	if mode == "" {
+		mode = InspectionRunModeFull
+	}
+	if mode != InspectionRunModeFull && mode != InspectionRunModeIncremental && mode != InspectionRunModeScoped && mode != InspectionRunModeRetry {
+		return InspectionSnapshot{}, fmt.Errorf("unsupported inspection run mode")
+	}
+	health := normalizeInspectionRunHealth(request.Health)
+	selected := sanitizeInspectionSweepTargets(request.Selected)
+	if mode == InspectionRunModeScoped && len(health) == 0 && len(selected) == 0 {
+		return InspectionSnapshot{}, fmt.Errorf("scoped inspection requires health or selected account ids")
+	}
+	e.mu.Lock()
+	if e.closed || !e.started {
+		e.mu.Unlock()
+		return InspectionSnapshot{}, fmt.Errorf("inspection engine is unavailable")
+	}
+	if e.running || e.pending || e.pendingProbeSweep {
+		e.mu.Unlock()
+		return InspectionSnapshot{}, fmt.Errorf("inspection is already running")
+	}
+	if (mode == InspectionRunModeScoped || mode == InspectionRunModeRetry) && len(e.records) == 0 {
+		e.mu.Unlock()
+		return InspectionSnapshot{}, fmt.Errorf("inspection mode requires existing results")
+	}
+	armed := strings.TrimSpace(managementKey) != "" && e.modelTests != nil
+	if !armed {
+		e.mu.Unlock()
+		return InspectionSnapshot{}, fmt.Errorf("management key is required for active inspection")
+	}
+	targets := e.runTargetsLocked(mode, health, selected)
+	if mode == InspectionRunModeFull || mode == InspectionRunModeIncremental {
+		targets = nil
+	}
+	if len(targets) == 0 && mode != InspectionRunModeFull && mode != InspectionRunModeIncremental {
+		e.mu.Unlock()
+		return InspectionSnapshot{}, fmt.Errorf("inspection scope matched no accounts")
+	}
+	e.managementKey = strings.TrimSpace(managementKey)
+	e.pending = true
+	e.pendingProbe = true
+	e.pendingProbeSweep = true
+	e.runMode = mode
+	e.runHealth = append([]string(nil), health...)
+	e.runSelected = append([]string(nil), selected...)
+	e.probePhase = InspectionProbePhaseListing
+	e.retryTotal = 0
+	e.retryCompleted = 0
+	e.stopRequested = false
+	e.probeSweepTotal = len(targets)
+	e.probeSweepCompleted = 0
+	e.probeSweepRemaining = len(targets)
+	e.probeSweepSource = InspectionSweepSourceManual
+	e.probeSweepStatus = InspectionSweepStatusRunning
+	e.probeSweepStartedAt = e.currentTime()
+	e.probeSweepTargets = append([]string(nil), targets...)
+	e.startRunHistoryLocked(mode, InspectionSweepSourceManual, e.probeSweepStartedAt)
+	e.dirty = true
+	e.generation++
+	e.mu.Unlock()
+	managementKey = ""
+	e.requestPersist()
+	select {
+	case e.scanWake <- struct{}{}:
+	default:
+	}
+	return e.Snapshot(), nil
+}
+
+func (e *InspectionEngine) StopRun() InspectionSnapshot {
+	if e == nil {
+		return InspectionSnapshot{Policy: defaultInspectionPolicy()}
+	}
+	e.mu.Lock()
+	cancel := e.activeCancel
+	if e.running || e.pendingProbeSweep || e.probeSweepRemaining > 0 {
+		e.stopRequested = true
+		e.pending = false
+		e.pendingProbe = false
+		e.pendingProbeSweep = false
+		e.probeSweepStatus = InspectionSweepStatusStopped
+		e.probePhase = InspectionProbePhaseStopped
+		e.managementKey = ""
+		e.updateRunHistoryLocked(InspectionSweepStatusStopped, InspectionProbePhaseStopped, e.currentTime())
+		e.dirty = true
+		e.generation++
+	}
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	e.requestPersist()
+	return e.Snapshot()
+}
+
+func normalizeInspectionRunHealth(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		health := strings.ToLower(strings.TrimSpace(value))
+		switch health {
+		case InspectionHealthHealthy, InspectionHealthQuotaLimited, InspectionHealthInvalidCredentials,
+			InspectionHealthDeactivated, InspectionHealthReview, InspectionHealthUnavailable,
+			InspectionHealthDisabled, InspectionHealthUnknown:
+		default:
+			continue
+		}
+		if _, exists := seen[health]; exists {
+			continue
+		}
+		seen[health] = struct{}{}
+		out = append(out, health)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeInspectionRunMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionRunModeNative, InspectionRunModeFull, InspectionRunModeIncremental, InspectionRunModeScoped, InspectionRunModeRetry:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeInspectionProbePhase(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionProbePhaseListing, InspectionProbePhasePrimary, InspectionProbePhaseRetry, InspectionProbePhaseStopped, InspectionProbePhaseDone:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func (e *InspectionEngine) runTargetsLocked(mode string, health, selected []string) []string {
+	if len(selected) > 0 {
+		return append([]string(nil), selected...)
+	}
+	ids := make([]string, 0, len(e.records))
+	healthSet := make(map[string]struct{}, len(health))
+	for _, value := range health {
+		healthSet[value] = struct{}{}
+	}
+	for id, record := range e.records {
+		include := false
+		switch mode {
+		case InspectionRunModeRetry:
+			include = record.Result.Health == InspectionHealthReview || record.Result.Health == InspectionHealthUnavailable || record.Result.Health == InspectionHealthUnknown ||
+				record.Probe.Status == "review" || record.Probe.Status == "unavailable"
+		case InspectionRunModeScoped:
+			_, include = healthSet[record.Result.Health]
+		case InspectionRunModeIncremental:
+			include = false
+		default:
+			include = true
+		}
+		if include {
+			ids = append(ids, id)
+		}
+	}
+	sortInspectionIDs(ids)
+	return sanitizeInspectionSweepTargets(ids)
 }
 
 func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapshot, error) {
@@ -257,6 +451,8 @@ func (e *InspectionEngine) RequestScan() InspectionSnapshot {
 	started := e.started && !e.closed
 	if started {
 		e.pending = true
+		e.stopRequested = false
+		e.startRunHistoryLocked(InspectionRunModeNative, InspectionSweepSourceManual, e.currentTime())
 	}
 	e.mu.Unlock()
 	if started {
@@ -277,6 +473,7 @@ func (e *InspectionEngine) RequestScanWithModelProbes(managementKey string) Insp
 	started := e.started && !e.closed
 	if started {
 		e.pending = true
+		e.stopRequested = false
 		armed := strings.TrimSpace(managementKey) != "" && e.modelTests != nil
 		e.pendingProbe = e.pendingProbe || armed
 		if e.pendingProbe {
@@ -285,6 +482,10 @@ func (e *InspectionEngine) RequestScanWithModelProbes(managementKey string) Insp
 		if armed && e.probeSweepRemaining > 0 {
 			e.pendingProbeSweep = true
 			e.probeSweepStatus = InspectionSweepStatusRunning
+			if e.runMode == "" {
+				e.runMode = InspectionRunModeFull
+			}
+			e.startRunHistoryLocked(e.runMode, InspectionSweepSourceManual, requestedAt)
 		} else if armed && e.probeSweepRemaining == 0 && !e.pendingProbeSweep && e.probeSweepStatus != InspectionSweepStatusRunning {
 			e.probeSweepTotal = 0
 			e.probeSweepCompleted = 0
@@ -294,6 +495,8 @@ func (e *InspectionEngine) RequestScanWithModelProbes(managementKey string) Insp
 			e.probeSweepStartedAt = requestedAt
 			e.probeSweepTargets = nil
 			e.pendingProbeSweep = true
+			e.runMode = InspectionRunModeFull
+			e.startRunHistoryLocked(InspectionRunModeFull, InspectionSweepSourceManual, requestedAt)
 		} else if !armed {
 			e.probeSweepSource = InspectionSweepSourceManual
 			e.probeSweepStatus = InspectionSweepStatusWaitingForAuth
@@ -319,7 +522,7 @@ func (e *InspectionEngine) ArmModelProbes(managementKey string) InspectionSnapsh
 	wake := false
 	if !e.closed && e.modelTests != nil {
 		e.managementKey = strings.TrimSpace(managementKey)
-		if e.anomalyTriggerPending || e.probeSweepRemaining > 0 {
+		if e.anomalyTriggerPending || (e.probeSweepRemaining > 0 && e.probeSweepStatus != InspectionSweepStatusStopped) {
 			e.anomalyTriggerPending = false
 			e.pending = true
 			e.pendingProbe = true
@@ -510,6 +713,103 @@ func (e *InspectionEngine) Actions(limit int) []InspectionAction {
 	return actions
 }
 
+func (e *InspectionEngine) UpdateReview(request InspectionReviewRequest) (InspectionResult, error) {
+	if e == nil {
+		return InspectionResult{}, fmt.Errorf("inspection engine is unavailable")
+	}
+	accountID := strings.TrimSpace(request.AccountID)
+	if accountID == "" || len(accountID) > 256 {
+		return InspectionResult{}, fmt.Errorf("account_id is required and must be at most 256 characters")
+	}
+	action := strings.ToLower(strings.TrimSpace(request.Action))
+	status := ""
+	inspectionAction := ""
+	switch action {
+	case "resolve":
+		status = InspectionReviewResolved
+		inspectionAction = InspectionActionReviewResolve
+	case "ignore":
+		status = InspectionReviewIgnored
+		inspectionAction = InspectionActionReviewIgnore
+	case "reopen":
+		status = InspectionReviewPending
+		inspectionAction = InspectionActionReviewReopen
+	default:
+		return InspectionResult{}, fmt.Errorf("unsupported inspection review action")
+	}
+	now := e.currentTime()
+	e.mu.Lock()
+	record, exists := e.records[accountID]
+	if !exists || record.Result.LastCheckedAt.IsZero() {
+		e.mu.Unlock()
+		return InspectionResult{}, fmt.Errorf("inspection result was not found")
+	}
+	if record.Result.Health != InspectionHealthReview {
+		e.mu.Unlock()
+		return InspectionResult{}, fmt.Errorf("inspection result does not require review")
+	}
+	current := normalizeInspectionReviewStatus(record.Result.ReviewStatus, record.Result.Health)
+	if current == status {
+		result := record.Result
+		e.mu.Unlock()
+		return result, nil
+	}
+	record.Result.ReviewStatus = status
+	record.Result.ReviewedAt = timePointer(now)
+	if status == InspectionReviewPending {
+		record.Result.ReviewedAt = nil
+	}
+	e.records[accountID] = record
+	actionRecord := newInspectionAction(record.Result, inspectionAction, record.Result.ReasonCode, now)
+	actionRecord.Status = InspectionActionSucceeded
+	e.appendActionLocked(actionRecord)
+	e.dirty = true
+	e.generation++
+	result := record.Result
+	e.mu.Unlock()
+	e.persist()
+	return result, nil
+}
+
+func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result ModelTestResult) error {
+	if e == nil || e.accounts == nil {
+		return fmt.Errorf("inspection engine is unavailable")
+	}
+	accountID := strings.TrimSpace(result.AccountID)
+	if accountID == "" {
+		return fmt.Errorf("account_id is required")
+	}
+	resolved, errResolve := e.accounts.ResolveTargets(ctx, TargetScope{Mode: "selected", IDs: []string{accountID}})
+	if errResolve != nil || len(resolved.Accounts) != 1 {
+		return fmt.Errorf("inspection account was not found")
+	}
+	account := resolved.Accounts[0]
+	e.scanMu.Lock()
+	defer e.scanMu.Unlock()
+	e.mu.Lock()
+	record := e.records[accountID]
+	policy := e.policy
+	previousHealth := record.Result.Health
+	previousReason := record.Result.ReasonCode
+	applyModelProbeToInspection(&record, result, policy)
+	decision := decideInspection(account, record, e.currentTime())
+	updateInspectionRecord(&record, account, decision, e.currentTime())
+	if record.Result.Health == InspectionHealthReview || record.Result.Health != previousHealth || record.Result.ReasonCode != previousReason {
+		record.Result.ReviewStatus = normalizeInspectionReviewStatus("", record.Result.Health)
+		record.Result.ReviewedAt = nil
+	}
+	e.records[accountID] = record
+	requestDisable := policy.AutoDisable && decision.AutoDisableEligible && account.Editable && !account.Disabled
+	e.dirty = true
+	e.generation++
+	e.mu.Unlock()
+	e.persist()
+	if requestDisable {
+		e.RequestScan()
+	}
+	return nil
+}
+
 func (e *InspectionEngine) Shutdown() {
 	if e == nil {
 		return
@@ -588,6 +888,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		return
 	}
 	startedAt := e.currentTime()
+	batchCtx, batchCancel := context.WithCancel(ctx)
 	e.mu.Lock()
 	e.running = true
 	e.pending = false
@@ -607,8 +908,18 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	probeSweepStatus := e.probeSweepStatus
 	probeSweepStartedAt := e.probeSweepStartedAt
 	probeSweepTargets := append([]string(nil), e.probeSweepTargets...)
+	runMode := e.runMode
+	stopRequested := e.stopRequested
 	config := e.config
+	e.activeCancel = batchCancel
 	e.mu.Unlock()
+	defer func() {
+		batchCancel()
+		e.mu.Lock()
+		e.activeCancel = nil
+		e.mu.Unlock()
+	}()
+	ctx = batchCtx
 	defer e.clearScanRunning()
 	manualSweepStart := !scheduled && manualProbe && requestedSweep && probeSweepSource == InspectionSweepSourceManual && probeSweepCompleted == 0
 	runNative := (!scheduled && !requestedSweep) || manualSweepStart || ((policy.Enabled || policy.PassiveCircuitEnabled) && inspectionRunDue(startedAt, lastNativeRunAt, nativeInspectionInterval(policy)))
@@ -628,6 +939,9 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		probeSweepStartedAt = startedAt
 	}
 	if !runNative && !runProbe {
+		return
+	}
+	if stopRequested {
 		return
 	}
 
@@ -656,8 +970,13 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	now := e.currentTime()
 	probeProcessed := 0
 	if runProbe {
+		e.mu.Lock()
+		e.probePhase = InspectionProbePhasePrimary
+		e.dirty = true
+		e.generation++
+		e.mu.Unlock()
 		if probeSweep && len(probeSweepTargets) == 0 {
-			probeSweepTargets = inspectionProbeEligibleAccountIDs(accounts, previous, policy.ScanManuallyDisabled)
+			probeSweepTargets = inspectionRunTargetIDs(runMode, accounts, previous, policy.ScanManuallyDisabled)
 			probeSweepTotal = len(probeSweepTargets)
 			probeSweepCompleted = 0
 			probeSweepRemaining = max(0, probeSweepTotal-probeSweepCompleted)
@@ -674,6 +993,22 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 			probeCursorForRun = 0
 		}
 		probeResults, nextCursor := runInspectionModelProbes(ctx, modelTests, probeAccounts, previous, probePolicy, probeCursorForRun, config.ManagementBaseURL, managementKey)
+		retryCount := inspectionProbeRetryCount(probeResults)
+		if retryCount > 0 {
+			e.mu.Lock()
+			e.probePhase = InspectionProbePhaseRetry
+			e.retryTotal += retryCount
+			e.mu.Unlock()
+		}
+		retryResults, retryCompleted := retryInspectionProbeResults(ctx, modelTests, probeAccounts, probeResults, probePolicy, config.ManagementBaseURL, managementKey)
+		if retryCompleted > 0 {
+			e.mu.Lock()
+			e.retryCompleted += retryCompleted
+			e.mu.Unlock()
+		}
+		if len(retryResults) > 0 {
+			probeResults = mergeInspectionProbeResults(probeResults, retryResults)
+		}
 		if !probeSweep {
 			probeCursor = nextCursor
 		}
@@ -721,6 +1056,19 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		}
 		probeSweepRemaining = max(0, probeSweepTotal-probeSweepCompleted)
 	}
+	e.mu.RLock()
+	stopped := e.stopRequested
+	e.mu.RUnlock()
+	if stopped {
+		e.mu.Lock()
+		e.probeSweepStatus = InspectionSweepStatusStopped
+		e.probePhase = InspectionProbePhaseStopped
+		e.running = false
+		e.pending = false
+		e.mu.Unlock()
+		e.requestPersist()
+		return
+	}
 	actionSummary, actions := e.applyAutomaticActions(ctx, policy, accountsByID, next, now)
 	summary.AutoDisabled += actionSummary.AutoDisabled
 	summary.AutoEnabled += actionSummary.AutoEnabled
@@ -740,6 +1088,13 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		}, stalled)
 		if probeSweepRemaining > 0 && !stalled {
 			e.requestProbeSweep()
+		} else if probeSweepRemaining == 0 {
+			e.mu.Lock()
+			e.probePhase = InspectionProbePhaseDone
+			e.runMode = ""
+			e.runHealth = nil
+			e.runSelected = nil
+			e.mu.Unlock()
 		}
 	}
 	if policy.AutoDelete && deletions != nil && strings.TrimSpace(managementKey) != "" {
@@ -768,6 +1123,16 @@ func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[
 		e.probeCursor = probeCursor
 	}
 	e.records = records
+	if e.activeRunID != "" {
+		e.updateRunHistorySummaryLocked(summary)
+		if !ranProbe {
+			status := InspectionSweepStatusCompleted
+			if summary.Error != "" {
+				status = InspectionSweepStatusFailed
+			}
+			e.updateRunHistoryLocked(status, InspectionProbePhaseDone, summary.FinishedAt)
+		}
+	}
 	for _, action := range actions {
 		e.appendActionLocked(action)
 	}
@@ -823,7 +1188,83 @@ func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {
 		ProbeSweepTargets:     append([]string(nil), e.probeSweepTargets...),
 		AnomalyTriggerPending: e.anomalyTriggerPending,
 		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
+		RunMode:               e.runMode,
+		RunHealth:             append([]string(nil), e.runHealth...),
+		RunSelected:           append([]string(nil), e.runSelected...),
+		ProbePhase:            e.probePhase,
+		RetryTotal:            e.retryTotal,
+		RetryCompleted:        e.retryCompleted,
+		StopRequested:         e.stopRequested,
+		Runs:                  append([]InspectionRunRecord(nil), e.runs...),
+		ActiveRunID:           e.activeRunID,
 	}
+}
+
+func (e *InspectionEngine) startRunHistoryLocked(mode, source string, startedAt time.Time) {
+	mode = normalizeInspectionRunMode(mode)
+	source = normalizeInspectionSweepSource(source)
+	if mode == "" || source == "" {
+		return
+	}
+	if e.activeRunID != "" {
+		return
+	}
+	startedAt = startedAt.UTC()
+	id := fmt.Sprintf("inspection-%d", startedAt.UnixNano())
+	e.activeRunID = id
+	e.runs = append(e.runs, InspectionRunRecord{ID: id, Mode: mode, Source: source, Status: InspectionSweepStatusRunning, Phase: InspectionProbePhaseListing, StartedAt: startedAt})
+	if len(e.runs) > maxInspectionRuns {
+		e.runs = e.runs[len(e.runs)-maxInspectionRuns:]
+	}
+}
+
+func (e *InspectionEngine) updateRunHistorySummaryLocked(summary InspectionRunSummary) {
+	for index := len(e.runs) - 1; index >= 0; index-- {
+		if e.runs[index].ID == e.activeRunID {
+			e.runs[index].Summary = summary
+			if e.runs[index].Mode == InspectionRunModeNative {
+				e.runs[index].PrimaryTotal = summary.Scanned
+				e.runs[index].PrimaryDone = summary.Scanned
+			}
+			return
+		}
+	}
+}
+
+func (e *InspectionEngine) updateRunHistoryLocked(status, phase string, finishedAt time.Time) {
+	for index := len(e.runs) - 1; index >= 0; index-- {
+		if e.runs[index].ID != e.activeRunID {
+			continue
+		}
+		e.runs[index].Status = normalizeInspectionSweepStatus(status)
+		e.runs[index].Phase = normalizeInspectionProbePhase(phase)
+		if e.runs[index].Mode != InspectionRunModeNative {
+			e.runs[index].PrimaryTotal = e.probeSweepTotal
+			e.runs[index].PrimaryDone = e.probeSweepCompleted
+			e.runs[index].RetryTotal = e.retryTotal
+			e.runs[index].RetryDone = e.retryCompleted
+		}
+		if status == InspectionSweepStatusCompleted || status == InspectionSweepStatusFailed || status == InspectionSweepStatusStopped {
+			e.runs[index].FinishedAt = finishedAt.UTC()
+			e.activeRunID = ""
+		}
+		return
+	}
+}
+
+func recentInspectionRuns(runs []InspectionRunRecord, limit int) []InspectionRunRecord {
+	if limit <= 0 || limit > maxInspectionRuns {
+		limit = 10
+	}
+	start := len(runs) - limit
+	if start < 0 {
+		start = 0
+	}
+	out := append([]InspectionRunRecord{}, runs[start:]...)
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out
 }
 
 func (e *InspectionEngine) requestPersist() {
@@ -871,6 +1312,7 @@ func (e *InspectionEngine) currentTime() time.Time {
 
 func updateInspectionRecord(record *inspectionRecord, account Account, decision inspectionDecision, now time.Time) {
 	previousHealth := record.Result.Health
+	previousReason := record.Result.ReasonCode
 	result := record.Result
 	result.ID = account.ID
 	result.Name = account.Name
@@ -890,11 +1332,24 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 	result.LastSuccessAt = timePointer(record.Signal.LastSuccessAt)
 	result.RecoverAfter = timePointer(decision.RecoverAfter)
 	result.SignalSource = normalizeInspectionSignalSource(decision.SignalSource)
+	result.StatusCode = boundedHTTPStatus(record.Signal.StatusCode)
+	if decision.Health == InspectionHealthReview {
+		if previousHealth != decision.Health || previousReason != decision.ReasonCode ||
+			(result.ReviewedAt != nil && record.Signal.LastFailureAt.After(result.ReviewedAt.UTC())) {
+			result.ReviewStatus = InspectionReviewPending
+			result.ReviewedAt = nil
+		} else {
+			result.ReviewStatus = normalizeInspectionReviewStatus(result.ReviewStatus, result.Health)
+		}
+	} else {
+		result.ReviewStatus = ""
+		result.ReviewedAt = nil
+	}
 	if result.OwnedDisable && !record.DisabledRecoverAfter.IsZero() {
 		result.RecoverAfter = timePointer(record.DisabledRecoverAfter)
 	}
 
-	if inspectionHealthIsStrongFailure(decision.Health) {
+	if inspectionDecisionIsStrongFailure(decision) {
 		if decision.FailureCount > 0 {
 			result.FailureStreak = boundedCounter(decision.FailureCount)
 		} else if previousHealth == decision.Health {
@@ -957,6 +1412,16 @@ func incrementInspectionSummary(summary *InspectionRunSummary, health string) {
 
 func inspectionHealthIsStrongFailure(health string) bool {
 	return health == InspectionHealthQuotaLimited || health == InspectionHealthInvalidCredentials || health == InspectionHealthDeactivated
+}
+
+func inspectionDecisionIsStrongFailure(decision inspectionDecision) bool {
+	return inspectionHealthIsStrongFailure(decision.Health) ||
+		(decision.SignalSource == InspectionSignalActiveProbe && decision.AutoDisableEligible)
+}
+
+func inspectionResultIsStrongFailure(result InspectionResult) bool {
+	return inspectionHealthIsStrongFailure(result.Health) ||
+		(result.SignalSource == InspectionSignalActiveProbe && result.AutoDisableEligible)
 }
 
 func inspectionHealthRank(health string) int {

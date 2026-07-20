@@ -121,6 +121,12 @@ func (e *InspectionEngine) updateProbeSweep(progress inspectionSweepProgress, st
 	e.probeSweepStatus = status
 	e.probeSweepStartedAt = progress.StartedAt.UTC()
 	e.probeSweepTargets = sanitizeInspectionSweepTargets(progress.Targets)
+	e.updateRunHistoryLocked(status, func() string {
+		if status == InspectionSweepStatusCompleted {
+			return InspectionProbePhaseDone
+		}
+		return e.probePhase
+	}(), e.currentTime())
 	if progress.Remaining == 0 || stalled {
 		e.pendingProbeSweep = false
 	}

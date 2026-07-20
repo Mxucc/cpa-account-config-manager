@@ -17,6 +17,8 @@ import type {
   InspectionDeleteRun,
   InspectionPolicy,
   InspectionResultList,
+  InspectionResult,
+  InspectionRunRequest,
   InspectionSnapshot,
   JobSnapshot,
   ModelTestResult,
@@ -216,6 +218,24 @@ export async function scanNativeInspection(): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection/scan/native", { method: "POST" });
 }
 
+export async function startInspectionRun(run: InspectionRunRequest): Promise<InspectionSnapshot> {
+  return request<InspectionSnapshot>("/inspection/run", {
+    method: "POST",
+    body: JSON.stringify(run),
+  });
+}
+
+export async function stopInspectionRun(): Promise<InspectionSnapshot> {
+  return request<InspectionSnapshot>("/inspection/stop", { method: "POST" });
+}
+
+export async function updateInspectionReview(accountID: string, action: "resolve" | "ignore" | "reopen"): Promise<InspectionResult> {
+  return request<InspectionResult>("/inspection/review", {
+    method: "POST",
+    body: JSON.stringify({ account_id: accountID, action }),
+  });
+}
+
 export async function listInspectionResults(page: number, pageSize: number, health = "", search = ""): Promise<InspectionResultList> {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (health) query.set("health", health);
@@ -228,6 +248,37 @@ export async function listInspectionActions(limit = 50): Promise<InspectionActio
   const query = new URLSearchParams({ limit: String(limit) });
   const response = await request<{ actions: InspectionAction[] }>("/inspection/actions", {}, query);
   return arrayOrEmpty(response.actions);
+}
+
+export async function downloadInspectionExport(format: "json" | "csv" | "jsonl", health = "", search = ""): Promise<{ filename: string; exported?: number }> {
+  const session = getSession();
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
+  const query = new URLSearchParams({ format });
+  if (health) query.set("health", health);
+  if (search) query.set("search", search);
+  const response = await fetch(buildURL("/inspection/export", query), {
+    headers: { Authorization: `Bearer ${session.managementKey}` },
+  });
+  if (!response.ok) {
+    let message = `Export failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      // Keep the status-only error when the response is not JSON.
+    }
+    throw new APIError(response.status, message);
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match?.[1] ?? `cpa-account-inspection.${format}`;
+  const href = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(href);
+  return { filename, exported: numericHeader(response.headers.get("X-Exported-Inspection-Results")) };
 }
 
 export async function executeInspectionAutoDelete(): Promise<InspectionDeleteRun> {

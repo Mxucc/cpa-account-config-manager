@@ -211,7 +211,10 @@ func shouldAutoDisableInspection(policy InspectionPolicy, account Account, recor
 	if !policy.AutoDisable || account.Disabled || !account.Editable || record.Result.OwnedDisable || !record.Result.AutoDisableEligible {
 		return false
 	}
-	if !inspectionHealthIsStrongFailure(record.Result.Health) && record.Result.ReasonCode != "credential_permission_denied" {
+	if record.Result.SignalSource == InspectionSignalActiveProbe {
+		return record.Probe.ReasonCode != "" && record.Probe.ReasonCode != "model_response_ok" && record.Probe.Status != "unsupported"
+	}
+	if !inspectionResultIsStrongFailure(record.Result) && record.Result.ReasonCode != "credential_permission_denied" {
 		return false
 	}
 	return record.Result.FailureStreak >= policy.FailureThreshold || record.Signal.ConsecutiveFailures >= policy.FailureThreshold
@@ -222,18 +225,18 @@ func shouldAutoEnableInspection(policy InspectionPolicy, account Account, record
 		return false
 	}
 	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) &&
-		!inspectionHealthIsStrongFailure(record.Result.Health) {
+		!inspectionResultIsStrongFailure(record.Result) {
 		return true
 	}
 	if record.DisableReason == "passive_circuit_open" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) &&
-		!inspectionHealthIsStrongFailure(record.Result.Health) {
+		!inspectionResultIsStrongFailure(record.Result) {
 		return true
 	}
 	if record.Result.Health == InspectionHealthHealthy && record.Result.HealthyStreak >= policy.RecoveryThreshold &&
 		inspectionRecoveryEvidenceAfter(record, record.DisabledAt) {
 		return true
 	}
-	return account.LastRefresh != nil && account.LastRefresh.After(record.DisabledAt) && !inspectionHealthIsStrongFailure(record.Result.Health)
+	return account.LastRefresh != nil && account.LastRefresh.After(record.DisabledAt) && !inspectionResultIsStrongFailure(record.Result)
 }
 
 func inspectionRecoveryEvidenceAfter(record inspectionRecord, disabledAt time.Time) bool {

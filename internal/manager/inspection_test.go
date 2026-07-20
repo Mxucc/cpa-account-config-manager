@@ -26,6 +26,82 @@ func TestInspectionEmptyCollectionsUseJSONArrays(t *testing.T) {
 	}
 }
 
+func TestInspectionReviewLifecyclePersistsSanitizedOperatorDecision(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
+	dataDir := t.TempDir()
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: dataDir})
+	engine.now = func() time.Time { return now }
+	engine.mu.Lock()
+	engine.records["review-account"] = inspectionRecord{Result: InspectionResult{
+		ID: "review-account", Name: "review.json", Health: InspectionHealthReview,
+		ReasonCode: "authentication_review", ReviewStatus: InspectionReviewPending, LastCheckedAt: now.Add(-time.Minute),
+	}}
+	engine.mu.Unlock()
+
+	resolved, errResolve := engine.UpdateReview(InspectionReviewRequest{AccountID: "review-account", Action: "resolve"})
+	if errResolve != nil {
+		t.Fatalf("resolve review: %v", errResolve)
+	}
+	if resolved.ReviewStatus != InspectionReviewResolved || resolved.ReviewedAt == nil || !resolved.ReviewedAt.Equal(now) {
+		t.Fatalf("resolved review = %#v", resolved)
+	}
+	engine.Shutdown()
+
+	raw, errRead := os.ReadFile(inspectionStorePath(dataDir))
+	if errRead != nil {
+		t.Fatalf("read review state: %v", errRead)
+	}
+	for _, forbidden := range []string{"access_token", "management-secret", "authorization"} {
+		if bytes.Contains(bytes.ToLower(raw), []byte(forbidden)) {
+			t.Fatalf("review state leaked %q: %s", forbidden, raw)
+		}
+	}
+
+	reloaded := NewInspectionEngine(nil, nil, nil)
+	reloaded.Configure(Config{DataDir: dataDir})
+	defer reloaded.Shutdown()
+	result := reloaded.ListResults(InspectionResultQuery{Page: 1, PageSize: 20}).Results[0]
+	if result.ReviewStatus != InspectionReviewResolved || result.ReviewedAt == nil || !result.ReviewedAt.Equal(now) {
+		t.Fatalf("reloaded review = %#v", result)
+	}
+	if _, errIgnore := reloaded.UpdateReview(InspectionReviewRequest{AccountID: "review-account", Action: "ignore"}); errIgnore != nil {
+		t.Fatalf("ignore review: %v", errIgnore)
+	}
+	reopened, errReopen := reloaded.UpdateReview(InspectionReviewRequest{AccountID: "review-account", Action: "reopen"})
+	if errReopen != nil || reopened.ReviewStatus != InspectionReviewPending || reopened.ReviewedAt != nil {
+		t.Fatalf("reopened review = %#v, error=%v", reopened, errReopen)
+	}
+}
+
+func TestInspectionRunHistoryIsBoundedSanitizedAndPersistent(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	engine := &InspectionEngine{}
+	engine.startRunHistoryLocked(InspectionRunModeFull, InspectionSweepSourceManual, now)
+	engine.probeSweepTotal = 12
+	engine.probeSweepCompleted = 12
+	engine.retryTotal = 2
+	engine.retryCompleted = 2
+	engine.updateRunHistorySummaryLocked(InspectionRunSummary{StartedAt: now, FinishedAt: now.Add(time.Minute), Scanned: 12, Healthy: 9})
+	engine.updateRunHistoryLocked(InspectionSweepStatusCompleted, InspectionProbePhaseDone, now.Add(time.Minute))
+
+	runs := recentInspectionRuns(engine.runs, 10)
+	if len(runs) != 1 || runs[0].Mode != InspectionRunModeFull || runs[0].Status != InspectionSweepStatusCompleted ||
+		runs[0].PrimaryDone != 12 || runs[0].RetryDone != 2 || runs[0].Summary.Healthy != 9 || engine.activeRunID != "" {
+		t.Fatalf("completed run history = %#v active=%q", runs, engine.activeRunID)
+	}
+
+	path := inspectionStorePath(t.TempDir())
+	state := persistedInspectionState{Version: inspectionStoreVersion, Policy: defaultInspectionPolicy(), Records: map[string]inspectionRecord{}, Runs: engine.runs}
+	if errSave := saveInspectionState(path, state); errSave != nil {
+		t.Fatalf("save run history: %v", errSave)
+	}
+	loaded, errLoad := loadInspectionState(path)
+	if errLoad != nil || len(loaded.Runs) != 1 || loaded.Runs[0].Summary.Healthy != 9 {
+		t.Fatalf("loaded run history = %#v, error=%v", loaded.Runs, errLoad)
+	}
+}
+
 func TestClassifyUsageFailureRequiresCredentialSemantics(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 8, 0, 0, 0, time.UTC)
 	tests := []struct {

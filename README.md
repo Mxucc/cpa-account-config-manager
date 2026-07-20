@@ -139,20 +139,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.2.4_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.2.5_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.2.4_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.2.5_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.2.4_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.2.4_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.2.5_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.2.5_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -161,17 +161,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so
-plugins/linux/arm64/cpa-account-config-manager-v0.2.4.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.2.4.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.2.4.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so
+plugins/linux/arm64/cpa-account-config-manager-v0.2.5.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.2.5.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.2.5.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so
 ```
 
 ### 3. Enable the plugin
@@ -456,15 +456,18 @@ shown as a rounded-up localized days-and-hours countdown. Credential refresh
 and successful-request recovery remain evidence-based and never fabricate a
 timestamp.
 
-A bare `401`, `403`, `unauthorized`, `payment_required`, region restriction, or
-model permission failure is review-only. Automatic disable eligibility requires
-explicit semantics such as `invalid_grant`, an invalid/revoked token, a
-deactivated account/workspace, explicit quota exhaustion, or the narrowly
-recognized xAI credential-permission response. Passive Usage failures and
-recoveries count distinct Usage events, so repeatedly scanning one old event
-does not satisfy a consecutive threshold. Repeated low- or medium-confidence
-failures can use the separate passive temporary-circuit policy; they do not
-become high-confidence credential or deletion evidence.
+A bare CPA-native or passive-Usage `401`, `403`, `unauthorized`,
+`payment_required`, or region restriction remains review-only until an active
+model test provides account-specific evidence. Once a supported active model
+test actually runs, every final non-available result (`authentication_failed`,
+`quota_limited`, `model_not_found`, `request_timeout`, `upstream_unavailable`,
+or `invalid_response`) recommends disable and is immediately eligible for
+automatic disable after the transient retry phase. `unsupported_provider` is
+excluded because no model request was performed. These active failures never
+become automatic-deletion evidence. Passive Usage failures and recoveries count
+distinct Usage events, so repeatedly scanning one old event does not satisfy a
+consecutive threshold. Repeated ambiguous passive failures can use the separate
+temporary-circuit policy without becoming credential or deletion evidence.
 
 | Setting | Default | Range / behavior |
 | --- | --- | --- |
@@ -489,8 +492,10 @@ evidence. A manual enable revokes inspection ownership rather than being
 overwritten. A passive circuit queues a scan immediately at its exact threshold
 and persists its trigger reason, ownership, and recovery deadline across plugin
 replacement or CPA restart. A configured number of fresh successes can close
-it before the deadline. `model_not_found` is excluded because it normally
-indicates a probe configuration problem rather than an account failure.
+it before the deadline. An account disabled by an active model failure remains
+inspection-owned and can recover only after fresh successful model or account
+refresh evidence; the active failure reason is still ineligible for automatic
+deletion.
 
 The same bounded evidence is projected into each returned account row. The
 main list distinguishes an inspection-owned automatic disable from a manual
@@ -700,7 +705,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -711,7 +716,7 @@ upgrading the native library.
 
 ## Management Routes
 
-All 33 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 37 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
 - `POST /accounts/model-test`
@@ -736,7 +741,11 @@ All 33 privileged routes are exact paths below `/v0/management/plugins/cpa-accou
 - `PUT /inspection`
 - `POST /inspection/scan`
 - `POST /inspection/scan/native`
+- `POST /inspection/run`
+- `POST /inspection/stop`
 - `GET /inspection/results`
+- `GET /inspection/export`
+- `POST /inspection/review`
 - `GET /inspection/actions`
 - `POST /inspection/auto-delete`
 - `GET /updates`
@@ -770,7 +779,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.2.4
+make package VERSION=0.2.5
 ```
 
 For a local build that should publish a repository link in plugin metadata,
@@ -826,6 +835,12 @@ and publishes:
   these ideas for the CLIProxyAPI native-plugin runtime and its Management
   authentication boundary. CPA Manager Plus is available under the MIT License;
   see [Third-Party Notices](THIRD_PARTY_NOTICES.md) for the complete notice.
+- Full, incremental, classification-scoped and retry inspection flows, stop
+  control, progress persistence, row/bulk actions and sanitized result export
+  also reference [`ywddd/grok-inspection`](https://github.com/ywddd/grok-inspection).
+  The implementation retains stricter CPA authentication, ownership and
+  revision-checked deletion boundaries. Grok Inspection is available under
+  the MIT License; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 

@@ -24,6 +24,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	registration := app.ManagementRegistration()
 	expected := map[string]struct{}{
 		http.MethodGet + " /plugins/cpa-account-config-manager/accounts":                 {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/model-test":     {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/delete/preview": {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/delete/start":   {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/batch/preview":           {},
@@ -41,6 +42,19 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/preview":  {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/start":    {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/defaults/force/status":    {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/inspection":               {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/inspection":               {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/scan":         {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/inspection/results":       {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/inspection/actions":       {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/auto-delete":  {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/updates":                  {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/updates":                  {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/updates/check":           {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/operations":               {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/operations/export":        {},
+		http.MethodDelete + " /plugins/cpa-account-config-manager/operations":            {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/operations/record":       {},
 	}
 	if len(registration.Routes) != len(expected) {
 		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))
@@ -63,7 +77,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	if len(expected) != 0 {
 		t.Fatalf("missing routes = %#v", expected)
 	}
-	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" || registration.Resources[0].Menu != "账号管理" {
+	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" || registration.Resources[0].Menu != "Account Management" {
 		t.Fatalf("resources = %#v", registration.Resources)
 	}
 }
@@ -119,6 +133,59 @@ func TestHandleManagementListsRedactedAccounts(t *testing.T) {
 	}
 	if strings.Contains(string(response.Body), "secret") {
 		t.Fatalf("response leaked secret: %s", response.Body)
+	}
+}
+
+func TestHandleManagementMergesSanitizedAutomationSummary(t *testing.T) {
+	now := time.Date(2026, time.July, 20, 18, 0, 0, 0, time.UTC)
+	recoverAfter := now.Add(2 * time.Hour)
+	host := inspectionEditableHost(true)
+	app := NewApp(host, []byte("index"))
+	defer app.Close()
+	app.inspection.mu.Lock()
+	app.inspection.policy = InspectionPolicy{AutoDisable: true, AutoEnable: true, RecoveryThreshold: 2}
+	app.inspection.records["inspection-account"] = inspectionRecord{
+		Result: InspectionResult{
+			ID:               "inspection-account",
+			Health:           InspectionHealthQuotaLimited,
+			ReasonCode:       "quota_exhausted",
+			Recommendation:   InspectionRecommendationEnable,
+			OwnedDisable:     true,
+			Disabled:         true,
+			LastCheckedAt:    now,
+			AutoAction:       InspectionActionDisable,
+			AutoActionStatus: InspectionActionSucceeded,
+		},
+		DisableReason:        "quota_exhausted",
+		DisabledAt:           now.Add(-time.Hour),
+		DisabledRecoverAfter: recoverAfter,
+		DisabledPath:         "/auths/list-summary-secret.json",
+		DisabledVersion:      "list-summary-secret-revision",
+	}
+	app.inspection.mu.Unlock()
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/accounts",
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+	}
+	for _, secret := range []string{"account-secret", "list-summary-secret", "/auths/", "revision"} {
+		if bytes.Contains(response.Body, []byte(secret)) {
+			t.Fatalf("account response leaked %q: %s", secret, response.Body)
+		}
+	}
+	var listed ListResponse
+	if errDecode := json.Unmarshal(response.Body, &listed); errDecode != nil {
+		t.Fatalf("decode account list: %v", errDecode)
+	}
+	if len(listed.Accounts) != 1 || listed.Accounts[0].Automation == nil {
+		t.Fatalf("account list = %#v", listed)
+	}
+	summary := listed.Accounts[0].Automation
+	if !summary.OwnedDisable || summary.DisableReason != "quota_exhausted" || summary.RecoverAfter == nil || !summary.RecoverAfter.Equal(recoverAfter) {
+		t.Fatalf("automation summary = %#v", summary)
 	}
 }
 

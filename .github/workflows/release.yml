@@ -178,6 +178,27 @@ jobs:
           fi
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
+      - name: Checkout annotated release tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Read release notes from tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if [[ "$(git cat-file -t "${RELEASE_TAG}")" != "tag" ]]; then
+            echo "release tag must be annotated: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          git for-each-ref --format='%(contents)' "refs/tags/${RELEASE_TAG}" > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "annotated release tag has no release notes: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -199,11 +220,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "CPA Account Config Manager ${RELEASE_TAG}" \
+              --notes-file release-notes.md
             gh release upload "${RELEASE_TAG}" assets/*.zip assets/*.sha256 assets/checksums.txt --clobber
           else
             gh release create "${RELEASE_TAG}" \
               --title "CPA Account Config Manager ${RELEASE_TAG}" \
-              --generate-notes \
+              --notes-file release-notes.md \
               assets/*.zip \
               assets/*.sha256 \
               assets/checksums.txt

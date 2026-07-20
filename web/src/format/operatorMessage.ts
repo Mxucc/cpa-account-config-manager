@@ -1,85 +1,27 @@
-const operatorMessages: Record<string, string> = {
-  "Failed to fetch": "无法连接 CPA",
-  "invalid management key": "Management Key 无效",
-  "management key is unavailable": "Management Key 不可用",
-  "preview expired; create a new preview": "预览已过期，请重新生成",
-  "preview not found": "预览不存在，请重新生成",
-  "preview contains no eligible targets": "预览中没有可执行账号",
-  "a batch job is already running": "已有批量任务正在运行",
-  "no failed targets are available to retry": "没有可重试的失败项",
-  "job result storage is unavailable; configure data_dir to a writable directory": "任务结果目录不可写，请将插件 data_dir 配置为容器内可写并持久化挂载的目录",
-  "management_base_url is invalid; configure an HTTP(S) loopback URL": "Management 地址无效，请将 management_base_url 配置为 CLIProxyAPI 进程内可访问的 HTTP(S) 回环地址",
-  "default policy storage is unavailable; configure data_dir to a writable directory": "默认策略目录不可写，请将插件 data_dir 配置为容器内可写并持久化挂载的目录",
-  "stored default policy could not be loaded": "已保存的默认策略无法读取",
-  "default policy status could not be persisted": "默认策略扫描状态无法持久化",
-  "auth file scan failed": "Auth 文件扫描失败",
-  "enabled policy requires priority or websockets": "启用默认策略时至少选择 Priority 或 WebSockets",
-  "apply_mode must be missing": "默认策略仅支持补齐缺失字段模式",
-  "force-sync preview not found": "强制同步预览不存在，请重新生成",
-  "force-sync preview expired": "强制同步预览已过期，请重新生成",
-  "default policy changed; create a new force-sync preview": "默认策略已变化，请重新生成强制同步预览",
-  "default policy does not manage any fields": "默认策略尚未选择受管字段",
-  "force-sync preview contains no eligible auth files": "强制同步预览中没有可执行 Auth 文件",
-  "no auth files are available for force sync": "没有可用于强制同步的 Auth 文件",
-  "failed to resolve force-sync targets": "强制同步目标解析失败",
-  "failed to start force-sync job": "强制同步任务启动失败",
-  "failed to start batch job": "批量任务启动失败",
-  "failed to start retry job": "重试任务启动失败",
-  "failed to load accounts": "账号列表加载失败",
-  "failed to resolve target accounts": "目标账号解析失败",
-  "failed to export accounts": "账号导出失败",
-  "failed to encode account export": "账号凭据文件生成失败",
-  "the export scope contains no file-backed accounts": "当前导出范围没有可导出的文件型账号",
-  "the export scope contains no compatible Codex OAuth accounts": "当前导出范围没有兼容的 Codex OAuth 账号",
-  "credential export exceeds the configured limit": "账号凭据导出超过数量或体积限制",
-  "import preview not found": "导入预览不存在，请重新生成",
-  "import preview expired": "导入预览已过期，请重新生成",
-  "import contains no supported account records": "没有识别到可导入的账号记录",
-  "CPA Auth storage is unavailable": "CPA Auth 存储不可用",
-  "at least one import file is required": "至少选择一个导入文件",
-  "multipart import contains no files": "上传内容中没有文件",
-  "invalid multipart content type": "多文件上传格式无效",
-  "multipart boundary is required": "多文件上传缺少边界信息",
-  "runtime-only account has no physical auth file": "运行时账号没有物理 Auth 文件",
-  "account is not backed by an editable auth file": "账号没有可编辑的 Auth 文件",
-  "account has no stable auth index": "账号缺少稳定索引",
-  "backing auth file is not JSON": "Auth 文件不是 JSON",
-  "multiple runtime accounts share this source file": "多个运行时账号共享同一来源文件",
-  "physical auth file is unavailable": "物理 Auth 文件不可用",
-  "physical auth file is invalid": "物理 Auth 文件无效",
-  "target resolves to a duplicate physical auth file": "目标指向重复的物理 Auth 文件",
-  "account no longer exists": "账号已不存在",
-  "job was interrupted before this target was updated": "账号更新前任务已中断",
-  "unexpected worker failure": "任务工作线程异常",
-  "physical auth file could not be re-read": "无法重新读取物理 Auth 文件",
-  "physical auth file changed after preview": "物理 Auth 文件在预览后已变化",
-  "physical auth source changed after preview": "物理 Auth 来源在预览后已变化",
-  "force-sync job was interrupted before this target was updated": "强制同步在该文件更新前已中断",
-  "force-sync job was interrupted during the update": "强制同步在文件更新过程中已中断",
-  "default policy update failed": "默认策略字段更新失败",
-  "unexpected force-sync worker failure": "强制同步工作线程异常",
-  "job was interrupted during the update": "账号更新过程中任务已中断",
-  "account field update failed": "账号字段更新失败",
-  "account disabled-state update failed": "账号启用状态更新失败",
-  "account disabled-state update failed after other fields were applied": "其他字段已生效，但账号启用状态更新失败",
-  "plugin stopped before this target completed": "该账号完成前插件已停止",
-  "provider reported an account error": "Provider 报告账号异常",
-  unauthorized: "未授权",
-  payment_required: "需要付费或额度不足",
-  not_found: "上游资源不存在",
-  "quota exhausted": "额度已用尽",
-  "transient upstream error": "上游临时异常",
-  "request failed": "请求失败",
-  "cloudflare challenge": "触发 Cloudflare 验证",
-  invalid_grant: "授权已失效",
-  "disabled via management api": "已通过 Management API 禁用",
-  "removed via management api": "已通过 Management API 移除",
-  "upstream temporarily unavailable": "上游暂时不可用",
+import type { Locale } from "../i18n";
+import { translateOperatorMessage } from "../i18n/operatorText";
+import { translateUI, type UIMessageKey } from "../i18n/uiText";
+
+const directMessages: Record<string, UIMessageKey> = {
+  "ui.management_key_is_not_set": "ui.management_key_is_not_set",
+  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store": "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store",
+  "ui.authentication_failed": "ui.authentication_failed",
+  "ui.request_failed": "ui.request_failed",
 };
 
-export function operatorMessage(message?: string): string {
+export function operatorMessage(message?: string, locale: Locale = "zh-CN"): string {
   const normalized = message?.trim() ?? "";
   const importAccountLimit = normalized.match(/^import contains more than (\d+) accounts$/);
-  if (importAccountLimit) return `一次最多导入 ${importAccountLimit[1]} 个账号`;
-  return operatorMessages[normalized] ?? normalized;
+  if (importAccountLimit) {
+    return translateUI(locale, "ui.a_single_import_supports_at_most_count_accounts", { count: importAccountLimit[1] });
+  }
+  const requestFailure = normalized.match(/^Request failed \((\d+)\)$/);
+  if (requestFailure) return translateUI(locale, "ui.request_failed_code", { code: requestFailure[1] });
+  const exportFailure = normalized.match(/^Export failed \((\d+)\)$/);
+  if (exportFailure) return translateUI(locale, "ui.export_failed_code", { code: exportFailure[1] });
+  const translated = translateOperatorMessage(locale, normalized);
+  if (translated) return translated;
+  const direct = directMessages[normalized];
+  if (direct) return translateUI(locale, direct);
+  return normalized;
 }

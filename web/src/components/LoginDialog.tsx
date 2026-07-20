@@ -1,5 +1,6 @@
 import { Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { useI18n } from "../i18n";
 
 interface LoginDialogProps {
   loading: boolean;
@@ -8,6 +9,7 @@ interface LoginDialogProps {
 }
 
 export function LoginDialog({ loading, error, onSubmit }: LoginDialogProps) {
+  const { tx } = useI18n();
   const [baseURL, setBaseURL] = useState(window.location.origin);
   const [managementKey, setManagementKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -20,14 +22,14 @@ export function LoginDialog({ loading, error, onSubmit }: LoginDialogProps) {
 
   return (
     <div className="auth-backdrop">
-      <form className="auth-dialog" onSubmit={submit} aria-label="管理认证">
+      <form className="auth-dialog" onSubmit={submit} aria-label={tx("ui.management_authentication")}>
         <div className="auth-mark"><KeyRound size={22} /></div>
         <div>
-          <h2>管理认证</h2>
+          <h2>{tx("ui.management_authentication")}</h2>
           <span className="auth-product">CPA Account Config Manager</span>
         </div>
         <label className="field-block">
-          <span>CPA 地址</span>
+          <span>{tx("ui.cpa_url")}</span>
           <input value={baseURL} onChange={(event) => setBaseURL(event.target.value)} autoComplete="url" />
         </label>
         <label className="field-block">
@@ -40,7 +42,7 @@ export function LoginDialog({ loading, error, onSubmit }: LoginDialogProps) {
               autoComplete="current-password"
               autoFocus
             />
-            <button type="button" aria-label={showKey ? "隐藏 Key" : "显示 Key"} title={showKey ? "隐藏 Key" : "显示 Key"} onClick={() => setShowKey((value) => !value)}>
+            <button type="button" aria-label={tx(showKey ? "ui.hide_key" : "ui.show_key")} title={tx(showKey ? "ui.hide_key" : "ui.show_key")} onClick={() => setShowKey((value) => !value)}>
               {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
@@ -48,7 +50,7 @@ export function LoginDialog({ loading, error, onSubmit }: LoginDialogProps) {
         {error ? <div className="auth-error" role="alert">{error}</div> : null}
         <button className="button button-primary auth-submit" type="submit" disabled={loading || managementKey.trim() === ""}>
           {loading ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />}
-          验证并进入
+          {tx("ui.verify_and_continue")}
         </button>
       </form>
     </div>

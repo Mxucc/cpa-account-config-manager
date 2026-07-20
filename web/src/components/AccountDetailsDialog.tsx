@@ -1,6 +1,9 @@
 import { LockKeyhole, Pencil, Settings2 } from "lucide-react";
 import type { Account } from "../types";
+import { accountStateLabel, sourceLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
+import { accountAutomationPresentation } from "../format/accountAutomation";
+import { localeFormats, useI18n, type Locale } from "../i18n";
 import { Modal } from "./Modal";
 
 interface AccountDetailsDialogProps {
@@ -10,20 +13,21 @@ interface AccountDetailsDialogProps {
 }
 
 export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetailsDialogProps) {
+  const { locale, formatDateTime, tx } = useI18n();
   const usage = account.usage;
   const identity = account.label || account.email || account.name || account.id;
-  const state = account.disabled ? "disabled" : account.unavailable ? "unavailable" : account.status || "unknown";
+  const automation = accountAutomationPresentation(account, locale);
 
   return (
     <Modal
-      title="账号详情"
+      title={tx("ui.account_details")}
       wide
       onClose={onClose}
       footer={(
         <>
           <span className="modal-scope">{account.name || account.id}</span>
-          <button className="button" type="button" onClick={onClose}>关闭</button>
-          {account.editable ? <button className="button button-primary" type="button" onClick={onEdit}><Pencil size={15} />编辑账号</button> : null}
+          <button className="button" type="button" onClick={onClose}>{tx("ui.close")}</button>
+          {account.editable ? <button className="button button-primary" type="button" onClick={onEdit}><Pencil size={15} />{tx("ui.edit_account")}</button> : null}
         </>
       )}
     >
@@ -34,56 +38,71 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
             <span>{account.email && account.email !== identity ? account.email : account.name}</span>
           </div>
           {account.editable
-            ? <span className="access-tag editable"><Settings2 size={13} />可编辑</span>
-            : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason)}><LockKeyhole size={13} />只读</span>}
+            ? <span className="access-tag editable"><Settings2 size={13} />{tx("ui.editable")}</span>
+            : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason, locale)}><LockKeyhole size={13} />{tx("ui.read_only")}</span>}
         </div>
 
-        <DetailSection title="身份与来源">
-          <DetailItem label="文件名" value={account.name} mono />
-          <DetailItem label="账号索引" value={account.id} mono />
+        <DetailSection title={tx("ui.identity_and_source")}>
+          <DetailItem label={tx("ui.filename")} value={account.name} mono />
+          <DetailItem label={tx("ui.account_index")} value={account.id} mono />
           <DetailItem label="Auth ID" value={account.auth_id} mono />
-          <DetailItem label="Provider" value={account.provider} />
-          <DetailItem label="Type" value={account.type} />
-          <DetailItem label="账号类型" value={account.account_type} />
-          <DetailItem label="套餐类型" value={account.plan_type} />
-          <DetailItem label="来源" value={account.source} />
-          <DetailItem label="状态" value={state} />
-          <DetailItem label="状态说明" value={operatorMessage(account.status_message)} />
-          {!account.editable ? <DetailItem label="只读原因" value={operatorMessage(account.read_only_reason)} wide /> : null}
+          <DetailItem label={tx("ui.provider")} value={account.provider} />
+          <DetailItem label={tx("ui.type")} value={account.type} />
+          <DetailItem label={tx("ui.account_type")} value={account.account_type} />
+          <DetailItem label={tx("ui.plan_type")} value={account.plan_type} />
+          <DetailItem label={tx("ui.source")} value={sourceLabel(account.source, locale)} />
+          <DetailItem label={tx("ui.status")} value={accountStateLabel(account, locale)} />
+          <DetailItem label={tx("ui.status_detail")} value={operatorMessage(account.status_message, locale)} />
+          {!account.editable ? <DetailItem label={tx("ui.read_only_reason")} value={operatorMessage(account.read_only_reason, locale)} wide /> : null}
         </DetailSection>
 
-        <DetailSection title="路由配置">
-          <DetailItem label="Priority" value={account.priority} mono />
-          <DetailItem label="Prefix" value={account.prefix || "default"} mono />
-          <DetailItem label="Proxy" value={account.proxy || (account.proxy_configured ? "已配置（地址已隐藏）" : "未配置")} mono />
-          <DetailItem label="WebSockets" value={account.websockets === undefined ? "未设置" : account.websockets ? "开启" : "关闭"} />
-          <DetailItem label="Headers" value={`${account.header_count || 0} 个`} />
-          <DetailItem label="Note" value={account.note} wide />
+        {account.automation ? (
+          <DetailSection title={tx("ui.automated_disposition")}>
+            <DetailItem label={tx("ui.disposition")} value={automation?.badge || tx("ui.no_automated_disposition")} />
+            <DetailItem label={tx("ui.inspection_conclusion")} value={automation?.reason || tx("ui.no_conclusion")} />
+            <DetailItem label={tx("ui.disposition_detail")} value={automation?.detail || tx("ui.no_automated_action_required")} wide />
+            <DetailItem label={tx("ui.auto_disable")} value={tx(account.automation.auto_disable_enabled ? "ui.on" : "ui.off")} />
+            <DetailItem label={tx("ui.auto_enable")} value={tx(account.automation.auto_enable_enabled ? "ui.on" : "ui.off")} />
+            <DetailItem label={tx("ui.auto_delete")} value={tx(account.automation.auto_delete_enabled ? "ui.on" : "ui.off")} />
+            <DetailItem label={tx("ui.auto_disabled_at")} value={formatDateTime(account.automation.disabled_at)} />
+            <DetailItem label={tx("ui.expected_recovery")} value={formatDateTime(account.automation.recover_after)} />
+            <DetailItem label={tx("ui.delete_eligible_at")} value={formatDateTime(account.automation.delete_eligible_at)} />
+            <DetailItem label={tx("ui.last_inspected")} value={formatDateTime(account.automation.last_checked_at)} />
+          </DetailSection>
+        ) : null}
+
+        <DetailSection title={tx("ui.routing")}>
+          <DetailItem label={tx("ui.priority")} value={account.priority} mono />
+          <DetailItem label={tx("ui.route_prefix")} value={account.prefix || tx("ui.default")} mono />
+          <DetailItem label={tx("ui.proxy")} value={account.proxy || tx(account.proxy_configured ? "ui.configured_address_hidden" : "ui.not_configured")} mono />
+          <DetailItem label="WebSocket" value={tx(account.websockets === undefined ? "ui.not_set" : account.websockets ? "ui.on_2" : "ui.off_2")} />
+          <DetailItem label={tx("ui.headers")} value={`${account.header_count || 0} ${tx("ui.accounts_2")}`} />
+          <DetailItem label={tx("ui.note")} value={account.note} wide />
           {account.header_names?.length ? (
             <div className="detail-item detail-item-wide">
-              <span>Header 名称</span>
+              <span>{tx("ui.header_names")}</span>
               <div className="detail-chips">{account.header_names.map((name) => <code key={name}>{name}</code>)}</div>
             </div>
           ) : null}
         </DetailSection>
 
-        <DetailSection title="用量与活动">
-          <DetailItem label="成功请求" value={formatNumber(account.success)} mono />
-          <DetailItem label="失败请求" value={formatNumber(account.failed)} mono />
-          <DetailItem label="总 Tokens" value={usage ? formatNumber(usage.total_tokens) : "暂无数据"} mono />
-          <DetailItem label="Input" value={usage ? formatNumber(usage.input_tokens) : "暂无数据"} mono />
-          <DetailItem label="Output" value={usage ? formatNumber(usage.output_tokens) : "暂无数据"} mono />
-          <DetailItem label="Reasoning" value={usage ? formatNumber(usage.reasoning_tokens) : "暂无数据"} mono />
-          <DetailItem label="Cached" value={usage ? formatNumber(usage.cached_tokens + usage.cache_read_tokens) : "暂无数据"} mono />
-          <DetailItem label="最后请求" value={formatTimestamp(usage?.last_request_at)} />
-          <DetailItem label="5 小时用量" value={usage?.codex?.five_hour ? `${formatPercent(usage.codex.five_hour.used_percent)} · ${formatTimestamp(usage.codex.five_hour.reset_at)}` : "暂无数据"} />
-          <DetailItem label="7 天用量" value={usage?.codex?.seven_day ? `${formatPercent(usage.codex.seven_day.used_percent)} · ${formatTimestamp(usage.codex.seven_day.reset_at)}` : "暂无数据"} />
+        <DetailSection title={tx("ui.usage_and_activity")}>
+          <DetailItem label={tx("ui.successful_requests")} value={formatNumber(account.success, locale)} mono />
+          <DetailItem label={tx("ui.failed_requests")} value={formatNumber(account.failed, locale)} mono />
+          <DetailItem label={tx("ui.total_tokens")} value={usage ? formatNumber(usage.total_tokens, locale) : tx("ui.no_data")} mono />
+          <DetailItem label="Input" value={usage ? formatNumber(usage.input_tokens, locale) : tx("ui.no_data")} mono />
+          <DetailItem label="Output" value={usage ? formatNumber(usage.output_tokens, locale) : tx("ui.no_data")} mono />
+          <DetailItem label="Reasoning" value={usage ? formatNumber(usage.reasoning_tokens, locale) : tx("ui.no_data")} mono />
+          <DetailItem label="Cached" value={usage ? formatNumber(usage.cached_tokens + usage.cache_read_tokens, locale) : tx("ui.no_data")} mono />
+          <DetailItem label={tx("ui.last_request")} value={formatDateTime(usage?.last_request_at)} />
+          <DetailItem label={tx("ui.5_hour_usage")} value={usage?.codex?.five_hour ? `${formatPercent(usage.codex.five_hour.used_percent)} · ${formatDateTime(usage.codex.five_hour.reset_at)}` : tx("ui.no_data")} />
+          <DetailItem label={tx("ui.7_day_usage")} value={usage?.codex?.seven_day ? `${formatPercent(usage.codex.seven_day.used_percent)} · ${formatDateTime(usage.codex.seven_day.reset_at)}` : tx("ui.no_data")} />
         </DetailSection>
 
-        <DetailSection title="时间">
-          <DetailItem label="更新时间" value={formatTimestamp(account.updated_at)} />
-          <DetailItem label="最后刷新" value={formatTimestamp(account.last_refresh)} />
-          <DetailItem label="下次重试" value={formatTimestamp(account.next_retry_after)} />
+        <DetailSection title={tx("ui.time")}>
+          <DetailItem label={tx("ui.updated")} value={formatDateTime(account.updated_at)} />
+          <DetailItem label={tx("ui.last_refresh")} value={formatDateTime(account.last_refresh)} />
+          <DetailItem label={tx("ui.next_retry")} value={formatDateTime(account.next_retry_after)} />
         </DetailSection>
       </div>
     </Modal>
@@ -109,26 +128,11 @@ function DetailItem({ label, value, mono = false, wide = false }: { label: strin
   );
 }
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("zh-CN", { notation: value >= 100000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
+function formatNumber(value: number, locale: Locale): string {
+  return new Intl.NumberFormat(localeFormats[locale].dateTimeLocale, { notation: value >= 100000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
 }
 
 function formatPercent(value: number): string {
   const normalized = value <= 1 ? value * 100 : value;
   return `${Math.max(0, Math.min(100, normalized)).toFixed(1).replace(/\.0$/, "")}%`;
-}
-
-function formatTimestamp(value?: string): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(date);
 }

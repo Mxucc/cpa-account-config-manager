@@ -32,6 +32,31 @@ export interface Account {
   usage?: AccountUsageSnapshot;
   updated_at?: string;
   last_refresh?: string;
+  automation?: AccountAutomationSummary;
+}
+
+export interface AccountAutomationSummary {
+  health: InspectionHealth;
+  reason_code: string;
+  recommendation: "keep" | "reauth" | "review" | "disable" | "enable" | "delete";
+  last_checked_at: string;
+  owned_disable: boolean;
+  disable_reason?: string;
+  disabled_at?: string;
+  recover_after?: string;
+  delete_eligible_at?: string;
+  delete_retry_after?: string;
+  auto_action?: "disable" | "enable" | "delete" | "delete_candidate";
+  auto_action_status?: "pending" | "succeeded" | "failed" | "skipped";
+  auto_disable_eligible: boolean;
+  inspection_enabled: boolean;
+  auto_disable_enabled: boolean;
+  auto_enable_enabled: boolean;
+  auto_delete_enabled: boolean;
+  failure_threshold: number;
+  failure_streak: number;
+  recovery_threshold: number;
+  healthy_streak: number;
 }
 
 export interface RecentRequestEntry {
@@ -81,6 +106,18 @@ export interface AccountListResponse {
   page: number;
   page_size: number;
   pages: number;
+}
+
+export type ModelTestStatus = "available" | "unavailable" | "unsupported" | "review";
+
+export interface ModelTestResult {
+  account_id: string;
+  provider: string;
+  model: string;
+  status: ModelTestStatus;
+  reason_code: string;
+  latency_ms: number;
+  tested_at: string;
 }
 
 export interface AccountDeleteTarget {
@@ -319,7 +356,197 @@ export type ResultExportFormat = "json" | "csv" | "jsonl";
 
 export type ExportFormat = AccountExportFormat | ResultExportFormat;
 
+export type OperationCategory = "account" | "batch" | "import" | "export" | "default_policy" | "inspection" | "update" | "journal";
+export type OperationStatus = "running" | "succeeded" | "partial" | "failed" | "interrupted" | "warning" | "skipped";
+export type OperationSource = "manual" | "background" | "default_policy" | "inspection" | "import" | "plugin_store";
+export type OperationExportFormat = "json" | "csv" | "jsonl";
+
+export interface OperationEntry {
+  id: string;
+  event_id?: string;
+  category: OperationCategory;
+  action: string;
+  status: OperationStatus;
+  source: OperationSource;
+  scope?: string;
+  target_id?: string;
+  target_count: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  started_at: string;
+  finished_at?: string;
+  reason_code?: string;
+  related_job_id?: string;
+  related_action_id?: string;
+  version?: string;
+  format?: string;
+  model?: string;
+}
+
+export interface OperationSummary {
+  total: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  attention: number;
+  interrupted: number;
+}
+
+export interface OperationListResponse {
+  operations: OperationEntry[];
+  summary: OperationSummary;
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  storage_error?: string;
+}
+
+export interface OperationFilters {
+  category?: OperationCategory | "";
+  status?: OperationStatus | "";
+  source?: OperationSource | "";
+  search?: string;
+}
+
 export interface Session {
   baseUrl: string;
   managementKey: string;
+}
+
+export type InspectionHealth = "healthy" | "quota_limited" | "invalid_credentials" | "deactivated" | "review" | "unavailable" | "disabled" | "unknown";
+
+export interface InspectionPolicy {
+  enabled: boolean;
+  scan_interval_minutes: number;
+  failure_threshold: number;
+  recovery_threshold: number;
+  auto_disable: boolean;
+  auto_enable: boolean;
+  auto_delete: boolean;
+  delete_grace_hours: number;
+  delete_batch_size: number;
+}
+
+export interface InspectionRunSummary {
+  started_at?: string;
+  finished_at?: string;
+  scanned: number;
+  healthy: number;
+  quota_limited: number;
+  invalid_credentials: number;
+  deactivated: number;
+  review: number;
+  unavailable: number;
+  disabled: number;
+  unknown: number;
+  auto_disabled: number;
+  auto_enabled: number;
+  delete_pending: number;
+  failed: number;
+  truncated: number;
+  error?: string;
+}
+
+export interface InspectionSnapshot {
+  policy: InspectionPolicy;
+  running: boolean;
+  pending: boolean;
+  scan_started_at?: string;
+  last_run: InspectionRunSummary;
+  total: number;
+  action_count: number;
+  storage_error?: string;
+}
+
+export interface InspectionResult {
+  id: string;
+  name?: string;
+  provider?: string;
+  type?: string;
+  plan_type?: string;
+  health: InspectionHealth;
+  reason_code: string;
+  confidence: "high" | "medium" | "low";
+  recommendation: "keep" | "reauth" | "review" | "disable" | "enable" | "delete";
+  disabled: boolean;
+  editable: boolean;
+  auto_disable_eligible: boolean;
+  owned_disable: boolean;
+  failure_streak: number;
+  healthy_streak: number;
+  last_checked_at: string;
+  first_unhealthy_at?: string;
+  last_failure_at?: string;
+  last_success_at?: string;
+  recover_after?: string;
+  delete_eligible_at?: string;
+  auto_action?: "disable" | "enable" | "delete" | "delete_candidate";
+  auto_action_status?: "pending" | "succeeded" | "failed" | "skipped";
+}
+
+export interface InspectionResultList {
+  results: InspectionResult[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
+export interface InspectionAction {
+  id: string;
+  account_id: string;
+  name?: string;
+  provider?: string;
+  action: "disable" | "enable" | "delete" | "delete_candidate";
+  status: "pending" | "succeeded" | "failed" | "skipped";
+  reason_code: string;
+  created_at: string;
+}
+
+export interface InspectionDeleteRun {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  results?: Array<{ account_id: string; status: string; reason?: string }>;
+}
+
+export interface UpdatePolicy {
+  check_enabled: boolean;
+  check_interval_hours: number;
+  auto_update: boolean;
+}
+
+export interface UpdateSnapshot {
+  policy: UpdatePolicy;
+  current_version: string;
+  latest_version?: string;
+  update_available: boolean;
+  release_url?: string;
+  checking: boolean;
+  pending: boolean;
+  checked_at?: string;
+  error?: string;
+}
+
+export interface PluginStoreEntry {
+  id: string;
+  version: string;
+  installed: boolean;
+  installed_version: string;
+  update_available: boolean;
+}
+
+export interface PluginStoreResponse {
+  plugins_enabled: boolean;
+  plugins: PluginStoreEntry[];
+}
+
+export interface PluginInstallResult {
+  status: "installed";
+  id: string;
+  version: string;
+  restart_required: boolean;
 }

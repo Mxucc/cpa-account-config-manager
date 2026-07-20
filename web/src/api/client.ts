@@ -13,10 +13,24 @@ import type {
   ExportFormat,
   ImportPreview,
   ImportResult,
+  InspectionAction,
+  InspectionDeleteRun,
+  InspectionPolicy,
+  InspectionResultList,
+  InspectionSnapshot,
   JobSnapshot,
+  ModelTestResult,
+  OperationEntry,
+  OperationExportFormat,
+  OperationFilters,
+  OperationListResponse,
+  PluginInstallResult,
+  PluginStoreResponse,
   PolicySnapshot,
   ResultExportFormat,
   TargetScope,
+  UpdatePolicy,
+  UpdateSnapshot,
 } from "../types";
 
 const API_ROOT = "/v0/management/plugins/cpa-account-config-manager";
@@ -32,14 +46,14 @@ export class APIError extends Error {
 
 function buildURL(path: string, query?: URLSearchParams): string {
   const session = getSession();
-  if (!session) throw new APIError(401, "Management Key 未设置");
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
   const suffix = query && query.size > 0 ? `?${query.toString()}` : "";
   return `${session.baseUrl}${API_ROOT}${path}${suffix}`;
 }
 
 async function request<T>(path: string, init: RequestInit = {}, query?: URLSearchParams): Promise<T> {
   const session = getSession();
-  if (!session) throw new APIError(401, "Management Key 未设置");
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   headers.set("Authorization", `Bearer ${session.managementKey}`);
@@ -50,10 +64,37 @@ async function request<T>(path: string, init: RequestInit = {}, query?: URLSearc
     headers,
   });
   if (!response.ok) {
-    let message = `请求失败 (${response.status})`;
+    let message = `Request failed (${response.status})`;
     try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) message = body.error;
+      const body = (await response.json()) as { error?: string; message?: string };
+      if (body.message || body.error) message = body.message || body.error || message;
+    } catch {
+      // Keep the status-only error when the response is not JSON.
+    }
+    throw new APIError(response.status, message);
+  }
+  return (await response.json()) as T;
+}
+
+function buildManagementURL(path: string): string {
+  const session = getSession();
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
+  return `${session.baseUrl}/v0/management${path}`;
+}
+
+async function managementRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const session = getSession();
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/json");
+  headers.set("Authorization", `Bearer ${session.managementKey}`);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const response = await fetch(buildManagementURL(path), { ...init, headers });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { error?: string; message?: string };
+      message = body.error === "plugin_update_requires_restart" ? body.error : body.message || body.error || message;
     } catch {
       // Keep the status-only error when the response is not JSON.
     }
@@ -85,6 +126,13 @@ export async function listAccounts(
   query.set("page", String(page));
   query.set("page_size", String(pageSize));
   return request<AccountListResponse>("/accounts", {}, query);
+}
+
+export async function testAccountModel(accountID: string, model: string): Promise<ModelTestResult> {
+  return request<ModelTestResult>("/accounts/model-test", {
+    method: "POST",
+    body: JSON.stringify({ account_id: accountID, model: model.trim() }),
+  });
 }
 
 export async function createAccountDeletePreview(accountID: string): Promise<AccountDeletePreview> {
@@ -144,6 +192,128 @@ export async function scanDefaultPolicy(): Promise<PolicySnapshot> {
 	return request<PolicySnapshot>("/defaults/scan", { method: "POST" });
 }
 
+export async function getInspection(): Promise<InspectionSnapshot> {
+  return request<InspectionSnapshot>("/inspection");
+}
+
+export async function saveInspectionPolicy(policy: InspectionPolicy, confirmAutoDelete = false): Promise<InspectionSnapshot> {
+  return request<InspectionSnapshot>("/inspection", {
+    method: "PUT",
+    body: JSON.stringify({ ...policy, confirm_auto_delete: confirmAutoDelete }),
+  });
+}
+
+export async function scanInspection(): Promise<InspectionSnapshot> {
+  return request<InspectionSnapshot>("/inspection/scan", { method: "POST" });
+}
+
+export async function listInspectionResults(page: number, pageSize: number, health = "", search = ""): Promise<InspectionResultList> {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (health) query.set("health", health);
+  if (search) query.set("search", search);
+  return request<InspectionResultList>("/inspection/results", {}, query);
+}
+
+export async function listInspectionActions(limit = 50): Promise<InspectionAction[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const response = await request<{ actions: InspectionAction[] }>("/inspection/actions", {}, query);
+  return response.actions;
+}
+
+export async function executeInspectionAutoDelete(): Promise<InspectionDeleteRun> {
+  return request<InspectionDeleteRun>("/inspection/auto-delete", { method: "POST" });
+}
+
+export async function getUpdateStatus(): Promise<UpdateSnapshot> {
+  return request<UpdateSnapshot>("/updates");
+}
+
+export async function saveUpdatePolicy(policy: UpdatePolicy, confirmAutoUpdate = false): Promise<UpdateSnapshot> {
+  return request<UpdateSnapshot>("/updates", {
+    method: "PUT",
+    body: JSON.stringify({ policy, confirm_auto_update: confirmAutoUpdate }),
+  });
+}
+
+export async function checkForUpdates(): Promise<UpdateSnapshot> {
+  return request<UpdateSnapshot>("/updates/check", { method: "POST" });
+}
+
+export async function getPluginStore(): Promise<PluginStoreResponse> {
+  return managementRequest<PluginStoreResponse>("/plugin-store");
+}
+
+export async function installPluginUpdate(version: string): Promise<PluginInstallResult> {
+  try {
+    const store = await getPluginStore();
+    if (!store.plugins.some((plugin) => plugin.id === "cpa-account-config-manager")) {
+      throw new APIError(404, "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store");
+    }
+    const result = await managementRequest<PluginInstallResult>("/plugin-store/cpa-account-config-manager/install", {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    });
+    void recordBrowserOperation("update_install", result.restart_required ? "warning" : "succeeded", result.version).catch(() => undefined);
+    return result;
+  } catch (error) {
+    void recordBrowserOperation("update_install", "failed", version).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function recordBrowserOperation(action: "update_install", status: "succeeded" | "failed" | "warning", version?: string): Promise<void> {
+  await request("/operations/record", {
+    method: "POST",
+    body: JSON.stringify({ action, status, version }),
+  });
+}
+
+export async function listOperations(page: number, pageSize: number, filters: OperationFilters = {}): Promise<OperationListResponse> {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (filters.category) query.set("category", filters.category);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.source) query.set("source", filters.source);
+  if (filters.search) query.set("search", filters.search);
+  return request<OperationListResponse>("/operations", {}, query);
+}
+
+export async function clearOperations(): Promise<{ operation: OperationEntry; retained: number }> {
+  return request<{ operation: OperationEntry; retained: number }>("/operations", { method: "DELETE" });
+}
+
+export async function downloadOperationExport(format: OperationExportFormat, filters: OperationFilters = {}): Promise<{ filename: string; exported?: number }> {
+  const session = getSession();
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
+  const query = new URLSearchParams({ format });
+  if (filters.category) query.set("category", filters.category);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.source) query.set("source", filters.source);
+  if (filters.search) query.set("search", filters.search);
+  const response = await fetch(buildURL("/operations/export", query), {
+    headers: { Authorization: `Bearer ${session.managementKey}` },
+  });
+  if (!response.ok) {
+    let message = `Export failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      // Keep the status-only error when the response is not JSON.
+    }
+    throw new APIError(response.status, message);
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match?.[1] ?? `cpa-account-operations.${format}`;
+  const href = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(href);
+  return { filename, exported: numericHeader(response.headers.get("X-Exported-Operations")) };
+}
+
 export async function createForceSyncPreview(): Promise<ForceSyncPreview> {
 	return request<ForceSyncPreview>("/defaults/force/preview", { method: "POST" });
 }
@@ -187,7 +357,7 @@ export async function downloadExport(kind: "accounts", format: AccountExportForm
 export async function downloadExport(kind: "results", format: ResultExportFormat, filters?: undefined): Promise<ExportDownloadResult>;
 export async function downloadExport(kind: "accounts" | "results", format: ExportFormat, scope?: TargetScope): Promise<ExportDownloadResult> {
   const session = getSession();
-  if (!session) throw new APIError(401, "Management Key 未设置");
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
   const query = kind === "accounts" && scope?.mode === "filtered" ? filtersQuery(scope.filters ?? {}) : new URLSearchParams();
   query.set("format", format);
   const headers = new Headers({ Authorization: `Bearer ${session.managementKey}` });
@@ -199,7 +369,7 @@ export async function downloadExport(kind: "accounts" | "results", format: Expor
     ...(selected ? { body: JSON.stringify({ scope }) } : {}),
   });
   if (!response.ok) {
-    let message = `导出失败 (${response.status})`;
+    let message = `Export failed (${response.status})`;
     try {
       const body = (await response.json()) as { error?: string };
       if (body.error) message = body.error;

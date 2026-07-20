@@ -43,7 +43,7 @@ describe("AccountUsageCell", () => {
       },
     }} />);
 
-    expect(screen.getByTitle("累计 Token：12,345")).toHaveTextContent("12.3Ktok");
+    expect(screen.getByTitle("累计 Token：12,345")).toHaveTextContent("1.2万tok");
     expect(screen.getByTitle("累计请求：成功 23，失败 2")).toHaveTextContent("23/2");
     expect(screen.getByTitle(/CPA 近期请求：8/)).toHaveTextContent("8");
     expect(screen.getByRole("meter", { name: "5h 用量 18.5%" }).firstElementChild).toHaveStyle({ width: "18.5%" });

@@ -4,13 +4,18 @@
 
 `cpa-account-config-manager` 是一个独立发布的 CLIProxyAPI 原生插件，用于在同一界面添加、查看、编辑、删除、筛选、导出并批量修改账号配置，避免来回切换 CPA 页面或逐个编辑 Auth JSON。
 
-插件架构参考 [`ywddd/grok-inspection`](https://github.com/ywddd/grok-inspection)，账号选择和字段按需启用的交互参考 sub2api，但首个版本不修改 CLIProxyAPI 核心程序。
+插件架构参考 [`ywddd/grok-inspection`](https://github.com/ywddd/grok-inspection)，账号选择和字段按需启用的交互参考 sub2api；巡检判定和“仅恢复自己禁用账号”的自动化边界参考 [`seakee/CPA-Manager-Plus`](https://github.com/seakee/CPA-Manager-Plus)，并按 CPA 原生插件回调与 Management 鉴权边界重新实现。
 
 ## 功能
 
-- 账号列表独立显示账号/套餐 Type，并支持搜索以及 Provider、Type、状态、启用状态、可编辑性筛选；sub2api 导入的 `plan_type` 会保留并优先于 OAuth/API Key 类型显示。
+- 账号列表独立显示账号/套餐类型，并支持搜索以及提供方、类型、状态、启用状态、可编辑性筛选；筛选条件经过校验并持久化，刷新后会自动恢复。sub2api 导入的 `plan_type` 会保留并优先于 OAuth/API Key 类型显示。
 - 使用 CPA 原生数据被动展示每个账号的累计/近期请求、累计 Token，以及可用时的 Codex 5 小时和 7 天额度进度。
+- 使用 CPA 运行状态、近期请求结果和规范化 Usage 证据进行手动/定时巡检，提供健康筛选、连续事件计数、处理建议和脱敏自动化记录。
+- 账号列表直接显示与当前策略一致的处置标签：是否由巡检自动禁用、规范化禁用原因、明确的额度恢复时间、等待恢复证据、建议删除、删除宽限期和删除重试；策略未开启时不会伪装成正在自动执行。
+- 可配置自动禁用、仅限巡检归属账号的自动恢复，以及单独确认、超过宽限期后才执行的停用账号自动删除；所有破坏性选项默认关闭。
+- 检查公开 GitHub Release、显示更新提示，并通过 CPA 鉴权插件商店按需安装；可选择仅在管理页面打开期间自动更新。
 - 每行提供脱敏详情、固定单账号范围编辑和文件名确认删除；顶部“添加账号”复用安全的多格式转换导入流程。
+- 每行可对 Codex/OpenAI、Claude、Gemini/AI Studio 和 xAI 账号做模型可用性测试；请求由 CPA 按指定 `auth_index` 执行，浏览器不能提供上游地址、请求头或原始请求体。
 - 本页多选、明确的“已选账号”范围、选中账号凭据下载、可持久化的 20/50/100/200 每页数量，以及固定快照的“全部筛选结果”范围。
 - 批量启用、批量禁用，以及 `priority`、`note`、`prefix`、`proxy_url`、`websockets`、自定义 Header 的按字段批量编辑。
 - 为 `priority` 和 `websockets` 保存默认策略，并写入 CPA 宿主管理的插件配置，重启或更新插件后仍会自动恢复；后台只补齐已有及后续上传 Auth 文件中缺失的受管字段。
@@ -19,10 +24,11 @@
 - 后台异步执行、受限并发、逐账号结果、Revision 冲突检测、部分成功继续和仅重试失败项。
 - 把当前筛选或当前勾选账号直接下载为 CPA、sub2api、Cockpit、9router、Codex、AxonHub 或 Codex-Manager 凭据文件。
 - 把批量任务结果导出为脱敏 JSON、CSV 或 JSON Lines 报表。
+- 账号删除、批处理、导入导出、默认策略、巡检自动化和插件更新统一进入持久化“操作日志”，支持筛选、详情弹窗、关联任务控制、导出和二次确认清理。
 - 支持粘贴文本 JSON，或一次混合选择多份 JSON、JSON Lines、TXT、ZIP 文件；服务端递归识别多种账号结构，转换成 CPA Codex Auth JSON，预览确认后导入且不覆盖现有 Auth 文件。
-- React 单文件内嵌界面，页面层级、控件、密集表格、弹窗以及浅色、纯白、深色主题均与 Management Center 保持一致，并支持同源认证状态。
+- React 单文件内嵌界面，页面层级、控件、密集表格、弹窗以及浅色、纯白、深色主题均与 Management Center 保持一致，并支持同源认证状态。插件读取 CPA Management Center 同源的 `cli-proxy-language` 选项，实时跟随简体中文、繁体中文、英文和俄语切换，不保存可能与 CPA 脱节的独立语言偏好。四套类型化语言目录和统一插值函数保证组件不再包含针对某种语言的条件分支。
 
-插件仍不提供刷新 Token、OAuth 重新授权、无限制凭据编辑、主动供应商额度巡检和调度功能。
+插件仍不提供刷新 Token、OAuth 重新授权、无限制凭据编辑或供应商额度探测。模型测试是操作员单独触发的一次最小生成请求，会消耗少量上游额度；巡检与自动处置仍只使用 CPA 已经持有的证据，不会在后台运行模型探测。
 
 ## 兼容性
 
@@ -30,9 +36,13 @@
 
 - 原生插件发现、Management 路由和 Resource 路由；
 - `host.auth.list`、`host.auth.get` 与 `host.auth.save` 回调；
+- 用于公开 GitHub Release 元数据检查的 `host.http.do`；
 - `PATCH /v0/management/auth-files/status`；
 - `PATCH /v0/management/auth-files/fields`；
-- 用于确认删除的鉴权 `DELETE /v0/management/auth-files?name=<file.json>`。
+- 用于确认删除的鉴权 `DELETE /v0/management/auth-files?name=<file.json>`；
+- 用于指定一个账号执行白名单模型探测的鉴权 `POST /v0/management/api-call`；
+- 用于插件更新的鉴权 `GET /v0/management/plugin-store` 与
+  `POST /v0/management/plugin-store/cpa-account-config-manager/install`。
 
 Token 累计和 Codex 额度进度还会使用原生 Usage Plugin 的 `usage.handle` 回调。宿主没有分发 Usage 记录时，账号列表和 CPA 请求计数仍可使用，Token 与额度位置显示为暂无数据。
 
@@ -58,20 +68,20 @@ Token 累计和 Codex 额度进度还会使用原生 Usage Plugin 的 `usage.han
 Linux：
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.2.0_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.2.1_linux_amd64.zip.sha256
 ```
 
 macOS：
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.2.0_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.2.1_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.2.0_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.2.0_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.2.1_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.2.1_windows_amd64.zip.sha256
 ```
 
 ### 2. 放置动态库
@@ -79,16 +89,16 @@ Get-Content .\cpa-account-config-manager_0.2.0_windows_amd64.zip.sha256
 解压后，将动态库放进 CLIProxyAPI 插件目录。推荐使用宿主优先扫描的平台子目录：
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so
-plugins/linux/arm64/cpa-account-config-manager-v0.2.0.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.2.0.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.2.0.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.2.1.so
+plugins/linux/arm64/cpa-account-config-manager-v0.2.1.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.2.1.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.2.1.dll
 ```
 
 Linux/macOS 上确保 CLIProxyAPI 服务账号可读、可执行：
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.1.so
 ```
 
 ### 3. 启用插件
@@ -114,7 +124,7 @@ plugins:
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `workers` | `6` | 同时执行的账号修改数。小于 1 时恢复为 6，大于 16 时限制为 16。 |
-| `data_dir` | `data/cpa-account-config-manager` | 可选的脱敏终态任务结果、向后兼容的 `default-policy.json` 策略/扫描缓存和 `usage-snapshots.json` 目录。需要保留终态任务或默认目录不可写时再覆盖；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。 |
+| `data_dir` | `data/cpa-account-config-manager` | 脱敏终态任务、向后兼容的 `default-policy.json`、`usage-snapshots.json`、`inspection-state.json`、`update-state.json` 与有界 `operation-log.json` 的目录。要让巡检/动作/更新策略和审计记录跨 CPA 重启与插件替换保留，必须持久化该目录；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。 |
 | `management_base_url` | `http://127.0.0.1:8317` | 普通批量编辑和确认删除使用的可选 CLIProxyAPI 原生写入接口回环地址；默认策略补齐和强制同步改用宿主 Auth 回调。还支持 `CPA_MANAGEMENT_BASE_URL`、仅限回环地址的 `CPA_BASE_URL`、`PORT`、`CPA_PORT`。 |
 
 同一对象里的 `enabled` 和 `priority` 由 CLIProxyAPI 插件宿主管理；界面中编辑的账号 `priority` 是另一项账号字段。
@@ -127,9 +137,11 @@ CLIProxyAPI 进程需要：
 
 - 对动态库有读取和执行权限；
 - 对 Auth 目录有读写权限，因为真正的字段持久化由 CLIProxyAPI 原生 Management API 完成；
-- 需要保留终态任务时，对实际生效的 `data_dir` 有读写权限。策略扫描缓存和脱敏使用量快照也会尽力写入该目录，但策略的耐久主副本位于 CPA 配置中。
+- 对实际生效的 `data_dir` 有读写权限。巡检与更新策略、脱敏巡检/动作状态、终态任务、策略扫描缓存和脱敏使用量快照都使用该目录；默认 Auth 策略还会在 CPA 配置中保留一份耐久副本。
 
-支持权限位的平台上，插件以 `0700` 创建数据目录，通过临时文件原子替换 `results.json`、`default-policy.json` 与 `usage-snapshots.json`，文件权限为 `0600`。使用量文件只保存累计 Token、时间戳及规范化后的 Codex 百分比/重置时间，不保存原始 Auth JSON、API Key、失败正文、Cookie 或原始响应 Header。建议让 CLIProxyAPI 和插件使用同一个非 root 服务账号运行。
+支持权限位的平台上，插件以 `0700` 创建数据目录，通过临时文件原子替换 JSON 状态，文件权限为 `0600`。巡检和更新状态只包含白名单身份、原因码、计数、策略、版本和时间戳；使用量状态只包含累计 Token 与规范化后的 Codex 百分比/重置时间。所有状态文件都不保存原始 Auth JSON、API Key、失败正文、Cookie、原始响应 Header 或 Management Key。建议让 CLIProxyAPI 和插件使用同一个非 root 服务账号运行。
+
+`operation-log.json` 最多保留 2,000 条，只含固定类别、动作、状态、来源、范围、公开关联 ID、有界计数、时间、白名单原因码、版本和导出格式。日志落盘是尽力行为：存储失败会单独显示为日志健康异常，但不会把已经完成的账号操作改判为失败。
 
 ## 使用流程
 
@@ -151,6 +163,14 @@ CLIProxyAPI 进程需要：
 - **删除：** 每行垃圾桶按钮先为一个可编辑文件账号创建 5 分钟删除预览；操作员必须输入精确 `.json` 文件名。确认时插件占用共享写入槽位，再次读取并比较物理 Revision，然后调用 CPA 鉴权后的回环 Auth 文件删除接口。文件已变化、目标缺失、重复来源、运行时账号或其他只读记录都不会删除。
 
 删除有意只支持逐账号确认，没有“删除全部筛选账号”。成功删除无法由插件撤销，操作前应备份 Auth 目录或先导出该账号。
+
+## 模型可用性测试
+
+每行的活动图标会打开模型测试弹窗，并按提供方预选模型。确认后，插件通过 CPA 鉴权后的 `/v0/management/api-call` 发送一次最小 `hi` 生成请求，用 `auth_index` 固定目标账号，因此 Token 刷新和账号代理选择仍由 CPA 负责。只读或运行时账号只要 CPA 能解析其运行时索引也可以测试；测试不会修改账号配置或状态。
+
+浏览器只能提交有长度和字符限制的账号 ID 与模型 ID，不能提交 URL、Header、Prompt、Payload、凭据或代理。插件只会构造 Codex/OpenAI、Claude、Gemini/AI Studio 和 xAI 的固定 HTTPS 请求，设置 20 秒超时和响应体上限；对外仅返回规范化可用性、固定原因码、提供方/模型 ID、延迟和时间。模型输出和上游原始响应正文不会返回、持久化或写入日志。不支持的提供方会直接返回结构化“暂不支持”，不会发起网络请求。
+
+每次结果都会作为 `model_test` 写入统一操作日志，只记录公开账号/模型 ID 与规范化原因。测试失败、额度受限或认证失败只供操作员判断，不会触发自动禁用、启用或删除。
 
 ## 账号导入
 
@@ -204,6 +224,48 @@ CLIProxyAPI 进程需要：
 
 在界面保存时，会先把完整的非敏感策略写入 CPA 宿主管理的插件配置，再立即应用到当前插件。`data_dir` 中的策略/扫描缓存改为尽力写入，即使目录不可用也不会阻止宿主配置中的策略保存。自动扫描和强制同步都不使用 `management_base_url`；它仍只是普通批量编辑的可选覆盖项。
 
+## 账号巡检与自动处置
+
+打开“巡检与自动化”可以立即巡检、按健康状态筛选、查看判定证据与自动化记录，并配置定时任务。巡检是被动的：它组合 `host.auth.list` 的 CPA 运行状态、CPA 请求计数、规范化的 Codex 额度窗口，以及 `usage.handle` 提供的语义化失败证据。原始失败正文只在内存中参与判定，对外返回或持久化前会缩减为白名单原因码。
+
+如果已知额度恢复时间且距离当前不超过 24 小时，账号列表会显示按当前语言格式化的具体自动启用时间；超过 24 小时则按向上取整后的“天 + 小时”显示倒计时。凭据刷新和成功请求证据驱动的恢复没有可靠时间戳，界面不会虚构具体恢复时间。
+
+裸 `401`、`403`、`unauthorized`、`payment_required`、地区限制和模型权限失败只会进入人工复核。只有 `invalid_grant`、明确无效/撤销的 Token、账号或 Workspace 停用、明确额度耗尽，以及严格匹配的 xAI 凭据权限响应，才具备自动禁用资格。被动 Usage 的失败和恢复按真实事件计数；反复扫描同一条旧事件不会凑满连续阈值。
+
+| 设置 | 默认值 | 范围 / 行为 |
+| --- | --- | --- |
+| 定时巡检 | 关闭 | 关闭后仍可手动立即巡检。 |
+| 巡检间隔 | 30 分钟 | 5-1,440 分钟。 |
+| 连续异常 | 3 | 2-10 次符合条件的连续观察。 |
+| 连续恢复 | 2 | 1-10 次连续恢复观察。 |
+| 自动禁用 | 关闭 | 只通过宿主回调修改物理 Auth JSON 的 `disabled` 字段。 |
+| 自动启用 | 关闭 | 只恢复仍由本巡检引擎持有禁用归属的账号。 |
+| 自动删除 | 关闭 | 依赖自动禁用，首次开启必须单独确认风险。 |
+| 删除宽限 | 168 小时 | 巡检禁用后 24-8,760 小时。 |
+| 单次删除 | 10 | 每次鉴权执行最多 1-100 个到期候选。 |
+
+归属式恢复保证插件不会启用操作员或其他系统禁用的账号。额度原因可以在已知重置时间后恢复；凭据问题需要禁用后的成功或刷新证据。操作员手动启用会撤销巡检归属，不会被下次扫描重新覆盖。
+
+账号列表会复用同一份有界巡检证据。只有巡检持有禁用归属、自动启用已开启且存在明确额度重置时间时，列表才显示具体“预计自动启用”时间；凭据类问题显示等待重新授权/刷新或成功请求证据。停用账号会根据自动删除是否开启、宽限期、待执行状态和失败重试时间显示“建议删除”“等待删除宽限期”“等待自动删除”或“等待自动删除重试”。人工禁用不会显示为巡检自动禁用。列表摘要只含白名单原因/动作枚举、计数、策略开关和时间，不包含原始 Usage 失败正文或 Auth 来源细节。
+
+自动删除比逐行手动删除更严格。只有明确的账号/Workspace 停用原因能创建候选；候选必须仍由巡检持有、仍禁用、唯一可编辑、指向同一份物理 `.json`、超过宽限期且仍判定停用。真正删除前，插件会再次列出账号、用最新信号重算健康状态、重读物理 JSON 并确认 `disabled: true`，再进入已有的 Revision 校验删除服务。账号恢复或来源变化会撤销候选；临时删除失败会保留候选，并至少延迟 5 分钟重试。
+
+插件绝不持久化 Management Key，因此到期删除不能由无人值守后台协程执行。它只在已经鉴权的“巡检与自动化”页面打开时运行：进入页面执行一次，随后按有界间隔检查。非敏感策略、脱敏结果、归属元数据和最多 500 条动作记录保存在 `inspection-state.json`。
+
+## 插件更新
+
+Release 检查默认开启，每 24 小时一次，可配置 1-168 小时。后端只通过 `host.http.do` 请求固定的公开地址 `https://api.github.com/repos/Mxucc/cpa-account-config-manager/releases/latest`，不发送 Authorization Header 或账号凭据，拒绝 Draft、Prerelease 和无效语义版本；`update-state.json` 只保存策略、规范化最新版本、时间戳和稳定错误码。
+
+发现新版本后页面会显示提示。真正安装委托给 CPA 鉴权插件商店，由宿主负责 Registry 来源、平台匹配、归档限制、Checksum 校验和最终落盘。自动安装默认关闭，首次开启必须确认，并且只在已鉴权巡检页面打开期间运行。原生动态库可能需要重启 CPA 才能启用新版本；安装失败或文件被占用时仍可手动重试。插件不会自行下载或替换自己的动态库，也不会保存浏览器中的 Management Key。
+
+## 统一操作日志
+
+打开“操作日志”可以统一查看账号管理器活动：单账号删除和模型可用性测试、批量修改与失败项重试、导入导出、默认策略保存/扫描/强制同步、巡检扫描及自动处置、更新检查和插件商店安装结果。进行中的批处理与强制同步按稳定 Job ID 原地更新；已持久化的巡检 Action ID 和扫描时间会被去重对账，轮询或重启后不会重复生成日志行。
+
+工作台提供类别、状态、来源和文本筛选，20/50/100/200 条分页，逐字段详情弹窗，以及关联的内存任务仍存在时可用的“打开关联任务”控制。当前筛选结果可下载为 JSON、防公式注入 CSV 或 JSON Lines。清理属于需要确认的破坏操作，完成后会有意保留一条 `journal_clear`，使清理行为本身仍可审计。
+
+操作日志不是凭据日志。它绝不保存 Management Key、原始 Auth JSON、Token、Cookie、API Key、代理或 Header 值、Patch 值、导入文档、凭据导出正文、原始请求/响应正文或浏览器任意文本。浏览器补记接口只接受固定 `update_install` 动作、三种固定结果和可选的规范化语义版本。
+
 ## 可编辑字段
 
 | 字段 | 行为 |
@@ -232,6 +294,10 @@ CLIProxyAPI 进程需要：
 
 - 账号列表、预览、错误和批量结果导出使用显式白名单字段并脱敏，不包含原始 Auth JSON、Token、Cookie、API Key、代理凭据或 Header 值。
 - 使用量采集是被动的：只监听 CPA 原生 `usage.handle` 记录，不调用供应商额度接口，也不消费 CPA 的破坏性 `/usage-queue`；公开和落盘快照仅保留 Token 计数以及白名单内的 Codex 百分比、重置和窗口字段。
+- 巡检只持久化规范化健康状态、原因码、计数、时间、归属元数据和脱敏动作记录。原始失败正文与响应 Header 只短暂存在于内存；含糊的鉴权或权限失败不能触发自动禁用或删除。
+- 自动启用受禁用归属约束；自动删除必须单独确认，只接受停用原因，经过宽限期并重读物理 Auth 状态，且只能使用当前已鉴权的浏览器请求执行。
+- 更新检查只访问固定公开 GitHub API 且不携带凭据；安装始终由 CPA 鉴权插件商店完成。插件不接受任意 Release URL，也不自行写入动态库。
+- 统一操作日志最多 2,000 条，只持久化显式公开字段；日志写入失败不阻断账号操作，界面会单独显示存储异常。清理必须确认并保留一条脱敏清理记录。
 - 凭据导出是单独且必须显式选择的 Management 下载；附件正文有意包含目标系统凭据，带 `no-store`，受账号数和体积限制，并且不会写入插件状态或日志。
 - 所有账号数据和写入接口都是 CLIProxyAPI 鉴权后的 Management 路由；未鉴权 Resource 路由只提供静态 HTML。
 - 手动输入的 Management Key 只在 JavaScript 内存中保存。插件可以读取官方面板已经保存的同源状态，但不会自行把 Key 写入 Local Storage。
@@ -255,7 +321,7 @@ CLIProxyAPI 进程需要：
 1. 把 `plugins.configs.cpa-account-config-manager.enabled` 改为 `false`。
 2. 重启 CLIProxyAPI。
 3. 进程停止后再删除动态库。Windows 加载中的 DLL 不能直接覆盖或删除。
-4. 如不再需要，可删除 `data/cpa-account-config-manager/results.json` 和 `default-policy.json`。前者只包含脱敏任务结果，删除后者会重置已保存的策略和脱敏扫描摘要。
+4. 如不再需要，可删除 `data/cpa-account-config-manager` 下的脱敏状态文件。删除 `inspection-state.json` 会重置巡检策略、禁用归属和动作历史；删除 `update-state.json` 会重置更新偏好和上次检查；删除 `default-policy.json` 会重置回退策略/扫描缓存；删除 `operation-log.json` 会重置统一操作日志。
 
 ## Docker
 
@@ -265,7 +331,7 @@ CLIProxyAPI 进程需要：
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.0.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.1.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.1.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -273,9 +339,10 @@ services:
 
 ## Management 路由
 
-以下 18 条鉴权路由都是 `/v0/management/plugins/cpa-account-config-manager` 下的固定精确路径：
+以下 32 条鉴权路由都是 `/v0/management/plugins/cpa-account-config-manager` 下的固定精确路径：
 
 - `GET /accounts`
+- `POST /accounts/model-test`
 - `POST /accounts/delete/preview`
 - `POST /accounts/delete/start`
 - `POST /batch/preview`
@@ -293,6 +360,19 @@ services:
 - `POST /defaults/force/preview`
 - `POST /defaults/force/start`
 - `GET /defaults/force/status`
+- `GET /inspection`
+- `PUT /inspection`
+- `POST /inspection/scan`
+- `GET /inspection/results`
+- `GET /inspection/actions`
+- `POST /inspection/auto-delete`
+- `GET /updates`
+- `PUT /updates`
+- `POST /updates/check`
+- `GET /operations`
+- `GET /operations/export`
+- `DELETE /operations`
+- `POST /operations/record`
 
 静态界面由 `/v0/resource/plugins/cpa-account-config-manager/index.html` 提供。
 
@@ -300,12 +380,14 @@ services:
 
 构建要求：Go 1.24+、Node.js 22、npm，以及支持 `go build -buildmode=c-shared` 的本机 C 工具链。
 
+项目协作和稳定后端输出统一以英文为源语言。后端元数据、错误、原因码、动作名和状态值都必须使用英文；前端代码使用类型化的英文语义消息 ID，简体中文、繁体中文、英文和俄语展示文案只放在各自语言目录中。不要再用翻译后的展示文本作为键，也不要在组件内按语言写条件分支。类型检查和源语言契约测试会持续校验这些约束。
+
 ```bash
 cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.2.0
+make package VERSION=0.2.1
 ```
 
 如果本地构建需要在插件元数据中显示仓库链接，可给 `make build` 或 `make package` 传入 `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager`。GitHub Actions 会自动注入实际仓库地址。
@@ -324,7 +406,7 @@ cd web
 VITE_CPA_BASE=http://127.0.0.1:8318 npm run dev
 ```
 
-打开 `http://127.0.0.1:5175`，CPA 地址保持页面同源，Management Key 使用 `demo-key`。Mock 仅包含合成账号，并模拟行详情/编辑/删除、批量任务、默认策略进度及混合 JSON/ZIP 导入，不会修改真实凭据。
+打开 `http://127.0.0.1:5175`，CPA 地址保持页面同源，Management Key 使用 `demo-key`。Mock 仅包含合成账号，并模拟行详情/编辑/删除、模型可用性测试、批量任务、默认策略进度、巡检与更新流程及混合 JSON/ZIP 导入，不会修改真实凭据。
 
 ## 发布
 

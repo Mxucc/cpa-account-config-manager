@@ -1,0 +1,259 @@
+package manager
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+const (
+	maxInspectionAccounts       = 10_000
+	maxInspectionActions        = 500
+	defaultInspectionInterval   = 30
+	minInspectionInterval       = 5
+	maxInspectionInterval       = 24 * 60
+	defaultFailureThreshold     = 3
+	defaultRecoveryThreshold    = 2
+	defaultDeleteGraceHours     = 7 * 24
+	defaultDeleteBatchSize      = 10
+	maxDeleteGraceHours         = 365 * 24
+	maxDeleteBatchSize          = 100
+	maxInspectionResultPageSize = 200
+
+	InspectionHealthHealthy            = "healthy"
+	InspectionHealthQuotaLimited       = "quota_limited"
+	InspectionHealthInvalidCredentials = "invalid_credentials"
+	InspectionHealthDeactivated        = "deactivated"
+	InspectionHealthReview             = "review"
+	InspectionHealthUnavailable        = "unavailable"
+	InspectionHealthDisabled           = "disabled"
+	InspectionHealthUnknown            = "unknown"
+
+	InspectionRecommendationKeep    = "keep"
+	InspectionRecommendationReauth  = "reauth"
+	InspectionRecommendationReview  = "review"
+	InspectionRecommendationDisable = "disable"
+	InspectionRecommendationEnable  = "enable"
+	InspectionRecommendationDelete  = "delete"
+
+	InspectionConfidenceHigh   = "high"
+	InspectionConfidenceMedium = "medium"
+	InspectionConfidenceLow    = "low"
+
+	InspectionActionDisable         = "disable"
+	InspectionActionEnable          = "enable"
+	InspectionActionDelete          = "delete"
+	InspectionActionDeleteCandidate = "delete_candidate"
+
+	InspectionActionPending   = "pending"
+	InspectionActionSucceeded = "succeeded"
+	InspectionActionFailed    = "failed"
+	InspectionActionSkipped   = "skipped"
+)
+
+type InspectionPolicy struct {
+	Enabled             bool `json:"enabled"`
+	ScanIntervalMinutes int  `json:"scan_interval_minutes"`
+	FailureThreshold    int  `json:"failure_threshold"`
+	RecoveryThreshold   int  `json:"recovery_threshold"`
+	AutoDisable         bool `json:"auto_disable"`
+	AutoEnable          bool `json:"auto_enable"`
+	AutoDelete          bool `json:"auto_delete"`
+	DeleteGraceHours    int  `json:"delete_grace_hours"`
+	DeleteBatchSize     int  `json:"delete_batch_size"`
+}
+
+type InspectionPolicyUpdateRequest struct {
+	InspectionPolicy
+	ConfirmAutoDelete bool `json:"confirm_auto_delete"`
+}
+
+type InspectionRunSummary struct {
+	StartedAt          time.Time `json:"started_at,omitempty"`
+	FinishedAt         time.Time `json:"finished_at,omitempty"`
+	Scanned            int       `json:"scanned"`
+	Healthy            int       `json:"healthy"`
+	QuotaLimited       int       `json:"quota_limited"`
+	InvalidCredentials int       `json:"invalid_credentials"`
+	Deactivated        int       `json:"deactivated"`
+	Review             int       `json:"review"`
+	Unavailable        int       `json:"unavailable"`
+	Disabled           int       `json:"disabled"`
+	Unknown            int       `json:"unknown"`
+	AutoDisabled       int       `json:"auto_disabled"`
+	AutoEnabled        int       `json:"auto_enabled"`
+	DeletePending      int       `json:"delete_pending"`
+	Failed             int       `json:"failed"`
+	Truncated          int       `json:"truncated"`
+	Error              string    `json:"error,omitempty"`
+}
+
+type InspectionSnapshot struct {
+	Policy        InspectionPolicy     `json:"policy"`
+	Running       bool                 `json:"running"`
+	Pending       bool                 `json:"pending"`
+	ScanStartedAt time.Time            `json:"scan_started_at,omitempty"`
+	LastRun       InspectionRunSummary `json:"last_run"`
+	Total         int                  `json:"total"`
+	ActionCount   int                  `json:"action_count"`
+	StorageError  string               `json:"storage_error,omitempty"`
+}
+
+type InspectionResult struct {
+	ID                  string     `json:"id"`
+	Name                string     `json:"name,omitempty"`
+	Provider            string     `json:"provider,omitempty"`
+	Type                string     `json:"type,omitempty"`
+	PlanType            string     `json:"plan_type,omitempty"`
+	Health              string     `json:"health"`
+	ReasonCode          string     `json:"reason_code"`
+	Confidence          string     `json:"confidence"`
+	Recommendation      string     `json:"recommendation"`
+	Disabled            bool       `json:"disabled"`
+	Editable            bool       `json:"editable"`
+	AutoDisableEligible bool       `json:"auto_disable_eligible"`
+	OwnedDisable        bool       `json:"owned_disable"`
+	FailureStreak       int        `json:"failure_streak"`
+	HealthyStreak       int        `json:"healthy_streak"`
+	LastCheckedAt       time.Time  `json:"last_checked_at"`
+	FirstUnhealthyAt    *time.Time `json:"first_unhealthy_at,omitempty"`
+	LastFailureAt       *time.Time `json:"last_failure_at,omitempty"`
+	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
+	RecoverAfter        *time.Time `json:"recover_after,omitempty"`
+	DeleteEligibleAt    *time.Time `json:"delete_eligible_at,omitempty"`
+	AutoAction          string     `json:"auto_action,omitempty"`
+	AutoActionStatus    string     `json:"auto_action_status,omitempty"`
+}
+
+// AccountAutomationSummary is the bounded inspection state exposed with an
+// account row. It intentionally excludes raw signals and auth-source details.
+type AccountAutomationSummary struct {
+	Health              string     `json:"health"`
+	ReasonCode          string     `json:"reason_code"`
+	Recommendation      string     `json:"recommendation"`
+	LastCheckedAt       time.Time  `json:"last_checked_at"`
+	OwnedDisable        bool       `json:"owned_disable"`
+	DisableReason       string     `json:"disable_reason,omitempty"`
+	DisabledAt          *time.Time `json:"disabled_at,omitempty"`
+	RecoverAfter        *time.Time `json:"recover_after,omitempty"`
+	DeleteEligibleAt    *time.Time `json:"delete_eligible_at,omitempty"`
+	DeleteRetryAfter    *time.Time `json:"delete_retry_after,omitempty"`
+	AutoAction          string     `json:"auto_action,omitempty"`
+	AutoActionStatus    string     `json:"auto_action_status,omitempty"`
+	AutoDisableEligible bool       `json:"auto_disable_eligible"`
+	InspectionEnabled   bool       `json:"inspection_enabled"`
+	AutoDisableEnabled  bool       `json:"auto_disable_enabled"`
+	AutoEnableEnabled   bool       `json:"auto_enable_enabled"`
+	AutoDeleteEnabled   bool       `json:"auto_delete_enabled"`
+	FailureThreshold    int        `json:"failure_threshold"`
+	FailureStreak       int        `json:"failure_streak"`
+	RecoveryThreshold   int        `json:"recovery_threshold"`
+	HealthyStreak       int        `json:"healthy_streak"`
+}
+
+type InspectionAction struct {
+	ID         string    `json:"id"`
+	AccountID  string    `json:"account_id"`
+	Name       string    `json:"name,omitempty"`
+	Provider   string    `json:"provider,omitempty"`
+	Action     string    `json:"action"`
+	Status     string    `json:"status"`
+	ReasonCode string    `json:"reason_code"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type InspectionDeleteResult struct {
+	AccountID string `json:"account_id"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type InspectionDeleteRun struct {
+	Attempted int                      `json:"attempted"`
+	Succeeded int                      `json:"succeeded"`
+	Failed    int                      `json:"failed"`
+	Skipped   int                      `json:"skipped"`
+	Results   []InspectionDeleteResult `json:"results,omitempty"`
+}
+
+type InspectionResultQuery struct {
+	Page     int
+	PageSize int
+	Health   string
+	Search   string
+}
+
+type InspectionResultList struct {
+	Results  []InspectionResult `json:"results"`
+	Total    int                `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"page_size"`
+	Pages    int                `json:"pages"`
+}
+
+func defaultInspectionPolicy() InspectionPolicy {
+	return InspectionPolicy{
+		ScanIntervalMinutes: defaultInspectionInterval,
+		FailureThreshold:    defaultFailureThreshold,
+		RecoveryThreshold:   defaultRecoveryThreshold,
+		DeleteGraceHours:    defaultDeleteGraceHours,
+		DeleteBatchSize:     defaultDeleteBatchSize,
+	}
+}
+
+func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
+	if policy.ScanIntervalMinutes == 0 {
+		policy.ScanIntervalMinutes = defaultInspectionInterval
+	}
+	if policy.FailureThreshold == 0 {
+		policy.FailureThreshold = defaultFailureThreshold
+	}
+	if policy.RecoveryThreshold == 0 {
+		policy.RecoveryThreshold = defaultRecoveryThreshold
+	}
+	if policy.DeleteGraceHours == 0 {
+		policy.DeleteGraceHours = defaultDeleteGraceHours
+	}
+	if policy.DeleteBatchSize == 0 {
+		policy.DeleteBatchSize = defaultDeleteBatchSize
+	}
+	return policy
+}
+
+func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error) {
+	policy = normalizeInspectionPolicy(policy)
+	if policy.ScanIntervalMinutes < minInspectionInterval || policy.ScanIntervalMinutes > maxInspectionInterval {
+		return InspectionPolicy{}, fmt.Errorf("scan_interval_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
+	}
+	if policy.FailureThreshold < 2 || policy.FailureThreshold > 10 {
+		return InspectionPolicy{}, fmt.Errorf("failure_threshold must be between 2 and 10")
+	}
+	if policy.RecoveryThreshold < 1 || policy.RecoveryThreshold > 10 {
+		return InspectionPolicy{}, fmt.Errorf("recovery_threshold must be between 1 and 10")
+	}
+	if policy.DeleteGraceHours < 24 || policy.DeleteGraceHours > maxDeleteGraceHours {
+		return InspectionPolicy{}, fmt.Errorf("delete_grace_hours must be between 24 and %d", maxDeleteGraceHours)
+	}
+	if policy.DeleteBatchSize < 1 || policy.DeleteBatchSize > maxDeleteBatchSize {
+		return InspectionPolicy{}, fmt.Errorf("delete_batch_size must be between 1 and %d", maxDeleteBatchSize)
+	}
+	if policy.AutoDelete && !policy.AutoDisable {
+		return InspectionPolicy{}, fmt.Errorf("auto_delete requires auto_disable")
+	}
+	return policy, nil
+}
+
+func normalizeInspectionResultQuery(query InspectionResultQuery) InspectionResultQuery {
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.PageSize < 1 {
+		query.PageSize = 50
+	}
+	if query.PageSize > maxInspectionResultPageSize {
+		query.PageSize = maxInspectionResultPageSize
+	}
+	query.Health = strings.ToLower(strings.TrimSpace(query.Health))
+	query.Search = strings.ToLower(strings.TrimSpace(query.Search))
+	return query
+}

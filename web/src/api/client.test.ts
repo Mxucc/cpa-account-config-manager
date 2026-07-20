@@ -1,5 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createAccountDeletePreview, createImportPreview, createPreview, deleteAccount, downloadExport, listAccounts, saveDefaultPolicy, startImport } from "./client";
+import {
+  createAccountDeletePreview,
+  createImportPreview,
+  createPreview,
+  deleteAccount,
+  downloadExport,
+  executeInspectionAutoDelete,
+  installPluginUpdate,
+  listAccounts,
+  saveDefaultPolicy,
+  saveInspectionPolicy,
+  saveUpdatePolicy,
+  startImport,
+  testAccountModel,
+} from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
 describe("management API client", () => {
@@ -87,6 +101,23 @@ describe("management API client", () => {
     expect(startURL).toContain("/accounts/delete/start");
     expect(JSON.parse(String(startInit.body))).toEqual({ preview_id: "delete-preview-1" });
     expect(new Headers(startInit.headers).get("Authorization")).toBe("Bearer management-secret");
+  });
+
+  it("submits only the account ID and model for a model availability test", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      account_id: "auth-1", provider: "codex", model: "gpt-5.4", status: "available",
+      reason_code: "model_response_ok", latency_ms: 286, tested_at: "2026-07-20T08:00:00Z",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await testAccountModel("auth-1", " gpt-5.4 ");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/accounts/model-test");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ account_id: "auth-1", model: "gpt-5.4" });
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 
 	it("preserves zero, false, and unmanaged null values in a default policy", async () => {
@@ -239,6 +270,65 @@ describe("management API client", () => {
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(init.body))).toEqual({ scope: { mode: "selected", ids: ["auth-2", "auth-1"] } });
+  });
+
+  it("persists confirmed automation settings and installs an exact plugin-store version", async () => {
+    setSession("", "management-secret");
+    const inspectionSnapshot = {
+      policy: { enabled: true, scan_interval_minutes: 30, failure_threshold: 3, recovery_threshold: 2, auto_disable: true, auto_enable: true, auto_delete: true, delete_grace_hours: 168, delete_batch_size: 10 },
+      running: false, pending: false, last_run: {}, total: 0, action_count: 0,
+    };
+    const updateSnapshot = {
+      policy: { check_enabled: true, check_interval_hours: 24, auto_update: true },
+      current_version: "0.2.0", latest_version: "0.3.0", update_available: true, checking: false, pending: false,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(inspectionSnapshot))
+      .mockResolvedValueOnce(jsonResponse(updateSnapshot))
+      .mockResolvedValueOnce(jsonResponse({ attempted: 0, succeeded: 0, failed: 0, skipped: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: false }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveInspectionPolicy(inspectionSnapshot.policy, true);
+    await saveUpdatePolicy(updateSnapshot.policy, true);
+    await executeInspectionAutoDelete();
+    await installPluginUpdate("0.3.0");
+
+    const [inspectionURL, inspectionInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(inspectionURL).toContain("/inspection");
+    expect(JSON.parse(String(inspectionInit.body))).toEqual({ ...inspectionSnapshot.policy, confirm_auto_delete: true });
+
+    const [updateURL, updateInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(updateURL).toContain("/updates");
+    expect(JSON.parse(String(updateInit.body))).toEqual({ policy: updateSnapshot.policy, confirm_auto_update: true });
+
+    const [deleteURL, deleteInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    expect(deleteURL).toContain("/inspection/auto-delete");
+    expect(deleteInit.body).toBeUndefined();
+
+    const [storeURL, storeInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+    expect(storeURL).toBe("/v0/management/plugin-store");
+    expect(new Headers(storeInit.headers).get("Authorization")).toBe("Bearer management-secret");
+
+    const [installURL, installInit] = fetchMock.mock.calls[4] as [string, RequestInit];
+    expect(installURL).toBe("/v0/management/plugin-store/cpa-account-config-manager/install");
+    expect(JSON.parse(String(installInit.body))).toEqual({ version: "0.3.0" });
+    expect(new Headers(installInit.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("preserves the stable restart-required plugin-store error code", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ error: "plugin_update_requires_restart", message: "loaded plugin cannot be overwritten while running" }, 409));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(installPluginUpdate("0.3.0")).rejects.toMatchObject({
+      status: 409,
+      message: "plugin_update_requires_restart",
+    });
   });
 });
 

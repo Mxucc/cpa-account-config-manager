@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
 import { _resetSessionForTest } from "./store/session";
 
@@ -42,12 +43,72 @@ describe("primary account batch flow", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders automatic disable reason and expected recovery in the account row", async () => {
+    const user = userEvent.setup();
+    const recoverAfter = "2026-07-21T10:30:00Z";
+    const automatedAccount = {
+      ...account,
+      disabled: true,
+      automation: {
+        health: "quota_limited",
+        reason_code: "quota_exhausted",
+        recommendation: "enable",
+        last_checked_at: "2026-07-20T10:00:00Z",
+        owned_disable: true,
+        disable_reason: "quota_exhausted",
+        disabled_at: "2026-07-20T09:00:00Z",
+        recover_after: recoverAfter,
+        auto_action: "disable",
+        auto_action_status: "succeeded",
+        auto_disable_eligible: true,
+        inspection_enabled: true,
+        auto_disable_enabled: true,
+        auto_enable_enabled: true,
+        auto_delete_enabled: false,
+        failure_threshold: 3,
+        failure_streak: 3,
+        recovery_threshold: 2,
+        healthy_streak: 0,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      return jsonResponse({ accounts: [automatedAccount], total: 1, page: 1, page_size: 50, pages: 1 });
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    expect(await screen.findByText("自动禁用", { selector: ".automation-disposition-badge" })).toBeInTheDocument();
+    expect(screen.getByText(/额度已耗尽.*自动启用/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看 operator@example.com" }));
+    const details = await screen.findByRole("dialog", { name: "账号详情" });
+    expect(within(details).getByText("自动处置")).toBeInTheDocument();
+    expect(within(details).getAllByText("自动禁用").length).toBeGreaterThan(0);
+    expect(within(details).getByText("额度已耗尽")).toBeInTheDocument();
+  });
+
   it("logs in, selects an account, previews an opted-in edit, and opens completed results", async () => {
     const user = userEvent.setup();
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       requests.push({ url, init });
+      if (url.includes("/accounts/model-test")) {
+        return jsonResponse({
+          account_id: "auth-1",
+          provider: "codex",
+          model: "gpt-5.4",
+          status: "available",
+          reason_code: "model_response_ok",
+          latency_ms: 286,
+          tested_at: "2026-07-20T08:00:00Z",
+        });
+      }
       if (url.includes("/batch/preview")) {
         return jsonResponse({
           id: "preview-1",
@@ -107,23 +168,37 @@ describe("primary account batch flow", () => {
     expect(screen.queryByRole("button", { name: "退出管理认证" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "账号筛选" })).toBeInTheDocument();
     expect(screen.getByText("账号列表")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "类型" })).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "", "账号", "提供方", "类型", "用量", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
+    ]);
     expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
     expect(screen.getByLabelText("每页账号数")).toHaveValue("50");
     const resetFilters = screen.getByRole("button", { name: "重置" });
-    const providerFilter = screen.getByLabelText("Provider");
+    const providerFilter = screen.getByLabelText("提供方");
     expect(resetFilters).toBeDisabled();
     await user.type(providerFilter, "custom-provider");
     expect(resetFilters).toBeEnabled();
     await user.clear(providerFilter);
     expect(resetFilters).toBeDisabled();
 
-    const typeFilter = screen.getByLabelText("Type");
+    const typeFilter = screen.getByLabelText("类型");
     await user.type(typeFilter, "k12");
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("type=k12"))).toBe(true));
     expect(resetFilters).toBeEnabled();
     await user.clear(typeFilter);
     expect(resetFilters).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "测试模型 operator@example.com" }));
+    const modelTestDialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    expect(within(modelTestDialog).getByLabelText("测试模型")).toHaveValue("gpt-5.4");
+    await user.click(within(modelTestDialog).getByRole("button", { name: "开始测试" }));
+    expect(await within(modelTestDialog).findByText("模型可用")).toBeInTheDocument();
+    expect(within(modelTestDialog).getByText("已收到符合预期的模型响应")).toBeInTheDocument();
+    expect(within(modelTestDialog).getByText("286 ms")).toBeInTheDocument();
+    const modelTestRequest = requests.find((request) => request.url.includes("/accounts/model-test"));
+    expect(JSON.parse(String(modelTestRequest?.init.body))).toEqual({ account_id: "auth-1", model: "gpt-5.4" });
+    await user.click(within(modelTestDialog).getAllByRole("button", { name: "关闭" })[1]);
 
     await user.click(screen.getByLabelText("选择 operator@example.com"));
     await user.click(screen.getByRole("button", { name: "导出选中账号" }));
@@ -131,7 +206,7 @@ describe("primary account batch flow", () => {
     expect(screen.getByText("已选账号")).toBeInTheDocument();
     await user.click(screen.getByLabelText("关闭"));
     await user.click(screen.getByRole("button", { name: "批量编辑" }));
-    await user.click(screen.getByLabelText("Note"));
+    await user.click(screen.getByLabelText("备注"));
     await user.type(screen.getByLabelText("Note 值"), "rotated pool");
     await user.click(screen.getByRole("button", { name: "生成预览" }));
 
@@ -194,6 +269,56 @@ describe("primary account batch flow", () => {
     await waitFor(() => expect(requests.some((url) => url.includes("page=1") && url.includes("page_size=200"))).toBe(true));
     expect(pageSizeSelect).toHaveValue("200");
     expect(localStorage.getItem(ACCOUNT_PAGE_SIZE_STORAGE_KEY)).toBe("200");
+  });
+
+  it("restores account search and filters and clears the persisted state on reset", async () => {
+    const user = userEvent.setup();
+    const requests: string[] = [];
+    writeAccountFilters({
+      search: "operator@example.com",
+      provider: "codex",
+      type: "k12",
+      status: "active",
+      disabled: "false",
+      editability: "editable",
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: url.includes("page_size=1") ? 1 : 50, pages: 1 });
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    expect(screen.getByLabelText("搜索账号")).toHaveValue("operator@example.com");
+    expect(screen.getByLabelText("提供方")).toHaveValue("codex");
+    expect(screen.getByLabelText("类型")).toHaveValue("k12");
+    expect(screen.getByLabelText("状态")).toHaveValue("active");
+    expect(screen.getByLabelText("启用状态")).toHaveValue("false");
+    expect(screen.getByLabelText("可编辑性")).toHaveValue("editable");
+    await waitFor(() => expect(requests.some((url) => (
+      url.includes("search=operator%40example.com")
+      && url.includes("provider=codex")
+      && url.includes("type=k12")
+      && url.includes("status=active")
+      && url.includes("disabled=false")
+      && url.includes("editability=editable")
+    ))).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "重置" }));
+    expect(screen.getByLabelText("搜索账号")).toHaveValue("");
+    expect(screen.getByLabelText("状态")).toHaveValue("");
+    await waitFor(() => expect(localStorage.getItem(ACCOUNT_FILTERS_STORAGE_KEY)).toBeNull());
   });
 
   it("views, edits, and deletes one account from its row without changing bulk selection", async () => {
@@ -267,7 +392,7 @@ describe("primary account batch flow", () => {
     expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "编辑 operator@example.com" }));
     const editor = await screen.findByRole("dialog", { name: "编辑账号" });
-    await user.click(within(editor).getByLabelText("Note"));
+    await user.click(within(editor).getByLabelText("备注"));
     await user.type(within(editor).getByLabelText("Note 值"), "single edit");
     await user.click(within(editor).getByRole("button", { name: "生成预览" }));
     const rowPreview = await screen.findByRole("dialog", { name: "变更预览" });
@@ -328,7 +453,7 @@ describe("primary account batch flow", () => {
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
 
-    const providerFilter = screen.getByLabelText("Provider");
+    const providerFilter = screen.getByLabelText("提供方");
     fireEvent.change(providerFilter, { target: { value: "codex" } });
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("provider=codex"))).toBe(true));
     fireEvent.change(providerFilter, { target: { value: "gemini" } });

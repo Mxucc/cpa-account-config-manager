@@ -22,13 +22,127 @@ let lastPolicyScan = {
   skipped: 0,
   failed: 0,
 };
+let inspectionPolicy = {
+  enabled: true,
+  scan_interval_minutes: 30,
+  failure_threshold: 3,
+  recovery_threshold: 2,
+  auto_disable: false,
+  auto_enable: false,
+  auto_delete: false,
+  delete_grace_hours: 168,
+  delete_batch_size: 10,
+};
+let updatePolicy = {
+  check_enabled: true,
+  check_interval_hours: 24,
+  auto_update: false,
+};
+
+const operationLog = Array.from({ length: 18 }, (_, index) => {
+  const variants = [
+    ["inspection", "inspection_scan", index % 5 === 0 ? "partial" : "succeeded", "inspection"],
+    ["inspection", "auto_disable", "succeeded", "inspection"],
+    ["default_policy", "policy_scan", "succeeded", "default_policy"],
+    ["import", "import", "succeeded", "import"],
+    ["export", "export_accounts", "succeeded", "manual"],
+    ["update", "update_check", "warning", "background"],
+  ];
+  const [category, action, status, source] = variants[index % variants.length];
+  const started = new Date(Date.now() - index * 47 * 60_000);
+  return {
+    id: `demo-operation-${index + 1}`,
+    event_id: `demo-event-${index + 1}`,
+    category,
+    action,
+    status,
+    source,
+    scope: category === "inspection" ? "scheduled" : category === "export" ? "filtered" : "system",
+    target_id: action === "auto_disable" ? `auth-${String((index % 12) + 1).padStart(3, "0")}` : undefined,
+    target_count: action === "inspection_scan" ? 12 : 1,
+    succeeded: status === "succeeded" ? (action === "inspection_scan" ? 12 : 1) : 0,
+    failed: status === "partial" ? 1 : 0,
+    skipped: 0,
+    started_at: started.toISOString(),
+    finished_at: new Date(started.getTime() + 850).toISOString(),
+    reason_code: status === "warning" ? "update_available" : status === "partial" ? "partial_failure" : "completed",
+    version: category === "update" ? "0.3.0" : undefined,
+    format: category === "export" ? "cpa" : undefined,
+  };
+});
 
 const providers = ["codex", "claude", "gemini", "antigravity"];
 const planTypes = ["free", "plus", "pro", "team", "business", "enterprise", "edu", "k12"];
+
+function mockAutomation(index, disabled) {
+  if (!disabled) return undefined;
+  const base = {
+    last_checked_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+    owned_disable: index !== 0,
+    auto_disable_eligible: index !== 0,
+    inspection_enabled: true,
+    auto_disable_enabled: true,
+    auto_enable_enabled: true,
+    auto_delete_enabled: false,
+    failure_threshold: 3,
+    failure_streak: 3,
+    recovery_threshold: 2,
+    healthy_streak: 0,
+  };
+  if (index === 7) return {
+    ...base,
+    health: "quota_limited",
+    reason_code: "quota_exhausted",
+    recommendation: "enable",
+    disable_reason: "quota_exhausted",
+    disabled_at: new Date(Date.now() - 90 * 60_000).toISOString(),
+    recover_after: new Date(Date.now() + 38 * 60_000).toISOString(),
+    auto_action: "disable",
+    auto_action_status: "succeeded",
+  };
+  if (index === 14) return {
+    ...base,
+    health: "deactivated",
+    reason_code: "workspace_deactivated",
+    recommendation: "delete",
+    disable_reason: "workspace_deactivated",
+    disabled_at: new Date(Date.now() - 48 * 60 * 60_000).toISOString(),
+  };
+  if (index === 21) return {
+    ...base,
+    health: "invalid_credentials",
+    reason_code: "invalid_credentials",
+    recommendation: "reauth",
+    disable_reason: "invalid_credentials",
+    disabled_at: new Date(Date.now() - 4 * 60 * 60_000).toISOString(),
+  };
+  if (index === 28) return {
+    ...base,
+    health: "quota_limited",
+    reason_code: "quota_exhausted",
+    recommendation: "enable",
+    disable_reason: "quota_exhausted",
+    disabled_at: new Date(Date.now() - 3 * 60 * 60_000).toISOString(),
+    recover_after: new Date(Date.now() + (2 * 24 + 5) * 60 * 60_000).toISOString(),
+    auto_action: "disable",
+    auto_action_status: "succeeded",
+  };
+  return {
+    ...base,
+    health: "disabled",
+    reason_code: "manual_disabled",
+    recommendation: "review",
+    owned_disable: false,
+    auto_disable_eligible: false,
+    failure_streak: 0,
+  };
+}
+
 const accounts = Array.from({ length: 36 }, (_, index) => {
   const provider = providers[index % providers.length];
   const readOnly = index % 11 === 0;
   const disabled = index % 7 === 0;
+  const automation = mockAutomation(index, disabled);
   const recentRequests = Array.from({ length: 6 }, (_, bucket) => ({
     time: new Date(Date.now() - (5 - bucket) * 10 * 60_000).toISOString(),
     success: (index + bucket * 2) % 7,
@@ -92,10 +206,86 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
     failed: index % 6,
     recent_requests: recentRequests,
     next_retry_after: index % 9 === 0 ? new Date(Date.now() + 12 * 60_000).toISOString() : undefined,
+    ...(automation ? { automation } : {}),
     ...(usage ? { usage } : {}),
     updated_at: new Date(Date.now() - index * 43 * 60_000).toISOString(),
   };
 });
+
+function mockInspectionResults() {
+  const checkedAt = new Date().toISOString();
+  const states = [
+    ["deactivated", "workspace_deactivated", "high", "delete", true],
+    ["invalid_credentials", "invalid_credentials", "high", "reauth", true],
+    ["quota_limited", "quota_exhausted", "high", "disable", true],
+    ["review", "authentication_review", "medium", "review", false],
+    ["unavailable", "native_unavailable", "medium", "review", false],
+  ];
+  return accounts.slice(0, 12).map((account, index) => {
+    const state = states[index] || ["healthy", "healthy_recent_success", "high", "keep", false];
+    return {
+      id: account.id,
+      name: account.name,
+      provider: account.provider,
+      type: account.account_type,
+      plan_type: account.plan_type,
+      health: state[0],
+      reason_code: state[1],
+      confidence: state[2],
+      recommendation: state[3],
+      disabled: account.disabled,
+      editable: account.editable,
+      auto_disable_eligible: state[4],
+      owned_disable: false,
+      failure_streak: state[4] ? Math.min(5, index + 1) : 0,
+      healthy_streak: state[0] === "healthy" ? index - 3 : 0,
+      last_checked_at: checkedAt,
+    };
+  });
+}
+
+function mockInspectionSnapshot(pending = false) {
+  const results = mockInspectionResults();
+  const count = (health) => results.filter((result) => result.health === health).length;
+  return {
+    policy: inspectionPolicy,
+    running: false,
+    pending,
+    last_run: {
+      scanned: results.length,
+      healthy: count("healthy"),
+      quota_limited: count("quota_limited"),
+      invalid_credentials: count("invalid_credentials"),
+      deactivated: count("deactivated"),
+      review: count("review"),
+      unavailable: count("unavailable"),
+      disabled: count("disabled"),
+      unknown: count("unknown"),
+      auto_disabled: 0,
+      auto_enabled: 0,
+      delete_pending: 0,
+      failed: 0,
+      truncated: 0,
+      started_at: new Date(Date.now() - 850).toISOString(),
+      finished_at: new Date().toISOString(),
+    },
+    total: results.length,
+    action_count: 3,
+  };
+}
+
+function mockUpdateSnapshot(pending = false) {
+  return {
+    policy: updatePolicy,
+    current_version: "0.2.0",
+    latest_version: "0.3.0",
+    update_available: true,
+    release_url: "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.3.0",
+    checking: false,
+    pending,
+    checked_at: new Date().toISOString(),
+  };
+}
 
 function json(response, status, body, headers = {}) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
@@ -484,12 +674,153 @@ function snapshotForceJob(includeResults = true) {
   };
 }
 
+function upsertMockOperation(eventID, operation) {
+  const index = operationLog.findIndex((entry) => entry.event_id === eventID);
+  const next = {
+    id: index >= 0 ? operationLog[index].id : crypto.randomUUID(),
+    event_id: eventID,
+    target_count: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+    started_at: new Date().toISOString(),
+    ...operation,
+  };
+  if (index >= 0) operationLog[index] = next;
+  else operationLog.push(next);
+  if (operationLog.length > 2000) operationLog.splice(0, operationLog.length - 2000);
+  return next;
+}
+
+function mockJobOperation(snapshot, action, category = "batch") {
+  if (!snapshot.id) return;
+  const status = snapshot.running ? "running" : snapshot.state === "completed" ? "succeeded" : snapshot.state;
+  upsertMockOperation(`${category}:${snapshot.id}`, {
+    category,
+    action,
+    status,
+    source: "manual",
+    scope: category === "batch" ? "selected" : "all",
+    target_count: snapshot.total,
+    succeeded: snapshot.succeeded,
+    failed: snapshot.failed + snapshot.conflicts,
+    skipped: snapshot.skipped,
+    started_at: snapshot.started_at,
+    finished_at: snapshot.finished_at,
+    reason_code: snapshot.running ? undefined : status === "succeeded" ? "completed" : "partial_failure",
+    related_job_id: snapshot.id,
+  });
+}
+
+function filteredMockOperations(url) {
+  mockJobOperation(snapshotJob(false), "batch_edit");
+  mockJobOperation(snapshotForceJob(false), "force_sync", "default_policy");
+  const category = url.searchParams.get("category") || "";
+  const status = url.searchParams.get("status") || "";
+  const source = url.searchParams.get("source") || "";
+  const search = (url.searchParams.get("search") || "").trim().toLowerCase();
+  return operationLog.filter((operation) => {
+    if (category && operation.category !== category) return false;
+    if (status && operation.status !== status) return false;
+    if (source && operation.source !== source) return false;
+    if (!search) return true;
+    return [operation.id, operation.category, operation.action, operation.status, operation.source, operation.scope, operation.target_id, operation.reason_code, operation.related_job_id, operation.version, operation.format, operation.model]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(search));
+  }).sort((left, right) => new Date(right.finished_at || right.started_at) - new Date(left.finished_at || left.started_at));
+}
+
+function mockOperationSummary(operations) {
+  return operations.reduce((summary, operation) => {
+    summary.total += 1;
+    if (operation.status === "running") summary.running += 1;
+    else if (operation.status === "succeeded") summary.succeeded += 1;
+    else if (operation.status === "failed") summary.failed += 1;
+    else if (operation.status === "interrupted") summary.interrupted += 1;
+    else summary.attention += 1;
+    return summary;
+  }, { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 });
+}
+
+function operationCSV(operations) {
+  const headers = ["id", "category", "action", "status", "source", "scope", "target_id", "target_count", "succeeded", "failed", "skipped", "started_at", "finished_at", "reason_code", "related_job_id", "related_action_id", "version", "format", "model"];
+  const rows = operations.map((entry) => headers.map((key) => entry[key]));
+  return csvDocument(headers, rows);
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host}`);
   if (!authorized(request)) return json(response, 401, { error: "invalid management key" });
 
+  if (request.method === "GET" && url.pathname.endsWith("/operations/export")) {
+    const format = url.searchParams.get("format") || "json";
+    const operations = filteredMockOperations(url);
+    const headers = { "X-Exported-Operations": String(operations.length), "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Operations" };
+    if (format === "csv") return textDownload(response, operationCSV(operations), "text/csv; charset=utf-8", "demo-operations.csv", headers);
+    if (format === "jsonl") return textDownload(response, operations.map((entry) => JSON.stringify(entry)).join("\n") + (operations.length ? "\n" : ""), "application/x-ndjson; charset=utf-8", "demo-operations.jsonl", headers);
+    return textDownload(response, JSON.stringify({ exported_at: new Date().toISOString(), count: operations.length, operations }, null, 2) + "\n", "application/json; charset=utf-8", "demo-operations.json", headers);
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/operations")) {
+    const operations = filteredMockOperations(url);
+    const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(url.searchParams.get("page_size")) || 50));
+    const start = (page - 1) * pageSize;
+    return json(response, 200, {
+      operations: operations.slice(start, start + pageSize),
+      summary: mockOperationSummary(operations),
+      total: operations.length,
+      page,
+      page_size: pageSize,
+      pages: operations.length ? Math.ceil(operations.length / pageSize) : 0,
+    });
+  }
+  if (request.method === "DELETE" && url.pathname.endsWith("/operations")) {
+    operationLog.splice(0);
+    const now = new Date().toISOString();
+    const operation = upsertMockOperation(`journal-clear:${now}`, {
+      category: "journal", action: "journal_clear", status: "succeeded", source: "manual", scope: "system",
+      target_count: 0, succeeded: 0, failed: 0, skipped: 0, started_at: now, finished_at: now, reason_code: "completed",
+    });
+    return json(response, 200, { operation, retained: 1 });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/operations/record")) {
+    const body = await readJSON(request);
+    if (body.action !== "update_install" || !["succeeded", "failed", "warning"].includes(body.status)) return json(response, 400, { error: "unsupported operation record" });
+    const now = new Date().toISOString();
+    const operation = upsertMockOperation(`update-install:${crypto.randomUUID()}`, {
+      category: "update", action: "update_install", status: body.status, source: "plugin_store", scope: "system",
+      target_count: 0, succeeded: 0, failed: body.status === "failed" ? 1 : 0, skipped: 0, started_at: now, finished_at: now,
+      reason_code: body.status === "warning" ? "restart_required" : body.status === "failed" ? "install_failed" : "completed", version: body.version,
+    });
+    return json(response, 201, operation);
+  }
+
   if (request.method === "GET" && url.pathname.endsWith("/plugins/cpa-account-config-manager/accounts")) {
     return json(response, 200, listFromURL(url));
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/accounts/model-test")) {
+    const body = await readJSON(request);
+    const account = accounts.find((candidate) => candidate.id === body.account_id);
+    if (!account) return json(response, 404, { error: "account was not found" });
+    const defaults = { codex: "gpt-5.4", openai: "gpt-5.4", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", aistudio: "gemini-2.0-flash", xai: "grok-4" };
+    const model = String(body.model || defaults[account.provider] || "").trim();
+    const supported = ["codex", "openai", "claude", "gemini", "gemini-cli", "gemini-interactions", "aistudio", "xai"].includes(account.provider);
+    const now = new Date().toISOString();
+    const result = {
+      account_id: account.id,
+      provider: account.provider,
+      model,
+      status: supported ? "available" : "unsupported",
+      reason_code: supported ? "model_response_ok" : "unsupported_provider",
+      latency_ms: supported ? 286 : 0,
+      tested_at: now,
+    };
+    upsertMockOperation(`model-test:${crypto.randomUUID()}`, {
+      category: "account", action: "model_test", status: supported ? "succeeded" : "skipped", source: "manual", scope: "single",
+      target_id: account.id, target_count: 1, succeeded: supported ? 1 : 0, failed: 0, skipped: supported ? 0 : 1,
+      started_at: now, finished_at: now, reason_code: result.reason_code, model,
+    });
+    return json(response, 200, result);
   }
   if (request.method === "POST" && url.pathname.endsWith("/accounts/delete/preview")) {
     const body = await readJSON(request);
@@ -797,6 +1128,86 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname.endsWith("/defaults/force/status")) {
     return json(response, 200, snapshotForceJob(url.searchParams.get("light") !== "1"));
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/inspection/results")) {
+    const health = url.searchParams.get("health") || "";
+    const search = (url.searchParams.get("search") || "").toLowerCase();
+    const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(url.searchParams.get("page_size")) || 50));
+    const filtered = mockInspectionResults().filter((result) => {
+      if (health && result.health !== health) return false;
+      if (!search) return true;
+      return [result.id, result.name, result.provider, result.type, result.plan_type, result.reason_code]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(search));
+    });
+    const start = (page - 1) * pageSize;
+    return json(response, 200, {
+      results: filtered.slice(start, start + pageSize),
+      total: filtered.length,
+      page,
+      page_size: pageSize,
+      pages: filtered.length ? Math.ceil(filtered.length / pageSize) : 0,
+    });
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/inspection/actions")) {
+    const results = mockInspectionResults();
+    const createdAt = new Date().toISOString();
+    return json(response, 200, {
+      actions: [
+        { id: "demo-action-disable", account_id: results[1].id, name: results[1].name, provider: results[1].provider, action: "disable", status: "succeeded", reason_code: results[1].reason_code, created_at: createdAt },
+        { id: "demo-action-enable", account_id: results[5].id, name: results[5].name, provider: results[5].provider, action: "enable", status: "succeeded", reason_code: "healthy_recent_success", created_at: createdAt },
+        { id: "demo-action-delete", account_id: results[0].id, name: results[0].name, provider: results[0].provider, action: "delete_candidate", status: "pending", reason_code: results[0].reason_code, created_at: createdAt },
+      ],
+    });
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/scan")) {
+    return json(response, 202, mockInspectionSnapshot(true));
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/auto-delete")) {
+    return json(response, 200, { attempted: 0, succeeded: 0, failed: 0, skipped: 0 });
+  }
+  if (request.method === "PUT" && url.pathname.endsWith("/inspection")) {
+    const body = await readJSON(request);
+    inspectionPolicy = {
+      enabled: Boolean(body.enabled),
+      scan_interval_minutes: Math.min(1440, Math.max(5, Number(body.scan_interval_minutes) || 30)),
+      failure_threshold: Math.min(10, Math.max(2, Number(body.failure_threshold) || 3)),
+      recovery_threshold: Math.min(10, Math.max(1, Number(body.recovery_threshold) || 2)),
+      auto_disable: Boolean(body.auto_disable),
+      auto_enable: Boolean(body.auto_enable),
+      auto_delete: Boolean(body.auto_delete),
+      delete_grace_hours: Math.min(8760, Math.max(24, Number(body.delete_grace_hours) || 168)),
+      delete_batch_size: Math.min(100, Math.max(1, Number(body.delete_batch_size) || 10)),
+    };
+    return json(response, 200, mockInspectionSnapshot());
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/inspection")) {
+    return json(response, 200, mockInspectionSnapshot());
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/updates/check")) {
+    return json(response, 202, mockUpdateSnapshot(true));
+  }
+  if (request.method === "PUT" && url.pathname.endsWith("/updates")) {
+    const body = await readJSON(request);
+    updatePolicy = {
+      check_enabled: Boolean(body.policy?.check_enabled),
+      check_interval_hours: Math.min(168, Math.max(1, Number(body.policy?.check_interval_hours) || 24)),
+      auto_update: Boolean(body.policy?.auto_update),
+    };
+    return json(response, 200, mockUpdateSnapshot());
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/updates")) {
+    return json(response, 200, mockUpdateSnapshot());
+  }
+  if (request.method === "GET" && url.pathname === "/v0/management/plugin-store") {
+    return json(response, 200, {
+      plugins_enabled: true,
+      plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }],
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/v0/management/plugin-store/cpa-account-config-manager/install") {
+    return json(response, 200, { status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: true });
   }
   return json(response, 404, { error: "not found" });
 });

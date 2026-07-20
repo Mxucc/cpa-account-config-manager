@@ -12,7 +12,7 @@ describe("BatchEditor", () => {
     render(<BatchEditor scopeLabel="已选 2 个账号" onClose={() => undefined} onSubmit={submit} />);
 
     expect(screen.getByRole("button", { name: "生成预览" })).toBeDisabled();
-    await user.click(screen.getByLabelText("Note"));
+    await user.click(screen.getByLabelText("备注"));
     await user.type(screen.getByLabelText("Note 值"), "batch-note");
     await user.click(screen.getByRole("button", { name: "生成预览" }));
 
@@ -23,7 +23,7 @@ describe("BatchEditor", () => {
     const user = userEvent.setup();
     render(<BatchEditor scopeLabel="当前筛选 3 个账号" onClose={() => undefined} onSubmit={() => undefined} />);
 
-    await user.click(screen.getByLabelText("Headers"));
+    await user.click(screen.getByLabelText("请求头"));
     expect(screen.getByLabelText("Header 值")).toHaveAttribute("type", "password");
     await user.type(screen.getByLabelText("Header 名称"), "Authorization");
     await user.type(screen.getByLabelText("Header 值"), "Bearer secret");

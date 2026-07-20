@@ -17,16 +17,17 @@ import (
 )
 
 const (
-	PluginID   = "cpa-account-config-manager"
-	PluginName = "CPA Account Config Manager"
+	PluginID                = "cpa-account-config-manager"
+	PluginName              = "CPA Account Config Manager"
+	DefaultPluginRepository = "https://github.com/Mxucc/cpa-account-config-manager"
 
 	managementRoutePrefix = "/plugins/" + PluginID
 	resourceRoutePrefix   = "/v0/resource/plugins/" + PluginID
 )
 
 var (
-	PluginVersion    = "0.2.0-dev"
-	PluginRepository = ""
+	PluginVersion    = "0.2.1"
+	PluginRepository = DefaultPluginRepository
 )
 
 type Registration struct {
@@ -41,17 +42,21 @@ type RegistrationCapabilities struct {
 }
 
 type App struct {
-	mu        sync.RWMutex
-	config    Config
-	accounts  *AccountService
-	deletions *AccountDeleteService
-	previews  *PreviewService
-	jobs      *JobEngine
-	policies  *PolicyEngine
-	force     *ForceSyncEngine
-	imports   *ImportService
-	usage     *UsageTracker
-	indexHTML []byte
+	mu         sync.RWMutex
+	config     Config
+	accounts   *AccountService
+	deletions  *AccountDeleteService
+	previews   *PreviewService
+	jobs       *JobEngine
+	policies   *PolicyEngine
+	inspection *InspectionEngine
+	updates    *UpdateChecker
+	force      *ForceSyncEngine
+	imports    *ImportService
+	usage      *UsageTracker
+	operations *OperationJournal
+	modelTests *ModelTestService
+	indexHTML  []byte
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -60,17 +65,26 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	mutations := NewMutationCoordinator()
 	jobs := NewJobEngineWithCoordinator(accounts, mutations)
 	policies := NewPolicyEngineWithCoordinator(host, mutations)
+	inspection := NewInspectionEngine(accounts, host, mutations)
+	var httpHost HTTPHost
+	if candidate, ok := host.(HTTPHost); ok {
+		httpHost = candidate
+	}
 	return &App{
-		config:    normalizeConfig(Config{}),
-		accounts:  accounts,
-		deletions: NewAccountDeleteService(accounts, mutations),
-		previews:  NewPreviewService(accounts),
-		jobs:      jobs,
-		policies:  policies,
-		force:     NewForceSyncEngine(accounts, host, policies, mutations),
-		imports:   NewImportService(host, mutations),
-		usage:     usage,
-		indexHTML: append([]byte(nil), indexHTML...),
+		config:     normalizeConfig(Config{}),
+		accounts:   accounts,
+		deletions:  NewAccountDeleteService(accounts, mutations),
+		previews:   NewPreviewService(accounts),
+		jobs:       jobs,
+		policies:   policies,
+		inspection: inspection,
+		updates:    NewUpdateChecker(httpHost, PluginVersion, PluginRepository),
+		force:      NewForceSyncEngine(accounts, host, policies, mutations),
+		imports:    NewImportService(host, mutations),
+		usage:      usage,
+		operations: NewOperationJournal(),
+		modelTests: NewModelTestService(accounts),
+		indexHTML:  append([]byte(nil), indexHTML...),
 	}
 }
 
@@ -82,10 +96,14 @@ func (a *App) Configure(raw []byte) {
 	a.config = ParseConfig(raw)
 	config := a.config
 	a.mu.Unlock()
+	a.operations.Configure(config)
 	a.jobs.Configure(config)
 	a.policies.Configure(config)
+	a.inspection.Configure(config)
+	a.updates.Configure(config)
 	a.force.Configure(config)
 	a.usage.Configure(config)
+	a.reconcileOperationSources()
 }
 
 func (a *App) configSnapshot() Config {
@@ -99,6 +117,7 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		return
 	}
 	a.usage.Observe(record)
+	a.inspection.Observe(record)
 }
 
 func (a *App) Close() {
@@ -106,12 +125,15 @@ func (a *App) Close() {
 		return
 	}
 	a.force.Shutdown()
+	a.inspection.Shutdown()
+	a.updates.Shutdown()
 	a.policies.Shutdown()
 	a.jobs.Shutdown()
 	a.deletions.Clear()
 	a.previews.Clear()
 	a.imports.Clear()
 	a.usage.Close()
+	a.reconcileOperationSources()
 }
 
 func (a *App) Registration() Registration {
@@ -124,7 +146,7 @@ func (a *App) Registration() Registration {
 			GitHubRepository: PluginRepository,
 			ConfigFields: []cpaapi.ConfigField{
 				{Name: "workers", Type: cpaapi.ConfigFieldTypeInteger, Description: "Optional maximum concurrent account mutations (default 6, range 1-16)."},
-				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job state plus policy-scan and usage caches."},
+				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job, policy, usage, inspection, update, and operation-journal state."},
 				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL; defaults to http://127.0.0.1:8317."},
 			},
 		},
@@ -136,6 +158,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test", Description: "Run one bounded account-specific model availability probe through CLIProxyAPI."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/preview", Description: "Preview deletion of one editable physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/start", Description: "Delete one confirmed unchanged physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/preview", Description: "Preview a batch account configuration patch."},
@@ -153,10 +176,23 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/preview", Description: "Preview force-syncing managed policy fields."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/start", Description: "Start an approved default-policy force sync."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults/force/status", Description: "Read current or last force-sync progress."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection", Description: "Read the persistent account inspection policy and scan status."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/inspection", Description: "Validate and save the account inspection policy."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan", Description: "Request an immediate account inspection scan."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/results", Description: "List redacted account inspection results."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/actions", Description: "List sanitized automatic action history."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/auto-delete", Description: "Execute due opt-in deletion candidates with the current Management credential."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/updates", Description: "Read plugin release and update-check status."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/updates", Description: "Validate and save plugin update-check settings."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Request an immediate public release check."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations", Description: "List the persistent sanitized account-manager operation journal."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/export", Description: "Export the sanitized operation journal as JSON, CSV, or JSON Lines."},
+			{Method: http.MethodDelete, Path: managementRoutePrefix + "/operations", Description: "Clear the operation journal while retaining a clear audit event."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/operations/record", Description: "Record a strict browser-owned plugin-store update outcome."},
 		},
 		Resources: []cpaapi.ResourceRoute{{
 			Path:        "/index.html",
-			Menu:        "账号管理",
+			Menu:        "Account Management",
 			Description: "List, filter, and safely batch-edit CLIProxyAPI account configuration.",
 		}},
 	}
@@ -168,6 +204,9 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		method = http.MethodGet
 	}
 	path := normalizedRequestPath(req.Path)
+	if strings.HasPrefix(path, "/v0/management"+managementRoutePrefix) {
+		a.reconcileOperationSources()
+	}
 
 	switch {
 	case method == http.MethodGet && path == resourceRoutePrefix+"/index.html":
@@ -178,6 +217,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		}
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/accounts":
 		return a.handleListAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/model-test":
+		return a.handleAccountModelTest(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/preview":
 		return a.handleAccountDeletePreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/start":
@@ -212,6 +253,32 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleForceStart(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults/force/status":
 		return jsonResponse(http.StatusOK, a.force.Snapshot(statusWantsResults(req.Query)))
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection":
+		return jsonResponse(http.StatusOK, a.inspection.Snapshot())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/inspection":
+		return a.handlePutInspectionPolicy(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/scan":
+		return jsonResponse(http.StatusAccepted, a.inspection.RequestScan())
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/results":
+		return a.handleListInspectionResults(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/actions":
+		return a.handleListInspectionActions(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/auto-delete":
+		return a.handleInspectionAutoDelete(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/updates":
+		return jsonResponse(http.StatusOK, a.updates.Snapshot())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/updates":
+		return a.handlePutUpdatePolicy(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/updates/check":
+		return jsonResponse(http.StatusAccepted, a.updates.RequestCheck())
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations":
+		return a.handleListOperations(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations/export":
+		return a.handleExportOperations(req)
+	case method == http.MethodDelete && path == "/v0/management"+managementRoutePrefix+"/operations":
+		return a.handleClearOperations()
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/operations/record":
+		return a.handleRecordOperation(req)
 	default:
 		return jsonResponse(http.StatusNotFound, map[string]any{
 			"error":  "not found",
@@ -219,6 +286,72 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			"path":   path,
 		})
 	}
+}
+
+func (a *App) handleListOperations(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	query := operationQueryFromRequest(req, 50)
+	return jsonResponse(http.StatusOK, a.operations.List(query))
+}
+
+func (a *App) handleExportOperations(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	format := firstQuery(req.Query, "format")
+	if format == "" {
+		format = "json"
+	}
+	query := operationQueryFromRequest(req, maxOperationEntries)
+	query.Page = 1
+	query.PageSize = maxOperationPageSize
+	response := a.operations.List(query)
+	entries := append([]OperationEntry(nil), response.Operations...)
+	for page := 2; page <= response.Pages; page++ {
+		query.Page = page
+		entries = append(entries, a.operations.List(query).Operations...)
+	}
+	download, errRender := renderOperationExport(format, entries, time.Now().UTC())
+	if errRender != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errRender.Error()})
+	}
+	return cpaapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":          []string{download.ContentType},
+			"Content-Disposition":   []string{fmt.Sprintf(`attachment; filename="%s"`, download.Filename)},
+			"X-Exported-Operations": []string{strconv.Itoa(download.Count)},
+		},
+		Body: download.Body,
+	}
+}
+
+func operationQueryFromRequest(req cpaapi.ManagementRequest, pageSize int) OperationQuery {
+	return OperationQuery{
+		Page:     intQuery(req.Query, "page", 1),
+		PageSize: intQuery(req.Query, "page_size", pageSize),
+		Category: firstQuery(req.Query, "category"),
+		Status:   firstQuery(req.Query, "status"),
+		Source:   firstQuery(req.Query, "source"),
+		Search:   firstQuery(req.Query, "search"),
+	}
+}
+
+func (a *App) handleClearOperations() cpaapi.ManagementResponse {
+	entry := a.operations.Clear()
+	return jsonResponse(http.StatusOK, map[string]any{"operation": entry, "retained": 1})
+}
+
+func (a *App) handleRecordOperation(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request OperationRecordRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	entry, errValidate := validateBrowserOperationRecord(request)
+	if errValidate != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errValidate.Error()})
+	}
+	now := time.Now().UTC()
+	entry.StartedAt = now
+	entry.FinishedAt = now
+	recorded := a.operations.Record(entry)
+	return jsonResponse(http.StatusCreated, recorded)
 }
 
 func (a *App) handleImportPreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
@@ -253,12 +386,18 @@ func (a *App) handleImportPreview(ctx context.Context, req cpaapi.ManagementRequ
 }
 
 func (a *App) handleImportStart(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	startedAt := time.Now().UTC()
 	var request ImportStartRequest
 	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
 	}
 	result, errStart := a.imports.Start(ctx, request.PreviewID)
 	if errStart != nil {
+		a.operations.Record(OperationEntry{
+			Category: OperationCategoryImport, Action: OperationActionImport, Status: OperationStatusFailed,
+			Source: OperationSourceImport, Scope: OperationScopeAll, Failed: 1, StartedAt: startedAt,
+			FinishedAt: time.Now().UTC(), ReasonCode: "operation_failed",
+		})
 		status := http.StatusInternalServerError
 		switch {
 		case errors.Is(errStart, ErrImportPreviewExpired):
@@ -272,6 +411,12 @@ func (a *App) handleImportStart(ctx context.Context, req cpaapi.ManagementReques
 		}
 		return jsonResponse(status, map[string]any{"error": errStart.Error()})
 	}
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryImport, Action: OperationActionImport, Status: operationStatusFromJobState(result.State),
+		Source: OperationSourceImport, Scope: OperationScopeAll, TargetCount: result.Total, Succeeded: result.Imported,
+		Failed: result.Failed, Skipped: result.Skipped, StartedAt: result.StartedAt, FinishedAt: result.FinishedAt,
+		ReasonCode: operationReasonFromJobState(result.State),
+	})
 	return jsonResponse(http.StatusOK, result)
 }
 
@@ -282,11 +427,13 @@ func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.Manage
 	}
 	saved, errSave := a.policies.SetPolicy(policy)
 	if errSave != nil {
+		a.recordPolicyChange(OperationCategoryDefaultPolicy, OperationActionPolicySave, OperationSourceManual, OperationStatusFailed)
 		if errors.Is(errSave, ErrPolicyStorageUnavailable) {
 			return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": ErrPolicyStorageUnavailable.Error()})
 		}
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
 	}
+	a.recordPolicyChange(OperationCategoryDefaultPolicy, OperationActionPolicySave, OperationSourceManual, OperationStatusSucceeded)
 	snapshot := a.policies.Snapshot()
 	snapshot.Policy = saved
 	return jsonResponse(http.StatusOK, snapshot)
@@ -327,6 +474,7 @@ func (a *App) handleForceStart(req cpaapi.ManagementRequest) cpaapi.ManagementRe
 			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to start force-sync job"})
 		}
 	}
+	a.operations.Upsert("force:"+snapshot.ID, operationFromForceSync(snapshot))
 	return jsonResponse(http.StatusAccepted, snapshot)
 }
 
@@ -338,6 +486,12 @@ func (a *App) handleListAccounts(ctx context.Context, req cpaapi.ManagementReque
 	response, errList := a.accounts.List(ctx, query)
 	if errList != nil {
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to load accounts"})
+	}
+	summaries := a.inspection.AccountAutomationSummaries(response.Accounts)
+	for index := range response.Accounts {
+		if summary, exists := summaries[response.Accounts[index].ID]; exists {
+			response.Accounts[index].Automation = &summary
+		}
 	}
 	return jsonResponse(http.StatusOK, response)
 }
@@ -382,6 +536,12 @@ func (a *App) handleAccountDeleteStart(ctx context.Context, req cpaapi.Managemen
 	result, errDelete := a.deletions.Start(ctx, request.PreviewID, config.ManagementBaseURL, managementKey)
 	managementKey = ""
 	if errDelete != nil {
+		now := time.Now().UTC()
+		a.operations.Record(OperationEntry{
+			Category: OperationCategoryAccount, Action: OperationActionDelete, Status: OperationStatusFailed,
+			Source: OperationSourceManual, Scope: OperationScopeSingle, TargetCount: 1, Failed: 1,
+			StartedAt: now, FinishedAt: now, ReasonCode: "operation_failed",
+		})
 		switch {
 		case errors.Is(errDelete, ErrAccountDeletePreviewExpired):
 			return jsonResponse(http.StatusGone, map[string]any{"error": "delete preview expired; create a new preview"})
@@ -397,6 +557,11 @@ func (a *App) handleAccountDeleteStart(ctx context.Context, req cpaapi.Managemen
 			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to delete account"})
 		}
 	}
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryAccount, Action: OperationActionDelete, Status: OperationStatusSucceeded,
+		Source: OperationSourceManual, Scope: OperationScopeSingle, TargetID: result.Account.ID, TargetCount: 1,
+		Succeeded: 1, StartedAt: result.DeletedAt, FinishedAt: result.DeletedAt, ReasonCode: "completed",
+	})
 	return jsonResponse(http.StatusOK, result)
 }
 
@@ -439,6 +604,9 @@ func (a *App) handleStart(req cpaapi.ManagementRequest) cpaapi.ManagementRespons
 		status := jobHTTPStatus(errStart)
 		return jsonResponse(status, map[string]any{"error": publicJobStartError(errStart, "failed to start batch job")})
 	}
+	entry := operationFromJob(snapshot)
+	entry.Scope = normalizeOperationScope(preview.Public.ScopeMode)
+	a.operations.Upsert("batch:"+snapshot.ID, entry)
 	a.previews.Delete(request.PreviewID)
 	return jsonResponse(http.StatusAccepted, snapshot)
 }
@@ -462,6 +630,9 @@ func (a *App) handleRetry(ctx context.Context, req cpaapi.ManagementRequest) cpa
 		status := jobHTTPStatus(errStart)
 		return jsonResponse(status, map[string]any{"error": publicJobStartError(errStart, "failed to start retry job")})
 	}
+	entry := operationFromJob(snapshot)
+	entry.Scope = OperationScopeSelected
+	a.operations.Upsert("batch:"+snapshot.ID, entry)
 	return jsonResponse(http.StatusAccepted, snapshot)
 }
 
@@ -512,6 +683,17 @@ func (a *App) handleExportAccounts(ctx context.Context, req cpaapi.ManagementReq
 		}
 		return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to encode account export"})
 	}
+	now := time.Now().UTC()
+	scope := OperationScopeFiltered
+	if strings.EqualFold(strings.TrimSpace(req.Method), http.MethodPost) {
+		scope = OperationScopeSelected
+	}
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryExport, Action: OperationActionExportAccounts, Status: OperationStatusSucceeded,
+		Source: OperationSourceManual, Scope: scope, TargetCount: download.Exported + download.Skipped,
+		Succeeded: download.Exported, Skipped: download.Skipped, StartedAt: now, FinishedAt: now,
+		ReasonCode: "completed", Format: format,
+	})
 	return exportDownloadResponse(download)
 }
 
@@ -524,7 +706,119 @@ func (a *App) handleExportResults(req cpaapi.ManagementRequest) cpaapi.Managemen
 	if errRender != nil {
 		return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "failed to encode result export"})
 	}
+	now := time.Now().UTC()
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryExport, Action: OperationActionExportResults, Status: OperationStatusSucceeded,
+		Source: OperationSourceManual, Scope: OperationScopeSystem, TargetCount: download.Exported,
+		Succeeded: download.Exported, Skipped: download.Skipped, StartedAt: now, FinishedAt: now,
+		ReasonCode: "completed", Format: format,
+	})
 	return exportDownloadResponse(download)
+}
+
+func (a *App) handlePutInspectionPolicy(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request InspectionPolicyUpdateRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	current := a.inspection.Snapshot().Policy
+	if request.AutoDelete && !current.AutoDelete && !request.ConfirmAutoDelete {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "enabling auto_delete requires explicit confirmation"})
+	}
+	snapshot, errSave := a.inspection.SetPolicy(request.InspectionPolicy)
+	if errSave != nil {
+		a.recordPolicyChange(OperationCategoryInspection, OperationActionInspectionSave, OperationSourceManual, OperationStatusFailed)
+		if strings.Contains(errSave.Error(), "save inspection policy") || strings.Contains(errSave.Error(), "storage is unavailable") {
+			return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "inspection policy could not be persisted"})
+		}
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
+	}
+	a.recordPolicyChange(OperationCategoryInspection, OperationActionInspectionSave, OperationSourceManual, OperationStatusSucceeded)
+	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) handleListInspectionResults(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	query := InspectionResultQuery{
+		Page:     intQuery(req.Query, "page", 1),
+		PageSize: intQuery(req.Query, "page_size", 50),
+		Health:   firstQuery(req.Query, "health"),
+		Search:   firstQuery(req.Query, "search"),
+	}
+	return jsonResponse(http.StatusOK, a.inspection.ListResults(query))
+}
+
+func (a *App) handleListInspectionActions(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	return jsonResponse(http.StatusOK, map[string]any{
+		"actions": a.inspection.Actions(intQuery(req.Query, "limit", 50)),
+	})
+}
+
+func (a *App) handleInspectionAutoDelete(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if !a.inspection.Snapshot().Policy.AutoDelete {
+		return jsonResponse(http.StatusConflict, map[string]any{"error": "auto_delete is disabled"})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	config := a.configSnapshot()
+	run := a.inspection.ExecutePendingDeletes(ctx, a.deletions, config.ManagementBaseURL, managementKey)
+	managementKey = ""
+	now := time.Now().UTC()
+	status := OperationStatusSucceeded
+	reason := "completed"
+	if run.Failed > 0 {
+		status = OperationStatusFailed
+		reason = "operation_failed"
+		if run.Succeeded > 0 {
+			status = OperationStatusPartial
+			reason = "partial_failure"
+		}
+	}
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryInspection, Action: OperationActionAutoDelete, Status: status,
+		Source: OperationSourceManual, Scope: OperationScopeSelected, TargetCount: run.Attempted,
+		Succeeded: run.Succeeded, Failed: run.Failed, Skipped: run.Skipped, StartedAt: now,
+		FinishedAt: now, ReasonCode: reason,
+	})
+	return jsonResponse(http.StatusOK, run)
+}
+
+func (a *App) handlePutUpdatePolicy(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request UpdatePolicyRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	current := a.updates.Snapshot().Policy
+	if request.Policy.AutoUpdate && !current.AutoUpdate && !request.ConfirmAutoUpdate {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "enabling auto_update requires explicit confirmation"})
+	}
+	snapshot, errSave := a.updates.SetPolicy(request.Policy)
+	if errSave != nil {
+		a.recordPolicyChange(OperationCategoryUpdate, OperationActionUpdateSave, OperationSourceManual, OperationStatusFailed)
+		if strings.Contains(errSave.Error(), "save update policy") || strings.Contains(errSave.Error(), "storage is unavailable") {
+			return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "update policy could not be persisted"})
+		}
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
+	}
+	a.recordPolicyChange(OperationCategoryUpdate, OperationActionUpdateSave, OperationSourceManual, OperationStatusSucceeded)
+	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) recordPolicyChange(category, action, source, status string) {
+	now := time.Now().UTC()
+	reason := "completed"
+	failed := 0
+	succeeded := 1
+	if status == OperationStatusFailed {
+		reason = "operation_failed"
+		failed = 1
+		succeeded = 0
+	}
+	a.operations.Record(OperationEntry{
+		Category: category, Action: action, Status: status, Source: source, Scope: OperationScopeSystem,
+		TargetCount: 1, Succeeded: succeeded, Failed: failed, StartedAt: now, FinishedAt: now, ReasonCode: reason,
+	})
 }
 
 func listQueryFromValues(values map[string][]string) (ListQuery, error) {

@@ -26,6 +26,10 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
   const [probeModels, setProbeModels] = useState({ ...inspection.model_probe_models });
   const [failureThreshold, setFailureThreshold] = useState(String(inspection.failure_threshold));
   const [recoveryThreshold, setRecoveryThreshold] = useState(String(inspection.recovery_threshold));
+  const [passiveCircuit, setPassiveCircuit] = useState(inspection.passive_circuit_enabled ?? false);
+  const [passiveThreshold, setPassiveThreshold] = useState(String(inspection.passive_failure_threshold ?? 5));
+  const [passiveWindow, setPassiveWindow] = useState(String(inspection.passive_failure_window_minutes ?? 180));
+  const [passiveDuration, setPassiveDuration] = useState(String(inspection.passive_circuit_minutes ?? 15));
   const [autoDisable, setAutoDisable] = useState(inspection.auto_disable);
   const [autoEnable, setAutoEnable] = useState(inspection.auto_enable);
   const [autoDelete, setAutoDelete] = useState(inspection.auto_delete);
@@ -51,6 +55,9 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
     const probeMinutes = Number(probeInterval);
     const probeBatch = Number(probeBatchSize);
     const recoveries = Number(recoveryThreshold);
+    const passiveFailures = Number(passiveThreshold);
+    const passiveWindowMinutes = Number(passiveWindow);
+    const passiveCircuitMinutes = Number(passiveDuration);
     const graceHours = Number(deleteGrace);
     const batchSize = Number(deleteBatch);
     const anomalyPct = Number(anomalyThreshold);
@@ -63,6 +70,9 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
     if (Object.values(probeModels).some((model) => !model.trim())) return setFormError(tx("ui.model_probe_models_are_required"));
     if (!Number.isInteger(failures) || failures < 2 || failures > 10) return setFormError(tx("ui.failure_threshold_must_be_between_2_and_10_events"));
     if (!Number.isInteger(recoveries) || recoveries < 1 || recoveries > 10) return setFormError(tx("ui.recovery_threshold_must_be_between_1_and_10_events"));
+    if (!Number.isInteger(passiveFailures) || passiveFailures < 2 || passiveFailures > 100) return setFormError(tx("ui.passive_failure_threshold_must_be_between_2_and_100_events"));
+    if (!Number.isInteger(passiveWindowMinutes) || passiveWindowMinutes < 1 || passiveWindowMinutes > 1440) return setFormError(tx("ui.passive_failure_window_must_be_between_1_and_1440_minutes"));
+    if (!Number.isInteger(passiveCircuitMinutes) || passiveCircuitMinutes < 1 || passiveCircuitMinutes > 1440) return setFormError(tx("ui.passive_circuit_duration_must_be_between_1_and_1440_minutes"));
     if (!Number.isInteger(graceHours) || graceHours < 24 || graceHours > 8760) return setFormError(tx("ui.deletion_grace_must_be_between_24_and_8760_hours"));
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) return setFormError(tx("ui.deletes_per_run_must_be_between_1_and_100"));
     if (!Number.isInteger(anomalyPct) || anomalyPct < 1 || anomalyPct > 100) return setFormError(tx("ui.anomaly_threshold_must_be_between_1_and_100_percent"));
@@ -70,6 +80,7 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
     if (!Number.isInteger(anomalyCooldownMinutes) || anomalyCooldownMinutes < 5 || anomalyCooldownMinutes > 1440) return setFormError(tx("ui.anomaly_cooldown_must_be_between_5_and_1440_minutes"));
     if (!Number.isInteger(updateHours) || updateHours < 1 || updateHours > 168) return setFormError(tx("ui.update_check_interval_must_be_between_1_and_168_hours"));
     if (autoDelete && !autoDisable) return setFormError(tx("ui.auto_delete_requires_auto_disable"));
+    if (passiveCircuit && (!autoDisable || !autoEnable)) return setFormError(tx("ui.passive_circuit_requires_auto_disable_and_auto_enable"));
     if (autoDelete && !inspection.auto_delete && !confirmDelete) return setFormError(tx("ui.confirm_the_risk_before_enabling_auto_delete"));
     if (autoDeleteInvalid && !inspection.auto_delete_invalid_credentials && !confirmDeleteInvalid) return setFormError(tx("ui.confirm_the_risk_before_deleting_invalid_credentials"));
     if (autoUpdate && !checkEnabled) return setFormError(tx("ui.auto_update_requires_update_checks"));
@@ -85,6 +96,10 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
       model_probe_models: Object.fromEntries(Object.entries(probeModels).map(([provider, model]) => [provider, model.trim()])) as InspectionPolicy["model_probe_models"],
       failure_threshold: failures,
       recovery_threshold: recoveries,
+      passive_circuit_enabled: passiveCircuit,
+      passive_failure_threshold: passiveFailures,
+      passive_failure_window_minutes: passiveWindowMinutes,
+      passive_circuit_minutes: passiveCircuitMinutes,
       auto_disable: autoDisable,
       auto_enable: autoEnable,
       auto_delete: autoDelete,
@@ -159,13 +174,18 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
         <section className="automation-settings-section">
           <header><AlertTriangle size={17} /><div><strong>{tx("ui.account_disposition")}</strong><span>{tx("ui.only_accounts_disabled_by_inspection_can_be_restored")}</span></div></header>
           <div className="automation-setting-grid">
-            <SettingToggle label="ui.auto_disable" checked={autoDisable} disabled={saving} onChange={(checked) => { setAutoDisable(checked); if (!checked) setAutoDelete(false); }} />
-            <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={setAutoEnable} />
+            <SettingToggle label="ui.auto_disable" checked={autoDisable} disabled={saving} onChange={(checked) => { setAutoDisable(checked); if (!checked) { setAutoDelete(false); setPassiveCircuit(false); } }} />
+            <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={(checked) => { setAutoEnable(checked); if (!checked) setPassiveCircuit(false); }} />
+            <SettingToggle label="ui.passive_temporary_circuit" checked={passiveCircuit} disabled={saving} onChange={(checked) => { setPassiveCircuit(checked); if (checked) { setAutoDisable(true); setAutoEnable(true); } }} />
+            <SettingNumber label="ui.passive_failure_threshold" suffix="ui.events" value={passiveThreshold} min={2} max={100} disabled={!passiveCircuit || saving} onChange={setPassiveThreshold} />
+            <SettingNumber label="ui.passive_failure_window" suffix="ui.minutes" value={passiveWindow} min={1} max={1440} disabled={!passiveCircuit || saving} onChange={setPassiveWindow} />
+            <SettingNumber label="ui.passive_circuit_duration" suffix="ui.minutes" value={passiveDuration} min={1} max={1440} disabled={!passiveCircuit || saving} onChange={setPassiveDuration} />
             <SettingToggle label="ui.auto_delete" checked={autoDelete} disabled={saving} danger onChange={(checked) => { setAutoDelete(checked); if (checked) setAutoDisable(true); else setAutoDeleteInvalid(false); }} />
             <SettingToggle label="ui.delete_persistent_invalid_credentials" checked={autoDeleteInvalid} disabled={saving} danger onChange={(checked) => { setAutoDeleteInvalid(checked); if (checked) { setAutoDelete(true); setAutoDisable(true); } }} />
             <SettingNumber label="ui.deletion_grace" suffix="ui.hours" value={deleteGrace} min={24} max={8760} disabled={!autoDelete || saving} onChange={setDeleteGrace} />
             <SettingNumber label="ui.deletes_per_run" suffix="ui.accounts_2" value={deleteBatch} min={1} max={100} disabled={!autoDelete || saving} onChange={setDeleteBatch} />
           </div>
+          <p className="automation-setting-note">{tx("ui.passive_circuit_description")}</p>
           {autoDelete && !inspection.auto_delete ? (
             <label className="destructive-confirmation">
               <input type="checkbox" checked={confirmDelete} disabled={saving} onChange={(event) => setConfirmDelete(event.target.checked)} aria-label={tx("ui.confirm_auto_delete")} />

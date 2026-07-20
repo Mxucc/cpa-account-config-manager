@@ -549,6 +549,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .automation-live.is-waiting { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 30%, var(--border-color)); background: var(--warning-soft); }
 .automation-live.is-waiting > span { background: var(--warning); }
 .automation-toolbar-actions { display: flex; align-items: center; gap: 7px; }
+.inspection-mode-button { min-width: 112px; }
+.inspection-sweep-progress { min-height: 52px; display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 2fr) auto; align-items: center; gap: 14px; padding: 9px 14px; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--blue-soft) 55%, var(--bg-primary)); }
+.inspection-sweep-progress > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.inspection-sweep-progress strong { font-size: 11px; }
+.inspection-sweep-progress span { overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.inspection-sweep-progress progress { width: 100%; height: 7px; accent-color: var(--blue); }
+.inspection-sweep-progress code { color: var(--text-secondary); font-size: 9px; white-space: nowrap; }
+.inspection-sweep-progress.sweep-completed progress { accent-color: var(--success); }
+.inspection-sweep-progress.sweep-failed progress { accent-color: var(--danger); }
 
 .update-banner { min-width: 0; min-height: 58px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 8px 12px 8px 18px; border-bottom: 1px solid color-mix(in srgb, var(--info-color) 25%, var(--border-color)); color: var(--blue); background: var(--blue-soft); }
 .update-banner > div { min-width: 0; display: grid; gap: 2px; }
@@ -917,8 +926,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .workspace-tabs button { gap: 5px; font-size: 9px; }
   .automation-toolbar { display: grid; padding: 12px; }
   .automation-title { align-items: flex-start; }
-  .automation-toolbar-actions { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 38px 38px; }
+  .automation-toolbar-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) 38px 38px; }
   .automation-toolbar-actions .button { min-width: 0; }
+  .inspection-sweep-progress { grid-template-columns: 1fr auto; gap: 7px 10px; }
+  .inspection-sweep-progress progress { grid-column: 1 / -1; grid-row: 2; }
   .update-banner { grid-template-columns: auto minmax(0, 1fr); padding: 10px 12px; }
   .update-banner > a, .update-banner > .button { grid-column: 2; grid-row: auto; justify-self: start; }
   .inspection-filter-bar > select { width: 100%; }

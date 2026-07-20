@@ -25,11 +25,13 @@ type inspectionSignal struct {
 }
 
 type inspectionProbeSignal struct {
-	Status     string    `json:"status,omitempty"`
-	ReasonCode string    `json:"reason_code,omitempty"`
-	Model      string    `json:"model,omitempty"`
-	TestedAt   time.Time `json:"tested_at,omitempty"`
-	LatencyMS  int64     `json:"latency_ms,omitempty"`
+	Status              string    `json:"status,omitempty"`
+	ReasonCode          string    `json:"reason_code,omitempty"`
+	Model               string    `json:"model,omitempty"`
+	TestedAt            time.Time `json:"tested_at,omitempty"`
+	LatencyMS           int64     `json:"latency_ms,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
+	ConsecutiveSuccess  int       `json:"consecutive_success,omitempty"`
 }
 
 type inspectionRecord struct {
@@ -55,6 +57,12 @@ type persistedInspectionState struct {
 	LastNativeRunAt       time.Time                   `json:"last_native_run_at,omitempty"`
 	LastProbeRunAt        time.Time                   `json:"last_probe_run_at,omitempty"`
 	ProbeSweepRemaining   int                         `json:"probe_sweep_remaining,omitempty"`
+	ProbeSweepTotal       int                         `json:"probe_sweep_total,omitempty"`
+	ProbeSweepCompleted   int                         `json:"probe_sweep_completed,omitempty"`
+	ProbeSweepSource      string                      `json:"probe_sweep_source,omitempty"`
+	ProbeSweepStatus      string                      `json:"probe_sweep_status,omitempty"`
+	ProbeSweepStartedAt   time.Time                   `json:"probe_sweep_started_at,omitempty"`
+	ProbeSweepTargets     []string                    `json:"probe_sweep_targets,omitempty"`
 	AnomalyTriggerPending bool                        `json:"anomaly_trigger_pending,omitempty"`
 	LastAnomalyTriggerAt  time.Time                   `json:"last_anomaly_trigger_at,omitempty"`
 }
@@ -90,6 +98,15 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 		state.ProbeSweepRemaining = 0
 		state.AnomalyTriggerPending = false
 	}
+	state.ProbeSweepTotal, state.ProbeSweepCompleted, state.ProbeSweepRemaining = normalizeInspectionSweepCounts(
+		state.ProbeSweepTotal, state.ProbeSweepCompleted, state.ProbeSweepRemaining,
+	)
+	state.ProbeSweepSource = normalizeInspectionSweepSource(state.ProbeSweepSource)
+	state.ProbeSweepStatus = normalizeInspectionSweepStatus(state.ProbeSweepStatus)
+	state.ProbeSweepTargets = sanitizeInspectionSweepTargets(state.ProbeSweepTargets)
+	if state.ProbeSweepTotal == 0 && state.ProbeSweepRemaining == 0 {
+		state.ProbeSweepCompleted = 0
+	}
 	return state, nil
 }
 
@@ -98,6 +115,7 @@ func saveInspectionState(path string, state persistedInspectionState) error {
 	state.Policy = normalizeInspectionPolicy(state.Policy)
 	state.Records = cloneInspectionRecords(state.Records)
 	state.Actions = append([]InspectionAction(nil), state.Actions...)
+	state.ProbeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)
 	return savePrivateJSON(path, state)
 }
 
@@ -136,6 +154,8 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Probe.Status = normalizeModelProbeStatus(record.Probe.Status)
 		record.Probe.ReasonCode = safeModelProbeReason(record.Probe.ReasonCode)
 		record.Probe.Model = safeModelIdentifier(record.Probe.Model)
+		record.Probe.ConsecutiveFailures = boundedCounter(record.Probe.ConsecutiveFailures)
+		record.Probe.ConsecutiveSuccess = boundedCounter(record.Probe.ConsecutiveSuccess)
 		if record.Probe.LatencyMS < 0 {
 			record.Probe.LatencyMS = 0
 		}
@@ -145,6 +165,12 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Result.ProbeTestedAt = cloneTimePointer(timePointerOrNil(record.Probe.TestedAt))
 		record.Result.ProbeLatencyMS = record.Probe.LatencyMS
 		record.DisableReason = safeInspectionReason(record.DisableReason)
+		record.Result.SignalSource = normalizeInspectionSignalSource(record.Result.SignalSource)
+		record.Result.CircuitReasonCode = safeOptionalInspectionReason(record.Result.CircuitReasonCode)
+		if record.DisableReason != "passive_circuit_open" {
+			record.Result.CircuitOpen = false
+			record.Result.CircuitReasonCode = ""
+		}
 		out[key] = record
 	}
 	return out
@@ -276,10 +302,27 @@ func safeInspectionReason(value string) string {
 		"transient_failure", "no_recent_evidence", "mutation_busy", "account_changed",
 		"account_missing", "account_read_only", "management_unavailable", "delete_failed",
 		"model_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
-		"request_timeout", "upstream_unavailable", "invalid_response":
+		"request_timeout", "upstream_unavailable", "invalid_response", "unconfirmed_upstream_response",
+		"passive_circuit_open":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "no_recent_evidence"
+	}
+}
+
+func safeOptionalInspectionReason(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return safeInspectionReason(value)
+}
+
+func normalizeInspectionSignalSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionSignalNative, InspectionSignalPassive, InspectionSignalActiveProbe:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
 	}
 }
 
@@ -290,6 +333,66 @@ func safeInspectionError(value string) string {
 	default:
 		return "account inspection failed"
 	}
+}
+
+func normalizeInspectionSweepCounts(total, completed, remaining int) (int, int, int) {
+	if total < 0 || total > maxInspectionAccounts {
+		total = 0
+	}
+	if completed < 0 || completed > maxInspectionAccounts {
+		completed = 0
+	}
+	if remaining < 0 || remaining > maxInspectionAccounts {
+		remaining = 0
+	}
+	if total == 0 && remaining > 0 {
+		total = remaining
+	}
+	if completed > total {
+		completed = total
+	}
+	if total > 0 && completed+remaining > total {
+		remaining = total - completed
+	}
+	return total, completed, remaining
+}
+
+func normalizeInspectionSweepSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionSweepSourceManual, InspectionSweepSourceScheduled, InspectionSweepSourceAnomaly:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeInspectionSweepStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionSweepStatusRunning, InspectionSweepStatusCompleted, InspectionSweepStatusFailed, InspectionSweepStatusWaitingForAuth:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func sanitizeInspectionSweepTargets(values []string) []string {
+	if len(values) > maxInspectionAccounts {
+		values = values[:maxInspectionAccounts]
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = safeOperationIdentifier(value, 256)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func boundedCounter(value int) int {

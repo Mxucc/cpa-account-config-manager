@@ -11,10 +11,12 @@ repetitive Auth JSON changes.
 The plugin is modeled on the native plugin and background-job architecture of
 [`ywddd/grok-inspection`](https://github.com/ywddd/grok-inspection), while its
 selection and opt-in patch workflow follows the useful account-management
-behavior in sub2api. Its inspection classifications and owner-bound automatic
-actions are informed by
-[`seakee/CPA-Manager-Plus`](https://github.com/seakee/CPA-Manager-Plus), adapted
-to CPA's native plugin callbacks and Management authentication boundary.
+behavior in sub2api. The inspection subsystem in particular, including its two
+inspection paths, account-health classifications, owner-bound recovery, and
+conservative automatic actions, is primarily informed by
+[`seakee/CPA-Manager-Plus`](https://github.com/seakee/CPA-Manager-Plus). Those
+concepts are independently adapted to CPA's native plugin callbacks and
+Management authentication boundary.
 
 ## Features
 
@@ -35,9 +37,13 @@ to CPA's native plugin callbacks and Management authentication boundary.
 - Configurable automatic disable and owner-bound recovery, plus separately
   confirmed automatic deletion for persistently deactivated physical Auth
   files after a configurable grace period. All destructive options default off.
-- Public GitHub Release checks, update prompts, and opt-in installation through
-  CPA's authenticated plugin store, including an optional page-attended
-  automatic update mode.
+- Opt-in passive temporary circuits for repeated ambiguous CPA request or
+  active model-probe failures. Circuits use an inspection-owned temporary
+  disable, recover on a bounded timer or fresh successes, never claim manual
+  disables, and never qualify for deletion.
+- Public GitHub Release checks with authenticated CPA Plugin Store metadata as
+  a fallback, update prompts, and opt-in store installation, including an
+  optional page-attended automatic update mode.
 - First-class row actions for redacted account details, fixed-scope
   single-account editing, and filename-confirmed deletion of eligible physical
   Auth files; the visible **Add account** action reuses the secure converter.
@@ -78,10 +84,11 @@ to CPA's native plugin callbacks and Management authentication boundary.
   UI components free of locale-specific branches.
 
 The plugin intentionally does not expose token refresh, OAuth reauthorization,
-unrestricted credential editing, or provider quota probing. A model test is a
-separate operator-triggered minimal generation request and can consume a small
-amount of upstream quota. Inspection and automatic actions still use only
-evidence CPA already owns and never run model probes in the background.
+unrestricted credential editing, or direct provider quota probing. Active
+model tests run only when an operator requests a full inspection or explicitly
+enables scheduled active probes. They use CPA's fixed Management route and can
+consume a small amount of upstream quota; all other inspection evidence comes
+from CPA-owned native state and Usage records.
 
 ## Compatibility
 
@@ -132,20 +139,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.2.3_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.2.4_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.2.3_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.2.4_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.2.3_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.2.3_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.2.4_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.2.4_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -154,17 +161,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.2.3.so
-plugins/linux/arm64/cpa-account-config-manager-v0.2.3.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.2.3.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.2.3.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so
+plugins/linux/arm64/cpa-account-config-manager-v0.2.4.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.2.4.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.2.4.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.3.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so
 ```
 
 ### 3. Enable the plugin
@@ -420,13 +427,28 @@ scans or force sync; it remains an optional override for ordinary batch edits.
 
 ## Account Inspection and Automatic Actions
 
-Open **Inspection & automation** to run an immediate scan, inspect health
-evidence, filter results, review automatic-action history, and configure the
-schedule. Inspection is passive: it combines `host.auth.list` runtime state,
-CPA request counters, normalized Codex quota windows, and semantic failure
-evidence delivered through `usage.handle`. Raw failure bodies are examined only
-in memory and are reduced to allow-listed reason codes before state is returned
-or persisted.
+Open **Inspection & automation** to run either of two explicit manual scans,
+inspect health evidence, filter results, review automatic-action history, and
+configure the schedule:
+
+- **Quick inspection** reads the complete CPA-native account census, runtime
+  state, request counters, quota windows, and normalized `usage.handle`
+  evidence. It sends no model request.
+- **Full server inspection** first refreshes that native census, then snapshots
+  every eligible account ID and actively tests model availability in bounded
+  batches until the snapshot is complete. The server persists normalized
+  total/completed/remaining progress and continues when the page is refreshed
+  or the operator navigates elsewhere. The current Management Key remains
+  memory-only; after a CPA restart, an authenticated page request rearms a
+  saved incomplete sweep.
+
+Accounts added during a full sweep enter the next sweep rather than shifting
+the current cursor. Accounts removed or manually disabled during a sweep are
+safely skipped and counted as processed. The **Probe manually disabled
+accounts** policy controls whether manually disabled accounts are included in
+the initial target snapshot. Raw failure bodies are examined only in memory
+and are reduced to allow-listed reason codes before state is returned or
+persisted.
 
 For a known quota recovery within the next 24 hours, account rows show the
 locale-formatted concrete auto-enable time. A recovery farther than 24 hours is
@@ -440,7 +462,9 @@ explicit semantics such as `invalid_grant`, an invalid/revoked token, a
 deactivated account/workspace, explicit quota exhaustion, or the narrowly
 recognized xAI credential-permission response. Passive Usage failures and
 recoveries count distinct Usage events, so repeatedly scanning one old event
-does not satisfy a consecutive threshold.
+does not satisfy a consecutive threshold. Repeated low- or medium-confidence
+failures can use the separate passive temporary-circuit policy; they do not
+become high-confidence credential or deletion evidence.
 
 | Setting | Default | Range / behavior |
 | --- | --- | --- |
@@ -448,6 +472,10 @@ does not satisfy a consecutive threshold.
 | Scan interval | 30 minutes | 5-1,440 minutes. |
 | Failure threshold | 3 | 2-10 consecutive qualifying observations. |
 | Recovery threshold | 2 | 1-10 consecutive recovery observations. |
+| Passive temporary circuit | Off | Requires automatic disable and automatic enable. |
+| Passive failure threshold | 5 | 2-100 consecutive ambiguous failures. |
+| Passive failure window | 180 minutes | 1-1,440 minutes; a longer gap resets the counter. |
+| Temporary disable duration | 15 minutes | 1-1,440 minutes; also bounds the background recovery scan interval. |
 | Automatic disable | Off | Changes only the physical Auth JSON `disabled` field through host callbacks. |
 | Automatic enable | Off | Restores only an account disabled and still owned by this inspection engine. |
 | Automatic delete | Off | Requires automatic disable and a separate first-time risk confirmation. |
@@ -458,7 +486,11 @@ Owner-bound recovery prevents the plugin from enabling an account disabled by
 an operator or another subsystem. Quota-owned disables can recover after the
 known reset time. Credential failures require post-disable success or refresh
 evidence. A manual enable revokes inspection ownership rather than being
-overwritten.
+overwritten. A passive circuit queues a scan immediately at its exact threshold
+and persists its trigger reason, ownership, and recovery deadline across plugin
+replacement or CPA restart. A configured number of fresh successes can close
+it before the deadline. `model_not_found` is excluded because it normally
+indicates a probe configuration problem rather than an account failure.
 
 The same bounded evidence is projected into each returned account row. The
 main list distinguishes an inspection-owned automatic disable from a manual
@@ -493,6 +525,13 @@ endpoint through `host.http.do`, sends no Authorization header or account
 credential, rejects drafts/prereleases/invalid semantic versions, and persists
 only the policy, normalized latest version, timestamp, and stable error code in
 `update-state.json`.
+
+The authenticated page also reads CPA's Plugin Store registry metadata. When
+direct GitHub discovery is unsupported, blocked, or rate-limited, a valid store
+version becomes the effective update source while the separate GitHub failure
+remains visible. Invalid or missing store versions are ignored. The Management
+Key is used only in the current request header and is never sent to the plugin
+backend or persisted.
 
 An available release produces an in-page prompt. Installation is delegated to
 CPA's authenticated plugin-store endpoints, which own registry selection,
@@ -578,7 +617,9 @@ and otherwise unsupported records remain visible but read-only.
 - Inspection persists only normalized health, reason codes, counters,
   timestamps, ownership metadata, and sanitized action records. Raw failure
   bodies and response headers are transient; ambiguous authorization or
-  permission failures cannot trigger automatic disable or deletion.
+  permission failures cannot trigger permanent credential handling or
+  deletion. They can enter the separately enabled, timer-bounded passive
+  temporary circuit only after its consecutive threshold.
 - Automatic enable is ownership-bound. Automatic deletion is separately
   confirmed, deactivation-only, grace-delayed, physically revalidated, and
   executed only with the current authenticated browser request.
@@ -659,7 +700,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.3.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.3.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.4.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -670,7 +711,7 @@ upgrading the native library.
 
 ## Management Routes
 
-All 32 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 33 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
 - `POST /accounts/model-test`
@@ -694,6 +735,7 @@ All 32 privileged routes are exact paths below `/v0/management/plugins/cpa-accou
 - `GET /inspection`
 - `PUT /inspection`
 - `POST /inspection/scan`
+- `POST /inspection/scan/native`
 - `GET /inspection/results`
 - `GET /inspection/actions`
 - `POST /inspection/auto-delete`
@@ -728,7 +770,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.2.3
+make package VERSION=0.2.4
 ```
 
 For a local build that should publish a repository link in plugin metadata,
@@ -773,6 +815,17 @@ and publishes:
 ## Friends
 
 - [LINUX DO](https://linux.do/) - A community we recognize and appreciate.
+
+## Acknowledgements
+
+- The inspection functionality, especially the quick/full inspection split,
+  account-health decisions, owner-bound automatic recovery, and conservative
+  disable/enable/delete safeguards, primarily references the product design of
+  [`seakee/CPA-Manager-Plus`](https://github.com/seakee/CPA-Manager-Plus),
+  Copyright 2026 Seakee. CPA Account Config Manager independently reimplements
+  these ideas for the CLIProxyAPI native-plugin runtime and its Management
+  authentication boundary. CPA Manager Plus is available under the MIT License;
+  see [Third-Party Notices](THIRD_PARTY_NOTICES.md) for the complete notice.
 
 ## License
 

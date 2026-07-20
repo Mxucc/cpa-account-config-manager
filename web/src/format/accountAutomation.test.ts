@@ -44,6 +44,22 @@ function account(summary?: AccountAutomationSummary, disabled = true): Account {
 }
 
 describe("accountAutomationPresentation", () => {
+  it("shows passive circuit evidence and its exact recovery time", () => {
+    const target = account(automation({
+        owned_disable: true,
+        disable_reason: "passive_circuit_open",
+        circuit_open: true,
+        circuit_reason_code: "invalid_response",
+        recover_after: "2026-07-21T12:30:00Z",
+    }), true);
+
+    const result = accountAutomationPresentation(target, "zh-CN", new Date("2026-07-21T12:00:00Z"));
+
+    expect(result?.badge).toBe("被动临时熔断");
+    expect(result?.detail).toContain("无法确认上游响应");
+    expect(result?.detail).toContain("2026");
+  });
+
   it.each([
     ["zh-CN", "自动禁用", "额度已耗尽", "预计"],
     ["zh-TW", "自動停用", "額度已用盡", "預計"],

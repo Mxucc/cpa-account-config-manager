@@ -36,6 +36,12 @@ type InspectionEngine struct {
 	lastProbeRunAt        time.Time
 	managementKey         string
 	probeSweepRemaining   int
+	probeSweepTotal       int
+	probeSweepCompleted   int
+	probeSweepSource      string
+	probeSweepStatus      string
+	probeSweepStartedAt   time.Time
+	probeSweepTargets     []string
 	anomalyTriggerPending bool
 	lastAnomalyTriggerAt  time.Time
 	anomalyEligible       int
@@ -137,6 +143,15 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.lastNativeRunAt = state.LastNativeRunAt
 	e.lastProbeRunAt = state.LastProbeRunAt
 	e.probeSweepRemaining = state.ProbeSweepRemaining
+	e.probeSweepTotal = state.ProbeSweepTotal
+	e.probeSweepCompleted = state.ProbeSweepCompleted
+	e.probeSweepSource = state.ProbeSweepSource
+	e.probeSweepStatus = state.ProbeSweepStatus
+	e.probeSweepStartedAt = state.ProbeSweepStartedAt
+	e.probeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)
+	if e.probeSweepRemaining > 0 {
+		e.probeSweepStatus = InspectionSweepStatusWaitingForAuth
+	}
 	e.anomalyTriggerPending = state.AnomalyTriggerPending
 	e.lastAnomalyTriggerAt = state.LastAnomalyTriggerAt
 	e.managementKey = ""
@@ -173,6 +188,11 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 		LastNativeRunAt:       e.lastNativeRunAt,
 		LastProbeRunAt:        e.lastProbeRunAt,
 		ProbeSweepRemaining:   e.probeSweepRemaining,
+		ProbeSweepTotal:       e.probeSweepTotal,
+		ProbeSweepCompleted:   e.probeSweepCompleted,
+		ProbeSweepSource:      e.probeSweepSource,
+		ProbeSweepStatus:      e.probeSweepStatus,
+		ProbeSweepStartedAt:   e.probeSweepStartedAt,
 		AnomalyEligible:       e.anomalyEligible,
 		AnomalyCount:          e.anomalyCount,
 		AnomalyPercent:        e.anomalyPercent,
@@ -252,13 +272,32 @@ func (e *InspectionEngine) RequestScanWithModelProbes(managementKey string) Insp
 	if e == nil {
 		return InspectionSnapshot{Policy: defaultInspectionPolicy()}
 	}
+	requestedAt := e.currentTime()
 	e.mu.Lock()
 	started := e.started && !e.closed
 	if started {
 		e.pending = true
-		e.pendingProbe = e.pendingProbe || (strings.TrimSpace(managementKey) != "" && e.modelTests != nil)
+		armed := strings.TrimSpace(managementKey) != "" && e.modelTests != nil
+		e.pendingProbe = e.pendingProbe || armed
 		if e.pendingProbe {
 			e.managementKey = strings.TrimSpace(managementKey)
+		}
+		if armed && e.probeSweepRemaining > 0 {
+			e.pendingProbeSweep = true
+			e.probeSweepStatus = InspectionSweepStatusRunning
+		} else if armed && e.probeSweepRemaining == 0 && !e.pendingProbeSweep && e.probeSweepStatus != InspectionSweepStatusRunning {
+			e.probeSweepTotal = 0
+			e.probeSweepCompleted = 0
+			e.probeSweepRemaining = 0
+			e.probeSweepSource = InspectionSweepSourceManual
+			e.probeSweepStatus = InspectionSweepStatusRunning
+			e.probeSweepStartedAt = requestedAt
+			e.probeSweepTargets = nil
+			e.pendingProbeSweep = true
+		} else if !armed {
+			e.probeSweepSource = InspectionSweepSourceManual
+			e.probeSweepStatus = InspectionSweepStatusWaitingForAuth
+			e.probeSweepStartedAt = requestedAt
 		}
 	}
 	e.mu.Unlock()
@@ -285,6 +324,7 @@ func (e *InspectionEngine) ArmModelProbes(managementKey string) InspectionSnapsh
 			e.pending = true
 			e.pendingProbe = true
 			e.pendingProbeSweep = true
+			e.probeSweepStatus = InspectionSweepStatusRunning
 			e.dirty = true
 			e.generation++
 			wake = e.started
@@ -317,12 +357,22 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 	}
 	inspection := e.records[authIndex]
 	inspection.Result.ID = authIndex
-	applyUsageRecordToInspection(&inspection, record, now)
+	applyUsageRecordToInspection(&inspection, record, e.policy, now)
 	e.records[authIndex] = inspection
+	wake := e.started && passiveCircuitThresholdReached(e.policy, inspection)
+	if wake {
+		e.pending = true
+	}
 	e.dirty = true
 	e.generation++
 	e.mu.Unlock()
 	e.requestPersist()
+	if wake {
+		select {
+		case e.scanWake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionResultList {
@@ -402,22 +452,27 @@ func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[st
 		}
 		ownedDisable := record.Result.OwnedDisable && account.Disabled
 		summary := AccountAutomationSummary{
-			Health:              normalizeInspectionHealth(record.Result.Health),
-			ReasonCode:          safeInspectionReason(record.Result.ReasonCode),
-			Recommendation:      normalizeInspectionRecommendation(record.Result.Recommendation),
-			LastCheckedAt:       record.Result.LastCheckedAt.UTC(),
-			OwnedDisable:        ownedDisable,
-			AutoAction:          normalizeInspectionAction(record.Result.AutoAction),
-			AutoActionStatus:    normalizeInspectionActionStatus(record.Result.AutoActionStatus),
-			AutoDisableEligible: record.Result.AutoDisableEligible,
-			InspectionEnabled:   policy.Enabled,
-			AutoDisableEnabled:  policy.AutoDisable,
-			AutoEnableEnabled:   policy.AutoEnable,
-			AutoDeleteEnabled:   policy.AutoDelete,
-			FailureThreshold:    policy.FailureThreshold,
-			FailureStreak:       boundedCounter(record.Result.FailureStreak),
-			RecoveryThreshold:   policy.RecoveryThreshold,
-			HealthyStreak:       boundedCounter(record.Result.HealthyStreak),
+			Health:                  normalizeInspectionHealth(record.Result.Health),
+			ReasonCode:              safeInspectionReason(record.Result.ReasonCode),
+			Recommendation:          normalizeInspectionRecommendation(record.Result.Recommendation),
+			LastCheckedAt:           record.Result.LastCheckedAt.UTC(),
+			OwnedDisable:            ownedDisable,
+			AutoAction:              normalizeInspectionAction(record.Result.AutoAction),
+			AutoActionStatus:        normalizeInspectionActionStatus(record.Result.AutoActionStatus),
+			AutoDisableEligible:     record.Result.AutoDisableEligible,
+			InspectionEnabled:       policy.Enabled,
+			AutoDisableEnabled:      policy.AutoDisable,
+			AutoEnableEnabled:       policy.AutoEnable,
+			AutoDeleteEnabled:       policy.AutoDelete,
+			FailureThreshold:        policy.FailureThreshold,
+			FailureStreak:           boundedCounter(record.Result.FailureStreak),
+			RecoveryThreshold:       policy.RecoveryThreshold,
+			HealthyStreak:           boundedCounter(record.Result.HealthyStreak),
+			PassiveCircuitEnabled:   policy.PassiveCircuitEnabled,
+			PassiveFailureThreshold: policy.PassiveFailureThreshold,
+			PassiveFailureStreak:    max(record.Signal.ConsecutiveFailures, record.Probe.ConsecutiveFailures),
+			CircuitOpen:             ownedDisable && record.DisableReason == "passive_circuit_open",
+			CircuitReasonCode:       safeOptionalInspectionReason(record.Result.CircuitReasonCode),
 		}
 		if ownedDisable {
 			if strings.TrimSpace(record.DisableReason) != "" {
@@ -546,13 +601,32 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	modelTests := e.modelTests
 	deletions := e.deletions
 	probeSweepRemaining := e.probeSweepRemaining
+	probeSweepTotal := e.probeSweepTotal
+	probeSweepCompleted := e.probeSweepCompleted
+	probeSweepSource := e.probeSweepSource
+	probeSweepStatus := e.probeSweepStatus
+	probeSweepStartedAt := e.probeSweepStartedAt
+	probeSweepTargets := append([]string(nil), e.probeSweepTargets...)
 	config := e.config
 	e.mu.Unlock()
 	defer e.clearScanRunning()
-	runNative := (!scheduled && !requestedSweep) || (policy.Enabled && inspectionRunDue(startedAt, lastNativeRunAt, policy.ScanIntervalMinutes))
+	manualSweepStart := !scheduled && manualProbe && requestedSweep && probeSweepSource == InspectionSweepSourceManual && probeSweepCompleted == 0
+	runNative := (!scheduled && !requestedSweep) || manualSweepStart || ((policy.Enabled || policy.PassiveCircuitEnabled) && inspectionRunDue(startedAt, lastNativeRunAt, nativeInspectionInterval(policy)))
 	runProbe := manualProbe || (scheduled && policy.ModelProbeEnabled && inspectionRunDue(startedAt, lastProbeRunAt, policy.ModelProbeIntervalMinutes))
 	runProbe = runProbe && strings.TrimSpace(managementKey) != "" && modelTests != nil
 	probeSweep := requestedSweep || (scheduled && runProbe && policy.ModelProbeFullSweep)
+	if scheduled && runProbe && policy.ModelProbeFullSweep && (probeSweepStatus != InspectionSweepStatusRunning || probeSweepRemaining == 0) {
+		probeSweepTotal = 0
+		probeSweepCompleted = 0
+		probeSweepRemaining = 0
+		probeSweepSource = InspectionSweepSourceScheduled
+		probeSweepStartedAt = startedAt
+		probeSweepTargets = nil
+	}
+	if probeSweep && probeSweepSource == "" {
+		probeSweepSource = InspectionSweepSourceScheduled
+		probeSweepStartedAt = startedAt
+	}
 	if !runNative && !runProbe {
 		return
 	}
@@ -567,6 +641,12 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		summary.Error = "account inspection failed"
 		summary.FinishedAt = e.currentTime()
 		e.finishScan(summary, previous, nil, runNative, false, probeCursor)
+		if requestedSweep {
+			e.updateProbeSweep(inspectionSweepProgress{
+				Total: probeSweepTotal, Completed: probeSweepCompleted, Remaining: probeSweepRemaining,
+				Source: probeSweepSource, StartedAt: probeSweepStartedAt, Targets: probeSweepTargets,
+			}, true)
+		}
 		return
 	}
 	if len(accounts) > maxInspectionAccounts {
@@ -574,21 +654,32 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		accounts = accounts[:maxInspectionAccounts]
 	}
 	now := e.currentTime()
-	probeCount := 0
+	probeProcessed := 0
 	if runProbe {
-		if probeSweep && probeSweepRemaining <= 0 {
-			probeSweepRemaining = len(inspectionProbeEligibleAccounts(accounts, previous, policy.ScanManuallyDisabled))
+		if probeSweep && len(probeSweepTargets) == 0 {
+			probeSweepTargets = inspectionProbeEligibleAccountIDs(accounts, previous, policy.ScanManuallyDisabled)
+			probeSweepTotal = len(probeSweepTargets)
+			probeSweepCompleted = 0
+			probeSweepRemaining = max(0, probeSweepTotal-probeSweepCompleted)
 		}
 		probePolicy := policy
-		if probeSweep && probeSweepRemaining > 0 && probePolicy.ModelProbeBatchSize > probeSweepRemaining {
-			probePolicy.ModelProbeBatchSize = probeSweepRemaining
+		probeAccounts := accounts
+		probeCursorForRun := probeCursor
+		if probeSweep {
+			batchEnd := min(probeSweepCompleted+probePolicy.ModelProbeBatchSize, len(probeSweepTargets))
+			batchTargets := probeSweepTargets[probeSweepCompleted:batchEnd]
+			probeProcessed = len(batchTargets)
+			probeAccounts = inspectionProbeAccountsForTargets(accounts, batchTargets)
+			probePolicy.ModelProbeBatchSize = len(probeAccounts)
+			probeCursorForRun = 0
 		}
-		probeResults, nextCursor := runInspectionModelProbes(ctx, modelTests, accounts, previous, probePolicy, probeCursor, config.ManagementBaseURL, managementKey)
-		probeCount = len(probeResults)
-		probeCursor = nextCursor
+		probeResults, nextCursor := runInspectionModelProbes(ctx, modelTests, probeAccounts, previous, probePolicy, probeCursorForRun, config.ManagementBaseURL, managementKey)
+		if !probeSweep {
+			probeCursor = nextCursor
+		}
 		for _, result := range probeResults {
 			record := previous[result.AccountID]
-			applyModelProbeToInspection(&record, result)
+			applyModelProbeToInspection(&record, result, policy)
 			previous[result.AccountID] = record
 		}
 	}
@@ -615,12 +706,20 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	if triggered {
 		probeSweep = true
 		probeSweepRemaining = anomalySweepSize
+		probeSweepTotal = anomalySweepSize
+		probeSweepCompleted = 0
+		probeSweepSource = InspectionSweepSourceAnomaly
+		probeSweepStartedAt = now
+		probeSweepTargets = inspectionProbeEligibleAccountIDs(accounts, next, policy.ScanManuallyDisabled)
+		probeSweepTotal = len(probeSweepTargets)
+		probeSweepRemaining = probeSweepTotal
 	}
 	if probeSweep {
-		probeSweepRemaining -= probeCount
-		if probeSweepRemaining < 0 {
-			probeSweepRemaining = 0
+		probeSweepCompleted += probeProcessed
+		if probeSweepCompleted > probeSweepTotal {
+			probeSweepCompleted = probeSweepTotal
 		}
+		probeSweepRemaining = max(0, probeSweepTotal-probeSweepCompleted)
 	}
 	actionSummary, actions := e.applyAutomaticActions(ctx, policy, accountsByID, next, now)
 	summary.AutoDisabled += actionSummary.AutoDisabled
@@ -633,9 +732,15 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	summary.Scanned = len(next)
 	summary.FinishedAt = e.currentTime()
 	e.finishScan(summary, next, actions, runNative, runProbe, probeCursor)
-	e.updateProbeSweep(probeSweepRemaining, probeSweep && runProbe && probeCount == 0)
-	if probeSweep && probeSweepRemaining > 0 {
-		e.requestProbeSweep()
+	if probeSweep {
+		stalled := runProbe && probeProcessed == 0 && probeSweepRemaining > 0
+		e.updateProbeSweep(inspectionSweepProgress{
+			Total: probeSweepTotal, Completed: probeSweepCompleted, Remaining: probeSweepRemaining,
+			Source: probeSweepSource, StartedAt: probeSweepStartedAt, Targets: probeSweepTargets,
+		}, stalled)
+		if probeSweepRemaining > 0 && !stalled {
+			e.requestProbeSweep()
+		}
 	}
 	if policy.AutoDelete && deletions != nil && strings.TrimSpace(managementKey) != "" {
 		e.ExecutePendingDeletes(ctx, deletions, config.ManagementBaseURL, managementKey)
@@ -710,6 +815,12 @@ func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {
 		LastNativeRunAt:       e.lastNativeRunAt,
 		LastProbeRunAt:        e.lastProbeRunAt,
 		ProbeSweepRemaining:   e.probeSweepRemaining,
+		ProbeSweepTotal:       e.probeSweepTotal,
+		ProbeSweepCompleted:   e.probeSweepCompleted,
+		ProbeSweepSource:      e.probeSweepSource,
+		ProbeSweepStatus:      e.probeSweepStatus,
+		ProbeSweepStartedAt:   e.probeSweepStartedAt,
+		ProbeSweepTargets:     append([]string(nil), e.probeSweepTargets...),
 		AnomalyTriggerPending: e.anomalyTriggerPending,
 		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
 	}
@@ -724,7 +835,7 @@ func (e *InspectionEngine) requestPersist() {
 
 func (e *InspectionEngine) scheduledEnabled() bool {
 	e.mu.RLock()
-	enabled := (e.policy.Enabled || (e.policy.ModelProbeEnabled && strings.TrimSpace(e.managementKey) != "")) && !e.closed
+	enabled := (e.policy.Enabled || e.policy.PassiveCircuitEnabled || (e.policy.ModelProbeEnabled && strings.TrimSpace(e.managementKey) != "")) && !e.closed
 	e.mu.RUnlock()
 	return enabled
 }
@@ -734,11 +845,20 @@ func (e *InspectionEngine) scanInterval() time.Duration {
 	policy := e.policy
 	e.mu.RUnlock()
 	policy = normalizeInspectionPolicy(policy)
-	minutes := policy.ScanIntervalMinutes
+	minutes := nativeInspectionInterval(policy)
 	if policy.ModelProbeEnabled && (!policy.Enabled || policy.ModelProbeIntervalMinutes < minutes) {
 		minutes = policy.ModelProbeIntervalMinutes
 	}
 	return time.Duration(minutes) * time.Minute
+}
+
+func nativeInspectionInterval(policy InspectionPolicy) int {
+	policy = normalizeInspectionPolicy(policy)
+	minutes := policy.ScanIntervalMinutes
+	if policy.PassiveCircuitEnabled && policy.PassiveCircuitMinutes < minutes {
+		minutes = policy.PassiveCircuitMinutes
+	}
+	return minutes
 }
 
 func (e *InspectionEngine) currentTime() time.Time {
@@ -769,6 +889,10 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 	result.LastFailureAt = timePointer(record.Signal.LastFailureAt)
 	result.LastSuccessAt = timePointer(record.Signal.LastSuccessAt)
 	result.RecoverAfter = timePointer(decision.RecoverAfter)
+	result.SignalSource = normalizeInspectionSignalSource(decision.SignalSource)
+	if result.OwnedDisable && !record.DisabledRecoverAfter.IsZero() {
+		result.RecoverAfter = timePointer(record.DisabledRecoverAfter)
+	}
 
 	if inspectionHealthIsStrongFailure(decision.Health) {
 		if decision.FailureCount > 0 {
@@ -797,6 +921,12 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 	}
 	if result.OwnedDisable && decision.Health == InspectionHealthHealthy {
 		result.Recommendation = InspectionRecommendationEnable
+	}
+	result.CircuitOpen = result.OwnedDisable && record.DisableReason == "passive_circuit_open"
+	if result.CircuitOpen {
+		result.FailureStreak = max(result.FailureStreak, record.Signal.ConsecutiveFailures, record.Probe.ConsecutiveFailures)
+	} else {
+		result.CircuitReasonCode = ""
 	}
 	record.Result = result
 }

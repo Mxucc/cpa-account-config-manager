@@ -208,8 +208,12 @@ export async function saveInspectionPolicy(policy: InspectionPolicy, confirmAuto
   });
 }
 
-export async function scanInspection(): Promise<InspectionSnapshot> {
+export async function scanFullInspection(): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection/scan", { method: "POST" });
+}
+
+export async function scanNativeInspection(): Promise<InspectionSnapshot> {
+  return request<InspectionSnapshot>("/inspection/scan/native", { method: "POST" });
 }
 
 export async function listInspectionResults(page: number, pageSize: number, health = "", search = ""): Promise<InspectionResultList> {
@@ -246,13 +250,71 @@ export async function checkForUpdates(): Promise<UpdateSnapshot> {
 }
 
 export async function getPluginStore(): Promise<PluginStoreResponse> {
-  return managementRequest<PluginStoreResponse>("/plugin-store");
+  const response = await managementRequest<PluginStoreResponse>("/plugin-store");
+  return { ...response, plugins: arrayOrEmpty(response.plugins) };
+}
+
+const pluginID = "cpa-account-config-manager";
+const pluginReleaseBaseURL = "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v";
+
+function normalizedStableVersion(value: string | undefined): { value: string; parts: [number, number, number] } | null {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec((value ?? "").trim());
+  if (!match) return null;
+  const parts = [Number(match[1]), Number(match[2]), Number(match[3])] as [number, number, number];
+  if (parts.some((part) => !Number.isSafeInteger(part))) return null;
+  return { value: parts.join("."), parts };
+}
+
+function compareStableVersions(left: [number, number, number], right: [number, number, number]): number {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStoreResponse | null, storeError = ""): UpdateSnapshot {
+  const githubError = status.error?.trim() || "";
+  const githubVersion = normalizedStableVersion(status.latest_version);
+  const currentVersion = normalizedStableVersion(status.current_version);
+  const plugin = arrayOrEmpty(store?.plugins).find((entry) => entry?.id === pluginID);
+  const storeVersion = normalizedStableVersion(plugin?.version);
+  const base: UpdateSnapshot = {
+    ...status,
+    release_source: githubVersion && !githubError ? "github" : "none",
+    github_error: githubError || undefined,
+    store_error: storeError || undefined,
+  };
+
+  if (!storeVersion || !currentVersion) return base;
+  const storeIsNewer = compareStableVersions(storeVersion.parts, currentVersion.parts) > 0;
+  const githubIsAtLeastStore = githubVersion && compareStableVersions(githubVersion.parts, storeVersion.parts) >= 0;
+  if (!githubError && githubIsAtLeastStore) return base;
+
+  return {
+    ...base,
+    latest_version: storeVersion.value,
+    update_available: storeIsNewer,
+    release_url: `${pluginReleaseBaseURL}${storeVersion.value}`,
+    release_source: "plugin_store",
+    error: undefined,
+  };
+}
+
+export async function getEffectiveUpdateStatus(checkNow = false): Promise<UpdateSnapshot> {
+  const [status, store] = await Promise.all([
+    checkNow ? checkForUpdates() : getUpdateStatus(),
+    getPluginStore().then(
+      (response) => ({ response, error: "" }),
+      (caught: unknown) => ({ response: null, error: caught instanceof Error ? caught.message : "plugin store request failed" }),
+    ),
+  ]);
+  return reconcileUpdateStatus(status, store.response, store.error);
 }
 
 export async function installPluginUpdate(version: string): Promise<PluginInstallResult> {
   try {
     const store = await getPluginStore();
-    if (!store.plugins.some((plugin) => plugin.id === "cpa-account-config-manager")) {
+    if (!arrayOrEmpty(store.plugins).some((plugin) => plugin.id === pluginID)) {
       throw new APIError(404, "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store");
     }
     const result = await managementRequest<PluginInstallResult>("/plugin-store/cpa-account-config-manager/install", {

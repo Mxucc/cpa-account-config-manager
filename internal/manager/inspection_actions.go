@@ -97,9 +97,14 @@ func (e *InspectionEngine) applyAutomaticActions(
 			continue
 		}
 
-		if shouldAutoDisableInspection(policy, account, record) {
+		openCircuit, circuitReason, circuitFailures := shouldOpenPassiveCircuit(policy, account, record, now)
+		if shouldAutoDisableInspection(policy, account, record) || openCircuit {
+			disableReason := record.Result.ReasonCode
+			if openCircuit {
+				disableReason = "passive_circuit_open"
+			}
 			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, true)
-			action := newInspectionAction(record.Result, InspectionActionDisable, record.Result.ReasonCode, now)
+			action := newInspectionAction(record.Result, InspectionActionDisable, disableReason, now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
 				record.Result.AutoAction = InspectionActionDisable
@@ -115,12 +120,20 @@ func (e *InspectionEngine) applyAutomaticActions(
 				record.Result.OwnedDisable = true
 				record.Result.AutoAction = InspectionActionDisable
 				record.Result.AutoActionStatus = InspectionActionSucceeded
-				record.DisableReason = record.Result.ReasonCode
+				record.DisableReason = disableReason
 				record.DisabledAt = now.UTC()
 				record.DisabledName = outcome.Name
 				record.DisabledPath = outcome.Path
 				record.DisabledVersion = outcome.Revision
-				if record.Result.RecoverAfter != nil {
+				if openCircuit {
+					recoverAfter := now.Add(time.Duration(policy.PassiveCircuitMinutes) * time.Minute).UTC()
+					record.Result.CircuitOpen = true
+					record.Result.CircuitReasonCode = safeOptionalInspectionReason(circuitReason)
+					record.Result.Recommendation = InspectionRecommendationDisable
+					record.Result.FailureStreak = circuitFailures
+					record.Result.RecoverAfter = timePointer(recoverAfter)
+					record.DisabledRecoverAfter = recoverAfter
+				} else if record.Result.RecoverAfter != nil {
 					record.DisabledRecoverAfter = record.Result.RecoverAfter.UTC()
 				}
 				summary.AutoDisabled++
@@ -151,6 +164,49 @@ func (e *InspectionEngine) applyAutomaticActions(
 	return summary, actions
 }
 
+func shouldOpenPassiveCircuit(policy InspectionPolicy, account Account, record inspectionRecord, now time.Time) (bool, string, int) {
+	if !policy.PassiveCircuitEnabled || !policy.AutoDisable || !policy.AutoEnable || account.Disabled || !account.Editable || record.Result.OwnedDisable {
+		return false, "", 0
+	}
+	count, reason := passiveCircuitFailureEvidence(policy, record, now)
+	return count >= policy.PassiveFailureThreshold, reason, count
+}
+
+func passiveCircuitThresholdReached(policy InspectionPolicy, record inspectionRecord) bool {
+	policy = normalizeInspectionPolicy(policy)
+	return policy.PassiveCircuitEnabled && policy.AutoDisable && policy.AutoEnable &&
+		record.Signal.ConsecutiveFailures == policy.PassiveFailureThreshold &&
+		!record.Signal.AutoDisableEligible && passiveCircuitReasonAllowed(record.Signal.ReasonCode)
+}
+
+func passiveCircuitFailureEvidence(policy InspectionPolicy, record inspectionRecord, now time.Time) (int, string) {
+	policy = normalizeInspectionPolicy(policy)
+	window := time.Duration(policy.PassiveFailureWindowMinutes) * time.Minute
+	bestCount := 0
+	bestReason := ""
+	if !record.Signal.LastFailureAt.IsZero() && !now.Before(record.Signal.LastFailureAt) && now.Sub(record.Signal.LastFailureAt) <= window &&
+		passiveCircuitReasonAllowed(record.Signal.ReasonCode) && !record.Signal.AutoDisableEligible {
+		bestCount = boundedCounter(record.Signal.ConsecutiveFailures)
+		bestReason = record.Signal.ReasonCode
+	}
+	if !record.Probe.TestedAt.IsZero() && !now.Before(record.Probe.TestedAt) && now.Sub(record.Probe.TestedAt) <= window &&
+		passiveCircuitReasonAllowed(record.Probe.ReasonCode) && record.Probe.ConsecutiveFailures > bestCount {
+		bestCount = boundedCounter(record.Probe.ConsecutiveFailures)
+		bestReason = record.Probe.ReasonCode
+	}
+	return bestCount, safeOptionalInspectionReason(bestReason)
+}
+
+func passiveCircuitReasonAllowed(reason string) bool {
+	switch safeOptionalInspectionReason(reason) {
+	case "authentication_review", "transient_failure", "unconfirmed_upstream_response", "quota_limited",
+		"request_timeout", "upstream_unavailable", "invalid_response":
+		return true
+	default:
+		return false
+	}
+}
+
 func shouldAutoDisableInspection(policy InspectionPolicy, account Account, record inspectionRecord) bool {
 	if !policy.AutoDisable || account.Disabled || !account.Editable || record.Result.OwnedDisable || !record.Result.AutoDisableEligible {
 		return false
@@ -166,6 +222,10 @@ func shouldAutoEnableInspection(policy InspectionPolicy, account Account, record
 		return false
 	}
 	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) &&
+		!inspectionHealthIsStrongFailure(record.Result.Health) {
+		return true
+	}
+	if record.DisableReason == "passive_circuit_open" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) &&
 		!inspectionHealthIsStrongFailure(record.Result.Health) {
 		return true
 	}
@@ -512,6 +572,9 @@ func clearInspectionDisableOwnership(record *inspectionRecord) {
 	}
 	record.Result.OwnedDisable = false
 	record.Result.DeleteEligibleAt = nil
+	record.Result.CircuitOpen = false
+	record.Result.CircuitReasonCode = ""
+	record.Result.RecoverAfter = nil
 	record.DisableReason = ""
 	record.DisabledAt = time.Time{}
 	record.DisabledName = ""

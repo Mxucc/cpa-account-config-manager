@@ -20,6 +20,9 @@ const (
 	maxModelProbeBatchSize      = 200
 	defaultFailureThreshold     = 3
 	defaultRecoveryThreshold    = 2
+	defaultPassiveThreshold     = 5
+	defaultPassiveWindow        = 180
+	defaultPassiveCircuit       = 15
 	defaultDeleteGraceHours     = 7 * 24
 	defaultDeleteBatchSize      = 10
 	maxDeleteGraceHours         = 365 * 24
@@ -55,6 +58,19 @@ const (
 	InspectionActionSucceeded = "succeeded"
 	InspectionActionFailed    = "failed"
 	InspectionActionSkipped   = "skipped"
+
+	InspectionSignalNative      = "native"
+	InspectionSignalPassive     = "passive"
+	InspectionSignalActiveProbe = "active_probe"
+
+	InspectionSweepSourceManual    = "manual"
+	InspectionSweepSourceScheduled = "scheduled"
+	InspectionSweepSourceAnomaly   = "anomaly"
+
+	InspectionSweepStatusRunning        = "running"
+	InspectionSweepStatusCompleted      = "completed"
+	InspectionSweepStatusFailed         = "failed"
+	InspectionSweepStatusWaitingForAuth = "waiting_for_auth"
 )
 
 type InspectionPolicy struct {
@@ -68,6 +84,10 @@ type InspectionPolicy struct {
 	ModelProbeModels             ModelProbeModels `json:"model_probe_models"`
 	FailureThreshold             int              `json:"failure_threshold"`
 	RecoveryThreshold            int              `json:"recovery_threshold"`
+	PassiveCircuitEnabled        bool             `json:"passive_circuit_enabled"`
+	PassiveFailureThreshold      int              `json:"passive_failure_threshold"`
+	PassiveFailureWindowMinutes  int              `json:"passive_failure_window_minutes"`
+	PassiveCircuitMinutes        int              `json:"passive_circuit_minutes"`
 	AutoDisable                  bool             `json:"auto_disable"`
 	AutoEnable                   bool             `json:"auto_enable"`
 	AutoDelete                   bool             `json:"auto_delete"`
@@ -126,6 +146,11 @@ type InspectionSnapshot struct {
 	LastNativeRunAt       time.Time            `json:"last_native_run_at,omitempty"`
 	LastProbeRunAt        time.Time            `json:"last_probe_run_at,omitempty"`
 	ProbeSweepRemaining   int                  `json:"probe_sweep_remaining"`
+	ProbeSweepTotal       int                  `json:"probe_sweep_total"`
+	ProbeSweepCompleted   int                  `json:"probe_sweep_completed"`
+	ProbeSweepSource      string               `json:"probe_sweep_source,omitempty"`
+	ProbeSweepStatus      string               `json:"probe_sweep_status,omitempty"`
+	ProbeSweepStartedAt   time.Time            `json:"probe_sweep_started_at,omitempty"`
 	AnomalyEligible       int                  `json:"anomaly_eligible"`
 	AnomalyCount          int                  `json:"anomaly_count"`
 	AnomalyPercent        int                  `json:"anomaly_percent"`
@@ -163,32 +188,40 @@ type InspectionResult struct {
 	ProbeModel          string     `json:"probe_model,omitempty"`
 	ProbeTestedAt       *time.Time `json:"probe_tested_at,omitempty"`
 	ProbeLatencyMS      int64      `json:"probe_latency_ms,omitempty"`
+	SignalSource        string     `json:"signal_source,omitempty"`
+	CircuitOpen         bool       `json:"circuit_open"`
+	CircuitReasonCode   string     `json:"circuit_reason_code,omitempty"`
 }
 
 // AccountAutomationSummary is the bounded inspection state exposed with an
 // account row. It intentionally excludes raw signals and auth-source details.
 type AccountAutomationSummary struct {
-	Health              string     `json:"health"`
-	ReasonCode          string     `json:"reason_code"`
-	Recommendation      string     `json:"recommendation"`
-	LastCheckedAt       time.Time  `json:"last_checked_at"`
-	OwnedDisable        bool       `json:"owned_disable"`
-	DisableReason       string     `json:"disable_reason,omitempty"`
-	DisabledAt          *time.Time `json:"disabled_at,omitempty"`
-	RecoverAfter        *time.Time `json:"recover_after,omitempty"`
-	DeleteEligibleAt    *time.Time `json:"delete_eligible_at,omitempty"`
-	DeleteRetryAfter    *time.Time `json:"delete_retry_after,omitempty"`
-	AutoAction          string     `json:"auto_action,omitempty"`
-	AutoActionStatus    string     `json:"auto_action_status,omitempty"`
-	AutoDisableEligible bool       `json:"auto_disable_eligible"`
-	InspectionEnabled   bool       `json:"inspection_enabled"`
-	AutoDisableEnabled  bool       `json:"auto_disable_enabled"`
-	AutoEnableEnabled   bool       `json:"auto_enable_enabled"`
-	AutoDeleteEnabled   bool       `json:"auto_delete_enabled"`
-	FailureThreshold    int        `json:"failure_threshold"`
-	FailureStreak       int        `json:"failure_streak"`
-	RecoveryThreshold   int        `json:"recovery_threshold"`
-	HealthyStreak       int        `json:"healthy_streak"`
+	Health                  string     `json:"health"`
+	ReasonCode              string     `json:"reason_code"`
+	Recommendation          string     `json:"recommendation"`
+	LastCheckedAt           time.Time  `json:"last_checked_at"`
+	OwnedDisable            bool       `json:"owned_disable"`
+	DisableReason           string     `json:"disable_reason,omitempty"`
+	DisabledAt              *time.Time `json:"disabled_at,omitempty"`
+	RecoverAfter            *time.Time `json:"recover_after,omitempty"`
+	DeleteEligibleAt        *time.Time `json:"delete_eligible_at,omitempty"`
+	DeleteRetryAfter        *time.Time `json:"delete_retry_after,omitempty"`
+	AutoAction              string     `json:"auto_action,omitempty"`
+	AutoActionStatus        string     `json:"auto_action_status,omitempty"`
+	AutoDisableEligible     bool       `json:"auto_disable_eligible"`
+	InspectionEnabled       bool       `json:"inspection_enabled"`
+	AutoDisableEnabled      bool       `json:"auto_disable_enabled"`
+	AutoEnableEnabled       bool       `json:"auto_enable_enabled"`
+	AutoDeleteEnabled       bool       `json:"auto_delete_enabled"`
+	FailureThreshold        int        `json:"failure_threshold"`
+	FailureStreak           int        `json:"failure_streak"`
+	RecoveryThreshold       int        `json:"recovery_threshold"`
+	HealthyStreak           int        `json:"healthy_streak"`
+	PassiveCircuitEnabled   bool       `json:"passive_circuit_enabled"`
+	PassiveFailureThreshold int        `json:"passive_failure_threshold"`
+	PassiveFailureStreak    int        `json:"passive_failure_streak"`
+	CircuitOpen             bool       `json:"circuit_open"`
+	CircuitReasonCode       string     `json:"circuit_reason_code,omitempty"`
 }
 
 type InspectionAction struct {
@@ -233,17 +266,20 @@ type InspectionResultList struct {
 
 func defaultInspectionPolicy() InspectionPolicy {
 	return InspectionPolicy{
-		ScanIntervalMinutes:       defaultInspectionInterval,
-		ModelProbeIntervalMinutes: defaultModelProbeInterval,
-		ModelProbeBatchSize:       defaultModelProbeBatchSize,
-		ModelProbeModels:          defaultModelProbeModels(),
-		FailureThreshold:          defaultFailureThreshold,
-		RecoveryThreshold:         defaultRecoveryThreshold,
-		DeleteGraceHours:          defaultDeleteGraceHours,
-		DeleteBatchSize:           defaultDeleteBatchSize,
-		AnomalyThresholdPercent:   defaultAnomalyThreshold,
-		AnomalyMinimumAccounts:    defaultAnomalyMinimum,
-		AnomalyCooldownMinutes:    defaultAnomalyCooldown,
+		ScanIntervalMinutes:         defaultInspectionInterval,
+		ModelProbeIntervalMinutes:   defaultModelProbeInterval,
+		ModelProbeBatchSize:         defaultModelProbeBatchSize,
+		ModelProbeModels:            defaultModelProbeModels(),
+		FailureThreshold:            defaultFailureThreshold,
+		RecoveryThreshold:           defaultRecoveryThreshold,
+		PassiveFailureThreshold:     defaultPassiveThreshold,
+		PassiveFailureWindowMinutes: defaultPassiveWindow,
+		PassiveCircuitMinutes:       defaultPassiveCircuit,
+		DeleteGraceHours:            defaultDeleteGraceHours,
+		DeleteBatchSize:             defaultDeleteBatchSize,
+		AnomalyThresholdPercent:     defaultAnomalyThreshold,
+		AnomalyMinimumAccounts:      defaultAnomalyMinimum,
+		AnomalyCooldownMinutes:      defaultAnomalyCooldown,
 	}
 }
 
@@ -289,6 +325,15 @@ func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 	if policy.RecoveryThreshold == 0 {
 		policy.RecoveryThreshold = defaultRecoveryThreshold
 	}
+	if policy.PassiveFailureThreshold == 0 {
+		policy.PassiveFailureThreshold = defaultPassiveThreshold
+	}
+	if policy.PassiveFailureWindowMinutes == 0 {
+		policy.PassiveFailureWindowMinutes = defaultPassiveWindow
+	}
+	if policy.PassiveCircuitMinutes == 0 {
+		policy.PassiveCircuitMinutes = defaultPassiveCircuit
+	}
 	if policy.DeleteGraceHours == 0 {
 		policy.DeleteGraceHours = defaultDeleteGraceHours
 	}
@@ -332,6 +377,15 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	if policy.RecoveryThreshold < 1 || policy.RecoveryThreshold > 10 {
 		return InspectionPolicy{}, fmt.Errorf("recovery_threshold must be between 1 and 10")
 	}
+	if policy.PassiveFailureThreshold < 2 || policy.PassiveFailureThreshold > 100 {
+		return InspectionPolicy{}, fmt.Errorf("passive_failure_threshold must be between 2 and 100")
+	}
+	if policy.PassiveFailureWindowMinutes < 1 || policy.PassiveFailureWindowMinutes > maxInspectionInterval {
+		return InspectionPolicy{}, fmt.Errorf("passive_failure_window_minutes must be between 1 and %d", maxInspectionInterval)
+	}
+	if policy.PassiveCircuitMinutes < 1 || policy.PassiveCircuitMinutes > maxInspectionInterval {
+		return InspectionPolicy{}, fmt.Errorf("passive_circuit_minutes must be between 1 and %d", maxInspectionInterval)
+	}
 	if policy.DeleteGraceHours < 24 || policy.DeleteGraceHours > maxDeleteGraceHours {
 		return InspectionPolicy{}, fmt.Errorf("delete_grace_hours must be between 24 and %d", maxDeleteGraceHours)
 	}
@@ -352,6 +406,9 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	}
 	if policy.AutoDeleteInvalidCredentials && (!policy.AutoDelete || !policy.AutoDisable) {
 		return InspectionPolicy{}, fmt.Errorf("auto_delete_invalid_credentials requires auto_delete and auto_disable")
+	}
+	if policy.PassiveCircuitEnabled && (!policy.AutoDisable || !policy.AutoEnable) {
+		return InspectionPolicy{}, fmt.Errorf("passive_circuit_enabled requires auto_disable and auto_enable")
 	}
 	if policy.ModelProbeFullSweep && !policy.ModelProbeEnabled {
 		return InspectionPolicy{}, fmt.Errorf("model_probe_full_sweep requires scheduled model probes")

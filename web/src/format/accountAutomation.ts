@@ -25,6 +25,12 @@ const reasonKeys: Record<string, MessageKey> = {
   native_unavailable: "reason.native_unavailable",
   manual_disabled: "reason.manual_disabled",
   transient_failure: "reason.transient_failure",
+  unconfirmed_upstream_response: "reason.unconfirmed_upstream_response",
+  passive_circuit_open: "reason.passive_circuit_open",
+  invalid_response: "reason.invalid_response",
+  upstream_unavailable: "reason.upstream_unavailable",
+  request_timeout: "reason.request_timeout",
+  quota_limited: "reason.quota_limited",
   no_recent_evidence: "reason.no_recent_evidence",
 };
 
@@ -67,6 +73,12 @@ export function accountAutomationPresentation(
   const reason = reasonLabel(locale, reasonCode);
 
   if (account.disabled && automation.owned_disable) {
+    if (automation.circuit_open || reasonCode === "passive_circuit_open") {
+      const recoverAfter = validDate(automation.recover_after);
+      const triggerReason = reasonLabel(locale, automation.circuit_reason_code || automation.reason_code);
+      const recoveryDetail = recoverAfter ? automaticEnableDetail(locale, recoverAfter, now) : t("automation.waiting_scan");
+      return { badge: t("automation.passive_circuit"), detail: withReason(triggerReason, recoveryDetail), reason: triggerReason, tone: "warning" };
+    }
     if (reasonCode === "account_deactivated" || reasonCode === "workspace_deactivated" || automation.recommendation === "delete") {
       if (!automation.auto_delete_enabled) {
         return { badge: t("automation.suggest_delete"), detail: withReason(reason, t("automation.delete_off")), reason, tone: "danger" };

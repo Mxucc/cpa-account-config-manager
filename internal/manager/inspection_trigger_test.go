@@ -226,7 +226,7 @@ func TestInspectionAnomalyTriggerCooldownPendingAndRearm(t *testing.T) {
 	if !triggered || sweepSize != 2 || !engine.anomalyTriggerPending || !engine.lastAnomalyTriggerAt.Equal(now) {
 		t.Fatalf("first trigger = %v size=%d engine=%#v", triggered, sweepSize, engine.Snapshot())
 	}
-	engine.updateProbeSweep(sweepSize, false)
+	engine.updateProbeSweep(inspectionSweepProgress{Total: sweepSize, Remaining: sweepSize, Source: InspectionSweepSourceAnomaly, StartedAt: now}, false)
 	engine.SetModelTestService(&ModelTestService{})
 	engine.ArmModelProbes("current-management-secret")
 	if engine.anomalyTriggerPending || !engine.pendingProbe || !engine.pendingProbeSweep || engine.managementKey == "" {

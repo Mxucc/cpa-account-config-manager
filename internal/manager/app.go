@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.3"
+	PluginVersion    = "0.2.4"
 	PluginRepository = DefaultPluginRepository
 )
 
@@ -183,6 +183,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection", Description: "Read the persistent account inspection policy and scan status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/inspection", Description: "Validate and save the account inspection policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan", Description: "Request an immediate account inspection scan."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan/native", Description: "Request an immediate full CPA-native account census without model probes."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/results", Description: "List redacted account inspection results."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/actions", Description: "List sanitized automatic action history."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/auto-delete", Description: "Execute due opt-in deletion candidates with the current Management credential."},
@@ -258,8 +259,9 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults/force/status":
 		return jsonResponse(http.StatusOK, a.force.Snapshot(statusWantsResults(req.Query)))
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection":
-		inspectionPolicy := a.inspection.Snapshot().Policy
-		if inspectionPolicy.ModelProbeEnabled || inspectionPolicy.AnomalyTriggerEnabled || inspectionPolicy.AutoDelete {
+		inspectionSnapshot := a.inspection.Snapshot()
+		inspectionPolicy := inspectionSnapshot.Policy
+		if inspectionPolicy.ModelProbeEnabled || inspectionPolicy.AnomalyTriggerEnabled || inspectionPolicy.AutoDelete || inspectionSnapshot.ProbeSweepRemaining > 0 {
 			managementKey := resolveManagementKey(req.Headers)
 			if managementKey != "" {
 				a.inspection.ArmModelProbes(managementKey)
@@ -274,6 +276,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		snapshot := a.inspection.RequestScanWithModelProbes(managementKey)
 		managementKey = ""
 		return jsonResponse(http.StatusAccepted, snapshot)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/scan/native":
+		return jsonResponse(http.StatusAccepted, a.inspection.RequestScan())
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/results":
 		return a.handleListInspectionResults(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/actions":

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,6 +153,93 @@ func TestInspectionProbeAuthorizationIsNeverPersistedAndMustBeRearmed(t *testing
 	}
 }
 
+func TestInspectionSweepProgressPersistsWithoutManagementCredential(t *testing.T) {
+	dataDir := t.TempDir()
+	startedAt := time.Date(2026, time.July, 21, 13, 0, 0, 0, time.UTC)
+	state := persistedInspectionState{
+		Version: inspectionStoreVersion, Policy: defaultInspectionPolicy(), Records: map[string]inspectionRecord{},
+		ProbeSweepTotal: 100, ProbeSweepCompleted: 40, ProbeSweepRemaining: 60,
+		ProbeSweepSource: InspectionSweepSourceManual, ProbeSweepStatus: InspectionSweepStatusRunning,
+		ProbeSweepStartedAt: startedAt,
+	}
+	if errSave := saveInspectionState(inspectionStorePath(dataDir), state); errSave != nil {
+		t.Fatalf("save inspection state: %v", errSave)
+	}
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.SetModelTestService(NewModelTestService(engine.accounts))
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+
+	snapshot := engine.Snapshot()
+	if snapshot.ProbeSweepTotal != 100 || snapshot.ProbeSweepCompleted != 40 || snapshot.ProbeSweepRemaining != 60 ||
+		snapshot.ProbeSweepSource != InspectionSweepSourceManual || snapshot.ProbeSweepStatus != InspectionSweepStatusWaitingForAuth ||
+		!snapshot.ProbeSweepStartedAt.Equal(startedAt) || snapshot.ActiveProbeArmed {
+		t.Fatalf("reloaded sweep snapshot = %#v", snapshot)
+	}
+	engine.scan(context.Background())
+	afterNative := engine.Snapshot()
+	if afterNative.ProbeSweepStatus != InspectionSweepStatusWaitingForAuth || afterNative.ProbeSweepRemaining != 60 || afterNative.ProbeSweepCompleted != 40 {
+		t.Fatalf("native scan changed waiting sweep progress: %#v", afterNative)
+	}
+	raw, errRead := os.ReadFile(inspectionStorePath(dataDir))
+	if errRead != nil {
+		t.Fatalf("read inspection state: %v", errRead)
+	}
+	if bytes.Contains(raw, []byte("management-secret")) {
+		t.Fatalf("sweep state leaked Management Key: %s", raw)
+	}
+}
+
+func TestFailedManualSweepPreservesCheckpointForExplicitResume(t *testing.T) {
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.started = true
+	engine.modelTests = &ModelTestService{}
+	engine.probeSweepTotal = 5
+	engine.probeSweepCompleted = 2
+	engine.probeSweepRemaining = 3
+	engine.probeSweepSource = InspectionSweepSourceManual
+	engine.probeSweepStatus = InspectionSweepStatusRunning
+	engine.probeSweepStartedAt = time.Date(2026, time.July, 21, 14, 0, 0, 0, time.UTC)
+	engine.probeSweepTargets = []string{"a", "b", "c", "d", "e"}
+	engine.updateProbeSweep(inspectionSweepProgress{
+		Total: 5, Completed: 2, Remaining: 3, Source: InspectionSweepSourceManual,
+		StartedAt: engine.probeSweepStartedAt, Targets: engine.probeSweepTargets,
+	}, true)
+	failed := engine.Snapshot()
+	if failed.ProbeSweepStatus != InspectionSweepStatusFailed || failed.ProbeSweepRemaining != 3 || len(engine.probeSweepTargets) != 5 || engine.pendingProbeSweep {
+		t.Fatalf("failed sweep checkpoint = %#v targets=%#v", failed, engine.probeSweepTargets)
+	}
+
+	resumed := engine.RequestScanWithModelProbes("current-management-secret")
+	if resumed.ProbeSweepStatus != InspectionSweepStatusRunning || resumed.ProbeSweepCompleted != 2 || resumed.ProbeSweepRemaining != 3 ||
+		!engine.pendingProbeSweep || engine.managementKey == "" {
+		t.Fatalf("resumed sweep = %#v pending=%t", resumed, engine.pendingProbeSweep)
+	}
+}
+
+func TestEmptyManualFullInspectionCompletesWithoutProbe(t *testing.T) {
+	host := &fakeAuthHost{}
+	accounts := NewAccountService(host)
+	engine := NewInspectionEngine(accounts, host, NewMutationCoordinator())
+	engine.SetModelTestService(NewModelTestService(accounts))
+	engine.store = ""
+	engine.config = normalizeConfig(Config{})
+	engine.policy = defaultInspectionPolicy()
+	engine.managementKey = "current-management-secret"
+	engine.probeSweepSource = InspectionSweepSourceManual
+	engine.probeSweepStatus = InspectionSweepStatusRunning
+	engine.probeSweepStartedAt = time.Date(2026, time.July, 21, 15, 0, 0, 0, time.UTC)
+
+	engine.scanWithMode(context.Background(), false, true, true)
+
+	snapshot := engine.Snapshot()
+	if snapshot.ProbeSweepTotal != 0 || snapshot.ProbeSweepCompleted != 0 || snapshot.ProbeSweepRemaining != 0 ||
+		snapshot.ProbeSweepStatus != InspectionSweepStatusCompleted || snapshot.LastRun.Scanned != 0 {
+		t.Fatalf("empty manual sweep = %#v", snapshot)
+	}
+}
+
 func TestManualInspectionRunsActiveModelProbeWithCurrentManagementCredential(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{AuthIndex: "manual-account", Name: "manual.json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/manual.json"}},
@@ -194,6 +282,99 @@ func TestManualInspectionRunsActiveModelProbeWithCurrentManagementCredential(t *
 	}
 }
 
+func TestManualFullInspectionProbesEveryEligibleAccountAndNativeInspectionDoesNotProbe(t *testing.T) {
+	entries := make([]cpaapi.HostAuthFileEntry, 0, 5)
+	details := make(map[string]cpaapi.HostAuthGetResponse, 5)
+	for index := 0; index < 5; index++ {
+		id := fmt.Sprintf("manual-full-%d", index)
+		entries = append(entries, cpaapi.HostAuthFileEntry{
+			AuthIndex: id, Name: id + ".json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/" + id + ".json",
+		})
+		details[id] = cpaapi.HostAuthGetResponse{
+			AuthIndex: id, Name: id + ".json", Path: "/auths/" + id + ".json",
+			JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret"}`),
+		}
+	}
+	host := &fakeAuthHost{entries: entries, details: details}
+	var calls atomic.Int32
+	var callsMu sync.Mutex
+	seen := make(map[string]int)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		var call managementAPICallRequest
+		_ = json.NewDecoder(request.Body).Decode(&call)
+		callsMu.Lock()
+		seen[call.AuthIndex]++
+		callsMu.Unlock()
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.completed\"}\n\n"})
+	}))
+	defer server.Close()
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	app.inspection.mu.Lock()
+	app.inspection.policy.ModelProbeBatchSize = 2
+	app.inspection.mu.Unlock()
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management/plugins/cpa-account-config-manager/inspection/scan",
+		Headers: http.Header{"Authorization": []string{"Bearer current-management-secret"}},
+	})
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("manual full response = %d %s", response.StatusCode, response.Body)
+	}
+	waitInspectionSweep(t, app.inspection, InspectionSweepStatusCompleted)
+	snapshot := app.inspection.Snapshot()
+	if calls.Load() != 5 || snapshot.ProbeSweepTotal != 5 || snapshot.ProbeSweepCompleted != 5 || snapshot.ProbeSweepRemaining != 0 ||
+		snapshot.ProbeSweepSource != InspectionSweepSourceManual {
+		t.Fatalf("manual full snapshot=%#v calls=%d", snapshot, calls.Load())
+	}
+	callsMu.Lock()
+	for _, entry := range entries {
+		if seen[entry.AuthIndex] != 1 {
+			callsMu.Unlock()
+			t.Fatalf("account %q probe count = %d, all=%#v", entry.AuthIndex, seen[entry.AuthIndex], seen)
+		}
+	}
+	callsMu.Unlock()
+
+	beforeNative := calls.Load()
+	previousRun := snapshot.LastRun.StartedAt
+	response = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management/plugins/cpa-account-config-manager/inspection/scan/native",
+		Headers: http.Header{"Authorization": []string{"Bearer current-management-secret"}},
+	})
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("native response = %d %s", response.StatusCode, response.Body)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		next := app.inspection.Snapshot()
+		if !next.Pending && !next.Running && next.LastRun.StartedAt.After(previousRun) {
+			if next.LastRun.Scanned != 5 || calls.Load() != beforeNative {
+				t.Fatalf("native snapshot=%#v calls before=%d after=%d", next, beforeNative, calls.Load())
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("native inspection did not complete")
+}
+
+func waitInspectionSweep(t *testing.T, engine *InspectionEngine, wantStatus string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := engine.Snapshot()
+		if !snapshot.Pending && !snapshot.Running && snapshot.ProbeSweepStatus == wantStatus {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("inspection sweep did not reach %q: %#v", wantStatus, engine.Snapshot())
+}
+
 func TestInspectionFullProbeSweepUsesExactFinalBatch(t *testing.T) {
 	entries := make([]cpaapi.HostAuthFileEntry, 0, 5)
 	details := make(map[string]cpaapi.HostAuthGetResponse, 5)
@@ -204,8 +385,15 @@ func TestInspectionFullProbeSweepUsesExactFinalBatch(t *testing.T) {
 	}
 	host := &fakeAuthHost{entries: entries, details: details}
 	var calls atomic.Int32
+	var seenMu sync.Mutex
+	seen := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls.Add(1)
+		var call managementAPICallRequest
+		_ = json.NewDecoder(request.Body).Decode(&call)
+		seenMu.Lock()
+		seen[call.AuthIndex]++
+		seenMu.Unlock()
 		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.completed\"}\n\n"})
 	}))
 	defer server.Close()
@@ -223,15 +411,43 @@ func TestInspectionFullProbeSweepUsesExactFinalBatch(t *testing.T) {
 	engine.managementKey = "management-secret"
 
 	engine.scanWithMode(context.Background(), true, false, false)
-	if engine.Snapshot().ProbeSweepRemaining != 3 || calls.Load() != 2 {
+	if engine.Snapshot().ProbeSweepRemaining != 3 || engine.Snapshot().ProbeSweepTotal != 5 || engine.Snapshot().ProbeSweepCompleted != 2 || calls.Load() != 2 {
 		t.Fatalf("first sweep batch remaining=%d calls=%d", engine.Snapshot().ProbeSweepRemaining, calls.Load())
 	}
+	host.mu.Lock()
+	host.entries = append(host.entries, cpaapi.HostAuthFileEntry{AuthIndex: "sweep-new", Name: "sweep-new.json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/sweep-new.json"})
+	host.details["sweep-new"] = cpaapi.HostAuthGetResponse{AuthIndex: "sweep-new", Name: "sweep-new.json", Path: "/auths/sweep-new.json", JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret"}`)}
+	host.mu.Unlock()
 	engine.scanWithMode(context.Background(), false, true, true)
-	if engine.Snapshot().ProbeSweepRemaining != 1 || calls.Load() != 4 {
+	if engine.Snapshot().ProbeSweepRemaining != 1 || engine.Snapshot().ProbeSweepCompleted != 4 || calls.Load() != 4 {
 		t.Fatalf("second sweep batch remaining=%d calls=%d", engine.Snapshot().ProbeSweepRemaining, calls.Load())
 	}
 	engine.scanWithMode(context.Background(), false, true, true)
-	if engine.Snapshot().ProbeSweepRemaining != 0 || calls.Load() != 5 {
+	if engine.Snapshot().ProbeSweepRemaining != 0 || engine.Snapshot().ProbeSweepCompleted != 5 || engine.Snapshot().ProbeSweepStatus != InspectionSweepStatusCompleted || calls.Load() != 5 {
 		t.Fatalf("final sweep batch remaining=%d calls=%d", engine.Snapshot().ProbeSweepRemaining, calls.Load())
+	}
+	seenMu.Lock()
+	for _, entry := range entries {
+		if seen[entry.AuthIndex] != 1 {
+			seenMu.Unlock()
+			t.Fatalf("snapshotted target %q probe count=%d all=%#v", entry.AuthIndex, seen[entry.AuthIndex], seen)
+		}
+	}
+	if seen["sweep-new"] != 0 {
+		seenMu.Unlock()
+		t.Fatalf("account added mid-sweep was probed: %#v", seen)
+	}
+	seenMu.Unlock()
+	engine.mu.Lock()
+	engine.probeSweepSource = InspectionSweepSourceManual
+	engine.lastProbeRunAt = time.Time{}
+	engine.mu.Unlock()
+	engine.scanWithMode(context.Background(), true, false, false)
+	nextSweep := engine.Snapshot()
+	if nextSweep.ProbeSweepTotal != 6 || nextSweep.ProbeSweepCompleted != 2 || nextSweep.ProbeSweepRemaining != 4 ||
+		nextSweep.ProbeSweepSource != InspectionSweepSourceScheduled || calls.Load() != 7 {
+		t.Fatalf("next scheduled sweep total=%d completed=%d remaining=%d source=%q status=%q calls=%d",
+			nextSweep.ProbeSweepTotal, nextSweep.ProbeSweepCompleted, nextSweep.ProbeSweepRemaining,
+			nextSweep.ProbeSweepSource, nextSweep.ProbeSweepStatus, calls.Load())
 	}
 }

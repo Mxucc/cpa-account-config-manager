@@ -6,14 +6,18 @@ import {
   deleteAccount,
   downloadExport,
   executeInspectionAutoDelete,
+  getEffectiveUpdateStatus,
   installPluginUpdate,
   listAccounts,
   listInspectionActions,
   listInspectionResults,
   listOperations,
+  reconcileUpdateStatus,
   saveDefaultPolicy,
   saveInspectionPolicy,
   saveUpdatePolicy,
+  scanFullInspection,
+  scanNativeInspection,
   startImport,
   testAccountModel,
 } from "./client";
@@ -43,6 +47,21 @@ describe("management API client", () => {
     expect(url).toContain("page=2");
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
+  });
+
+  it("uses separate fixed routes for quick native and full server inspection", async () => {
+    setSession("", "management-secret");
+    const snapshot = { policy: {}, running: false, pending: true, last_run: {}, total: 0, action_count: 0 };
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(snapshot));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await scanNativeInspection();
+    await scanFullInspection();
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/inspection/scan/native");
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/inspection\/scan$/);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe("POST");
   });
 
   it("normalizes nullable list payloads from older or malformed backends", async () => {
@@ -361,6 +380,52 @@ describe("management API client", () => {
       status: 409,
       message: "plugin_update_requires_restart",
     });
+  });
+
+  it("reconciles a failed GitHub check with authenticated plugin-store metadata", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.2.3", update_available: false, checking: false, pending: false, error: "release metadata request failed" }))
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.4", installed: true, installed_version: "0.2.3", update_available: true }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getEffectiveUpdateStatus();
+
+    expect(result).toMatchObject({
+      current_version: "0.2.3",
+      latest_version: "0.2.4",
+      update_available: true,
+      release_source: "plugin_store",
+      github_error: "release metadata request failed",
+    });
+    expect(result.error).toBeUndefined();
+    expect(new Headers((fetchMock.mock.calls[1] as [string, RequestInit])[1].headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("uses the store as the source without inventing an update when versions match", () => {
+    const result = reconcileUpdateStatus({
+      policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
+      current_version: "0.2.3", update_available: false, checking: false, pending: false,
+      error: "release metadata request failed",
+    }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "v0.2.3", installed: true, installed_version: "0.2.3", update_available: false }] });
+
+    expect(result).toMatchObject({ latest_version: "0.2.3", update_available: false, release_source: "plugin_store", github_error: "release metadata request failed" });
+    expect(result.error).toBeUndefined();
+  });
+
+  it("keeps the GitHub failure explicit when store metadata is missing or invalid", () => {
+    const status = {
+      policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
+      current_version: "0.2.3", update_available: false, checking: false, pending: false,
+      error: "release metadata request failed",
+    };
+    for (const store of [null, { plugins_enabled: true, plugins: null }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "latest", installed: true, installed_version: "0.2.3", update_available: true }] }]) {
+      const result = reconcileUpdateStatus(status, store);
+      expect(result.release_source).toBe("none");
+      expect(result.error).toBe("release metadata request failed");
+      expect(result.update_available).toBe(false);
+    }
   });
 });
 

@@ -111,6 +111,30 @@ func inspectionProbeEligibleAccounts(accounts []Account, records map[string]insp
 	return eligible
 }
 
+func inspectionProbeEligibleAccountIDs(accounts []Account, records map[string]inspectionRecord, scanManuallyDisabled bool) []string {
+	eligible := inspectionProbeEligibleAccounts(accounts, records, scanManuallyDisabled)
+	sort.SliceStable(eligible, func(left, right int) bool { return eligible[left].ID < eligible[right].ID })
+	ids := make([]string, 0, len(eligible))
+	for _, account := range eligible {
+		ids = append(ids, account.ID)
+	}
+	return ids
+}
+
+func inspectionProbeAccountsForTargets(accounts []Account, targets []string) []Account {
+	byID := make(map[string]Account, len(accounts))
+	for _, account := range accounts {
+		byID[account.ID] = account
+	}
+	out := make([]Account, 0, len(targets))
+	for _, id := range targets {
+		if account, exists := byID[id]; exists {
+			out = append(out, account)
+		}
+	}
+	return out
+}
+
 func inspectionProbeProvider(account Account) string {
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)))
 	switch provider {
@@ -140,14 +164,25 @@ func inspectionProbeModel(account Account, models ModelProbeModels) string {
 	}
 }
 
-func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResult) {
+func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResult, policy InspectionPolicy) {
 	if record == nil || strings.TrimSpace(result.AccountID) == "" {
 		return
 	}
-	record.Probe = inspectionProbeSignal{
+	previous := record.Probe
+	next := inspectionProbeSignal{
 		Status: normalizeModelProbeStatus(result.Status), ReasonCode: safeModelProbeReason(result.ReasonCode),
 		Model: safeModelIdentifier(result.Model), TestedAt: result.TestedAt.UTC(), LatencyMS: maxInt64(0, result.LatencyMS),
 	}
+	window := time.Duration(normalizeInspectionPolicy(policy).PassiveFailureWindowMinutes) * time.Minute
+	if next.ReasonCode == "model_response_ok" || next.Status == "available" {
+		next.ConsecutiveSuccess = boundedCounter(previous.ConsecutiveSuccess + 1)
+	} else if previous.TestedAt.IsZero() || next.TestedAt.Before(previous.TestedAt) || next.TestedAt.Sub(previous.TestedAt) > window ||
+		previous.ReasonCode == "model_response_ok" || previous.ReasonCode != next.ReasonCode {
+		next.ConsecutiveFailures = 1
+	} else {
+		next.ConsecutiveFailures = boundedCounter(previous.ConsecutiveFailures + 1)
+	}
+	record.Probe = next
 	record.Result.ProbeStatus = record.Probe.Status
 	record.Result.ProbeReasonCode = record.Probe.ReasonCode
 	record.Result.ProbeModel = record.Probe.Model

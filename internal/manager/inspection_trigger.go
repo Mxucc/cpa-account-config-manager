@@ -93,17 +93,39 @@ func (e *InspectionEngine) evaluateAnomalyTrigger(
 	return true, inspectionProbeSweepSize(accounts, records, policy.ScanManuallyDisabled)
 }
 
-func (e *InspectionEngine) updateProbeSweep(remaining int, stalled bool) {
+type inspectionSweepProgress struct {
+	Total     int
+	Completed int
+	Remaining int
+	Source    string
+	StartedAt time.Time
+	Targets   []string
+}
+
+func (e *InspectionEngine) updateProbeSweep(progress inspectionSweepProgress, stalled bool) {
 	if e == nil {
 		return
 	}
-	if remaining < 0 || stalled {
-		remaining = 0
+	progress.Total, progress.Completed, progress.Remaining = normalizeInspectionSweepCounts(progress.Total, progress.Completed, progress.Remaining)
+	status := InspectionSweepStatusRunning
+	if stalled {
+		status = InspectionSweepStatusFailed
+	} else if progress.Remaining == 0 {
+		status = InspectionSweepStatusCompleted
 	}
 	e.mu.Lock()
-	e.probeSweepRemaining = remaining
-	if remaining == 0 {
+	e.probeSweepTotal = progress.Total
+	e.probeSweepCompleted = progress.Completed
+	e.probeSweepRemaining = progress.Remaining
+	e.probeSweepSource = normalizeInspectionSweepSource(progress.Source)
+	e.probeSweepStatus = status
+	e.probeSweepStartedAt = progress.StartedAt.UTC()
+	e.probeSweepTargets = sanitizeInspectionSweepTargets(progress.Targets)
+	if progress.Remaining == 0 || stalled {
 		e.pendingProbeSweep = false
+	}
+	if progress.Remaining == 0 {
+		e.probeSweepTargets = nil
 	}
 	e.dirty = true
 	e.generation++
@@ -125,6 +147,7 @@ func (e *InspectionEngine) requestProbeSweep() {
 			e.anomalyTriggerPending = true
 		}
 		e.dirty = true
+		e.probeSweepStatus = InspectionSweepStatusWaitingForAuth
 		e.generation++
 		e.mu.Unlock()
 		e.requestPersist()
@@ -133,6 +156,7 @@ func (e *InspectionEngine) requestProbeSweep() {
 	e.pending = true
 	e.pendingProbe = true
 	e.pendingProbeSweep = true
+	e.probeSweepStatus = InspectionSweepStatusRunning
 	started := e.started
 	e.mu.Unlock()
 	if started {

@@ -32,6 +32,7 @@ type inspectionDecision struct {
 	RecoverAfter        time.Time
 	FailureCount        int
 	HealthyCount        int
+	SignalSource        string
 }
 
 func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEvidence {
@@ -60,7 +61,7 @@ func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEv
 		if status >= 500 {
 			return inspectionEvidence{ReasonCode: "transient_failure", Confidence: InspectionConfidenceLow, StatusCode: status}
 		}
-		return inspectionEvidence{StatusCode: status}
+		return inspectionEvidence{ReasonCode: "unconfirmed_upstream_response", Confidence: InspectionConfidenceLow, StatusCode: status}
 	}
 	if strings.Contains(text, "account_deactivated") {
 		return inspectionEvidence{
@@ -197,7 +198,7 @@ func quotaRecoveryFromHeaders(headers http.Header, now time.Time) time.Time {
 	return latest
 }
 
-func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRecord, now time.Time) {
+func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRecord, policy InspectionPolicy, now time.Time) {
 	if record == nil {
 		return
 	}
@@ -209,16 +210,20 @@ func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRe
 		return
 	}
 	evidence := classifyUsageFailure(usage, now)
-	record.Signal.ConsecutiveFailures = boundedCounter(record.Signal.ConsecutiveFailures + 1)
+	window := time.Duration(normalizeInspectionPolicy(policy).PassiveFailureWindowMinutes) * time.Minute
+	if record.Signal.LastFailureAt.IsZero() || now.Before(record.Signal.LastFailureAt) || now.Sub(record.Signal.LastFailureAt) > window ||
+		record.Signal.ReasonCode != evidence.ReasonCode {
+		record.Signal.ConsecutiveFailures = 1
+	} else {
+		record.Signal.ConsecutiveFailures = boundedCounter(record.Signal.ConsecutiveFailures + 1)
+	}
 	record.Signal.ConsecutiveSuccess = 0
 	record.Signal.LastFailureAt = now
 	record.Signal.StatusCode = evidence.StatusCode
-	if evidence.ReasonCode != "" {
-		record.Signal.ReasonCode = evidence.ReasonCode
-		record.Signal.Confidence = evidence.Confidence
-		record.Signal.AutoDisableEligible = evidence.AutoDisableEligible
-		record.Signal.RecoverAfter = evidence.RecoverAfter
-	}
+	record.Signal.ReasonCode = evidence.ReasonCode
+	record.Signal.Confidence = evidence.Confidence
+	record.Signal.AutoDisableEligible = evidence.AutoDisableEligible
+	record.Signal.RecoverAfter = evidence.RecoverAfter
 }
 
 func decideInspection(account Account, record inspectionRecord, now time.Time) inspectionDecision {
@@ -231,6 +236,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			Recommendation:      InspectionRecommendationDisable,
 			AutoDisableEligible: true,
 			RecoverAfter:        recoverAfter,
+			SignalSource:        InspectionSignalNative,
 		}
 	}
 	if account.Disabled && !record.Result.OwnedDisable {
@@ -239,6 +245,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			ReasonCode:     "manual_disabled",
 			Confidence:     InspectionConfidenceHigh,
 			Recommendation: InspectionRecommendationKeep,
+			SignalSource:   InspectionSignalNative,
 		}
 	}
 	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
@@ -259,6 +266,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			Confidence:          InspectionConfidenceHigh,
 			Recommendation:      InspectionRecommendationReauth,
 			AutoDisableEligible: true,
+			SignalSource:        InspectionSignalNative,
 		}
 	case "unauthorized":
 		return inspectionDecision{
@@ -266,6 +274,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			ReasonCode:     "authentication_review",
 			Confidence:     InspectionConfidenceMedium,
 			Recommendation: InspectionRecommendationReview,
+			SignalSource:   InspectionSignalNative,
 		}
 	case "payment_required":
 		return inspectionDecision{
@@ -273,6 +282,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			ReasonCode:     "billing_review",
 			Confidence:     InspectionConfidenceMedium,
 			Recommendation: InspectionRecommendationReview,
+			SignalSource:   InspectionSignalNative,
 		}
 	case "quota exhausted":
 		return inspectionDecision{
@@ -281,6 +291,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			Confidence:          InspectionConfidenceHigh,
 			Recommendation:      InspectionRecommendationDisable,
 			AutoDisableEligible: true,
+			SignalSource:        InspectionSignalNative,
 		}
 	}
 	if account.Unavailable || status == "transient upstream error" || status == "upstream temporarily unavailable" || status == "cloudflare challenge" {
@@ -289,6 +300,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			ReasonCode:     "native_unavailable",
 			Confidence:     InspectionConfidenceMedium,
 			Recommendation: InspectionRecommendationReview,
+			SignalSource:   InspectionSignalNative,
 		}
 	}
 	if !record.Signal.LastSuccessAt.IsZero() && record.Signal.LastSuccessAt.After(record.Signal.LastFailureAt) {
@@ -298,6 +310,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			Confidence:     InspectionConfidenceHigh,
 			Recommendation: InspectionRecommendationKeep,
 			HealthyCount:   boundedCounter(record.Signal.ConsecutiveSuccess),
+			SignalSource:   InspectionSignalPassive,
 		}
 	}
 	if recentAccountSuccess(account) || strings.EqualFold(strings.TrimSpace(account.Status), "ready") || strings.EqualFold(strings.TrimSpace(account.Status), "active") {
@@ -306,6 +319,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			ReasonCode:     "healthy_recent_success",
 			Confidence:     InspectionConfidenceHigh,
 			Recommendation: InspectionRecommendationKeep,
+			SignalSource:   InspectionSignalNative,
 		}
 	}
 	return inspectionDecision{
@@ -313,6 +327,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 		ReasonCode:     "no_recent_evidence",
 		Confidence:     InspectionConfidenceLow,
 		Recommendation: InspectionRecommendationReview,
+		SignalSource:   InspectionSignalNative,
 	}
 }
 
@@ -325,22 +340,23 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 		return inspectionDecision{
 			Health: InspectionHealthHealthy, ReasonCode: probe.ReasonCode,
 			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationKeep,
+			HealthyCount: probe.ConsecutiveSuccess, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "authentication_failed":
 		return inspectionDecision{
 			Health: InspectionHealthInvalidCredentials, ReasonCode: probe.ReasonCode,
 			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
-			AutoDisableEligible: true,
+			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "quota_limited":
 		return inspectionDecision{
 			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationReview, FailureCount: 1,
+			Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationReview, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "model_not_found", "request_timeout", "upstream_unavailable", "invalid_response":
 		return inspectionDecision{
 			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview, FailureCount: 1,
+			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	default:
 		return inspectionDecision{}, false
@@ -367,6 +383,7 @@ func decisionFromSignal(signal inspectionSignal) inspectionDecision {
 		AutoDisableEligible: signal.AutoDisableEligible,
 		RecoverAfter:        signal.RecoverAfter,
 		FailureCount:        boundedCounter(signal.ConsecutiveFailures),
+		SignalSource:        InspectionSignalPassive,
 	}
 	switch decision.ReasonCode {
 	case "account_deactivated", "workspace_deactivated":

@@ -8,6 +8,7 @@ import {
   ExternalLink,
   LoaderCircle,
   RefreshCw,
+  ScanSearch,
   Search,
   Settings2,
   ShieldAlert,
@@ -66,7 +67,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
+  const [scanningMode, setScanningMode] = useState<"native" | "full" | "">("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -92,13 +93,13 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
       const [nextSnapshot, nextActions, nextUpdates] = await Promise.all([
         api.getInspection(),
         api.listInspectionActions(50),
-        api.getUpdateStatus(),
+        api.getEffectiveUpdateStatus(),
       ]);
       setSnapshot(nextSnapshot);
       setActions(nextActions);
       setUpdates(nextUpdates);
       if (nextUpdates.policy.check_enabled && !nextUpdates.checked_at && !nextUpdates.checking && !nextUpdates.pending) {
-        setUpdates(await api.checkForUpdates());
+        setUpdates(await api.getEffectiveUpdateStatus(true));
       }
     } catch (caught) {
       handleError(caught);
@@ -197,15 +198,15 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     void installUpdate(true);
   }, [installUpdate, updates]);
 
-  const runScan = async () => {
-    setScanning(true);
+  const runScan = async (mode: "native" | "full") => {
+    setScanningMode(mode);
     setError("");
     try {
-      setSnapshot(await api.scanInspection());
+      setSnapshot(mode === "native" ? await api.scanNativeInspection() : await api.scanFullInspection());
     } catch (caught) {
       handleError(caught);
     } finally {
-      setScanning(false);
+      setScanningMode("");
     }
   };
 
@@ -213,7 +214,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     setUpdateChecking(true);
     setError("");
     try {
-      setUpdates(await api.checkForUpdates());
+      setUpdates(await api.getEffectiveUpdateStatus(true));
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -239,6 +240,11 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   };
 
   const lastRun = snapshot?.last_run;
+  const sweepTotal = snapshot?.probe_sweep_total ?? 0;
+  const sweepCompleted = snapshot?.probe_sweep_completed ?? 0;
+  const sweepRemaining = snapshot?.probe_sweep_remaining ?? 0;
+  const sweepStatus = snapshot?.probe_sweep_status;
+  const inspectionBusy = Boolean(snapshot?.running || snapshot?.pending || scanningMode);
   return (
     <section className="automation-panel" aria-label={tx("ui.inspection_and_automation")}>
       <header className="automation-toolbar">
@@ -251,8 +257,11 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           <div><strong>{tx("ui.account_health_inspection")}</strong><span>{snapshot?.running || snapshot?.pending ? tx("ui.reading_cpa_status") : tx("ui.last_completed_time", { time: formatDateTime(lastRun?.finished_at) })}</span></div>
         </div>
         <div className="automation-toolbar-actions">
-          <button className="button" type="button" disabled={scanning || snapshot?.running || snapshot?.pending} onClick={() => void runScan()}>
-            {scanning || snapshot?.running || snapshot?.pending ? <LoaderCircle className="spin" size={16} /> : <Activity size={16} />}{tx("ui.inspect_now")}
+          <button className="button inspection-mode-button" type="button" disabled={inspectionBusy} onClick={() => void runScan("native")}>
+            {scanningMode === "native" ? <LoaderCircle className="spin" size={16} /> : <Activity size={16} />}{tx("ui.quick_native_inspection")}
+          </button>
+          <button className="button button-primary inspection-mode-button" type="button" disabled={inspectionBusy} onClick={() => void runScan("full")}>
+            {scanningMode === "full" ? <LoaderCircle className="spin" size={16} /> : <ScanSearch size={16} />}{tx("ui.full_server_inspection")}
           </button>
           <IconButton label={tx("ui.refresh_inspection")} disabled={loading} onClick={() => void Promise.all([refreshOverview(), refreshResults()])}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton label={tx("ui.inspection_and_automation_settings")} disabled={!snapshot || !updates} onClick={() => { setSettingsError(""); setSettingsOpen(true); }}><Settings2 size={17} /></IconButton>
@@ -272,6 +281,17 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error || operatorMessage(snapshot?.storage_error || lastRun?.error, locale)}</span><IconButton label={tx("ui.dismiss_inspection_message")} onClick={() => setError("")}><X size={14} /></IconButton></div>
       ) : null}
 
+      {snapshot?.probe_sweep_source && sweepStatus ? (
+        <div className={`inspection-sweep-progress sweep-${sweepStatus}`} role="status">
+          <div>
+            <strong>{tx("ui.full_server_inspection")}</strong>
+            <span>{sweepSourceLabel(snapshot.probe_sweep_source, locale)} · {sweepStatusLabel(sweepStatus, locale)}</span>
+          </div>
+          <progress max={Math.max(1, sweepTotal)} value={Math.min(sweepCompleted, Math.max(1, sweepTotal))} aria-label={tx("ui.full_server_inspection_progress")} />
+          <code>{tx("ui.completed_count_of_total_remaining_remaining", { completed: sweepCompleted, total: sweepTotal, remaining: sweepRemaining })}</code>
+        </div>
+      ) : null}
+
       <div className="inspection-metrics" aria-label={tx("ui.inspection_metrics")}>
         <InspectionMetric label={tx("ui.accounts")} value={lastRun?.scanned ?? snapshot?.total ?? 0} icon={<ShieldCheck size={14} />} />
         <InspectionMetric label={tx("ui.healthy")} value={lastRun?.healthy ?? 0} tone="healthy" />
@@ -288,7 +308,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           tone={(snapshot?.anomaly_percent ?? 0) >= (snapshot?.policy.anomaly_threshold_percent ?? 101) ? "warning" : ""}
         />
         <InspectionMetric label={tx("ui.abnormal_sample")} value={`${snapshot?.anomaly_count ?? 0}/${snapshot?.anomaly_eligible ?? 0}`} />
-        <InspectionMetric label={tx("ui.active_sweep_remaining")} value={snapshot?.probe_sweep_remaining ?? 0} tone={(snapshot?.probe_sweep_remaining ?? 0) > 0 ? "warning" : ""} />
+        <InspectionMetric label={tx("ui.full_server_inspection_progress")} value={sweepTotal > 0 ? `${sweepCompleted}/${sweepTotal}` : "-"} detail={sweepTotal > 0 ? tx("ui.remaining_count", { count: sweepRemaining }) : undefined} tone={sweepRemaining > 0 ? "warning" : ""} />
       </div>
 
       <section className="inspection-results">
@@ -333,7 +353,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
             <div><span>{tx("ui.current_version")}</span><code>{updates?.current_version || "-"}</code></div>
             <div><span>{tx("ui.latest_version")}</span><code>{updates?.latest_version || "-"}</code></div>
             <div><span>{tx("ui.last_checked")}</span><time>{formatDateTime(updates?.checked_at)}</time></div>
-            <div><span>{tx("ui.check_status")}</span><strong>{updates?.error ? operatorMessage(updates.error, locale) : tx(updates?.checking || updates?.pending ? "ui.checking" : updates?.update_available ? "ui.update_available" : "ui.up_to_date")}</strong></div>
+            <div><span>{tx("ui.check_status")}</span><strong>{updates?.release_source === "plugin_store" && updates.github_error ? tx("ui.github_metadata_unavailable_using_plugin_store") : updates?.error ? operatorMessage(updates.error, locale) : tx(updates?.checking || updates?.pending ? "ui.checking" : updates?.update_available ? "ui.update_available" : "ui.up_to_date")}</strong></div>
           </div>
           <button className="button button-quiet" type="button" disabled={updateChecking || updates?.checking || updates?.pending} onClick={() => void checkUpdates()}>
             {updateChecking || updates?.checking || updates?.pending ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{tx("ui.check_for_updates")}
@@ -366,11 +386,11 @@ function InspectionRow({ result }: { result: InspectionResult }) {
       <td><span className={`health-badge health-${result.health}`}><span />{healthLabel(result.health, locale)}</span></td>
       <td><div className="inspection-account"><strong>{result.name || result.id}</strong><code>{result.id}</code></div></td>
       <td><div className="inspection-type"><strong>{result.provider || tx("ui.unknown")}</strong><span>{result.plan_type || result.type || "-"}</span></div></td>
-      <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{confidenceLabel(result.confidence, locale)}</span></div></td>
+      <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{confidenceLabel(result.confidence, locale)}{result.signal_source ? ` · ${signalSourceLabel(result.signal_source, locale)}` : ""}</span></div></td>
       <td><div className={`inspection-probe probe-${result.probe_status || "none"}`}><strong>{result.probe_reason_code ? reasonLabel(result.probe_reason_code, locale) : tx("ui.no_probe_result")}</strong><span>{result.probe_model || "-"}{result.probe_latency_ms ? ` · ${result.probe_latency_ms} ms` : ""}</span>{result.probe_tested_at ? <time title={tx("ui.last_model_probe_time", { time: formatDateTime(result.probe_tested_at) })}>{formatDateTime(result.probe_tested_at)}</time> : null}</div></td>
       <td><div className="inspection-streak"><span className="danger">{tx("ui.failures_count", { count: result.failure_streak })}</span><span className="success">{tx("ui.recovery_count", { count: result.healthy_streak })}</span></div></td>
       <td><span className={`recommendation recommendation-${result.recommendation}`}>{recommendationLabel(result.recommendation, locale)}</span></td>
-      <td><div className="inspection-action-state"><strong>{actionLabel(result.auto_action, locale)}</strong><span>{actionStatusLabel(result.auto_action_status, result.owned_disable, locale)}</span></div></td>
+      <td><div className="inspection-action-state"><strong>{result.circuit_open ? tx("ui.passive_temporary_circuit") : actionLabel(result.auto_action, locale)}</strong><span>{result.circuit_open && result.recover_after ? tx("ui.circuit_recovers_at_time", { time: formatDateTime(result.recover_after) }) : actionStatusLabel(result.auto_action_status, result.owned_disable, locale)}</span></div></td>
       <td><time>{formatDateTime(result.last_checked_at)}</time></td>
     </tr>
   );
@@ -407,8 +427,21 @@ function reasonLabel(value: string, locale: Locale): string {
     quota_limited: "ui.upstream_quota_or_rate_limited_2", model_not_found: "ui.model_unavailable_or_missing",
     request_timeout: "ui.model_test_timed_out", upstream_unavailable: "ui.upstream_service_unavailable",
     invalid_response: "ui.could_not_validate_upstream_response", unsupported_provider: "ui.provider_unsupported",
+    unconfirmed_upstream_response: "ui.could_not_validate_upstream_response", passive_circuit_open: "ui.passive_temporary_circuit",
   } satisfies Record<string, UIMessageKey>)[value];
   return source ? translateUI(locale, source) : value;
+}
+
+function signalSourceLabel(value: NonNullable<InspectionResult["signal_source"]>, locale: Locale): string {
+  return translateUI(locale, ({ native: "ui.cpa_native_evidence", passive: "ui.passive_request_evidence", active_probe: "ui.active_model_probe_evidence" } satisfies Record<NonNullable<InspectionResult["signal_source"]>, UIMessageKey>)[value]);
+}
+
+function sweepSourceLabel(value: NonNullable<InspectionSnapshot["probe_sweep_source"]>, locale: Locale): string {
+  return translateUI(locale, ({ manual: "ui.manual_full_inspection", scheduled: "ui.scheduled_full_inspection", anomaly: "ui.anomaly_triggered_inspection" } satisfies Record<NonNullable<InspectionSnapshot["probe_sweep_source"]>, UIMessageKey>)[value]);
+}
+
+function sweepStatusLabel(value: NonNullable<InspectionSnapshot["probe_sweep_status"]>, locale: Locale): string {
+  return translateUI(locale, ({ running: "ui.inspection_running", completed: "ui.inspection_completed", failed: "ui.inspection_failed", waiting_for_auth: "ui.inspection_waiting_for_auth" } satisfies Record<NonNullable<InspectionSnapshot["probe_sweep_status"]>, UIMessageKey>)[value]);
 }
 
 function confidenceLabel(value: string, locale: Locale): string {

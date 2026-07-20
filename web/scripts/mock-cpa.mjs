@@ -39,8 +39,12 @@ let inspectionPolicy = {
   },
   failure_threshold: 3,
   recovery_threshold: 2,
-  auto_disable: false,
-  auto_enable: false,
+  passive_circuit_enabled: true,
+  passive_failure_threshold: 5,
+  passive_failure_window_minutes: 180,
+  passive_circuit_minutes: 15,
+  auto_disable: true,
+  auto_enable: true,
   auto_delete: false,
   auto_delete_invalid_credentials: false,
   delete_grace_hours: 168,
@@ -144,6 +148,22 @@ function mockAutomation(index, disabled) {
     auto_action: "disable",
     auto_action_status: "succeeded",
   };
+  if (index === 35) return {
+    ...base,
+    health: "unavailable",
+    reason_code: "invalid_response",
+    recommendation: "disable",
+    disable_reason: "passive_circuit_open",
+    disabled_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+    recover_after: new Date(Date.now() + 11 * 60_000).toISOString(),
+    passive_circuit_enabled: true,
+    passive_failure_threshold: 5,
+    passive_failure_streak: 5,
+    circuit_open: true,
+    circuit_reason_code: "invalid_response",
+    auto_action: "disable",
+    auto_action_status: "succeeded",
+  };
   return {
     ...base,
     health: "disabled",
@@ -240,27 +260,32 @@ function mockInspectionResults() {
   ];
   return accounts.slice(0, 12).map((account, index) => {
     const state = states[index] || ["healthy", "healthy_recent_success", "high", "keep", false];
+    const circuit = index === 4;
     return {
       id: account.id,
       name: account.name,
       provider: account.provider,
       type: account.account_type,
       plan_type: account.plan_type,
-      health: state[0],
-      reason_code: state[1],
+      health: circuit ? "unavailable" : state[0],
+      reason_code: circuit ? "invalid_response" : state[1],
       confidence: state[2],
-      recommendation: state[3],
-      disabled: account.disabled,
+      recommendation: circuit ? "disable" : state[3],
+      disabled: circuit || account.disabled,
       editable: account.editable,
       auto_disable_eligible: state[4],
-      owned_disable: false,
-      failure_streak: state[4] ? Math.min(5, index + 1) : 0,
+      owned_disable: circuit,
+      failure_streak: circuit ? 5 : state[4] ? Math.min(5, index + 1) : 0,
       healthy_streak: state[0] === "healthy" ? index - 3 : 0,
       probe_status: index < 5 ? "unavailable" : "available",
       probe_reason_code: index < 2 ? "authentication_failed" : index === 2 ? "quota_limited" : index < 5 ? "upstream_unavailable" : "model_response_ok",
       probe_model: account.provider === "gemini" ? "gemini-2.0-flash" : "gpt-5.4",
       probe_tested_at: checkedAt,
       probe_latency_ms: 180 + index * 17,
+      signal_source: index < 5 ? "active_probe" : "native",
+      circuit_open: circuit,
+      circuit_reason_code: circuit ? "invalid_response" : undefined,
+      recover_after: circuit ? new Date(Date.now() + 11 * 60_000).toISOString() : undefined,
       last_checked_at: checkedAt,
     };
   });
@@ -297,6 +322,11 @@ function mockInspectionSnapshot(pending = false) {
     last_native_run_at: new Date().toISOString(),
     last_probe_run_at: new Date(Date.now() - 60_000).toISOString(),
     probe_sweep_remaining: 7,
+    probe_sweep_total: 12,
+    probe_sweep_completed: 5,
+    probe_sweep_source: "manual",
+    probe_sweep_status: "running",
+    probe_sweep_started_at: new Date(Date.now() - 35_000).toISOString(),
     anomaly_eligible: 10,
     anomaly_count: 5,
     anomaly_percent: 50,
@@ -309,12 +339,11 @@ function mockUpdateSnapshot(pending = false) {
   return {
     policy: updatePolicy,
     current_version: "0.2.0",
-    latest_version: "0.3.0",
-    update_available: true,
-    release_url: "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.3.0",
+    update_available: false,
     checking: false,
     pending,
     checked_at: new Date().toISOString(),
+    error: "release metadata request failed",
   };
 }
 
@@ -1195,6 +1224,9 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname.endsWith("/inspection/scan")) {
     return json(response, 202, mockInspectionSnapshot(true));
   }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/scan/native")) {
+    return json(response, 202, mockInspectionSnapshot(true));
+  }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/auto-delete")) {
     return json(response, 200, { attempted: 0, succeeded: 0, failed: 0, skipped: 0 });
   }
@@ -1217,6 +1249,10 @@ const server = http.createServer(async (request, response) => {
       },
       failure_threshold: Math.min(10, Math.max(2, Number(body.failure_threshold) || 3)),
       recovery_threshold: Math.min(10, Math.max(1, Number(body.recovery_threshold) || 2)),
+      passive_circuit_enabled: Boolean(body.passive_circuit_enabled),
+      passive_failure_threshold: Math.min(100, Math.max(2, Number(body.passive_failure_threshold) || 5)),
+      passive_failure_window_minutes: Math.min(1440, Math.max(1, Number(body.passive_failure_window_minutes) || 180)),
+      passive_circuit_minutes: Math.min(1440, Math.max(1, Number(body.passive_circuit_minutes) || 15)),
       auto_disable: Boolean(body.auto_disable),
       auto_enable: Boolean(body.auto_enable),
       auto_delete: Boolean(body.auto_delete),

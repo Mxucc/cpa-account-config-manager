@@ -57,6 +57,11 @@ export interface AccountAutomationSummary {
   failure_streak: number;
   recovery_threshold: number;
   healthy_streak: number;
+  passive_circuit_enabled?: boolean;
+  passive_failure_threshold?: number;
+  passive_failure_streak?: number;
+  circuit_open?: boolean;
+  circuit_reason_code?: string;
 }
 
 export interface RecentRequestEntry {
@@ -434,6 +439,10 @@ export interface InspectionPolicy {
   };
   failure_threshold: number;
   recovery_threshold: number;
+  passive_circuit_enabled?: boolean;
+  passive_failure_threshold?: number;
+  passive_failure_window_minutes?: number;
+  passive_circuit_minutes?: number;
   auto_disable: boolean;
   auto_enable: boolean;
   auto_delete: boolean;
@@ -478,6 +487,11 @@ export interface InspectionSnapshot {
   last_native_run_at?: string;
   last_probe_run_at?: string;
   probe_sweep_remaining: number;
+  probe_sweep_total?: number;
+  probe_sweep_completed?: number;
+  probe_sweep_source?: "manual" | "scheduled" | "anomaly";
+  probe_sweep_status?: "running" | "completed" | "failed" | "waiting_for_auth";
+  probe_sweep_started_at?: string;
   anomaly_eligible: number;
   anomaly_count: number;
   anomaly_percent: number;
@@ -515,6 +529,9 @@ export interface InspectionResult {
   probe_tested_at?: string;
   probe_latency_ms?: number;
   auto_action_status?: "pending" | "succeeded" | "failed" | "skipped";
+  signal_source?: "native" | "passive" | "active_probe";
+  circuit_open?: boolean;
+  circuit_reason_code?: string;
 }
 
 export interface InspectionResultList {
@@ -560,6 +577,9 @@ export interface UpdateSnapshot {
   pending: boolean;
   checked_at?: string;
   error?: string;
+  release_source?: "github" | "plugin_store" | "none";
+  github_error?: string;
+  store_error?: string;
 }
 
 export interface PluginStoreEntry {
@@ -572,7 +592,7 @@ export interface PluginStoreEntry {
 
 export interface PluginStoreResponse {
   plugins_enabled: boolean;
-  plugins: PluginStoreEntry[];
+  plugins: PluginStoreEntry[] | null;
 }
 
 export interface PluginInstallResult {

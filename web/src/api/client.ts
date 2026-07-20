@@ -103,6 +103,10 @@ async function managementRequest<T>(path: string, init: RequestInit = {}): Promi
   return (await response.json()) as T;
 }
 
+function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function filtersQuery(filters: AccountFilters): URLSearchParams {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
@@ -125,7 +129,8 @@ export async function listAccounts(
   const query = filtersQuery(filters);
   query.set("page", String(page));
   query.set("page_size", String(pageSize));
-  return request<AccountListResponse>("/accounts", {}, query);
+  const response = await request<AccountListResponse>("/accounts", {}, query);
+  return { ...response, accounts: arrayOrEmpty(response.accounts) };
 }
 
 export async function testAccountModel(accountID: string, model: string): Promise<ModelTestResult> {
@@ -211,13 +216,14 @@ export async function listInspectionResults(page: number, pageSize: number, heal
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (health) query.set("health", health);
   if (search) query.set("search", search);
-  return request<InspectionResultList>("/inspection/results", {}, query);
+  const response = await request<InspectionResultList>("/inspection/results", {}, query);
+  return { ...response, results: arrayOrEmpty(response.results) };
 }
 
 export async function listInspectionActions(limit = 50): Promise<InspectionAction[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   const response = await request<{ actions: InspectionAction[] }>("/inspection/actions", {}, query);
-  return response.actions;
+  return arrayOrEmpty(response.actions);
 }
 
 export async function executeInspectionAutoDelete(): Promise<InspectionDeleteRun> {
@@ -274,7 +280,8 @@ export async function listOperations(page: number, pageSize: number, filters: Op
   if (filters.status) query.set("status", filters.status);
   if (filters.source) query.set("source", filters.source);
   if (filters.search) query.set("search", filters.search);
-  return request<OperationListResponse>("/operations", {}, query);
+  const response = await request<OperationListResponse>("/operations", {}, query);
+  return { ...response, operations: arrayOrEmpty(response.operations) };
 }
 
 export async function clearOperations(): Promise<{ operation: OperationEntry; retained: number }> {

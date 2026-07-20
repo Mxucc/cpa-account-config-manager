@@ -74,6 +74,23 @@ func (f *fakeAuthHost) SaveAuth(_ context.Context, name string, rawJSON json.Raw
 	return cpaapi.HostAuthSaveResponse{Name: name, Path: "/auths/" + name}, nil
 }
 
+func TestAccountServiceListReturnsEmptyJSONArray(t *testing.T) {
+	response, errList := NewAccountService(&fakeAuthHost{}).List(context.Background(), ListQuery{Page: 1, PageSize: 50})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if response.Accounts == nil {
+		t.Fatal("Accounts is nil, want an empty JSON array")
+	}
+	encoded, errMarshal := json.Marshal(response)
+	if errMarshal != nil {
+		t.Fatalf("json.Marshal() error = %v", errMarshal)
+	}
+	if !bytes.Contains(encoded, []byte(`"accounts":[]`)) {
+		t.Fatalf("encoded response = %s, want accounts array", encoded)
+	}
+}
+
 func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{

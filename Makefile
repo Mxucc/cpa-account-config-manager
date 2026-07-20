@@ -1,7 +1,7 @@
 PLUGIN_ID := cpa-account-config-manager
 DIST_DIR := $(CURDIR)/dist
 WEB_DIR := $(CURDIR)/web
-VERSION ?= 0.2.1
+VERSION ?= 0.2.2
 REPOSITORY ?=
 
 PLUGIN_LDFLAGS := -X cpa-account-config-manager/internal/manager.PluginVersion=$(VERSION)

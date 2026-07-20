@@ -116,7 +116,7 @@ func (j *OperationJournal) Upsert(eventID string, entry OperationEntry) Operatio
 func (j *OperationJournal) List(query OperationQuery) OperationListResponse {
 	query = normalizeOperationQuery(query)
 	if j == nil {
-		return OperationListResponse{Page: query.Page, PageSize: query.PageSize}
+		return OperationListResponse{Operations: []OperationEntry{}, Page: query.Page, PageSize: query.PageSize}
 	}
 	j.mu.RLock()
 	operations := cloneOperationEntries(j.operations)
@@ -382,7 +382,7 @@ func cloneOperationEntry(entry OperationEntry) OperationEntry {
 }
 
 func cloneOperationEntries(entries []OperationEntry) []OperationEntry {
-	return append([]OperationEntry(nil), entries...)
+	return append([]OperationEntry{}, entries...)
 }
 
 func operationEntryEqual(left, right OperationEntry) bool {

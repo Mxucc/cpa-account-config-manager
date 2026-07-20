@@ -8,6 +8,9 @@ import {
   executeInspectionAutoDelete,
   installPluginUpdate,
   listAccounts,
+  listInspectionActions,
+  listInspectionResults,
+  listOperations,
   saveDefaultPolicy,
   saveInspectionPolicy,
   saveUpdatePolicy,
@@ -40,6 +43,28 @@ describe("management API client", () => {
     expect(url).toContain("page=2");
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
+  });
+
+  it("normalizes nullable list payloads from older or malformed backends", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ accounts: null, total: 0, page: 1, page_size: 50, pages: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ results: null, total: 0, page: 1, page_size: 50, pages: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ actions: null }))
+      .mockResolvedValueOnce(jsonResponse({
+        operations: null,
+        summary: { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 },
+        total: 0,
+        page: 1,
+        page_size: 50,
+        pages: 0,
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listAccounts(1, 50, {})).resolves.toMatchObject({ accounts: [] });
+    await expect(listInspectionResults(1, 50)).resolves.toMatchObject({ results: [] });
+    await expect(listInspectionActions()).resolves.toEqual([]);
+    await expect(listOperations(1, 50)).resolves.toMatchObject({ operations: [] });
   });
 
   it("sends selected scope and patch values only in the authenticated request", async () => {

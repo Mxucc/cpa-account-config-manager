@@ -15,6 +15,17 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+func TestInspectionEmptyCollectionsUseJSONArrays(t *testing.T) {
+	engine := &InspectionEngine{}
+	results := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50})
+	if results.Results == nil {
+		t.Fatal("Results is nil, want an empty JSON array")
+	}
+	if actions := engine.Actions(50); actions == nil {
+		t.Fatal("Actions is nil, want an empty JSON array")
+	}
+}
+
 func TestClassifyUsageFailureRequiresCredentialSemantics(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 8, 0, 0, 0, time.UTC)
 	tests := []struct {

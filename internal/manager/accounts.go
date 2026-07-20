@@ -73,7 +73,7 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 	if end > total {
 		end = total
 	}
-	pageAccounts := append([]Account(nil), accounts[start:end]...)
+	pageAccounts := append([]Account{}, accounts[start:end]...)
 	s.enrichAccountDetails(ctx, pageAccounts)
 
 	pages := 0

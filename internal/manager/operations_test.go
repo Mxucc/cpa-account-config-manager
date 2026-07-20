@@ -15,6 +15,16 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+func TestOperationJournalEmptyListUsesJSONArray(t *testing.T) {
+	var journal *OperationJournal
+	if response := journal.List(OperationQuery{Page: 1, PageSize: 50}); response.Operations == nil {
+		t.Fatal("nil journal Operations is nil, want an empty JSON array")
+	}
+	if response := (&OperationJournal{}).List(OperationQuery{Page: 1, PageSize: 50}); response.Operations == nil {
+		t.Fatal("empty journal Operations is nil, want an empty JSON array")
+	}
+}
+
 func TestOperationJournalPersistsFiltersUpsertsAndBoundsEntries(t *testing.T) {
 	dataDir := t.TempDir()
 	journal := NewOperationJournal()

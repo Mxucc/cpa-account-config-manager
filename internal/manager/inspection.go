@@ -257,7 +257,7 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 		pages = (total + query.PageSize - 1) / query.PageSize
 	}
 	return InspectionResultList{
-		Results:  append([]InspectionResult(nil), results[start:end]...),
+		Results:  append([]InspectionResult{}, results[start:end]...),
 		Total:    total,
 		Page:     query.Page,
 		PageSize: query.PageSize,
@@ -323,7 +323,7 @@ func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[st
 
 func (e *InspectionEngine) Actions(limit int) []InspectionAction {
 	if e == nil {
-		return nil
+		return []InspectionAction{}
 	}
 	if limit <= 0 || limit > maxInspectionActions {
 		limit = 50
@@ -333,7 +333,7 @@ func (e *InspectionEngine) Actions(limit int) []InspectionAction {
 	if start < 0 {
 		start = 0
 	}
-	actions := append([]InspectionAction(nil), e.actions[start:]...)
+	actions := append([]InspectionAction{}, e.actions[start:]...)
 	e.mu.RUnlock()
 	for left, right := 0, len(actions)-1; left < right; left, right = left+1, right-1 {
 		actions[left], actions[right] = actions[right], actions[left]

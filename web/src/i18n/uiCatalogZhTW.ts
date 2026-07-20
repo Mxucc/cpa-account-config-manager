@@ -158,8 +158,6 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.this_permanently_deletes_the_cpa_auth_file": "將永久刪除 CPA Auth 檔案",
   "ui.the_file_is_revalidated_before_deletion": "刪除前會再次檢查檔案在預覽後是否有變更。",
   "ui.validating_deletion_target": "正在驗證刪除目標",
-  "ui.enter_the_filename_to_confirm": "輸入檔名以確認",
-  "ui.confirm_deletion_filename": "確認刪除檔名",
   "ui.download_account_credentials": "下載帳號憑證",
   "ui.download_format": "下載 {format}",
   "ui.scope": "範圍",

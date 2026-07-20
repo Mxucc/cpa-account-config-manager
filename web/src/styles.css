@@ -344,9 +344,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .delete-account-summary dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; }
 .delete-account-summary code { font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: 9px; }
 .delete-preview-loading { min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 10px; }
-.delete-confirmation { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; color: var(--muted); font-size: 9px; font-weight: 700; }
-.delete-confirmation code { max-width: 300px; overflow: hidden; color: var(--danger); text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 9px; }
-.delete-confirmation input { grid-column: 1 / -1; width: 100%; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: 10px; }
 
 .batch-editor { display: grid; gap: 8px; }
 .edit-row { min-height: 52px; display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); opacity: 0.72; }
@@ -858,7 +855,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .secret-input, .number-suffix { min-height: 42px; border-radius: var(--radius-md); border-color: var(--border-primary); background: var(--bg-secondary); }
 .secret-input input, .number-suffix input[type="number"] { height: 40px; background: transparent; }
-.delete-confirmation input, .policy-row input[type="number"] { height: 42px; border-radius: var(--radius-md); background: var(--bg-secondary); }
+.policy-row input[type="number"] { height: 42px; border-radius: var(--radius-md); background: var(--bg-secondary); }
 .edit-row, .policy-row, .warning-list div, .preview-start-error, .force-warning, .import-error, .import-result-banner, .delete-warning { border-radius: var(--radius-md); }
 .policy-metrics, .preview-metrics, .preview-targets, .import-metrics, .import-records, .import-result-list, .export-summary, .export-format-options { border-radius: var(--radius-md); }
 .field-chip, .force-policy-values > span, .detail-chips code { border-radius: 6px; }
@@ -1045,8 +1042,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .auth-dialog { grid-template-columns: 44px minmax(0, 1fr); gap: 16px 12px; padding: 20px; }
   .auth-mark { width: 44px; height: 44px; }
   .account-details-heading { align-items: flex-start; }
-  .delete-confirmation { grid-template-columns: 1fr; }
-  .delete-confirmation code { max-width: 100%; text-align: left; }
   .import-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .import-metric { border-bottom: 1px solid var(--line); }
   .import-metric:nth-child(2) { border-right: none; }

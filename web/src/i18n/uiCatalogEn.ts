@@ -156,8 +156,6 @@ export const enUI = {
   "ui.this_permanently_deletes_the_cpa_auth_file": "This permanently deletes the CPA Auth file",
   "ui.the_file_is_revalidated_before_deletion": "The file is revalidated before deletion.",
   "ui.validating_deletion_target": "Validating deletion target",
-  "ui.enter_the_filename_to_confirm": "Enter the filename to confirm",
-  "ui.confirm_deletion_filename": "Confirm deletion filename",
   "ui.download_account_credentials": "Download account credentials",
   "ui.download_format": "Download {format}",
   "ui.scope": "Scope",

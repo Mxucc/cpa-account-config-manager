@@ -158,8 +158,6 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.this_permanently_deletes_the_cpa_auth_file": "Файл авторизации CPA будет удалён безвозвратно",
   "ui.the_file_is_revalidated_before_deletion": "Перед удалением файл будет повторно проверен на изменения.",
   "ui.validating_deletion_target": "Проверка цели удаления",
-  "ui.enter_the_filename_to_confirm": "Введите имя файла для подтверждения",
-  "ui.confirm_deletion_filename": "Подтвердите имя удаляемого файла",
   "ui.download_account_credentials": "Скачать учётные данные",
   "ui.download_format": "Скачать {format}",
   "ui.scope": "Область",

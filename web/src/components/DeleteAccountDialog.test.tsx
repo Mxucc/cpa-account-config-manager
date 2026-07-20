@@ -33,7 +33,7 @@ const preview: AccountDeletePreview = {
   },
 };
 
-it("requires the exact file name before confirming deletion", async () => {
+it("uses the confirmation dialog without requiring typed account identity", async () => {
   const user = userEvent.setup();
   const onConfirm = vi.fn();
   render(
@@ -49,12 +49,8 @@ it("requires the exact file name before confirming deletion", async () => {
   );
 
   const deleteButton = screen.getByRole("button", { name: "删除账号" });
-  expect(deleteButton).toBeDisabled();
-  await user.type(screen.getByLabelText("确认删除文件名"), "operator");
-  expect(deleteButton).toBeDisabled();
-  await user.clear(screen.getByLabelText("确认删除文件名"));
-  await user.type(screen.getByLabelText("确认删除文件名"), "operator.json");
   expect(deleteButton).toBeEnabled();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   await user.click(deleteButton);
   expect(onConfirm).toHaveBeenCalledTimes(1);
 });

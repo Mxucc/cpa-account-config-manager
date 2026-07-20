@@ -45,7 +45,7 @@ Management authentication boundary.
   a fallback, update prompts, and opt-in store installation, including an
   optional page-attended automatic update mode.
 - First-class row actions for redacted account details, fixed-scope
-  single-account editing, and filename-confirmed deletion of eligible physical
+  single-account editing, and confirmation-dialog deletion of eligible physical
   Auth files; the visible **Add account** action reuses the secure converter.
 - Per-account model availability tests for Codex/OpenAI, Claude, Gemini/AI
   Studio, and xAI, routed through CPA's selected `auth_index` with structured,
@@ -284,11 +284,12 @@ added.
   physical revision check, shared writer slot, job results, and conflict
   handling as batch editing without changing the table's bulk selection.
 - **Delete:** the trash action first creates a five-minute server preview for
-  one editable file-backed account. The operator must type the exact `.json`
-  filename. Start then acquires the shared writer slot, re-reads and compares
-  the physical revision, and calls CPA's authenticated loopback Auth-file
-  delete endpoint. A changed, missing, duplicated, runtime-only, or otherwise
-  read-only target is not deleted.
+  one editable file-backed account. The confirmation dialog shows the account
+  and file identity; no username or filename input is required. Confirming then
+  acquires the shared writer slot, re-reads and compares the physical revision,
+  and calls CPA's authenticated loopback Auth-file delete endpoint. A changed,
+  missing, duplicated, runtime-only, or otherwise read-only target is not
+  deleted.
 
 Deletion is intentionally single-account only. There is no bulk
 "delete filtered accounts" action, and a successful delete cannot be undone by

@@ -1,5 +1,4 @@
 import { LoaderCircle, Trash2, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
 import type { Account, AccountDeletePreview } from "../types";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
@@ -15,14 +14,8 @@ interface DeleteAccountDialogProps {
 }
 
 export function DeleteAccountDialog({ account, preview, previewing, deleting, error, onClose, onConfirm }: DeleteAccountDialogProps) {
-  const { locale, tx } = useI18n();
-  const [confirmation, setConfirmation] = useState("");
+  const { tx } = useI18n();
   const filename = preview?.account.name || account.name;
-  const confirmed = Boolean(preview && confirmation === preview.account.name);
-
-  useEffect(() => {
-    setConfirmation("");
-  }, [preview?.id, account.id]);
 
   return (
     <Modal
@@ -31,7 +24,7 @@ export function DeleteAccountDialog({ account, preview, previewing, deleting, er
       footer={(
         <>
           <button className="button" type="button" disabled={deleting} onClick={onClose}>{tx("ui.cancel")}</button>
-          <button className="button button-danger" type="button" disabled={!confirmed || deleting} onClick={onConfirm}>
+          <button className="button button-danger" type="button" disabled={!preview || deleting} onClick={onConfirm}>
             {deleting ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{tx("ui.delete_account")}
           </button>
         </>
@@ -54,21 +47,6 @@ export function DeleteAccountDialog({ account, preview, previewing, deleting, er
 
         {previewing ? <div className="delete-preview-loading"><LoaderCircle className="spin" size={18} /><span>{tx("ui.validating_deletion_target")}</span></div> : null}
         {error ? <div className="form-error" role="alert">{error}</div> : null}
-        {preview ? (
-          <label className="delete-confirmation">
-            <span>{tx("ui.enter_the_filename_to_confirm")}</span>
-            <code>{preview.account.name}</code>
-            <input
-              autoComplete="off"
-              spellCheck={false}
-              value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
-              aria-label={tx("ui.confirm_deletion_filename")}
-              placeholder={preview.account.name}
-              disabled={deleting}
-            />
-          </label>
-        ) : null}
       </div>
     </Modal>
   );

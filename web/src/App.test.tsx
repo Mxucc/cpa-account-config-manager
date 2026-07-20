@@ -406,11 +406,9 @@ describe("primary account batch flow", () => {
 
     await user.click(screen.getByRole("button", { name: "删除 operator@example.com" }));
     const deleteDialog = await screen.findByRole("dialog", { name: "删除账号" });
-    const confirmation = await within(deleteDialog).findByLabelText("确认删除文件名");
     const deleteButton = within(deleteDialog).getByRole("button", { name: "删除账号" });
-    expect(deleteButton).toBeDisabled();
-    await user.type(confirmation, "operator.json");
-    expect(deleteButton).toBeEnabled();
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+    expect(within(deleteDialog).queryByRole("textbox")).not.toBeInTheDocument();
     await user.click(deleteButton);
 
     expect(await screen.findByText("没有匹配账号")).toBeInTheDocument();

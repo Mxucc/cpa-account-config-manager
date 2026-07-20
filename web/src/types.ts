@@ -420,13 +420,30 @@ export type InspectionHealth = "healthy" | "quota_limited" | "invalid_credential
 export interface InspectionPolicy {
   enabled: boolean;
   scan_interval_minutes: number;
+  model_probe_enabled: boolean;
+  model_probe_full_sweep: boolean;
+  scan_manually_disabled: boolean;
+  model_probe_interval_minutes: number;
+  model_probe_batch_size: number;
+  model_probe_models: {
+    codex: string;
+    openai: string;
+    claude: string;
+    gemini: string;
+    xai: string;
+  };
   failure_threshold: number;
   recovery_threshold: number;
   auto_disable: boolean;
   auto_enable: boolean;
   auto_delete: boolean;
+  auto_delete_invalid_credentials: boolean;
   delete_grace_hours: number;
   delete_batch_size: number;
+  anomaly_trigger_enabled: boolean;
+  anomaly_threshold_percent: number;
+  anomaly_minimum_accounts: number;
+  anomaly_cooldown_minutes: number;
 }
 
 export interface InspectionRunSummary {
@@ -457,6 +474,15 @@ export interface InspectionSnapshot {
   last_run: InspectionRunSummary;
   total: number;
   action_count: number;
+  active_probe_armed: boolean;
+  last_native_run_at?: string;
+  last_probe_run_at?: string;
+  probe_sweep_remaining: number;
+  anomaly_eligible: number;
+  anomaly_count: number;
+  anomaly_percent: number;
+  anomaly_trigger_pending: boolean;
+  last_anomaly_trigger_at?: string;
   storage_error?: string;
 }
 
@@ -483,6 +509,11 @@ export interface InspectionResult {
   recover_after?: string;
   delete_eligible_at?: string;
   auto_action?: "disable" | "enable" | "delete" | "delete_candidate";
+  probe_status?: "available" | "unavailable" | "review" | "unsupported";
+  probe_reason_code?: string;
+  probe_model?: string;
+  probe_tested_at?: string;
+  probe_latency_ms?: number;
   auto_action_status?: "pending" | "succeeded" | "failed" | "skipped";
 }
 

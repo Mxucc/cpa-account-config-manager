@@ -165,29 +165,53 @@ func shouldAutoEnableInspection(policy InspectionPolicy, account Account, record
 	if !policy.AutoEnable || !record.Result.OwnedDisable || !account.Disabled || !account.Editable {
 		return false
 	}
-	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) {
+	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) &&
+		!inspectionHealthIsStrongFailure(record.Result.Health) {
 		return true
 	}
 	if record.Result.Health == InspectionHealthHealthy && record.Result.HealthyStreak >= policy.RecoveryThreshold &&
-		!record.Signal.LastSuccessAt.IsZero() && record.Signal.LastSuccessAt.After(record.DisabledAt) {
+		inspectionRecoveryEvidenceAfter(record, record.DisabledAt) {
 		return true
 	}
 	return account.LastRefresh != nil && account.LastRefresh.After(record.DisabledAt) && !inspectionHealthIsStrongFailure(record.Result.Health)
+}
+
+func inspectionRecoveryEvidenceAfter(record inspectionRecord, disabledAt time.Time) bool {
+	if !record.Signal.LastSuccessAt.IsZero() && record.Signal.LastSuccessAt.After(disabledAt) {
+		return true
+	}
+	return record.Probe.ReasonCode == "model_response_ok" && record.Probe.TestedAt.After(disabledAt)
 }
 
 func markInspectionDeleteCandidate(policy InspectionPolicy, record *inspectionRecord, now time.Time) bool {
 	if record == nil || !policy.AutoDelete || !record.Result.OwnedDisable || !record.Result.Disabled || !record.Result.Editable {
 		return false
 	}
-	if record.DisableReason != "account_deactivated" && record.DisableReason != "workspace_deactivated" {
-		return false
-	}
-	if record.DisabledAt.IsZero() || record.Result.Health != InspectionHealthDeactivated {
+	if record.DisabledAt.IsZero() || !inspectionDeleteReasonAllowed(policy, *record) {
 		return false
 	}
 	eligibleAt := record.DisabledAt.Add(time.Duration(policy.DeleteGraceHours) * time.Hour).UTC()
 	record.Result.DeleteEligibleAt = timePointer(eligibleAt)
 	return !eligibleAt.After(now)
+}
+
+func inspectionDeleteReasonAllowed(policy InspectionPolicy, record inspectionRecord) bool {
+	if record.Result.ReasonCode != record.DisableReason || record.Result.Confidence != InspectionConfidenceHigh {
+		return false
+	}
+	if record.Result.Health == InspectionHealthDeactivated {
+		return record.DisableReason == "account_deactivated" || record.DisableReason == "workspace_deactivated"
+	}
+	if !policy.AutoDeleteInvalidCredentials || record.Result.Health != InspectionHealthInvalidCredentials ||
+		record.Result.FailureStreak < policy.FailureThreshold {
+		return false
+	}
+	switch record.DisableReason {
+	case "invalid_credentials", "token_revoked", "authentication_failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Account, record inspectionRecord, disabled bool) (inspectionMutationResult, error) {
@@ -266,9 +290,8 @@ func (e *InspectionEngine) ExecutePendingDeletes(
 		for id, record := range e.records {
 			if !record.Result.OwnedDisable || record.Result.AutoAction != InspectionActionDeleteCandidate ||
 				(record.Result.AutoActionStatus != InspectionActionPending && record.Result.AutoActionStatus != InspectionActionFailed) ||
-				record.Result.Health != InspectionHealthDeactivated || !record.Result.Disabled || !record.Result.Editable ||
+				!record.Result.Disabled || !record.Result.Editable || !inspectionDeleteReasonAllowed(policy, record) ||
 				record.Result.DeleteEligibleAt == nil || record.Result.DeleteEligibleAt.After(now) ||
-				(record.DisableReason != "account_deactivated" && record.DisableReason != "workspace_deactivated") ||
 				(!record.DeleteRetryAfter.IsZero() && record.DeleteRetryAfter.After(now)) {
 				continue
 			}
@@ -364,9 +387,7 @@ func (e *InspectionEngine) revalidatePendingDelete(ctx context.Context, id strin
 	sameSource := account.Editable && account.Name != "" && account.Name == record.DisabledName &&
 		account.path != "" && account.path == normalizedPath(record.DisabledPath)
 	eligible := e.policy.AutoDelete && record.Result.OwnedDisable && account.Disabled && physicalDisabled && sameSource &&
-		record.Result.Health == InspectionHealthDeactivated && record.Result.ReasonCode == record.DisableReason &&
-		record.Result.DeleteEligibleAt != nil && !record.Result.DeleteEligibleAt.After(now) &&
-		(record.DisableReason == "account_deactivated" || record.DisableReason == "workspace_deactivated")
+		inspectionDeleteReasonAllowed(e.policy, record) && record.Result.DeleteEligibleAt != nil && !record.Result.DeleteEligibleAt.After(now)
 	if eligible {
 		e.records[id] = record
 		e.dirty = true

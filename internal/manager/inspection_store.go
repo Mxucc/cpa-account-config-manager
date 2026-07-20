@@ -24,24 +24,39 @@ type inspectionSignal struct {
 	RecoverAfter        time.Time `json:"recover_after,omitempty"`
 }
 
+type inspectionProbeSignal struct {
+	Status     string    `json:"status,omitempty"`
+	ReasonCode string    `json:"reason_code,omitempty"`
+	Model      string    `json:"model,omitempty"`
+	TestedAt   time.Time `json:"tested_at,omitempty"`
+	LatencyMS  int64     `json:"latency_ms,omitempty"`
+}
+
 type inspectionRecord struct {
-	Result               InspectionResult `json:"result"`
-	Signal               inspectionSignal `json:"signal"`
-	DisableReason        string           `json:"disable_reason,omitempty"`
-	DisabledAt           time.Time        `json:"disabled_at,omitempty"`
-	DisabledName         string           `json:"disabled_name,omitempty"`
-	DisabledPath         string           `json:"disabled_path,omitempty"`
-	DisabledVersion      string           `json:"disabled_revision,omitempty"`
-	DisabledRecoverAfter time.Time        `json:"disabled_recover_after,omitempty"`
-	DeleteRetryAfter     time.Time        `json:"delete_retry_after,omitempty"`
+	Result               InspectionResult      `json:"result"`
+	Signal               inspectionSignal      `json:"signal"`
+	Probe                inspectionProbeSignal `json:"probe,omitempty"`
+	DisableReason        string                `json:"disable_reason,omitempty"`
+	DisabledAt           time.Time             `json:"disabled_at,omitempty"`
+	DisabledName         string                `json:"disabled_name,omitempty"`
+	DisabledPath         string                `json:"disabled_path,omitempty"`
+	DisabledVersion      string                `json:"disabled_revision,omitempty"`
+	DisabledRecoverAfter time.Time             `json:"disabled_recover_after,omitempty"`
+	DeleteRetryAfter     time.Time             `json:"delete_retry_after,omitempty"`
 }
 
 type persistedInspectionState struct {
-	Version int                         `json:"version"`
-	Policy  InspectionPolicy            `json:"policy"`
-	Records map[string]inspectionRecord `json:"records"`
-	Actions []InspectionAction          `json:"actions,omitempty"`
-	LastRun InspectionRunSummary        `json:"last_run"`
+	Version               int                         `json:"version"`
+	Policy                InspectionPolicy            `json:"policy"`
+	Records               map[string]inspectionRecord `json:"records"`
+	Actions               []InspectionAction          `json:"actions,omitempty"`
+	LastRun               InspectionRunSummary        `json:"last_run"`
+	ProbeCursor           int                         `json:"probe_cursor,omitempty"`
+	LastNativeRunAt       time.Time                   `json:"last_native_run_at,omitempty"`
+	LastProbeRunAt        time.Time                   `json:"last_probe_run_at,omitempty"`
+	ProbeSweepRemaining   int                         `json:"probe_sweep_remaining,omitempty"`
+	AnomalyTriggerPending bool                        `json:"anomaly_trigger_pending,omitempty"`
+	LastAnomalyTriggerAt  time.Time                   `json:"last_anomaly_trigger_at,omitempty"`
 }
 
 func inspectionStorePath(dataDir string) string {
@@ -68,6 +83,13 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 	state.Records = sanitizeInspectionRecords(state.Records)
 	state.Actions = sanitizeInspectionActions(state.Actions)
 	state.LastRun.Error = safeInspectionError(state.LastRun.Error)
+	if state.ProbeCursor < 0 || state.ProbeCursor >= maxInspectionAccounts {
+		state.ProbeCursor = 0
+	}
+	if state.ProbeSweepRemaining < 0 || state.ProbeSweepRemaining > maxInspectionAccounts {
+		state.ProbeSweepRemaining = 0
+		state.AnomalyTriggerPending = false
+	}
 	return state, nil
 }
 
@@ -111,6 +133,17 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Signal.StatusCode = boundedHTTPStatus(record.Signal.StatusCode)
 		record.Signal.ConsecutiveFailures = boundedCounter(record.Signal.ConsecutiveFailures)
 		record.Signal.ConsecutiveSuccess = boundedCounter(record.Signal.ConsecutiveSuccess)
+		record.Probe.Status = normalizeModelProbeStatus(record.Probe.Status)
+		record.Probe.ReasonCode = safeModelProbeReason(record.Probe.ReasonCode)
+		record.Probe.Model = safeModelIdentifier(record.Probe.Model)
+		if record.Probe.LatencyMS < 0 {
+			record.Probe.LatencyMS = 0
+		}
+		record.Result.ProbeStatus = record.Probe.Status
+		record.Result.ProbeReasonCode = record.Probe.ReasonCode
+		record.Result.ProbeModel = record.Probe.Model
+		record.Result.ProbeTestedAt = cloneTimePointer(timePointerOrNil(record.Probe.TestedAt))
+		record.Result.ProbeLatencyMS = record.Probe.LatencyMS
 		record.DisableReason = safeInspectionReason(record.DisableReason)
 		out[key] = record
 	}
@@ -152,7 +185,31 @@ func cloneInspectionResult(result InspectionResult) InspectionResult {
 	clone.LastSuccessAt = cloneTimePointer(result.LastSuccessAt)
 	clone.RecoverAfter = cloneTimePointer(result.RecoverAfter)
 	clone.DeleteEligibleAt = cloneTimePointer(result.DeleteEligibleAt)
+	clone.ProbeTestedAt = cloneTimePointer(result.ProbeTestedAt)
 	return clone
+}
+
+func timePointerOrNil(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
+}
+
+func normalizeModelProbeStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "available", "unavailable", "review", "unsupported":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func safeModelProbeReason(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return safeInspectionReason(value)
 }
 
 func cloneTimePointer(value *time.Time) *time.Time {
@@ -217,7 +274,9 @@ func safeInspectionReason(value string) string {
 		"account_deactivated", "workspace_deactivated", "authentication_review",
 		"billing_review", "credential_permission_denied", "native_unavailable", "manual_disabled",
 		"transient_failure", "no_recent_evidence", "mutation_busy", "account_changed",
-		"account_missing", "account_read_only", "management_unavailable", "delete_failed":
+		"account_missing", "account_read_only", "management_unavailable", "delete_failed",
+		"model_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
+		"request_timeout", "upstream_unavailable", "invalid_response":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "no_recent_evidence"

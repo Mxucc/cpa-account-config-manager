@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.2"
+	PluginVersion    = "0.2.3"
 	PluginRepository = DefaultPluginRepository
 )
 
@@ -66,6 +66,10 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	jobs := NewJobEngineWithCoordinator(accounts, mutations)
 	policies := NewPolicyEngineWithCoordinator(host, mutations)
 	inspection := NewInspectionEngine(accounts, host, mutations)
+	modelTests := NewModelTestService(accounts)
+	deletions := NewAccountDeleteService(accounts, mutations)
+	inspection.SetModelTestService(modelTests)
+	inspection.SetDeleteService(deletions)
 	var httpHost HTTPHost
 	if candidate, ok := host.(HTTPHost); ok {
 		httpHost = candidate
@@ -73,7 +77,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	return &App{
 		config:     normalizeConfig(Config{}),
 		accounts:   accounts,
-		deletions:  NewAccountDeleteService(accounts, mutations),
+		deletions:  deletions,
 		previews:   NewPreviewService(accounts),
 		jobs:       jobs,
 		policies:   policies,
@@ -83,7 +87,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		imports:    NewImportService(host, mutations),
 		usage:      usage,
 		operations: NewOperationJournal(),
-		modelTests: NewModelTestService(accounts),
+		modelTests: modelTests,
 		indexHTML:  append([]byte(nil), indexHTML...),
 	}
 }
@@ -192,7 +196,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 		},
 		Resources: []cpaapi.ResourceRoute{{
 			Path:        "/index.html",
-			Menu:        "Account Management",
+			Menu:        "CPA-A Config",
 			Description: "List, filter, and safely batch-edit CLIProxyAPI account configuration.",
 		}},
 	}
@@ -254,11 +258,22 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults/force/status":
 		return jsonResponse(http.StatusOK, a.force.Snapshot(statusWantsResults(req.Query)))
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection":
+		inspectionPolicy := a.inspection.Snapshot().Policy
+		if inspectionPolicy.ModelProbeEnabled || inspectionPolicy.AnomalyTriggerEnabled || inspectionPolicy.AutoDelete {
+			managementKey := resolveManagementKey(req.Headers)
+			if managementKey != "" {
+				a.inspection.ArmModelProbes(managementKey)
+				managementKey = ""
+			}
+		}
 		return jsonResponse(http.StatusOK, a.inspection.Snapshot())
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/inspection":
 		return a.handlePutInspectionPolicy(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/scan":
-		return jsonResponse(http.StatusAccepted, a.inspection.RequestScan())
+		managementKey := resolveManagementKey(req.Headers)
+		snapshot := a.inspection.RequestScanWithModelProbes(managementKey)
+		managementKey = ""
+		return jsonResponse(http.StatusAccepted, snapshot)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/results":
 		return a.handleListInspectionResults(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/actions":
@@ -724,6 +739,16 @@ func (a *App) handlePutInspectionPolicy(req cpaapi.ManagementRequest) cpaapi.Man
 	current := a.inspection.Snapshot().Policy
 	if request.AutoDelete && !current.AutoDelete && !request.ConfirmAutoDelete {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "enabling auto_delete requires explicit confirmation"})
+	}
+	if request.AutoDeleteInvalidCredentials && !current.AutoDeleteInvalidCredentials && !request.ConfirmDeleteInvalidCredentials {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "enabling auto_delete_invalid_credentials requires explicit confirmation"})
+	}
+	if request.ModelProbeEnabled || request.AnomalyTriggerEnabled || request.AutoDelete {
+		managementKey := resolveManagementKey(req.Headers)
+		if managementKey != "" {
+			a.inspection.ArmModelProbes(managementKey)
+			managementKey = ""
+		}
 	}
 	snapshot, errSave := a.inspection.SetPolicy(request.InspectionPolicy)
 	if errSave != nil {

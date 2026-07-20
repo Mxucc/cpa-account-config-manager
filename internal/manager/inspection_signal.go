@@ -12,6 +12,7 @@ import (
 const (
 	maxInspectionFailureBody = 64 * 1024
 	inspectionEvidenceTTL    = 7 * 24 * time.Hour
+	modelProbeEvidenceTTL    = 24 * time.Hour
 )
 
 type inspectionEvidence struct {
@@ -232,6 +233,17 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			RecoverAfter:        recoverAfter,
 		}
 	}
+	if account.Disabled && !record.Result.OwnedDisable {
+		return inspectionDecision{
+			Health:         InspectionHealthDisabled,
+			ReasonCode:     "manual_disabled",
+			Confidence:     InspectionConfidenceHigh,
+			Recommendation: InspectionRecommendationKeep,
+		}
+	}
+	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
+		return decision
+	}
 	if activeInspectionSignal(record.Signal, now) {
 		return decisionFromSignal(record.Signal)
 	}
@@ -271,14 +283,6 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			AutoDisableEligible: true,
 		}
 	}
-	if account.Disabled && !record.Result.OwnedDisable {
-		return inspectionDecision{
-			Health:         InspectionHealthDisabled,
-			ReasonCode:     "manual_disabled",
-			Confidence:     InspectionConfidenceHigh,
-			Recommendation: InspectionRecommendationKeep,
-		}
-	}
 	if account.Unavailable || status == "transient upstream error" || status == "upstream temporarily unavailable" || status == "cloudflare challenge" {
 		return inspectionDecision{
 			Health:         InspectionHealthUnavailable,
@@ -309,6 +313,37 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 		ReasonCode:     "no_recent_evidence",
 		Confidence:     InspectionConfidenceLow,
 		Recommendation: InspectionRecommendationReview,
+	}
+}
+
+func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspectionDecision, bool) {
+	if probe.TestedAt.IsZero() || now.Before(probe.TestedAt) || now.Sub(probe.TestedAt) > modelProbeEvidenceTTL {
+		return inspectionDecision{}, false
+	}
+	switch probe.ReasonCode {
+	case "model_response_ok":
+		return inspectionDecision{
+			Health: InspectionHealthHealthy, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationKeep,
+		}, true
+	case "authentication_failed":
+		return inspectionDecision{
+			Health: InspectionHealthInvalidCredentials, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+			AutoDisableEligible: true,
+		}, true
+	case "quota_limited":
+		return inspectionDecision{
+			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationReview, FailureCount: 1,
+		}, true
+	case "model_not_found", "request_timeout", "upstream_unavailable", "invalid_response":
+		return inspectionDecision{
+			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview, FailureCount: 1,
+		}, true
+	default:
+		return inspectionDecision{}, false
 	}
 }
 

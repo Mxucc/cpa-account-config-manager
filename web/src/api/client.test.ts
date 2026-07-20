@@ -300,7 +300,14 @@ describe("management API client", () => {
   it("persists confirmed automation settings and installs an exact plugin-store version", async () => {
     setSession("", "management-secret");
     const inspectionSnapshot = {
-      policy: { enabled: true, scan_interval_minutes: 30, failure_threshold: 3, recovery_threshold: 2, auto_disable: true, auto_enable: true, auto_delete: true, delete_grace_hours: 168, delete_batch_size: 10 },
+      policy: {
+        enabled: true, scan_interval_minutes: 30,
+        model_probe_enabled: true, model_probe_full_sweep: true, scan_manually_disabled: true, model_probe_interval_minutes: 60, model_probe_batch_size: 20,
+        model_probe_models: { codex: "gpt-5.4", openai: "gpt-5.4", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", xai: "grok-4" },
+        failure_threshold: 3, recovery_threshold: 2, auto_disable: true, auto_enable: true,
+        auto_delete: true, auto_delete_invalid_credentials: true, delete_grace_hours: 168, delete_batch_size: 10,
+        anomaly_trigger_enabled: true, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
+      },
       running: false, pending: false, last_run: {}, total: 0, action_count: 0,
     };
     const updateSnapshot = {
@@ -315,14 +322,14 @@ describe("management API client", () => {
       .mockResolvedValueOnce(jsonResponse({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: false }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await saveInspectionPolicy(inspectionSnapshot.policy, true);
+    await saveInspectionPolicy(inspectionSnapshot.policy, true, true);
     await saveUpdatePolicy(updateSnapshot.policy, true);
     await executeInspectionAutoDelete();
     await installPluginUpdate("0.3.0");
 
     const [inspectionURL, inspectionInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(inspectionURL).toContain("/inspection");
-    expect(JSON.parse(String(inspectionInit.body))).toEqual({ ...inspectionSnapshot.policy, confirm_auto_delete: true });
+    expect(JSON.parse(String(inspectionInit.body))).toEqual({ ...inspectionSnapshot.policy, confirm_auto_delete: true, confirm_delete_invalid_credentials: true });
 
     const [updateURL, updateInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(updateURL).toContain("/updates");

@@ -593,6 +593,31 @@ func TestInspectionPolicyRouteRequiresExplicitAutoDeleteConfirmation(t *testing.
 	}
 }
 
+func TestInspectionPolicyRouteRequiresSeparateInvalidCredentialDeleteConfirmation(t *testing.T) {
+	app := NewApp(inspectionEditableHost(false), []byte("index"))
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
+	body := []byte(`{"enabled":false,"scan_interval_minutes":30,"failure_threshold":3,"recovery_threshold":2,"auto_disable":true,"auto_enable":false,"auto_delete":true,"auto_delete_invalid_credentials":true,"delete_grace_hours":168,"delete_batch_size":10,"confirm_auto_delete":true}`)
+	withoutInvalidConfirmation := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/inspection",
+		Body:   body,
+	})
+	if withoutInvalidConfirmation.StatusCode != http.StatusBadRequest || !bytes.Contains(withoutInvalidConfirmation.Body, []byte("auto_delete_invalid_credentials requires explicit confirmation")) {
+		t.Fatalf("without invalid-credential confirmation = %d %s", withoutInvalidConfirmation.StatusCode, withoutInvalidConfirmation.Body)
+	}
+	confirmedBody := bytes.TrimSuffix(body, []byte("}"))
+	confirmedBody = append(confirmedBody, []byte(`,"confirm_delete_invalid_credentials":true}`)...)
+	confirmed := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/inspection",
+		Body:   confirmedBody,
+	})
+	if confirmed.StatusCode != http.StatusOK {
+		t.Fatalf("confirmed invalid-credential deletion = %d %s", confirmed.StatusCode, confirmed.Body)
+	}
+}
+
 func TestAccountAutomationSummariesArePolicyAwareAndSanitized(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 14, 0, 0, 0, time.UTC)
 	recoverAfter := now.Add(90 * time.Minute)

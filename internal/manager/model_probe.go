@@ -202,7 +202,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		}
 		data, errMarshal := marshal(openAIResponsesProbePayload(model, false))
 		return modelProbe{kind: "openai", url: "https://api.openai.com/v1/responses", headers: bearerJSONHeaders(false), data: data}, model, true, errMarshal
-	case "claude":
+	case "claude", "anthropic":
 		if model == "" {
 			model = "claude-sonnet-4-5-20250929"
 		}
@@ -232,7 +232,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		}
 		probeURL := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(geminiModel) + ":generateContent"
 		return modelProbe{kind: "gemini", url: probeURL, headers: headers, data: data}, model, true, errMarshal
-	case "xai":
+	case "xai", "grok":
 		if model == "" {
 			model = "grok-4"
 		}

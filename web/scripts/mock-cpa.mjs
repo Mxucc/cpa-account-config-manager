@@ -25,13 +25,30 @@ let lastPolicyScan = {
 let inspectionPolicy = {
   enabled: true,
   scan_interval_minutes: 30,
+  model_probe_enabled: true,
+  model_probe_full_sweep: true,
+  scan_manually_disabled: false,
+  model_probe_interval_minutes: 60,
+  model_probe_batch_size: 20,
+  model_probe_models: {
+    codex: "gpt-5.4",
+    openai: "gpt-5.4",
+    claude: "claude-sonnet-4-5-20250929",
+    gemini: "gemini-2.0-flash",
+    xai: "grok-4",
+  },
   failure_threshold: 3,
   recovery_threshold: 2,
   auto_disable: false,
   auto_enable: false,
   auto_delete: false,
+  auto_delete_invalid_credentials: false,
   delete_grace_hours: 168,
   delete_batch_size: 10,
+  anomaly_trigger_enabled: true,
+  anomaly_threshold_percent: 50,
+  anomaly_minimum_accounts: 10,
+  anomaly_cooldown_minutes: 60,
 };
 let updatePolicy = {
   check_enabled: true,
@@ -239,6 +256,11 @@ function mockInspectionResults() {
       owned_disable: false,
       failure_streak: state[4] ? Math.min(5, index + 1) : 0,
       healthy_streak: state[0] === "healthy" ? index - 3 : 0,
+      probe_status: index < 5 ? "unavailable" : "available",
+      probe_reason_code: index < 2 ? "authentication_failed" : index === 2 ? "quota_limited" : index < 5 ? "upstream_unavailable" : "model_response_ok",
+      probe_model: account.provider === "gemini" ? "gemini-2.0-flash" : "gpt-5.4",
+      probe_tested_at: checkedAt,
+      probe_latency_ms: 180 + index * 17,
       last_checked_at: checkedAt,
     };
   });
@@ -271,6 +293,15 @@ function mockInspectionSnapshot(pending = false) {
     },
     total: results.length,
     action_count: 3,
+    active_probe_armed: true,
+    last_native_run_at: new Date().toISOString(),
+    last_probe_run_at: new Date(Date.now() - 60_000).toISOString(),
+    probe_sweep_remaining: 7,
+    anomaly_eligible: 10,
+    anomaly_count: 5,
+    anomaly_percent: 50,
+    anomaly_trigger_pending: false,
+    last_anomaly_trigger_at: new Date(Date.now() - 90_000).toISOString(),
   };
 }
 
@@ -1172,13 +1203,30 @@ const server = http.createServer(async (request, response) => {
     inspectionPolicy = {
       enabled: Boolean(body.enabled),
       scan_interval_minutes: Math.min(1440, Math.max(5, Number(body.scan_interval_minutes) || 30)),
+      model_probe_enabled: Boolean(body.model_probe_enabled),
+      model_probe_full_sweep: Boolean(body.model_probe_full_sweep),
+      scan_manually_disabled: Boolean(body.scan_manually_disabled),
+      model_probe_interval_minutes: Math.min(1440, Math.max(5, Number(body.model_probe_interval_minutes) || 60)),
+      model_probe_batch_size: Math.min(200, Math.max(1, Number(body.model_probe_batch_size) || 20)),
+      model_probe_models: {
+        codex: String(body.model_probe_models?.codex || "gpt-5.4"),
+        openai: String(body.model_probe_models?.openai || "gpt-5.4"),
+        claude: String(body.model_probe_models?.claude || "claude-sonnet-4-5-20250929"),
+        gemini: String(body.model_probe_models?.gemini || "gemini-2.0-flash"),
+        xai: String(body.model_probe_models?.xai || "grok-4"),
+      },
       failure_threshold: Math.min(10, Math.max(2, Number(body.failure_threshold) || 3)),
       recovery_threshold: Math.min(10, Math.max(1, Number(body.recovery_threshold) || 2)),
       auto_disable: Boolean(body.auto_disable),
       auto_enable: Boolean(body.auto_enable),
       auto_delete: Boolean(body.auto_delete),
+      auto_delete_invalid_credentials: Boolean(body.auto_delete_invalid_credentials),
       delete_grace_hours: Math.min(8760, Math.max(24, Number(body.delete_grace_hours) || 168)),
       delete_batch_size: Math.min(100, Math.max(1, Number(body.delete_batch_size) || 10)),
+      anomaly_trigger_enabled: Boolean(body.anomaly_trigger_enabled),
+      anomaly_threshold_percent: Math.min(100, Math.max(1, Number(body.anomaly_threshold_percent) || 50)),
+      anomaly_minimum_accounts: Math.min(10_000, Math.max(1, Number(body.anomaly_minimum_accounts) || 10)),
+      anomaly_cooldown_minutes: Math.min(1440, Math.max(5, Number(body.anomaly_cooldown_minutes) || 60)),
     };
     return json(response, 200, mockInspectionSnapshot());
   }

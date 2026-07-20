@@ -16,31 +16,45 @@ import (
 const inspectionPersistDelay = 2 * time.Second
 
 type InspectionEngine struct {
-	mu          sync.RWMutex
-	scanMu      sync.Mutex
-	storeMu     sync.Mutex
-	wait        sync.WaitGroup
-	accounts    *AccountService
-	host        AuthHost
-	mutations   *MutationCoordinator
-	config      Config
-	store       string
-	policy      InspectionPolicy
-	records     map[string]inspectionRecord
-	actions     []InspectionAction
-	lastRun     InspectionRunSummary
-	running     bool
-	pending     bool
-	scanStarted time.Time
-	storageErr  string
-	dirty       bool
-	generation  uint64
-	scanWake    chan struct{}
-	persistWake chan struct{}
-	cancel      context.CancelFunc
-	started     bool
-	closed      bool
-	now         func() time.Time
+	mu                    sync.RWMutex
+	scanMu                sync.Mutex
+	storeMu               sync.Mutex
+	wait                  sync.WaitGroup
+	accounts              *AccountService
+	host                  AuthHost
+	mutations             *MutationCoordinator
+	modelTests            *ModelTestService
+	deletions             *AccountDeleteService
+	config                Config
+	store                 string
+	policy                InspectionPolicy
+	records               map[string]inspectionRecord
+	actions               []InspectionAction
+	lastRun               InspectionRunSummary
+	probeCursor           int
+	lastNativeRunAt       time.Time
+	lastProbeRunAt        time.Time
+	managementKey         string
+	probeSweepRemaining   int
+	anomalyTriggerPending bool
+	lastAnomalyTriggerAt  time.Time
+	anomalyEligible       int
+	anomalyCount          int
+	anomalyPercent        int
+	running               bool
+	pending               bool
+	pendingProbe          bool
+	pendingProbeSweep     bool
+	scanStarted           time.Time
+	storageErr            string
+	dirty                 bool
+	generation            uint64
+	scanWake              chan struct{}
+	persistWake           chan struct{}
+	cancel                context.CancelFunc
+	started               bool
+	closed                bool
+	now                   func() time.Time
 }
 
 func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *MutationCoordinator) *InspectionEngine {
@@ -60,6 +74,24 @@ func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *Mut
 		persistWake: make(chan struct{}, 1),
 		now:         time.Now,
 	}
+}
+
+func (e *InspectionEngine) SetModelTestService(service *ModelTestService) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.modelTests = service
+	e.mu.Unlock()
+}
+
+func (e *InspectionEngine) SetDeleteService(service *AccountDeleteService) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.deletions = service
+	e.mu.Unlock()
 }
 
 func (e *InspectionEngine) Configure(config Config) {
@@ -101,6 +133,13 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.records = state.Records
 	e.actions = state.Actions
 	e.lastRun = state.LastRun
+	e.probeCursor = state.ProbeCursor
+	e.lastNativeRunAt = state.LastNativeRunAt
+	e.lastProbeRunAt = state.LastProbeRunAt
+	e.probeSweepRemaining = state.ProbeSweepRemaining
+	e.anomalyTriggerPending = state.AnomalyTriggerPending
+	e.lastAnomalyTriggerAt = state.LastAnomalyTriggerAt
+	e.managementKey = ""
 	e.storageErr = storageErr
 	e.dirty = false
 	e.generation++
@@ -123,14 +162,23 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return InspectionSnapshot{
-		Policy:        e.policy,
-		Running:       e.running,
-		Pending:       e.pending,
-		ScanStartedAt: e.scanStarted,
-		LastRun:       e.lastRun,
-		Total:         len(e.records),
-		ActionCount:   len(e.actions),
-		StorageError:  e.storageErr,
+		Policy:                e.policy,
+		Running:               e.running,
+		Pending:               e.pending,
+		ScanStartedAt:         e.scanStarted,
+		LastRun:               e.lastRun,
+		Total:                 len(e.records),
+		ActionCount:           len(e.actions),
+		ActiveProbeArmed:      strings.TrimSpace(e.managementKey) != "" && e.modelTests != nil,
+		LastNativeRunAt:       e.lastNativeRunAt,
+		LastProbeRunAt:        e.lastProbeRunAt,
+		ProbeSweepRemaining:   e.probeSweepRemaining,
+		AnomalyEligible:       e.anomalyEligible,
+		AnomalyCount:          e.anomalyCount,
+		AnomalyPercent:        e.anomalyPercent,
+		AnomalyTriggerPending: e.anomalyTriggerPending,
+		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
+		StorageError:          e.storageErr,
 	}
 }
 
@@ -152,6 +200,12 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 		return InspectionSnapshot{}, fmt.Errorf("inspection storage is unavailable")
 	}
 	state.Policy = normalized
+	if !normalized.AnomalyTriggerEnabled {
+		state.AnomalyTriggerPending = false
+	}
+	if !normalized.ModelProbeFullSweep && !normalized.AnomalyTriggerEnabled {
+		state.ProbeSweepRemaining = 0
+	}
 	e.storeMu.Lock()
 	errSave := saveInspectionState(storePath, state)
 	e.storeMu.Unlock()
@@ -161,6 +215,13 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 
 	e.mu.Lock()
 	e.policy = normalized
+	if !normalized.AnomalyTriggerEnabled {
+		e.anomalyTriggerPending = false
+	}
+	if !normalized.ModelProbeFullSweep && !normalized.AnomalyTriggerEnabled {
+		e.probeSweepRemaining = 0
+		e.pendingProbeSweep = false
+	}
 	e.storageErr = ""
 	e.generation++
 	e.mu.Unlock()
@@ -179,6 +240,59 @@ func (e *InspectionEngine) RequestScan() InspectionSnapshot {
 	}
 	e.mu.Unlock()
 	if started {
+		select {
+		case e.scanWake <- struct{}{}:
+		default:
+		}
+	}
+	return e.Snapshot()
+}
+
+func (e *InspectionEngine) RequestScanWithModelProbes(managementKey string) InspectionSnapshot {
+	if e == nil {
+		return InspectionSnapshot{Policy: defaultInspectionPolicy()}
+	}
+	e.mu.Lock()
+	started := e.started && !e.closed
+	if started {
+		e.pending = true
+		e.pendingProbe = e.pendingProbe || (strings.TrimSpace(managementKey) != "" && e.modelTests != nil)
+		if e.pendingProbe {
+			e.managementKey = strings.TrimSpace(managementKey)
+		}
+	}
+	e.mu.Unlock()
+	managementKey = ""
+	if started {
+		select {
+		case e.scanWake <- struct{}{}:
+		default:
+		}
+	}
+	return e.Snapshot()
+}
+
+func (e *InspectionEngine) ArmModelProbes(managementKey string) InspectionSnapshot {
+	if e == nil || strings.TrimSpace(managementKey) == "" {
+		return e.Snapshot()
+	}
+	e.mu.Lock()
+	wake := false
+	if !e.closed && e.modelTests != nil {
+		e.managementKey = strings.TrimSpace(managementKey)
+		if e.anomalyTriggerPending || e.probeSweepRemaining > 0 {
+			e.anomalyTriggerPending = false
+			e.pending = true
+			e.pendingProbe = true
+			e.pendingProbeSweep = true
+			e.dirty = true
+			e.generation++
+			wake = e.started
+		}
+	}
+	e.mu.Unlock()
+	managementKey = ""
+	if wake {
 		select {
 		case e.scanWake <- struct{}{}:
 		default:
@@ -351,6 +465,7 @@ func (e *InspectionEngine) Shutdown() {
 		return
 	}
 	e.closed = true
+	e.managementKey = ""
 	cancel := e.cancel
 	e.mu.Unlock()
 	if cancel != nil {
@@ -368,10 +483,16 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-e.scanWake:
-			e.scan(ctx)
+			e.mu.Lock()
+			probe := e.pendingProbe
+			sweep := e.pendingProbeSweep
+			e.pendingProbe = false
+			e.pendingProbeSweep = false
+			e.mu.Unlock()
+			e.scanWithMode(ctx, false, probe, sweep)
 		case <-timer.C:
 			if e.scheduledEnabled() {
-				e.scan(ctx)
+				e.scanWithMode(ctx, true, false, false)
 			}
 		}
 		resetInspectionTimer(timer, e.scanInterval())
@@ -402,6 +523,10 @@ func (e *InspectionEngine) persistLoop(ctx context.Context) {
 }
 
 func (e *InspectionEngine) scan(ctx context.Context) {
+	e.scanWithMode(ctx, false, false, false)
+}
+
+func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualProbe, requestedSweep bool) {
 	e.scanMu.Lock()
 	defer e.scanMu.Unlock()
 	if ctx.Err() != nil {
@@ -414,8 +539,23 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 	e.scanStarted = startedAt
 	previous := cloneInspectionRecords(e.records)
 	policy := e.policy
+	managementKey := e.managementKey
+	lastNativeRunAt := e.lastNativeRunAt
+	lastProbeRunAt := e.lastProbeRunAt
+	probeCursor := e.probeCursor
+	modelTests := e.modelTests
+	deletions := e.deletions
+	probeSweepRemaining := e.probeSweepRemaining
+	config := e.config
 	e.mu.Unlock()
 	defer e.clearScanRunning()
+	runNative := (!scheduled && !requestedSweep) || (policy.Enabled && inspectionRunDue(startedAt, lastNativeRunAt, policy.ScanIntervalMinutes))
+	runProbe := manualProbe || (scheduled && policy.ModelProbeEnabled && inspectionRunDue(startedAt, lastProbeRunAt, policy.ModelProbeIntervalMinutes))
+	runProbe = runProbe && strings.TrimSpace(managementKey) != "" && modelTests != nil
+	probeSweep := requestedSweep || (scheduled && runProbe && policy.ModelProbeFullSweep)
+	if !runNative && !runProbe {
+		return
+	}
 
 	summary := InspectionRunSummary{StartedAt: startedAt}
 	accounts, errAccounts := e.accounts.baseAccounts(ctx)
@@ -426,7 +566,7 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 		summary.Failed = 1
 		summary.Error = "account inspection failed"
 		summary.FinishedAt = e.currentTime()
-		e.finishScan(summary, previous, nil)
+		e.finishScan(summary, previous, nil, runNative, false, probeCursor)
 		return
 	}
 	if len(accounts) > maxInspectionAccounts {
@@ -434,6 +574,24 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 		accounts = accounts[:maxInspectionAccounts]
 	}
 	now := e.currentTime()
+	probeCount := 0
+	if runProbe {
+		if probeSweep && probeSweepRemaining <= 0 {
+			probeSweepRemaining = len(inspectionProbeEligibleAccounts(accounts, previous, policy.ScanManuallyDisabled))
+		}
+		probePolicy := policy
+		if probeSweep && probeSweepRemaining > 0 && probePolicy.ModelProbeBatchSize > probeSweepRemaining {
+			probePolicy.ModelProbeBatchSize = probeSweepRemaining
+		}
+		probeResults, nextCursor := runInspectionModelProbes(ctx, modelTests, accounts, previous, probePolicy, probeCursor, config.ManagementBaseURL, managementKey)
+		probeCount = len(probeResults)
+		probeCursor = nextCursor
+		for _, result := range probeResults {
+			record := previous[result.AccountID]
+			applyModelProbeToInspection(&record, result)
+			previous[result.AccountID] = record
+		}
+	}
 	next := make(map[string]inspectionRecord, len(accounts))
 	accountsByID := make(map[string]Account, len(accounts))
 	for _, account := range accounts {
@@ -452,6 +610,18 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 		accountsByID[id] = account
 		incrementInspectionSummary(&summary, record.Result.Health)
 	}
+	armed := strings.TrimSpace(managementKey) != "" && modelTests != nil
+	triggered, anomalySweepSize := e.evaluateAnomalyTrigger(policy, accountsByID, next, now, scheduled && runNative, armed)
+	if triggered {
+		probeSweep = true
+		probeSweepRemaining = anomalySweepSize
+	}
+	if probeSweep {
+		probeSweepRemaining -= probeCount
+		if probeSweepRemaining < 0 {
+			probeSweepRemaining = 0
+		}
+	}
 	actionSummary, actions := e.applyAutomaticActions(ctx, policy, accountsByID, next, now)
 	summary.AutoDisabled += actionSummary.AutoDisabled
 	summary.AutoEnabled += actionSummary.AutoEnabled
@@ -462,7 +632,15 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 	}
 	summary.Scanned = len(next)
 	summary.FinishedAt = e.currentTime()
-	e.finishScan(summary, next, actions)
+	e.finishScan(summary, next, actions, runNative, runProbe, probeCursor)
+	e.updateProbeSweep(probeSweepRemaining, probeSweep && runProbe && probeCount == 0)
+	if probeSweep && probeSweepRemaining > 0 {
+		e.requestProbeSweep()
+	}
+	if policy.AutoDelete && deletions != nil && strings.TrimSpace(managementKey) != "" {
+		e.ExecutePendingDeletes(ctx, deletions, config.ManagementBaseURL, managementKey)
+	}
+	managementKey = ""
 }
 
 func (e *InspectionEngine) clearScanRunning() {
@@ -472,11 +650,18 @@ func (e *InspectionEngine) clearScanRunning() {
 	e.mu.Unlock()
 }
 
-func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[string]inspectionRecord, actions []InspectionAction) {
+func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[string]inspectionRecord, actions []InspectionAction, ranNative, ranProbe bool, probeCursor int) {
 	e.mu.Lock()
 	e.running = false
 	e.scanStarted = time.Time{}
 	e.lastRun = summary
+	if ranNative {
+		e.lastNativeRunAt = summary.FinishedAt
+	}
+	if ranProbe {
+		e.lastProbeRunAt = summary.FinishedAt
+		e.probeCursor = probeCursor
+	}
 	e.records = records
 	for _, action := range actions {
 		e.appendActionLocked(action)
@@ -516,11 +701,17 @@ func (e *InspectionEngine) persist() {
 
 func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {
 	return persistedInspectionState{
-		Version: inspectionStoreVersion,
-		Policy:  e.policy,
-		Records: cloneInspectionRecords(e.records),
-		Actions: append([]InspectionAction(nil), e.actions...),
-		LastRun: e.lastRun,
+		Version:               inspectionStoreVersion,
+		Policy:                e.policy,
+		Records:               cloneInspectionRecords(e.records),
+		Actions:               append([]InspectionAction(nil), e.actions...),
+		LastRun:               e.lastRun,
+		ProbeCursor:           e.probeCursor,
+		LastNativeRunAt:       e.lastNativeRunAt,
+		LastProbeRunAt:        e.lastProbeRunAt,
+		ProbeSweepRemaining:   e.probeSweepRemaining,
+		AnomalyTriggerPending: e.anomalyTriggerPending,
+		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
 	}
 }
 
@@ -533,17 +724,21 @@ func (e *InspectionEngine) requestPersist() {
 
 func (e *InspectionEngine) scheduledEnabled() bool {
 	e.mu.RLock()
-	enabled := e.policy.Enabled && !e.closed
+	enabled := (e.policy.Enabled || (e.policy.ModelProbeEnabled && strings.TrimSpace(e.managementKey) != "")) && !e.closed
 	e.mu.RUnlock()
 	return enabled
 }
 
 func (e *InspectionEngine) scanInterval() time.Duration {
 	e.mu.RLock()
-	minutes := e.policy.ScanIntervalMinutes
+	policy := e.policy
 	e.mu.RUnlock()
-	policy := normalizeInspectionPolicy(InspectionPolicy{ScanIntervalMinutes: minutes})
-	return time.Duration(policy.ScanIntervalMinutes) * time.Minute
+	policy = normalizeInspectionPolicy(policy)
+	minutes := policy.ScanIntervalMinutes
+	if policy.ModelProbeEnabled && (!policy.Enabled || policy.ModelProbeIntervalMinutes < minutes) {
+		minutes = policy.ModelProbeIntervalMinutes
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 func (e *InspectionEngine) currentTime() time.Time {

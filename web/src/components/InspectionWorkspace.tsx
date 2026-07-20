@@ -221,11 +221,11 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     }
   };
 
-  const saveSettings = async (inspection: InspectionPolicy, updatePolicy: UpdatePolicy, confirmDelete: boolean, confirmUpdate: boolean) => {
+  const saveSettings = async (inspection: InspectionPolicy, updatePolicy: UpdatePolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean, confirmUpdate: boolean) => {
     setSettingsSaving(true);
     setSettingsError("");
     try {
-      const nextInspection = await api.saveInspectionPolicy(inspection, confirmDelete);
+      const nextInspection = await api.saveInspectionPolicy(inspection, confirmDelete, confirmDeleteInvalid);
       const nextUpdates = await api.saveUpdatePolicy(updatePolicy, confirmUpdate);
       setSnapshot(nextInspection);
       setUpdates(nextUpdates);
@@ -243,7 +243,11 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     <section className="automation-panel" aria-label={tx("ui.inspection_and_automation")}>
       <header className="automation-toolbar">
         <div className="automation-title">
-          <span className={`automation-live ${snapshot?.policy.enabled ? "is-on" : ""}`}><span />{tx(snapshot?.policy.enabled ? "ui.scheduled_inspection" : "ui.manual")}</span>
+          <div className="automation-sources">
+            <span className={`automation-live ${snapshot?.policy.enabled ? "is-on" : ""}`}><span />{tx(snapshot?.policy.enabled ? "ui.scheduled_inspection" : "ui.manual")}</span>
+            {snapshot?.policy.model_probe_enabled ? <span className={`automation-live ${snapshot.active_probe_armed ? "is-on" : "is-waiting"}`}><span />{tx(snapshot.active_probe_armed ? "ui.active_probe_ready" : "ui.active_probe_waiting_for_auth")}</span> : null}
+            {snapshot?.anomaly_trigger_pending || (snapshot?.probe_sweep_remaining ?? 0) > 0 ? <span className="automation-live is-waiting"><span />{tx("ui.full_active_inspection_queued")}</span> : null}
+          </div>
           <div><strong>{tx("ui.account_health_inspection")}</strong><span>{snapshot?.running || snapshot?.pending ? tx("ui.reading_cpa_status") : tx("ui.last_completed_time", { time: formatDateTime(lastRun?.finished_at) })}</span></div>
         </div>
         <div className="automation-toolbar-actions">
@@ -277,6 +281,14 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         <InspectionMetric label={tx("ui.auto_disable")} value={lastRun?.auto_disabled ?? 0} />
         <InspectionMetric label={tx("ui.auto_enable")} value={lastRun?.auto_enabled ?? 0} tone="healthy" />
         <InspectionMetric label={tx("ui.pending_deletion")} value={lastRun?.delete_pending ?? 0} tone="danger" />
+        <InspectionMetric
+          label={tx("ui.anomaly_ratio")}
+          value={`${snapshot?.anomaly_percent ?? 0}%`}
+          detail={snapshot?.last_anomaly_trigger_at ? tx("ui.last_triggered_time", { time: formatDateTime(snapshot.last_anomaly_trigger_at) }) : tx("ui.not_triggered_yet")}
+          tone={(snapshot?.anomaly_percent ?? 0) >= (snapshot?.policy.anomaly_threshold_percent ?? 101) ? "warning" : ""}
+        />
+        <InspectionMetric label={tx("ui.abnormal_sample")} value={`${snapshot?.anomaly_count ?? 0}/${snapshot?.anomaly_eligible ?? 0}`} />
+        <InspectionMetric label={tx("ui.active_sweep_remaining")} value={snapshot?.probe_sweep_remaining ?? 0} tone={(snapshot?.probe_sweep_remaining ?? 0) > 0 ? "warning" : ""} />
       </div>
 
       <section className="inspection-results">
@@ -292,7 +304,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         </div>
         <div className="inspection-table-scroll">
           <table className="inspection-table">
-            <thead><tr><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th></tr></thead>
+            <thead><tr><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.model_probe")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th></tr></thead>
             <tbody>
               {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} />)}
             </tbody>
@@ -336,15 +348,15 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           saving={settingsSaving}
           error={settingsError}
           onClose={() => setSettingsOpen(false)}
-          onSave={(inspection, updatePolicy, confirmDelete, confirmUpdate) => void saveSettings(inspection, updatePolicy, confirmDelete, confirmUpdate)}
+          onSave={(inspection, updatePolicy, confirmDelete, confirmDeleteInvalid, confirmUpdate) => void saveSettings(inspection, updatePolicy, confirmDelete, confirmDeleteInvalid, confirmUpdate)}
         />
       ) : null}
     </section>
   );
 }
 
-function InspectionMetric({ label, value, tone = "", icon }: { label: string; value: number; tone?: string; icon?: ReactNode }) {
-  return <div className={tone}><span>{icon}{label}</span><strong>{value}</strong></div>;
+function InspectionMetric({ label, value, detail, tone = "", icon }: { label: string; value: string | number; detail?: string; tone?: string; icon?: ReactNode }) {
+  return <div className={tone}><span>{icon}{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>;
 }
 
 function InspectionRow({ result }: { result: InspectionResult }) {
@@ -355,6 +367,7 @@ function InspectionRow({ result }: { result: InspectionResult }) {
       <td><div className="inspection-account"><strong>{result.name || result.id}</strong><code>{result.id}</code></div></td>
       <td><div className="inspection-type"><strong>{result.provider || tx("ui.unknown")}</strong><span>{result.plan_type || result.type || "-"}</span></div></td>
       <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{confidenceLabel(result.confidence, locale)}</span></div></td>
+      <td><div className={`inspection-probe probe-${result.probe_status || "none"}`}><strong>{result.probe_reason_code ? reasonLabel(result.probe_reason_code, locale) : tx("ui.no_probe_result")}</strong><span>{result.probe_model || "-"}{result.probe_latency_ms ? ` · ${result.probe_latency_ms} ms` : ""}</span>{result.probe_tested_at ? <time title={tx("ui.last_model_probe_time", { time: formatDateTime(result.probe_tested_at) })}>{formatDateTime(result.probe_tested_at)}</time> : null}</div></td>
       <td><div className="inspection-streak"><span className="danger">{tx("ui.failures_count", { count: result.failure_streak })}</span><span className="success">{tx("ui.recovery_count", { count: result.healthy_streak })}</span></div></td>
       <td><span className={`recommendation recommendation-${result.recommendation}`}>{recommendationLabel(result.recommendation, locale)}</span></td>
       <td><div className="inspection-action-state"><strong>{actionLabel(result.auto_action, locale)}</strong><span>{actionStatusLabel(result.auto_action_status, result.owned_disable, locale)}</span></div></td>
@@ -376,7 +389,7 @@ function ActionHistoryRow({ action }: { action: InspectionAction }) {
 }
 
 function InspectionLoadingRows() {
-  return <>{Array.from({ length: 5 }, (_, index) => <tr className="inspection-loading-row" key={index}><td colSpan={8}><span /></td></tr>)}</>;
+  return <>{Array.from({ length: 5 }, (_, index) => <tr className="inspection-loading-row" key={index}><td colSpan={9}><span /></td></tr>)}</>;
 }
 
 function healthLabel(value: InspectionHealth, locale: Locale): string {
@@ -390,6 +403,10 @@ function reasonLabel(value: string, locale: Locale): string {
     account_deactivated: "ui.account_deactivated", workspace_deactivated: "ui.workspace_deactivated", authentication_review: "ui.authentication_needs_review",
     billing_review: "ui.billing_or_quota_needs_review", credential_permission_denied: "ui.credential_permission_denied", native_unavailable: "ui.cpa_marked_unavailable", manual_disabled: "ui.manually_disabled_2",
     transient_failure: "ui.temporary_upstream_failure", no_recent_evidence: "ui.no_recent_evidence",
+    model_response_ok: "ui.model_response_is_healthy", authentication_failed: "ui.credentials_invalid_or_expired",
+    quota_limited: "ui.upstream_quota_or_rate_limited_2", model_not_found: "ui.model_unavailable_or_missing",
+    request_timeout: "ui.model_test_timed_out", upstream_unavailable: "ui.upstream_service_unavailable",
+    invalid_response: "ui.could_not_validate_upstream_response", unsupported_provider: "ui.provider_unsupported",
   } satisfies Record<string, UIMessageKey>)[value];
   return source ? translateUI(locale, source) : value;
 }

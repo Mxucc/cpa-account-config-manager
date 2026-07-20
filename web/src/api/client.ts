@@ -201,10 +201,10 @@ export async function getInspection(): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection");
 }
 
-export async function saveInspectionPolicy(policy: InspectionPolicy, confirmAutoDelete = false): Promise<InspectionSnapshot> {
+export async function saveInspectionPolicy(policy: InspectionPolicy, confirmAutoDelete = false, confirmDeleteInvalidCredentials = false): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection", {
     method: "PUT",
-    body: JSON.stringify({ ...policy, confirm_auto_delete: confirmAutoDelete }),
+    body: JSON.stringify({ ...policy, confirm_auto_delete: confirmAutoDelete, confirm_delete_invalid_credentials: confirmDeleteInvalidCredentials }),
   });
 }
 

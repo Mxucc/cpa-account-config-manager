@@ -10,8 +10,14 @@ const (
 	maxInspectionAccounts       = 10_000
 	maxInspectionActions        = 500
 	defaultInspectionInterval   = 30
+	defaultModelProbeInterval   = 60
+	defaultModelProbeBatchSize  = 20
+	defaultAnomalyThreshold     = 50
+	defaultAnomalyMinimum       = 10
+	defaultAnomalyCooldown      = 60
 	minInspectionInterval       = 5
 	maxInspectionInterval       = 24 * 60
+	maxModelProbeBatchSize      = 200
 	defaultFailureThreshold     = 3
 	defaultRecoveryThreshold    = 2
 	defaultDeleteGraceHours     = 7 * 24
@@ -52,20 +58,40 @@ const (
 )
 
 type InspectionPolicy struct {
-	Enabled             bool `json:"enabled"`
-	ScanIntervalMinutes int  `json:"scan_interval_minutes"`
-	FailureThreshold    int  `json:"failure_threshold"`
-	RecoveryThreshold   int  `json:"recovery_threshold"`
-	AutoDisable         bool `json:"auto_disable"`
-	AutoEnable          bool `json:"auto_enable"`
-	AutoDelete          bool `json:"auto_delete"`
-	DeleteGraceHours    int  `json:"delete_grace_hours"`
-	DeleteBatchSize     int  `json:"delete_batch_size"`
+	Enabled                      bool             `json:"enabled"`
+	ScanIntervalMinutes          int              `json:"scan_interval_minutes"`
+	ModelProbeEnabled            bool             `json:"model_probe_enabled"`
+	ModelProbeFullSweep          bool             `json:"model_probe_full_sweep"`
+	ScanManuallyDisabled         bool             `json:"scan_manually_disabled"`
+	ModelProbeIntervalMinutes    int              `json:"model_probe_interval_minutes"`
+	ModelProbeBatchSize          int              `json:"model_probe_batch_size"`
+	ModelProbeModels             ModelProbeModels `json:"model_probe_models"`
+	FailureThreshold             int              `json:"failure_threshold"`
+	RecoveryThreshold            int              `json:"recovery_threshold"`
+	AutoDisable                  bool             `json:"auto_disable"`
+	AutoEnable                   bool             `json:"auto_enable"`
+	AutoDelete                   bool             `json:"auto_delete"`
+	AutoDeleteInvalidCredentials bool             `json:"auto_delete_invalid_credentials"`
+	DeleteGraceHours             int              `json:"delete_grace_hours"`
+	DeleteBatchSize              int              `json:"delete_batch_size"`
+	AnomalyTriggerEnabled        bool             `json:"anomaly_trigger_enabled"`
+	AnomalyThresholdPercent      int              `json:"anomaly_threshold_percent"`
+	AnomalyMinimumAccounts       int              `json:"anomaly_minimum_accounts"`
+	AnomalyCooldownMinutes       int              `json:"anomaly_cooldown_minutes"`
+}
+
+type ModelProbeModels struct {
+	Codex  string `json:"codex"`
+	OpenAI string `json:"openai"`
+	Claude string `json:"claude"`
+	Gemini string `json:"gemini"`
+	XAI    string `json:"xai"`
 }
 
 type InspectionPolicyUpdateRequest struct {
 	InspectionPolicy
-	ConfirmAutoDelete bool `json:"confirm_auto_delete"`
+	ConfirmAutoDelete               bool `json:"confirm_auto_delete"`
+	ConfirmDeleteInvalidCredentials bool `json:"confirm_delete_invalid_credentials"`
 }
 
 type InspectionRunSummary struct {
@@ -89,14 +115,23 @@ type InspectionRunSummary struct {
 }
 
 type InspectionSnapshot struct {
-	Policy        InspectionPolicy     `json:"policy"`
-	Running       bool                 `json:"running"`
-	Pending       bool                 `json:"pending"`
-	ScanStartedAt time.Time            `json:"scan_started_at,omitempty"`
-	LastRun       InspectionRunSummary `json:"last_run"`
-	Total         int                  `json:"total"`
-	ActionCount   int                  `json:"action_count"`
-	StorageError  string               `json:"storage_error,omitempty"`
+	Policy                InspectionPolicy     `json:"policy"`
+	Running               bool                 `json:"running"`
+	Pending               bool                 `json:"pending"`
+	ScanStartedAt         time.Time            `json:"scan_started_at,omitempty"`
+	LastRun               InspectionRunSummary `json:"last_run"`
+	Total                 int                  `json:"total"`
+	ActionCount           int                  `json:"action_count"`
+	ActiveProbeArmed      bool                 `json:"active_probe_armed"`
+	LastNativeRunAt       time.Time            `json:"last_native_run_at,omitempty"`
+	LastProbeRunAt        time.Time            `json:"last_probe_run_at,omitempty"`
+	ProbeSweepRemaining   int                  `json:"probe_sweep_remaining"`
+	AnomalyEligible       int                  `json:"anomaly_eligible"`
+	AnomalyCount          int                  `json:"anomaly_count"`
+	AnomalyPercent        int                  `json:"anomaly_percent"`
+	AnomalyTriggerPending bool                 `json:"anomaly_trigger_pending"`
+	LastAnomalyTriggerAt  time.Time            `json:"last_anomaly_trigger_at,omitempty"`
+	StorageError          string               `json:"storage_error,omitempty"`
 }
 
 type InspectionResult struct {
@@ -123,6 +158,11 @@ type InspectionResult struct {
 	DeleteEligibleAt    *time.Time `json:"delete_eligible_at,omitempty"`
 	AutoAction          string     `json:"auto_action,omitempty"`
 	AutoActionStatus    string     `json:"auto_action_status,omitempty"`
+	ProbeStatus         string     `json:"probe_status,omitempty"`
+	ProbeReasonCode     string     `json:"probe_reason_code,omitempty"`
+	ProbeModel          string     `json:"probe_model,omitempty"`
+	ProbeTestedAt       *time.Time `json:"probe_tested_at,omitempty"`
+	ProbeLatencyMS      int64      `json:"probe_latency_ms,omitempty"`
 }
 
 // AccountAutomationSummary is the bounded inspection state exposed with an
@@ -193,17 +233,55 @@ type InspectionResultList struct {
 
 func defaultInspectionPolicy() InspectionPolicy {
 	return InspectionPolicy{
-		ScanIntervalMinutes: defaultInspectionInterval,
-		FailureThreshold:    defaultFailureThreshold,
-		RecoveryThreshold:   defaultRecoveryThreshold,
-		DeleteGraceHours:    defaultDeleteGraceHours,
-		DeleteBatchSize:     defaultDeleteBatchSize,
+		ScanIntervalMinutes:       defaultInspectionInterval,
+		ModelProbeIntervalMinutes: defaultModelProbeInterval,
+		ModelProbeBatchSize:       defaultModelProbeBatchSize,
+		ModelProbeModels:          defaultModelProbeModels(),
+		FailureThreshold:          defaultFailureThreshold,
+		RecoveryThreshold:         defaultRecoveryThreshold,
+		DeleteGraceHours:          defaultDeleteGraceHours,
+		DeleteBatchSize:           defaultDeleteBatchSize,
+		AnomalyThresholdPercent:   defaultAnomalyThreshold,
+		AnomalyMinimumAccounts:    defaultAnomalyMinimum,
+		AnomalyCooldownMinutes:    defaultAnomalyCooldown,
+	}
+}
+
+func defaultModelProbeModels() ModelProbeModels {
+	return ModelProbeModels{
+		Codex:  "gpt-5.4",
+		OpenAI: "gpt-5.4",
+		Claude: "claude-sonnet-4-5-20250929",
+		Gemini: "gemini-2.0-flash",
+		XAI:    "grok-4",
 	}
 }
 
 func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 	if policy.ScanIntervalMinutes == 0 {
 		policy.ScanIntervalMinutes = defaultInspectionInterval
+	}
+	if policy.ModelProbeIntervalMinutes == 0 {
+		policy.ModelProbeIntervalMinutes = defaultModelProbeInterval
+	}
+	if policy.ModelProbeBatchSize == 0 {
+		policy.ModelProbeBatchSize = defaultModelProbeBatchSize
+	}
+	defaults := defaultModelProbeModels()
+	if strings.TrimSpace(policy.ModelProbeModels.Codex) == "" {
+		policy.ModelProbeModels.Codex = defaults.Codex
+	}
+	if strings.TrimSpace(policy.ModelProbeModels.OpenAI) == "" {
+		policy.ModelProbeModels.OpenAI = defaults.OpenAI
+	}
+	if strings.TrimSpace(policy.ModelProbeModels.Claude) == "" {
+		policy.ModelProbeModels.Claude = defaults.Claude
+	}
+	if strings.TrimSpace(policy.ModelProbeModels.Gemini) == "" {
+		policy.ModelProbeModels.Gemini = defaults.Gemini
+	}
+	if strings.TrimSpace(policy.ModelProbeModels.XAI) == "" {
+		policy.ModelProbeModels.XAI = defaults.XAI
 	}
 	if policy.FailureThreshold == 0 {
 		policy.FailureThreshold = defaultFailureThreshold
@@ -217,6 +295,15 @@ func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 	if policy.DeleteBatchSize == 0 {
 		policy.DeleteBatchSize = defaultDeleteBatchSize
 	}
+	if policy.AnomalyThresholdPercent == 0 {
+		policy.AnomalyThresholdPercent = defaultAnomalyThreshold
+	}
+	if policy.AnomalyMinimumAccounts == 0 {
+		policy.AnomalyMinimumAccounts = defaultAnomalyMinimum
+	}
+	if policy.AnomalyCooldownMinutes == 0 {
+		policy.AnomalyCooldownMinutes = defaultAnomalyCooldown
+	}
 	return policy
 }
 
@@ -224,6 +311,20 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	policy = normalizeInspectionPolicy(policy)
 	if policy.ScanIntervalMinutes < minInspectionInterval || policy.ScanIntervalMinutes > maxInspectionInterval {
 		return InspectionPolicy{}, fmt.Errorf("scan_interval_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
+	}
+	if policy.ModelProbeIntervalMinutes < minInspectionInterval || policy.ModelProbeIntervalMinutes > maxInspectionInterval {
+		return InspectionPolicy{}, fmt.Errorf("model_probe_interval_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
+	}
+	if policy.ModelProbeBatchSize < 1 || policy.ModelProbeBatchSize > maxModelProbeBatchSize {
+		return InspectionPolicy{}, fmt.Errorf("model_probe_batch_size must be between 1 and %d", maxModelProbeBatchSize)
+	}
+	for provider, model := range map[string]string{
+		"codex": policy.ModelProbeModels.Codex, "openai": policy.ModelProbeModels.OpenAI,
+		"claude": policy.ModelProbeModels.Claude, "gemini": policy.ModelProbeModels.Gemini, "xai": policy.ModelProbeModels.XAI,
+	} {
+		if safeModelIdentifier(model) == "" {
+			return InspectionPolicy{}, fmt.Errorf("model_probe_models.%s contains unsupported characters or exceeds 128 characters", provider)
+		}
 	}
 	if policy.FailureThreshold < 2 || policy.FailureThreshold > 10 {
 		return InspectionPolicy{}, fmt.Errorf("failure_threshold must be between 2 and 10")
@@ -237,8 +338,26 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	if policy.DeleteBatchSize < 1 || policy.DeleteBatchSize > maxDeleteBatchSize {
 		return InspectionPolicy{}, fmt.Errorf("delete_batch_size must be between 1 and %d", maxDeleteBatchSize)
 	}
+	if policy.AnomalyThresholdPercent < 1 || policy.AnomalyThresholdPercent > 100 {
+		return InspectionPolicy{}, fmt.Errorf("anomaly_threshold_percent must be between 1 and 100")
+	}
+	if policy.AnomalyMinimumAccounts < 1 || policy.AnomalyMinimumAccounts > maxInspectionAccounts {
+		return InspectionPolicy{}, fmt.Errorf("anomaly_minimum_accounts must be between 1 and %d", maxInspectionAccounts)
+	}
+	if policy.AnomalyCooldownMinutes < minInspectionInterval || policy.AnomalyCooldownMinutes > maxInspectionInterval {
+		return InspectionPolicy{}, fmt.Errorf("anomaly_cooldown_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
+	}
 	if policy.AutoDelete && !policy.AutoDisable {
 		return InspectionPolicy{}, fmt.Errorf("auto_delete requires auto_disable")
+	}
+	if policy.AutoDeleteInvalidCredentials && (!policy.AutoDelete || !policy.AutoDisable) {
+		return InspectionPolicy{}, fmt.Errorf("auto_delete_invalid_credentials requires auto_delete and auto_disable")
+	}
+	if policy.ModelProbeFullSweep && !policy.ModelProbeEnabled {
+		return InspectionPolicy{}, fmt.Errorf("model_probe_full_sweep requires scheduled model probes")
+	}
+	if policy.AnomalyTriggerEnabled && !policy.Enabled {
+		return InspectionPolicy{}, fmt.Errorf("anomaly_trigger_enabled requires scheduled native inspection")
 	}
 	return policy, nil
 }

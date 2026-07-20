@@ -786,29 +786,33 @@ export default function App() {
             <span className="brand-icon"><FileCog size={21} /></span>
             <div><h1>{tx("ui.account_management")}</h1><span>CPA Account Config Manager</span></div>
           </div>
-          <div className="header-status">
-            <span><ShieldCheck size={15} />{tx("ui.count_accounts", { count: data.total })}</span>
-            {job?.id ? <button type="button" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={15} />{job.running ? `${job.done}/${job.total}` : jobStateLabel(job.state)}</button> : null}
-            {forceJob?.id ? <button type="button" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={15} />{forceJob.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel(forceJob.state)}</button> : null}
-          </div>
-          <div className="header-actions">
-            {job?.id ? <IconButton className="mobile-job-action" label={tx("ui.open_batch_job")} onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
-            {forceJob?.id ? <IconButton className="mobile-job-action" label={tx("ui.open_force_sync_job")} onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
-            {activeView === "accounts" ? <>
-              <button className="button button-primary header-add-account" type="button" title={tx("ui.add_accounts")} aria-label={tx("ui.add_accounts")} onClick={openImport}><UserPlus size={16} /><span>{tx("ui.add_accounts")}</span></button>
-              <IconButton label={tx("ui.default_policy")} onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
-              <IconButton className="export-action" label={tx("ui.download_filtered_credentials")} onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
-              <IconButton label={tx("ui.refresh_accounts")} onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
-            </> : null}
-            <a className="icon-button" href="https://github.com/Mxucc/cpa-account-config-manager/" target="_blank" rel="noopener noreferrer" aria-label={tx("ui.open_project_on_github")} title={tx("ui.open_project_on_github")}><Github size={17} /></a>
-          </div>
         </header>
 
-        <nav className="workspace-tabs" aria-label={tx("ui.account_management_views")}>
-          <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} />{tx("ui.accounts")}</button>
-          <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} />{tx("ui.inspection_and_automation")}</button>
-          <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} />{tx("ui.operation_log")}</button>
-        </nav>
+        <div className="workspace-bar">
+          <nav className="workspace-tabs" aria-label={tx("ui.account_management_views")}>
+            <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} />{tx("ui.accounts")}</button>
+            <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} />{tx("ui.inspection_and_automation")}</button>
+            <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} />{tx("ui.operation_log")}</button>
+          </nav>
+          <div className="workspace-controls">
+            <div className="header-status">
+              <span><ShieldCheck size={15} />{tx("ui.count_accounts", { count: data.total })}</span>
+              {job?.id ? <button type="button" onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={15} />{job.running ? `${job.done}/${job.total}` : jobStateLabel(job.state)}</button> : null}
+              {forceJob?.id ? <button type="button" onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={15} />{forceJob.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel(forceJob.state)}</button> : null}
+            </div>
+            <div className="header-actions">
+              {job?.id ? <IconButton className="mobile-job-action" label={tx("ui.open_batch_job")} onClick={() => { setForceJobOpen(false); setJobOpen(true); }}><Activity size={17} /></IconButton> : null}
+              {forceJob?.id ? <IconButton className="mobile-job-action" label={tx("ui.open_force_sync_job")} onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
+              {activeView === "accounts" ? <>
+                <button className="button button-primary header-add-account" type="button" title={tx("ui.add_accounts")} aria-label={tx("ui.add_accounts")} onClick={openImport}><UserPlus size={16} /><span>{tx("ui.add_accounts")}</span></button>
+                <IconButton label={tx("ui.default_policy")} onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
+                <IconButton className="export-action" label={tx("ui.download_filtered_credentials")} onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
+                <IconButton label={tx("ui.refresh_accounts")} onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
+              </> : null}
+              <a className="icon-button" href="https://github.com/Mxucc/cpa-account-config-manager/" target="_blank" rel="noopener noreferrer" aria-label={tx("ui.open_project_on_github")} title={tx("ui.open_project_on_github")}><Github size={17} /></a>
+            </div>
+          </div>
+        </div>
 
         {notice ? <div className="notice-bar global-notice" role="alert"><span>{notice}</span><IconButton label={tx("ui.dismiss_notification")} onClick={() => setNotice("")}><X size={15} /></IconButton></div> : null}
 

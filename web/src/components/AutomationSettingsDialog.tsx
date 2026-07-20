@@ -11,24 +11,36 @@ interface AutomationSettingsDialogProps {
   saving: boolean;
   error?: string;
   onClose: () => void;
-  onSave: (inspection: InspectionPolicy, updates: UpdatePolicy, confirmDelete: boolean, confirmUpdate: boolean) => void;
+  onSave: (inspection: InspectionPolicy, updates: UpdatePolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean, confirmUpdate: boolean) => void;
 }
 
 export function AutomationSettingsDialog({ inspection, updates, saving, error = "", onClose, onSave }: AutomationSettingsDialogProps) {
   const { tx } = useI18n();
   const [scheduleEnabled, setScheduleEnabled] = useState(inspection.enabled);
   const [scanInterval, setScanInterval] = useState(String(inspection.scan_interval_minutes));
+  const [probeEnabled, setProbeEnabled] = useState(inspection.model_probe_enabled);
+  const [fullProbeSweep, setFullProbeSweep] = useState(inspection.model_probe_full_sweep);
+  const [scanManuallyDisabled, setScanManuallyDisabled] = useState(inspection.scan_manually_disabled);
+  const [probeInterval, setProbeInterval] = useState(String(inspection.model_probe_interval_minutes));
+  const [probeBatchSize, setProbeBatchSize] = useState(String(inspection.model_probe_batch_size));
+  const [probeModels, setProbeModels] = useState({ ...inspection.model_probe_models });
   const [failureThreshold, setFailureThreshold] = useState(String(inspection.failure_threshold));
   const [recoveryThreshold, setRecoveryThreshold] = useState(String(inspection.recovery_threshold));
   const [autoDisable, setAutoDisable] = useState(inspection.auto_disable);
   const [autoEnable, setAutoEnable] = useState(inspection.auto_enable);
   const [autoDelete, setAutoDelete] = useState(inspection.auto_delete);
+  const [autoDeleteInvalid, setAutoDeleteInvalid] = useState(inspection.auto_delete_invalid_credentials);
   const [deleteGrace, setDeleteGrace] = useState(String(inspection.delete_grace_hours));
   const [deleteBatch, setDeleteBatch] = useState(String(inspection.delete_batch_size));
+  const [anomalyEnabled, setAnomalyEnabled] = useState(inspection.anomaly_trigger_enabled);
+  const [anomalyThreshold, setAnomalyThreshold] = useState(String(inspection.anomaly_threshold_percent));
+  const [anomalyMinimum, setAnomalyMinimum] = useState(String(inspection.anomaly_minimum_accounts));
+  const [anomalyCooldown, setAnomalyCooldown] = useState(String(inspection.anomaly_cooldown_minutes));
   const [checkEnabled, setCheckEnabled] = useState(updates.check_enabled);
   const [checkInterval, setCheckInterval] = useState(String(updates.check_interval_hours));
   const [autoUpdate, setAutoUpdate] = useState(updates.auto_update);
   const [confirmDelete, setConfirmDelete] = useState(inspection.auto_delete);
+  const [confirmDeleteInvalid, setConfirmDeleteInvalid] = useState(inspection.auto_delete_invalid_credentials);
   const [confirmUpdate, setConfirmUpdate] = useState(updates.auto_update);
   const [formError, setFormError] = useState("");
 
@@ -36,35 +48,58 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
     setFormError("");
     const scanMinutes = Number(scanInterval);
     const failures = Number(failureThreshold);
+    const probeMinutes = Number(probeInterval);
+    const probeBatch = Number(probeBatchSize);
     const recoveries = Number(recoveryThreshold);
     const graceHours = Number(deleteGrace);
     const batchSize = Number(deleteBatch);
+    const anomalyPct = Number(anomalyThreshold);
+    const anomalyMin = Number(anomalyMinimum);
+    const anomalyCooldownMinutes = Number(anomalyCooldown);
     const updateHours = Number(checkInterval);
     if (!Number.isInteger(scanMinutes) || scanMinutes < 5 || scanMinutes > 1440) return setFormError(tx("ui.inspection_interval_must_be_between_5_and_1440_minutes"));
+    if (!Number.isInteger(probeMinutes) || probeMinutes < 5 || probeMinutes > 1440) return setFormError(tx("ui.model_probe_interval_must_be_between_5_and_1440_minutes"));
+    if (!Number.isInteger(probeBatch) || probeBatch < 1 || probeBatch > 200) return setFormError(tx("ui.model_probe_batch_must_be_between_1_and_200_accounts"));
+    if (Object.values(probeModels).some((model) => !model.trim())) return setFormError(tx("ui.model_probe_models_are_required"));
     if (!Number.isInteger(failures) || failures < 2 || failures > 10) return setFormError(tx("ui.failure_threshold_must_be_between_2_and_10_events"));
     if (!Number.isInteger(recoveries) || recoveries < 1 || recoveries > 10) return setFormError(tx("ui.recovery_threshold_must_be_between_1_and_10_events"));
     if (!Number.isInteger(graceHours) || graceHours < 24 || graceHours > 8760) return setFormError(tx("ui.deletion_grace_must_be_between_24_and_8760_hours"));
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) return setFormError(tx("ui.deletes_per_run_must_be_between_1_and_100"));
+    if (!Number.isInteger(anomalyPct) || anomalyPct < 1 || anomalyPct > 100) return setFormError(tx("ui.anomaly_threshold_must_be_between_1_and_100_percent"));
+    if (!Number.isInteger(anomalyMin) || anomalyMin < 1 || anomalyMin > 10000) return setFormError(tx("ui.anomaly_minimum_must_be_between_1_and_10000_accounts"));
+    if (!Number.isInteger(anomalyCooldownMinutes) || anomalyCooldownMinutes < 5 || anomalyCooldownMinutes > 1440) return setFormError(tx("ui.anomaly_cooldown_must_be_between_5_and_1440_minutes"));
     if (!Number.isInteger(updateHours) || updateHours < 1 || updateHours > 168) return setFormError(tx("ui.update_check_interval_must_be_between_1_and_168_hours"));
     if (autoDelete && !autoDisable) return setFormError(tx("ui.auto_delete_requires_auto_disable"));
     if (autoDelete && !inspection.auto_delete && !confirmDelete) return setFormError(tx("ui.confirm_the_risk_before_enabling_auto_delete"));
+    if (autoDeleteInvalid && !inspection.auto_delete_invalid_credentials && !confirmDeleteInvalid) return setFormError(tx("ui.confirm_the_risk_before_deleting_invalid_credentials"));
     if (autoUpdate && !checkEnabled) return setFormError(tx("ui.auto_update_requires_update_checks"));
     if (autoUpdate && !updates.auto_update && !confirmUpdate) return setFormError(tx("ui.confirm_the_risk_before_enabling_auto_update"));
     onSave({
       enabled: scheduleEnabled,
       scan_interval_minutes: scanMinutes,
+      model_probe_enabled: probeEnabled,
+      model_probe_full_sweep: fullProbeSweep,
+      scan_manually_disabled: scanManuallyDisabled,
+      model_probe_interval_minutes: probeMinutes,
+      model_probe_batch_size: probeBatch,
+      model_probe_models: Object.fromEntries(Object.entries(probeModels).map(([provider, model]) => [provider, model.trim()])) as InspectionPolicy["model_probe_models"],
       failure_threshold: failures,
       recovery_threshold: recoveries,
       auto_disable: autoDisable,
       auto_enable: autoEnable,
       auto_delete: autoDelete,
+      auto_delete_invalid_credentials: autoDeleteInvalid,
       delete_grace_hours: graceHours,
       delete_batch_size: batchSize,
+      anomaly_trigger_enabled: anomalyEnabled,
+      anomaly_threshold_percent: anomalyPct,
+      anomaly_minimum_accounts: anomalyMin,
+      anomaly_cooldown_minutes: anomalyCooldownMinutes,
     }, {
       check_enabled: checkEnabled,
       check_interval_hours: updateHours,
       auto_update: autoUpdate,
-    }, confirmDelete, confirmUpdate);
+    }, confirmDelete, confirmDeleteInvalid, confirmUpdate);
   };
 
   return (
@@ -93,11 +128,41 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
         </section>
 
         <section className="automation-settings-section">
+          <header><ShieldCheck size={17} /><div><strong>{tx("ui.server_model_inspection")}</strong><span>{tx("ui.server_model_inspection_description")}</span></div></header>
+          <div className="automation-setting-grid">
+            <SettingToggle label="ui.scheduled_model_probes" checked={probeEnabled} disabled={saving} onChange={setProbeEnabled} />
+            <SettingToggle label="ui.full_scheduled_active_inspection" checked={fullProbeSweep} disabled={!probeEnabled || saving} onChange={setFullProbeSweep} />
+            <SettingToggle label="ui.probe_manually_disabled_accounts" checked={scanManuallyDisabled} disabled={!probeEnabled || saving} onChange={setScanManuallyDisabled} />
+            <SettingNumber label="ui.model_probe_interval" suffix="ui.minutes" value={probeInterval} min={5} max={1440} disabled={!probeEnabled || saving} onChange={setProbeInterval} />
+            <SettingNumber label="ui.accounts_per_probe_run" suffix="ui.accounts_2" value={probeBatchSize} min={1} max={200} disabled={!probeEnabled || saving} onChange={setProbeBatchSize} />
+          </div>
+          <div className="probe-model-grid">
+            <ProbeModel label="ui.codex_model" value={probeModels.codex} disabled={saving} onChange={(value) => setProbeModels((current) => ({ ...current, codex: value }))} />
+            <ProbeModel label="ui.openai_model" value={probeModels.openai} disabled={saving} onChange={(value) => setProbeModels((current) => ({ ...current, openai: value }))} />
+            <ProbeModel label="ui.claude_model" value={probeModels.claude} disabled={saving} onChange={(value) => setProbeModels((current) => ({ ...current, claude: value }))} />
+            <ProbeModel label="ui.gemini_model" value={probeModels.gemini} disabled={saving} onChange={(value) => setProbeModels((current) => ({ ...current, gemini: value }))} />
+            <ProbeModel label="ui.grok_xai_model" value={probeModels.xai} disabled={saving} onChange={(value) => setProbeModels((current) => ({ ...current, xai: value }))} />
+          </div>
+          <p className="automation-setting-note">{tx("ui.active_probe_key_memory_note")}</p>
+        </section>
+
+        <section className="automation-settings-section">
+          <header><AlertTriangle size={17} /><div><strong>{tx("ui.anomaly_trigger")}</strong><span>{tx("ui.anomaly_trigger_description")}</span></div></header>
+          <div className="automation-setting-grid">
+            <SettingToggle label="ui.enable_anomaly_trigger" checked={anomalyEnabled} disabled={saving} onChange={(checked) => { setAnomalyEnabled(checked); if (checked) setScheduleEnabled(true); }} />
+            <SettingNumber label="ui.anomaly_threshold" suffix="ui.percent" value={anomalyThreshold} min={1} max={100} disabled={!anomalyEnabled || saving} onChange={setAnomalyThreshold} />
+            <SettingNumber label="ui.minimum_sample" suffix="ui.accounts_2" value={anomalyMinimum} min={1} max={10000} disabled={!anomalyEnabled || saving} onChange={setAnomalyMinimum} />
+            <SettingNumber label="ui.trigger_cooldown" suffix="ui.minutes" value={anomalyCooldown} min={5} max={1440} disabled={!anomalyEnabled || saving} onChange={setAnomalyCooldown} />
+          </div>
+        </section>
+
+        <section className="automation-settings-section">
           <header><AlertTriangle size={17} /><div><strong>{tx("ui.account_disposition")}</strong><span>{tx("ui.only_accounts_disabled_by_inspection_can_be_restored")}</span></div></header>
           <div className="automation-setting-grid">
             <SettingToggle label="ui.auto_disable" checked={autoDisable} disabled={saving} onChange={(checked) => { setAutoDisable(checked); if (!checked) setAutoDelete(false); }} />
             <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={setAutoEnable} />
-            <SettingToggle label="ui.auto_delete" checked={autoDelete} disabled={saving} danger onChange={(checked) => { setAutoDelete(checked); if (checked) setAutoDisable(true); }} />
+            <SettingToggle label="ui.auto_delete" checked={autoDelete} disabled={saving} danger onChange={(checked) => { setAutoDelete(checked); if (checked) setAutoDisable(true); else setAutoDeleteInvalid(false); }} />
+            <SettingToggle label="ui.delete_persistent_invalid_credentials" checked={autoDeleteInvalid} disabled={saving} danger onChange={(checked) => { setAutoDeleteInvalid(checked); if (checked) { setAutoDelete(true); setAutoDisable(true); } }} />
             <SettingNumber label="ui.deletion_grace" suffix="ui.hours" value={deleteGrace} min={24} max={8760} disabled={!autoDelete || saving} onChange={setDeleteGrace} />
             <SettingNumber label="ui.deletes_per_run" suffix="ui.accounts_2" value={deleteBatch} min={1} max={100} disabled={!autoDelete || saving} onChange={setDeleteBatch} />
           </div>
@@ -105,6 +170,12 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
             <label className="destructive-confirmation">
               <input type="checkbox" checked={confirmDelete} disabled={saving} onChange={(event) => setConfirmDelete(event.target.checked)} aria-label={tx("ui.confirm_auto_delete")} />
               <Trash2 size={15} /><span>{tx("ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period")}</span>
+            </label>
+          ) : null}
+          {autoDeleteInvalid && !inspection.auto_delete_invalid_credentials ? (
+            <label className="destructive-confirmation">
+              <input type="checkbox" checked={confirmDeleteInvalid} disabled={saving} onChange={(event) => setConfirmDeleteInvalid(event.target.checked)} aria-label={tx("ui.confirm_invalid_credential_deletion")} />
+              <Trash2 size={15} /><span>{tx("ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation")}</span>
             </label>
           ) : null}
         </section>
@@ -128,6 +199,11 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
       </div>
     </Modal>
   );
+}
+
+function ProbeModel({ label, value, disabled, onChange }: { label: UIMessageKey; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const { tx } = useI18n();
+  return <label className="probe-model-field"><span>{tx(label)}</span><input type="text" maxLength={128} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} aria-label={tx(label)} /></label>;
 }
 
 function SettingToggle({ label, checked, disabled, danger = false, onChange }: { label: UIMessageKey; checked: boolean; disabled: boolean; danger?: boolean; onChange: (checked: boolean) => void }) {

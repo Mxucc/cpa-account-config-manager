@@ -603,6 +603,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .inspection-metrics .warning strong { color: var(--warning); }
 .inspection-metrics .danger strong { color: var(--danger); }
 .inspection-metrics .review strong { color: var(--blue); }
+.inspection-remediation { min-width: 0; display: grid; grid-template-columns: minmax(210px, 0.9fr) minmax(420px, 1.6fr) auto; align-items: stretch; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary); }
+.inspection-remediation > header { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 12px 14px; border-right: 1px solid var(--border-color); }
+.inspection-remediation > header div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.inspection-remediation > header strong { font-size: 12px; }
+.inspection-remediation > header span { color: var(--text-secondary); font-size: 9px; line-height: 1.4; }
+.inspection-remediation > header b { width: fit-content; color: var(--blue); font-size: 9px; font-weight: 600; }
+.inspection-remediation-counts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(70px, 1fr)); }
+.inspection-remediation-counts > span { min-width: 70px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 9px 11px; border-right: 1px solid var(--border-color); }
+.inspection-remediation-counts small { overflow: hidden; color: var(--text-tertiary); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.inspection-remediation-counts strong { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 15px; font-variant-numeric: tabular-nums; }
+.inspection-remediation-counts .danger strong { color: var(--danger); }
+.inspection-remediation-counts .warning strong { color: var(--warning); }
+.inspection-remediation-counts .healthy strong { color: var(--success); }
+.inspection-remediation-counts .review strong { color: var(--blue); }
+.inspection-remediation-actions { min-width: 205px; display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: 6px; padding: 9px 12px; }
+.inspection-remediation-actions .button { justify-content: flex-start; white-space: nowrap; }
+.inspection-remediation-confirm { display: grid; gap: 13px; }
 
 .inspection-results { min-width: 0; }
 .inspection-filter-bar { min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 9px 14px; border-bottom: 1px solid var(--border-color); background: var(--bg-quinary); }
@@ -939,6 +956,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .with-job-panel .bulk-actions .button { min-width: 0; padding-inline: 7px; }
   .automation-lower-grid { grid-template-columns: 1fr; }
   .action-history { border-right: none; border-bottom: 1px solid var(--border-color); }
+  .inspection-remediation { grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.3fr); }
+  .inspection-remediation-actions { grid-column: 1 / -1; min-width: 0; flex-direction: row; border-top: 1px solid var(--border-color); }
 }
 
 @media (max-width: 820px) {
@@ -964,6 +983,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .update-banner > a { grid-column: 2; }
   .update-banner > .button { grid-column: 3; grid-row: 1 / span 2; }
   .inspection-filter-bar { flex-wrap: wrap; }
+  .inspection-remediation { grid-template-columns: 1fr; }
+  .inspection-remediation > header { border-right: none; border-bottom: 1px solid var(--border-color); }
+  .inspection-remediation-counts { overflow-x: auto; }
+  .inspection-remediation-actions { grid-column: auto; }
   .inspection-filter-bar .inspection-search { width: 100%; }
   .inspection-filter-bar > span { margin-left: 0; }
   .inspection-selection-bar { flex-wrap: wrap; }
@@ -1044,11 +1067,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .update-banner { grid-template-columns: auto minmax(0, 1fr); padding: 10px 12px; }
   .update-banner > a, .update-banner > .button { grid-column: 2; grid-row: auto; justify-self: start; }
   .inspection-filter-bar > select { width: 100%; }
+  .inspection-remediation-actions { flex-direction: column; }
   .inspection-page-size { width: 100%; justify-content: space-between; }
   .inspection-export-format { flex: 1 1 auto; justify-content: space-between; }
-  .inspection-selection-bar .button { flex: 1 1 calc(50% - 7px); min-width: 0; }
+  .inspection-selection-bar .button { flex: 1 1 100%; width: 100%; min-width: 0; }
   .inspection-filter-actions > span { width: 100%; margin-right: 0; }
-  .inspection-filter-actions .button { flex: 1 1 calc(50% - 7px); min-width: 0; }
+  .inspection-filter-actions .button { flex: 1 1 100%; width: 100%; min-width: 0; }
   .inspection-action-dialog dl { grid-template-columns: 1fr; }
   .inspection-action-dialog dl > div { border-right: none; border-bottom: 1px solid var(--border-color); }
   .inspection-action-dialog dl > div:nth-last-child(-n + 2) { border-bottom: 1px solid var(--border-color); }

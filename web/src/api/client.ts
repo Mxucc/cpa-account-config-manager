@@ -246,13 +246,34 @@ export async function listInspectionResults(page: number, pageSize: number, heal
   if (health) query.set("health", health);
   if (search) query.set("search", search);
   const response = await request<InspectionResultList>("/inspection/results", {}, query);
-  return { ...response, results: arrayOrEmpty(response.results) };
+  return {
+    ...response,
+    results: arrayOrEmpty(response.results),
+    summary: response.summary ?? {
+      actionable: 0,
+      suggested_delete: 0,
+      suggested_disable: 0,
+      suggested_enable: 0,
+      reauth: 0,
+      review: 0,
+      keep: 0,
+      editable_enabled: 0,
+      editable_disabled: 0,
+    },
+  };
 }
 
 export async function listInspectionActions(limit = 50): Promise<InspectionAction[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   const response = await request<{ actions: InspectionAction[] }>("/inspection/actions", {}, query);
   return arrayOrEmpty(response.actions);
+}
+
+export async function deleteInspectionRecommendations(accountIDs: string[]): Promise<InspectionDeleteRun> {
+  return request<InspectionDeleteRun>("/inspection/delete", {
+    method: "POST",
+    body: JSON.stringify({ account_ids: accountIDs, confirm: true }),
+  });
 }
 
 export async function downloadInspectionExport(format: "json" | "csv" | "jsonl", health = "", search = ""): Promise<{ filename: string; exported?: number }> {

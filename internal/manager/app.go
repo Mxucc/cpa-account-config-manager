@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.7"
+	PluginVersion    = "0.2.8"
 	PluginRepository = DefaultPluginRepository
 )
 
@@ -191,6 +191,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/export", Description: "Export filtered sanitized inspection results as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/review", Description: "Resolve, ignore, or reopen one sanitized inspection review result."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/actions", Description: "List sanitized automatic action history."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/delete", Description: "Delete explicitly confirmed high-confidence inspection recommendations after physical revision revalidation."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/auto-delete", Description: "Execute due opt-in deletion candidates with the current Management credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/updates", Description: "Read plugin release and update-check status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/updates", Description: "Validate and save plugin update-check settings."},
@@ -266,7 +267,7 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection":
 		inspectionSnapshot := a.inspection.Snapshot()
 		inspectionPolicy := inspectionSnapshot.Policy
-		if inspectionPolicy.ModelProbeEnabled || inspectionPolicy.AnomalyTriggerEnabled || inspectionPolicy.AutoDelete || inspectionSnapshot.ProbeSweepRemaining > 0 {
+		if inspectionPolicy.ModelProbeEnabled || inspectionPolicy.AnomalyTriggerEnabled || inspectionPolicy.AutoDisable || inspectionPolicy.AutoEnable || inspectionPolicy.AutoDelete || inspectionSnapshot.ProbeSweepRemaining > 0 {
 			managementKey := resolveManagementKey(req.Headers)
 			if managementKey != "" {
 				a.inspection.ArmModelProbes(managementKey)
@@ -291,19 +292,26 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		managementKey = ""
 		return jsonResponse(http.StatusAccepted, snapshot)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/scan/native":
+		managementKey := resolveManagementKey(req.Headers)
+		if managementKey != "" {
+			a.inspection.ArmModelProbes(managementKey)
+			managementKey = ""
+		}
 		return jsonResponse(http.StatusAccepted, a.inspection.RequestScan())
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/run":
 		return a.handleInspectionRun(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/stop":
 		return jsonResponse(http.StatusAccepted, a.inspection.StopRun())
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/results":
-		return a.handleListInspectionResults(req)
+		return a.handleListInspectionResults(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/export":
 		return a.handleExportInspection(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/review":
 		return a.handleInspectionReview(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/actions":
 		return a.handleListInspectionActions(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/delete":
+		return a.handleInspectionManualDelete(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/auto-delete":
 		return a.handleInspectionAutoDelete(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/updates":
@@ -796,7 +804,7 @@ func (a *App) handlePutInspectionPolicy(req cpaapi.ManagementRequest) cpaapi.Man
 	if request.AutoDeleteInvalidCredentials && !current.AutoDeleteInvalidCredentials && !request.ConfirmDeleteInvalidCredentials {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "enabling auto_delete_invalid_credentials requires explicit confirmation"})
 	}
-	if request.ModelProbeEnabled || request.AnomalyTriggerEnabled || request.AutoDelete {
+	if request.ModelProbeEnabled || request.AnomalyTriggerEnabled || request.AutoDisable || request.AutoEnable || request.AutoDelete {
 		managementKey := resolveManagementKey(req.Headers)
 		if managementKey != "" {
 			a.inspection.ArmModelProbes(managementKey)
@@ -815,7 +823,8 @@ func (a *App) handlePutInspectionPolicy(req cpaapi.ManagementRequest) cpaapi.Man
 	return jsonResponse(http.StatusOK, snapshot)
 }
 
-func (a *App) handleListInspectionResults(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+func (a *App) handleListInspectionResults(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	_ = a.inspection.ReconcileAccountStates(ctx)
 	query := InspectionResultQuery{
 		Page:     intQuery(req.Query, "page", 1),
 		PageSize: intQuery(req.Query, "page_size", 50),
@@ -869,6 +878,46 @@ func (a *App) handleListInspectionActions(req cpaapi.ManagementRequest) cpaapi.M
 	return jsonResponse(http.StatusOK, map[string]any{
 		"actions": a.inspection.Actions(intQuery(req.Query, "limit", 50)),
 	})
+}
+
+func (a *App) handleInspectionManualDelete(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request InspectionManualDeleteRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	config := a.configSnapshot()
+	startedAt := time.Now().UTC()
+	run, errDelete := a.inspection.ExecuteManualDeletes(ctx, a.deletions, config.ManagementBaseURL, managementKey, request)
+	managementKey = ""
+	if errDelete != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(errDelete, ErrInspectionDeleteConfirmation) || errors.Is(errDelete, ErrInspectionDeleteIDsRequired) || errors.Is(errDelete, ErrInspectionDeleteTooMany) {
+			status = http.StatusBadRequest
+		}
+		return jsonResponse(status, map[string]any{"error": errDelete.Error()})
+	}
+	status := OperationStatusSucceeded
+	reason := "completed"
+	if run.Failed > 0 || run.Skipped > 0 {
+		status = OperationStatusPartial
+		reason = "partial_failure"
+		if run.Succeeded == 0 && run.Failed > 0 {
+			status = OperationStatusFailed
+			reason = "operation_failed"
+		}
+	}
+	finishedAt := time.Now().UTC()
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryInspection, Action: OperationActionDelete, Status: status,
+		Source: OperationSourceManual, Scope: OperationScopeSelected, TargetCount: run.Attempted,
+		Succeeded: run.Succeeded, Failed: run.Failed, Skipped: run.Skipped,
+		StartedAt: startedAt, FinishedAt: finishedAt, ReasonCode: reason,
+	})
+	return jsonResponse(http.StatusOK, run)
 }
 
 func (a *App) handleInspectionAutoDelete(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

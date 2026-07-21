@@ -197,7 +197,7 @@ type InspectionSnapshot struct {
 	AnomalyCount          int                   `json:"anomaly_count"`
 	AnomalyPercent        int                   `json:"anomaly_percent"`
 	AnomalyTriggerPending bool                  `json:"anomaly_trigger_pending"`
-	LastAnomalyTriggerAt  time.Time             `json:"last_anomaly_trigger_at,omitempty"`
+	LastAnomalyTriggerAt  *time.Time            `json:"last_anomaly_trigger_at,omitempty"`
 	StorageError          string                `json:"storage_error,omitempty"`
 	RunMode               string                `json:"run_mode,omitempty"`
 	ProbePhase            string                `json:"probe_phase,omitempty"`
@@ -310,6 +310,23 @@ type InspectionDeleteRun struct {
 	Results   []InspectionDeleteResult `json:"results,omitempty"`
 }
 
+type InspectionManualDeleteRequest struct {
+	AccountIDs []string `json:"account_ids"`
+	Confirm    bool     `json:"confirm"`
+}
+
+type InspectionRemediationSummary struct {
+	Actionable       int `json:"actionable"`
+	SuggestedDelete  int `json:"suggested_delete"`
+	SuggestedDisable int `json:"suggested_disable"`
+	SuggestedEnable  int `json:"suggested_enable"`
+	Reauth           int `json:"reauth"`
+	Review           int `json:"review"`
+	Keep             int `json:"keep"`
+	EditableEnabled  int `json:"editable_enabled"`
+	EditableDisabled int `json:"editable_disabled"`
+}
+
 type InspectionResultQuery struct {
 	Page     int
 	PageSize int
@@ -318,11 +335,12 @@ type InspectionResultQuery struct {
 }
 
 type InspectionResultList struct {
-	Results  []InspectionResult `json:"results"`
-	Total    int                `json:"total"`
-	Page     int                `json:"page"`
-	PageSize int                `json:"page_size"`
-	Pages    int                `json:"pages"`
+	Results  []InspectionResult           `json:"results"`
+	Summary  InspectionRemediationSummary `json:"summary"`
+	Total    int                          `json:"total"`
+	Page     int                          `json:"page"`
+	PageSize int                          `json:"page_size"`
+	Pages    int                          `json:"pages"`
 }
 
 type InspectionReviewRequest struct {

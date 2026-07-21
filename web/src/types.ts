@@ -576,10 +576,23 @@ export interface InspectionResult {
 
 export interface InspectionResultList {
   results: InspectionResult[];
+  summary: InspectionRemediationSummary;
   total: number;
   page: number;
   page_size: number;
   pages: number;
+}
+
+export interface InspectionRemediationSummary {
+  actionable: number;
+  suggested_delete: number;
+  suggested_disable: number;
+  suggested_enable: number;
+  reauth: number;
+  review: number;
+  keep: number;
+  editable_enabled: number;
+  editable_disabled: number;
 }
 
 export interface InspectionAction {

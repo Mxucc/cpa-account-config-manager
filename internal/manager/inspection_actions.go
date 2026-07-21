@@ -12,8 +12,15 @@ import (
 )
 
 const (
-	inspectionMutationOwner = "account-inspection"
-	inspectionDeleteRetry   = 5 * time.Minute
+	inspectionMutationOwner    = "account-inspection"
+	inspectionDeleteRetry      = 5 * time.Minute
+	maxManualInspectionDeletes = 100
+)
+
+var (
+	ErrInspectionDeleteConfirmation = errors.New("inspection deletion requires explicit confirmation")
+	ErrInspectionDeleteIDsRequired  = errors.New("inspection deletion account_ids are required")
+	ErrInspectionDeleteTooMany      = errors.New("inspection deletion supports at most 100 accounts per request")
 )
 
 type inspectionMutationResult struct {
@@ -35,6 +42,8 @@ func (e *InspectionEngine) applyAutomaticActions(
 	accounts map[string]Account,
 	records map[string]inspectionRecord,
 	now time.Time,
+	managementBaseURL string,
+	managementKey string,
 ) (InspectionRunSummary, []InspectionAction) {
 	summary := InspectionRunSummary{}
 	if !policy.AutoDisable && !policy.AutoEnable && !policy.AutoDelete {
@@ -45,6 +54,16 @@ func (e *InspectionEngine) applyAutomaticActions(
 		return summary, nil
 	}
 	defer e.mutations.Release(inspectionMutationOwner)
+	var writer ManagementWriter
+	if strings.TrimSpace(managementKey) != "" {
+		client, errClient := newManagementClient(resolveManagementBaseURL(managementBaseURL), managementKey, nil)
+		if errClient != nil {
+			summary.Error = "CPA account status API is unavailable"
+			return summary, nil
+		}
+		writer = client
+		defer clearManagementWriterSecrets(writer)
+	}
 
 	ids := make([]string, 0, len(records))
 	for id := range records {
@@ -71,7 +90,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 		}
 
 		if shouldAutoEnableInspection(policy, account, record, now) {
-			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, false)
+			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, false, writer)
 			action := newInspectionAction(record.Result, InspectionActionEnable, record.DisableReason, now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
@@ -103,7 +122,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 			if openCircuit {
 				disableReason = "passive_circuit_open"
 			}
-			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, true)
+			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, true, writer)
 			action := newInspectionAction(record.Result, InspectionActionDisable, disableReason, now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
@@ -280,7 +299,7 @@ func inspectionDeleteReasonAllowed(policy InspectionPolicy, record inspectionRec
 	}
 }
 
-func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Account, record inspectionRecord, disabled bool) (inspectionMutationResult, error) {
+func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Account, record inspectionRecord, disabled bool, writer ManagementWriter) (inspectionMutationResult, error) {
 	if e == nil || e.host == nil {
 		return inspectionMutationResult{}, fmt.Errorf("auth host is unavailable")
 	}
@@ -318,7 +337,7 @@ func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Ac
 			return inspectionMutationResult{}, fmt.Errorf("disabled field is invalid")
 		}
 	}
-	if current == disabled {
+	if current == disabled && (writer == nil || account.Disabled == disabled) {
 		return inspectionMutationResult{Name: name, Path: path, Revision: revisionFor(raw)}, nil
 	}
 	encodedDisabled, _ := json.Marshal(disabled)
@@ -327,7 +346,11 @@ func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Ac
 	if errMarshal != nil {
 		return inspectionMutationResult{}, fmt.Errorf("encode auth update: %w", errMarshal)
 	}
-	if _, errSave := e.host.SaveAuth(ctx, name, updated); errSave != nil {
+	if writer != nil {
+		if errPatch := writer.PatchDisabled(ctx, name, disabled); errPatch != nil {
+			return inspectionMutationResult{}, fmt.Errorf("update CPA account status: %w", errPatch)
+		}
+	} else if _, errSave := e.host.SaveAuth(ctx, name, updated); errSave != nil {
 		return inspectionMutationResult{}, fmt.Errorf("save auth file: %w", errSave)
 	}
 	return inspectionMutationResult{
@@ -336,6 +359,134 @@ func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Ac
 		Path:     path,
 		Revision: revisionFor(updated),
 	}, nil
+}
+
+func (e *InspectionEngine) ExecuteManualDeletes(
+	ctx context.Context,
+	deletions *AccountDeleteService,
+	managementBaseURL string,
+	managementKey string,
+	request InspectionManualDeleteRequest,
+) (InspectionDeleteRun, error) {
+	run := InspectionDeleteRun{}
+	if !request.Confirm {
+		return run, ErrInspectionDeleteConfirmation
+	}
+	if e == nil || deletions == nil || strings.TrimSpace(managementKey) == "" {
+		return run, fmt.Errorf("inspection deletion service is unavailable")
+	}
+	seen := make(map[string]struct{}, len(request.AccountIDs))
+	ids := make([]string, 0, len(request.AccountIDs))
+	for _, rawID := range request.AccountIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return run, ErrInspectionDeleteIDsRequired
+	}
+	if len(ids) > maxManualInspectionDeletes {
+		return run, ErrInspectionDeleteTooMany
+	}
+	sortInspectionIDs(ids)
+	now := e.currentTime()
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			break
+		}
+		run.Attempted++
+		e.mu.RLock()
+		record, exists := e.records[id]
+		allowed := exists && inspectionManualDeleteAllowed(record.Result)
+		e.mu.RUnlock()
+		if !allowed {
+			run.Skipped++
+			run.Results = append(run.Results, InspectionDeleteResult{AccountID: id, Status: InspectionActionSkipped, Reason: "delete_not_recommended"})
+			e.markManualDeleteAttempt(id, InspectionActionSkipped, "delete_not_recommended", now)
+			continue
+		}
+		preview, errPreview := deletions.Preview(ctx, AccountDeletePreviewRequest{ID: id})
+		if errPreview != nil {
+			reason := inspectionDeleteFailureReason(errPreview)
+			status := InspectionActionFailed
+			if reason == "account_missing" || reason == "account_read_only" {
+				status = InspectionActionSkipped
+				run.Skipped++
+			} else {
+				run.Failed++
+			}
+			run.Results = append(run.Results, InspectionDeleteResult{AccountID: id, Status: status, Reason: reason})
+			e.markManualDeleteAttempt(id, status, reason, now)
+			continue
+		}
+		_, errDelete := deletions.Start(ctx, preview.ID, managementBaseURL, managementKey)
+		if errDelete != nil {
+			reason := inspectionDeleteFailureReason(errDelete)
+			status := InspectionActionFailed
+			if errors.Is(errDelete, ErrAccountDeleteBusy) {
+				status = InspectionActionSkipped
+				run.Skipped++
+			} else {
+				run.Failed++
+			}
+			run.Results = append(run.Results, InspectionDeleteResult{AccountID: id, Status: status, Reason: reason})
+			e.markManualDeleteAttempt(id, status, reason, now)
+			continue
+		}
+		run.Succeeded++
+		run.Results = append(run.Results, InspectionDeleteResult{AccountID: id, Status: InspectionActionSucceeded})
+		e.markManualDeleteAttempt(id, InspectionActionSucceeded, "", now)
+	}
+	managementKey = ""
+	e.persist()
+	return run, nil
+}
+
+func inspectionManualDeleteAllowed(result InspectionResult) bool {
+	if !result.Editable || normalizeInspectionConfidence(result.Confidence) != InspectionConfidenceHigh {
+		return false
+	}
+	health := normalizeInspectionHealth(result.Health)
+	recommendation := normalizeInspectionRecommendation(result.Recommendation)
+	reason := safeOptionalInspectionReason(result.ReasonCode)
+	if recommendation == InspectionRecommendationDelete && health == InspectionHealthDeactivated {
+		return reason == "account_deactivated" || reason == "workspace_deactivated"
+	}
+	if recommendation != InspectionRecommendationReauth || health != InspectionHealthInvalidCredentials || result.SignalSource == InspectionSignalActiveProbe {
+		return false
+	}
+	return reason == "invalid_credentials" || reason == "token_revoked" || reason == "authentication_failed"
+}
+
+func (e *InspectionEngine) markManualDeleteAttempt(id, status, reason string, now time.Time) {
+	e.mu.Lock()
+	record, exists := e.records[id]
+	if !exists {
+		e.mu.Unlock()
+		return
+	}
+	action := newInspectionAction(record.Result, InspectionActionDelete, record.Result.ReasonCode, now)
+	action.Status = status
+	if reason != "" {
+		action.ReasonCode = safeInspectionDeleteFailureReason(reason)
+	}
+	e.appendActionLocked(action)
+	if status == InspectionActionSucceeded {
+		delete(e.records, id)
+	} else {
+		record.Result.AutoAction = InspectionActionDelete
+		record.Result.AutoActionStatus = status
+		e.records[id] = record
+	}
+	e.dirty = true
+	e.generation++
+	e.mu.Unlock()
 }
 
 func (e *InspectionEngine) ExecutePendingDeletes(

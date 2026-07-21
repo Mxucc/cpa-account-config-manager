@@ -33,6 +33,27 @@ func TestInspectionAnomalyThresholdBoundaries(t *testing.T) {
 	}
 }
 
+func TestInspectionAnomalyMetricsRefreshWithoutTriggeringManualRun(t *testing.T) {
+	engine := &InspectionEngine{}
+	policy := defaultInspectionPolicy()
+	policy.AnomalyTriggerEnabled = true
+	accounts := map[string]Account{
+		"healthy":   {ID: "healthy", Editable: true},
+		"unhealthy": {ID: "unhealthy", Editable: true},
+	}
+	records := map[string]inspectionRecord{
+		"healthy":   {Result: InspectionResult{ID: "healthy", Health: InspectionHealthHealthy}},
+		"unhealthy": {Result: InspectionResult{ID: "unhealthy", Health: InspectionHealthUnavailable}},
+	}
+	triggered, size := engine.evaluateAnomalyTrigger(policy, accounts, records, time.Now().UTC(), false, true)
+	if triggered || size != 0 || engine.anomalyEligible != 2 || engine.anomalyCount != 1 || engine.anomalyPercent != 50 {
+		t.Fatalf("manual anomaly metrics triggered=%t size=%d eligible=%d count=%d percent=%d", triggered, size, engine.anomalyEligible, engine.anomalyCount, engine.anomalyPercent)
+	}
+	if snapshot := engine.Snapshot(); snapshot.LastAnomalyTriggerAt != nil {
+		t.Fatalf("zero anomaly trigger time was exposed: %#v", snapshot.LastAnomalyTriggerAt)
+	}
+}
+
 func TestInspectionAnomalyPolicyBoundariesAndDependencies(t *testing.T) {
 	valid := defaultInspectionPolicy()
 	valid.Enabled = true

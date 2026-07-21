@@ -51,7 +51,7 @@ func (e *InspectionEngine) evaluateAnomalyTrigger(
 	evaluate bool,
 	armed bool,
 ) (bool, int) {
-	if e == nil || !evaluate {
+	if e == nil {
 		return false, 0
 	}
 	eligible, abnormal := inspectionAnomalyCounts(accounts, records)
@@ -59,7 +59,7 @@ func (e *InspectionEngine) evaluateAnomalyTrigger(
 	if eligible > 0 {
 		percent = abnormal * 100 / eligible
 	}
-	above := policy.AnomalyTriggerEnabled && inspectionAnomalyTriggered(
+	above := evaluate && policy.AnomalyTriggerEnabled && inspectionAnomalyTriggered(
 		eligible, abnormal, policy.AnomalyMinimumAccounts, policy.AnomalyThresholdPercent,
 	)
 

@@ -34,7 +34,9 @@ import type {
   InspectionPolicy,
   InspectionResult,
   InspectionResultList,
+  InspectionRemediationSummary,
   InspectionSnapshot,
+  JobSnapshot,
   ModelTestResult,
   UpdatePolicy,
   UpdateSnapshot,
@@ -60,7 +62,26 @@ interface InspectionWorkspaceProps {
   onNotice: (message: string) => void;
 }
 
-const emptyResults: InspectionResultList = { results: [], total: 0, page: 1, page_size: 50, pages: 0 };
+const emptyRemediationSummary: InspectionRemediationSummary = {
+  actionable: 0,
+  suggested_delete: 0,
+  suggested_disable: 0,
+  suggested_enable: 0,
+  reauth: 0,
+  review: 0,
+  keep: 0,
+  editable_enabled: 0,
+  editable_disabled: 0,
+};
+
+const emptyResults: InspectionResultList = { results: [], summary: emptyRemediationSummary, total: 0, page: 1, page_size: 50, pages: 0 };
+
+interface RemediationPlan {
+  mode: "recommended" | "reauth" | "selected";
+  deleteIDs: string[];
+  disableIDs: string[];
+  enableIDs: string[];
+}
 
 const healthOptions: Array<{ value: "" | InspectionHealth; label: UIMessageKey }> = [
   { value: "", label: "ui.all_health_states" },
@@ -88,7 +109,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [loading, setLoading] = useState(true);
   const [scanningMode, setScanningMode] = useState<"native" | "active" | "stop" | "">("");
   const [runMode, setRunMode] = useState<"full" | "incremental" | "retry" | "filtered" | "selected">("full");
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selected, setSelected] = useState<Map<string, boolean>>(() => new Map());
   const [actionTarget, setActionTarget] = useState<InspectionResult | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [modelAccount, setModelAccount] = useState<Account | null>(null);
@@ -112,6 +133,9 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [updateChecking, setUpdateChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [autoDeleting, setAutoDeleting] = useState(false);
+  const [remediationPlan, setRemediationPlan] = useState<RemediationPlan | null>(null);
+  const [remediating, setRemediating] = useState(false);
+  const [remediationError, setRemediationError] = useState("");
   const [error, setError] = useState("");
   const attemptedUpdate = useRef("");
   const autoDeleteBusy = useRef(false);
@@ -285,7 +309,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
       const request = requestedMode === "filtered"
         ? { mode: "scoped" as const, health: [health as InspectionHealth] }
         : requestedMode === "selected"
-          ? { mode: "scoped" as const, selected: [...selected] }
+          ? { mode: "scoped" as const, selected: [...selected.keys()] }
           : { mode: requestedMode };
       setSnapshot(await api.startInspectionRun(request));
     } catch (caught) {
@@ -313,11 +337,11 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     setPage(1);
   };
 
-  const toggleSelected = (id: string) => {
+  const toggleSelected = (result: InspectionResult) => {
     setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const next = new Map(current);
+      if (next.has(result.id)) next.delete(result.id);
+      else next.set(result.id, result.disabled);
       return next;
     });
   };
@@ -326,10 +350,10 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     const editableIDs = results.results.filter((result) => result.editable).map((result) => result.id);
     const allSelected = editableIDs.length > 0 && editableIDs.every((id) => selected.has(id));
     setSelected((current) => {
-      const next = new Set(current);
-      for (const id of editableIDs) {
-        if (allSelected) next.delete(id);
-        else next.add(id);
+      const next = new Map(current);
+      for (const result of results.results.filter((entry) => entry.editable)) {
+        if (allSelected) next.delete(result.id);
+        else next.set(result.id, result.disabled);
       }
       return next;
     });
@@ -345,21 +369,28 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     }
   };
 
+  const collectFilteredResults = async (targetHealth = health, targetSearch = search): Promise<InspectionResult[]> => {
+    const collected: InspectionResult[] = [];
+    let currentPage = 1;
+    let pages = 1;
+    do {
+      const batch = await api.listInspectionResults(currentPage, 200, targetHealth, targetSearch);
+      collected.push(...batch.results);
+      pages = Math.min(50, batch.pages);
+      currentPage++;
+    } while (currentPage <= pages && collected.length < 10_000);
+    return collected.slice(0, 10_000);
+  };
+
   const previewFilteredAccountChange = async (disabled: boolean) => {
     setResolvingFiltered(true);
     setError("");
     try {
-      const ids: string[] = [];
-      let currentPage = 1;
-      let pages = 1;
-      do {
-        const batch = await api.listInspectionResults(currentPage, 200, health, search);
-        ids.push(...batch.results.filter((result) => result.editable).map((result) => result.id));
-        pages = Math.min(50, batch.pages);
-        currentPage++;
-      } while (currentPage <= pages && ids.length < 10_000);
+      const ids = (await collectFilteredResults())
+        .filter((result) => result.editable && result.disabled !== disabled)
+        .map((result) => result.id);
       if (ids.length === 0) throw new Error(tx("ui.no_editable_inspection_results"));
-      await previewAccountChange(ids.slice(0, 10_000), disabled);
+      await previewAccountChange(ids, disabled);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -367,20 +398,110 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     }
   };
 
+  const waitForBatch = async (jobID: string): Promise<JobSnapshot> => {
+    for (let attempt = 0; attempt < 240; attempt++) {
+      const job = await api.getJobStatus(false);
+      if (job.id !== jobID) throw new Error(tx("ui.batch_job_was_replaced"));
+      if (!job.running) return job;
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    throw new Error(tx("ui.batch_job_did_not_finish_in_time"));
+  };
+
   const startAccountChange = async () => {
     if (!batchPreview) return;
     setBatchStarting(true);
     setBatchError("");
     try {
-      await api.startBatch(batchPreview.id);
+      const started = await api.startBatch(batchPreview.id);
       setBatchPreview(null);
-      setSelected(new Set());
+      setSelected(new Map());
       onNotice(tx("ui.change_started"));
-      window.setTimeout(() => void Promise.all([refreshOverview(), refreshResults()]), 500);
+      const finished = await waitForBatch(started.id || "");
+      if (finished.failed > 0 || finished.conflicts > 0) {
+        setError(tx("ui.account_change_finished_with_failures", { succeeded: finished.succeeded, failed: finished.failed + finished.conflicts }));
+      } else {
+        onNotice(tx("ui.account_change_completed", { count: finished.succeeded }));
+      }
+      await Promise.all([refreshOverview(), refreshResults()]);
     } catch (caught) {
       setBatchError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
     } finally {
       setBatchStarting(false);
+    }
+  };
+
+  const openRemediation = async (mode: RemediationPlan["mode"]) => {
+    setResolvingFiltered(true);
+    setRemediationError("");
+    try {
+      const source = await collectFilteredResults(mode === "selected" ? "" : health, mode === "selected" ? "" : search);
+      const candidates = mode === "selected" ? source.filter((result) => selected.has(result.id)) : source;
+      const deleteIDs = candidates
+        .filter((result) => mode === "reauth"
+          ? result.recommendation === "reauth"
+          : result.recommendation === "delete" || (mode === "selected" && result.recommendation === "reauth"))
+        .map((result) => result.id);
+      const disableIDs = mode === "recommended"
+        ? candidates.filter((result) => result.editable && !result.disabled && result.recommendation === "disable").map((result) => result.id)
+        : [];
+      const enableIDs = mode === "recommended"
+        ? candidates.filter((result) => result.editable && result.disabled && result.owned_disable && result.recommendation === "enable").map((result) => result.id)
+        : [];
+      if (deleteIDs.length + disableIDs.length + enableIDs.length === 0) {
+        throw new Error(tx("ui.no_recommended_actions_available"));
+      }
+      setRemediationPlan({ mode, deleteIDs, disableIDs, enableIDs });
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setResolvingFiltered(false);
+    }
+  };
+
+  const executeRemediation = async () => {
+    if (!remediationPlan) return;
+    setRemediating(true);
+    setRemediationError("");
+    let succeeded = 0;
+    let failed = 0;
+    let skipped = 0;
+    try {
+      for (let offset = 0; offset < remediationPlan.deleteIDs.length; offset += 100) {
+        const run = await api.deleteInspectionRecommendations(remediationPlan.deleteIDs.slice(offset, offset + 100));
+        succeeded += run.succeeded;
+        failed += run.failed;
+        skipped += run.skipped;
+      }
+      for (const target of [
+        { ids: remediationPlan.disableIDs, disabled: true },
+        { ids: remediationPlan.enableIDs, disabled: false },
+      ]) {
+        if (target.ids.length === 0) continue;
+        const preview = await api.createPreview({ mode: "selected", ids: target.ids }, { disabled: target.disabled });
+        if (preview.eligible === 0) {
+          skipped += preview.total;
+          continue;
+        }
+        const started = await api.startBatch(preview.id);
+        const finished = await waitForBatch(started.id || "");
+        succeeded += finished.succeeded;
+        failed += finished.failed + finished.conflicts;
+        skipped += finished.skipped;
+      }
+      setSelected(new Map());
+      await Promise.all([refreshOverview(), refreshResults()]);
+      if (failed > 0 || skipped > 0) {
+        setRemediationError(tx("ui.remediation_finished_with_result", { succeeded, failed, skipped }));
+      } else {
+        setRemediationPlan(null);
+        onNotice(tx("ui.remediation_completed_count", { count: succeeded }));
+      }
+    } catch (caught) {
+      setRemediationError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+      await Promise.all([refreshOverview(), refreshResults()]);
+    } finally {
+      setRemediating(false);
     }
   };
 
@@ -501,6 +622,10 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const sweepRemaining = snapshot?.probe_sweep_remaining ?? 0;
   const sweepStatus = snapshot?.probe_sweep_status;
   const inspectionBusy = Boolean(snapshot?.running || snapshot?.pending || scanningMode);
+  const remediation = results.summary ?? emptyRemediationSummary;
+  const selectedDisabledIDs = [...selected.entries()].filter(([, disabled]) => disabled).map(([id]) => id);
+  const selectedEnabledIDs = [...selected.entries()].filter(([, disabled]) => !disabled).map(([id]) => id);
+  const lastAnomalyTriggerAt = meaningfulTimestamp(snapshot?.last_anomaly_trigger_at) ? snapshot?.last_anomaly_trigger_at : undefined;
   return (
     <section className="automation-panel" aria-label={tx("ui.inspection_and_automation")}>
       <header className="automation-toolbar">
@@ -595,12 +720,35 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         <InspectionMetric
           label={tx("ui.anomaly_ratio")}
           value={`${snapshot?.anomaly_percent ?? 0}%`}
-          detail={snapshot?.last_anomaly_trigger_at ? tx("ui.last_triggered_time", { time: formatDateTime(snapshot.last_anomaly_trigger_at) }) : tx("ui.not_triggered_yet")}
+          detail={lastAnomalyTriggerAt ? tx("ui.last_triggered_time", { time: formatDateTime(lastAnomalyTriggerAt) }) : tx("ui.not_triggered_yet")}
           tone={(snapshot?.anomaly_percent ?? 0) >= (snapshot?.policy.anomaly_threshold_percent ?? 101) ? "warning" : ""}
         />
         <InspectionMetric label={tx("ui.abnormal_sample")} value={`${snapshot?.anomaly_count ?? 0}/${snapshot?.anomaly_eligible ?? 0}`} />
         <InspectionMetric label={tx("ui.full_server_inspection_progress")} value={sweepTotal > 0 ? `${sweepCompleted}/${sweepTotal}` : "-"} detail={sweepTotal > 0 ? tx("ui.remaining_count", { count: sweepRemaining }) : undefined} tone={sweepRemaining > 0 ? "warning" : ""} />
       </div>
+
+      <section className="inspection-remediation" aria-label={tx("ui.inspection_remediation_queue")}>
+        <header>
+          <div><strong>{tx("ui.inspection_remediation_queue")}</strong><span>{tx("ui.inspection_remediation_description")}</span></div>
+          <b>{tx("ui.recommended_action_count", { count: remediation.actionable })}</b>
+        </header>
+        <div className="inspection-remediation-counts">
+          <span className="danger"><small>{tx("ui.suggested_delete")}</small><strong>{remediation.suggested_delete}</strong></span>
+          <span className="warning"><small>{tx("ui.suggested_disable")}</small><strong>{remediation.suggested_disable}</strong></span>
+          <span className="healthy"><small>{tx("ui.suggested_enable")}</small><strong>{remediation.suggested_enable}</strong></span>
+          <span className="review"><small>{tx("ui.relogin_required")}</small><strong>{remediation.reauth}</strong></span>
+          <span><small>{tx("ui.keep")}</small><strong>{remediation.keep}</strong></span>
+          <span><small>{tx("ui.manual_review")}</small><strong>{remediation.review}</strong></span>
+        </div>
+        <div className="inspection-remediation-actions">
+          <button className="button button-primary" type="button" disabled={resolvingFiltered || remediating || remediation.suggested_delete + remediation.suggested_disable + remediation.suggested_enable === 0} onClick={() => void openRemediation("recommended")}>
+            {resolvingFiltered || remediating ? <LoaderCircle className="spin" size={15} /> : <Wrench size={15} />}{tx("ui.execute_recommended_actions")}
+          </button>
+          <button className="button button-danger" type="button" disabled={resolvingFiltered || remediating || remediation.reauth === 0} onClick={() => void openRemediation("reauth")}>
+            <Trash2 size={15} />{tx("ui.delete_relogin_accounts", { count: remediation.reauth })}
+          </button>
+        </div>
+      </section>
 
       <section className="inspection-results">
         <div className="inspection-filter-bar">
@@ -629,24 +777,25 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         {results.total > 0 ? (
           <div className="inspection-filter-actions" role="toolbar" aria-label={tx("ui.filtered_results")}>
             <span>{tx("ui.filtered_results")} · {tx("ui.count_results", { count: results.total })}</span>
-            <button className="button button-quiet" type="button" disabled={resolvingFiltered} onClick={() => void previewFilteredAccountChange(false)}>{resolvingFiltered ? <LoaderCircle className="spin" size={15} /> : <CheckSquare2 size={15} />}{tx("ui.enable_filtered_results")}</button>
-            <button className="button button-quiet" type="button" disabled={resolvingFiltered} onClick={() => void previewFilteredAccountChange(true)}>{resolvingFiltered ? <LoaderCircle className="spin" size={15} /> : <XSquare size={15} />}{tx("ui.disable_filtered_results")}</button>
+            <button className="button button-quiet" type="button" disabled={resolvingFiltered || remediation.editable_disabled === 0} onClick={() => void previewFilteredAccountChange(false)}>{resolvingFiltered ? <LoaderCircle className="spin" size={15} /> : <CheckSquare2 size={15} />}{tx("ui.enable_filtered_disabled_accounts", { count: remediation.editable_disabled })}</button>
+            <button className="button button-quiet" type="button" disabled={resolvingFiltered || remediation.editable_enabled === 0} onClick={() => void previewFilteredAccountChange(true)}>{resolvingFiltered ? <LoaderCircle className="spin" size={15} /> : <XSquare size={15} />}{tx("ui.disable_filtered_enabled_accounts", { count: remediation.editable_enabled })}</button>
           </div>
         ) : null}
         {selected.size > 0 ? (
           <div className="inspection-selection-bar" role="toolbar" aria-label={tx("ui.selected_accounts") }>
             <strong>{tx("ui.selected_count", { count: selected.size })}</strong>
-            <button className="button button-quiet" type="button" onClick={() => void previewAccountChange([...selected], false)}><CheckSquare2 size={15} />{tx("ui.enable_selected")}</button>
-            <button className="button button-quiet" type="button" onClick={() => void previewAccountChange([...selected], true)}><XSquare size={15} />{tx("ui.disable_selected")}</button>
+            <button className="button button-quiet" type="button" disabled={selectedDisabledIDs.length === 0} onClick={() => void previewAccountChange(selectedDisabledIDs, false)}><CheckSquare2 size={15} />{tx("ui.enable_selected_disabled_accounts", { count: selectedDisabledIDs.length })}</button>
+            <button className="button button-quiet" type="button" disabled={selectedEnabledIDs.length === 0} onClick={() => void previewAccountChange(selectedEnabledIDs, true)}><XSquare size={15} />{tx("ui.disable_selected_enabled_accounts", { count: selectedEnabledIDs.length })}</button>
+            <button className="button button-danger" type="button" disabled={resolvingFiltered} onClick={() => void openRemediation("selected")}><Trash2 size={15} />{tx("ui.delete_selected_recommendations")}</button>
             <button className="button button-quiet" type="button" disabled={inspectionBusy} onClick={() => { setRunMode("selected"); void runActiveInspection("selected"); }}><ScanSearch size={15} />{tx("ui.inspect_selected")}</button>
-            <button className="button button-quiet" type="button" onClick={() => setSelected(new Set())}>{tx("ui.clear_selection")}</button>
+            <button className="button button-quiet" type="button" onClick={() => setSelected(new Map())}>{tx("ui.clear_selection")}</button>
           </div>
         ) : null}
         <div className="inspection-table-scroll">
           <table className="inspection-table">
             <thead><tr><th className="inspection-select-cell"><input type="checkbox" aria-label={tx("ui.select_current_page")} checked={results.results.some((result) => result.editable) && results.results.filter((result) => result.editable).every((result) => selected.has(result.id))} onChange={toggleCurrentPage} /></th><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.quota_and_usage")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.model_probe")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th><th>{tx("ui.actions")}</th></tr></thead>
             <tbody>
-              {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} selected={selected.has(result.id)} onSelect={() => toggleSelected(result.id)} onModelTest={() => openModelTest(result)} onToggle={() => void previewAccountChange([result.id], !result.disabled)} onAction={() => setActionTarget(result)} />)}
+              {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} selected={selected.has(result.id)} onSelect={() => toggleSelected(result)} onModelTest={() => openModelTest(result)} onToggle={() => void previewAccountChange([result.id], !result.disabled)} onAction={() => setActionTarget(result)} />)}
             </tbody>
           </table>
           {!loading && results.results.length === 0 ? <div className="empty-state">{tx("ui.no_matching_inspection_results")}</div> : null}
@@ -724,8 +873,51 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
       {modelAccount ? <ModelTestDialog account={modelAccount} result={modelResult} error={modelError} testing={modelTesting} onClose={() => setModelAccount(null)} onTest={(model) => void testModel(model)} /> : null}
       {batchPreview ? <PreviewDialog preview={batchPreview} starting={batchStarting} error={batchError} onClose={() => setBatchPreview(null)} onConfirm={() => void startAccountChange()} /> : null}
       {deleteTarget ? <DeleteAccountDialog account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={() => { setDeleteTarget(null); setDeletePreview(null); }} onConfirm={() => void confirmDelete()} /> : null}
+      {remediationPlan ? <InspectionRemediationDialog plan={remediationPlan} running={remediating} error={remediationError} onClose={() => !remediating && setRemediationPlan(null)} onConfirm={() => void executeRemediation()} /> : null}
     </section>
   );
+}
+
+function InspectionRemediationDialog({ plan, running, error, onClose, onConfirm }: {
+  plan: RemediationPlan;
+  running: boolean;
+  error: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { tx } = useI18n();
+  const deleteCount = plan.deleteIDs.length;
+  const total = deleteCount + plan.disableIDs.length + plan.enableIDs.length;
+  return (
+    <Modal
+      title={tx(plan.mode === "reauth" ? "ui.confirm_delete_relogin_accounts" : plan.mode === "selected" ? "ui.confirm_selected_remediation" : "ui.confirm_recommended_actions")}
+      onClose={onClose}
+      footer={<>
+        <span className="modal-scope">{tx("ui.count_accounts", { count: total })}</span>
+        <button className="button" type="button" disabled={running} onClick={onClose}>{tx("ui.cancel")}</button>
+        <button className={`button ${deleteCount > 0 ? "button-danger" : "button-primary"}`} type="button" disabled={running || total === 0} onClick={onConfirm}>
+          {running ? <LoaderCircle className="spin" size={15} /> : deleteCount > 0 ? <Trash2 size={15} /> : <Wrench size={15} />}
+          {running ? tx("ui.executing_remediation") : tx("ui.confirm_and_execute")}
+        </button>
+      </>}
+    >
+      <div className="inspection-remediation-confirm">
+        <div className="preview-metrics">
+          <div className="preview-metric danger"><span>{tx("ui.delete")}</span><strong>{deleteCount}</strong></div>
+          <div className="preview-metric warning"><span>{tx("ui.disable")}</span><strong>{plan.disableIDs.length}</strong></div>
+          <div className="preview-metric success"><span>{tx("ui.enable")}</span><strong>{plan.enableIDs.length}</strong></div>
+        </div>
+        {deleteCount > 0 ? <div className="delete-warning"><AlertTriangle size={18} /><div><strong>{tx("ui.deletion_cannot_be_undone")}</strong><span>{tx("ui.bulk_inspection_delete_revalidates_each_file")}</span></div></div> : null}
+        {error ? <div className="preview-start-error" role="alert"><AlertTriangle size={17} /><div><strong>{tx("ui.remediation_result")}</strong><span>{error}</span></div></div> : null}
+      </div>
+    </Modal>
+  );
+}
+
+function meaningfulTimestamp(value: string | undefined): value is string {
+  if (!value) return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.getUTCFullYear() > 1;
 }
 
 function InspectionMetric({ label, value, detail, tone = "", icon }: { label: string; value: string | number; detail?: string; tone?: string; icon?: ReactNode }) {

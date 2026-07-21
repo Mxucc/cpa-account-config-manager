@@ -254,10 +254,11 @@ function mockInspectionResults() {
   const checkedAt = new Date().toISOString();
   const states = [
     ["deactivated", "workspace_deactivated", "high", "delete", true],
-    ["invalid_credentials", "invalid_credentials", "high", "disable", true],
+    ["invalid_credentials", "invalid_credentials", "high", "reauth", true],
     ["quota_limited", "quota_exhausted", "high", "disable", true],
     ["unavailable", "upstream_unavailable", "low", "disable", true],
     ["unavailable", "native_unavailable", "medium", "review", false],
+    ["healthy", "healthy_recent_success", "high", "enable", false],
   ];
   return accounts.slice(0, 12).map((account, index) => {
     const state = states[index] || ["healthy", "healthy_recent_success", "high", "keep", false];
@@ -272,10 +273,10 @@ function mockInspectionResults() {
       reason_code: circuit ? "invalid_response" : state[1],
       confidence: state[2],
       recommendation: circuit ? "disable" : state[3],
-      disabled: circuit || account.disabled,
+      disabled: circuit || index === 5 || account.disabled,
       editable: account.editable,
       auto_disable_eligible: state[4],
-      owned_disable: circuit,
+      owned_disable: circuit || index === 5,
       failure_streak: circuit ? 5 : state[4] ? Math.min(5, index + 1) : 0,
       healthy_streak: state[0] === "healthy" ? index - 3 : 0,
       probe_status: index < 5 ? "unavailable" : "available",
@@ -296,6 +297,34 @@ function mockInspectionResults() {
       last_checked_at: checkedAt,
     };
   });
+}
+
+function mockInspectionRemediationSummary(results) {
+  const summary = {
+    actionable: 0,
+    suggested_delete: 0,
+    suggested_disable: 0,
+    suggested_enable: 0,
+    reauth: 0,
+    review: 0,
+    keep: 0,
+    editable_enabled: 0,
+    editable_disabled: 0,
+  };
+  for (const result of results) {
+    if (result.editable) {
+      if (result.disabled) summary.editable_disabled += 1;
+      else summary.editable_enabled += 1;
+    }
+    if (result.recommendation === "delete") summary.suggested_delete += 1;
+    else if (result.recommendation === "disable" && result.editable && !result.disabled) summary.suggested_disable += 1;
+    else if (result.recommendation === "enable" && result.editable && result.disabled && result.owned_disable) summary.suggested_enable += 1;
+    else if (result.recommendation === "reauth") summary.reauth += 1;
+    else if (result.recommendation === "review") summary.review += 1;
+    else summary.keep += 1;
+  }
+  summary.actionable = summary.suggested_delete + summary.suggested_disable + summary.suggested_enable + summary.reauth;
+  return summary;
 }
 
 function mockInspectionSnapshot(pending = false) {
@@ -1237,6 +1266,7 @@ const server = http.createServer(async (request, response) => {
     const start = (page - 1) * pageSize;
     return json(response, 200, {
       results: filtered.slice(start, start + pageSize),
+      summary: mockInspectionRemediationSummary(filtered),
       total: filtered.length,
       page,
       page_size: pageSize,
@@ -1290,6 +1320,11 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/scan/native")) {
     return json(response, 202, mockInspectionSnapshot(true));
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/inspection/delete")) {
+    const body = await readJSON(request);
+    const ids = Array.isArray(body.account_ids) ? body.account_ids.slice(0, 100) : [];
+    return json(response, 200, { attempted: ids.length, succeeded: body.confirm ? ids.length : 0, failed: 0, skipped: body.confirm ? 0 : ids.length });
   }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/auto-delete")) {
     return json(response, 200, { attempted: 0, succeeded: 0, failed: 0, skipped: 0 });

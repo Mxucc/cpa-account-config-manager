@@ -227,7 +227,7 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 		AnomalyCount:          e.anomalyCount,
 		AnomalyPercent:        e.anomalyPercent,
 		AnomalyTriggerPending: e.anomalyTriggerPending,
-		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
+		LastAnomalyTriggerAt:  timePointer(e.lastAnomalyTriggerAt),
 		StorageError:          e.storageErr,
 		RunMode:               e.runMode,
 		ProbePhase:            e.probePhase,
@@ -625,6 +625,7 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 	})
 
 	total := len(results)
+	remediation := summarizeInspectionRemediation(results)
 	start := (query.Page - 1) * query.PageSize
 	if start > total {
 		start = total
@@ -639,11 +640,95 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 	}
 	return InspectionResultList{
 		Results:  append([]InspectionResult{}, results[start:end]...),
+		Summary:  remediation,
 		Total:    total,
 		Page:     query.Page,
 		PageSize: query.PageSize,
 		Pages:    pages,
 	}
+}
+
+func (e *InspectionEngine) ReconcileAccountStates(ctx context.Context) error {
+	if e == nil || e.accounts == nil {
+		return fmt.Errorf("account inspection is unavailable")
+	}
+	accounts, errAccounts := e.accounts.baseAccounts(ctx)
+	if errAccounts != nil {
+		return fmt.Errorf("list CPA accounts: %w", errAccounts)
+	}
+	current := make(map[string]Account, len(accounts))
+	for _, account := range accounts {
+		if id := strings.TrimSpace(account.ID); id != "" {
+			current[id] = account
+		}
+	}
+	e.mu.Lock()
+	changed := false
+	for id, record := range e.records {
+		account, exists := current[id]
+		if !exists {
+			delete(e.records, id)
+			changed = true
+			continue
+		}
+		if record.Result.Disabled != account.Disabled {
+			record.Result.Disabled = account.Disabled
+			changed = true
+		}
+		if record.Result.OwnedDisable && !account.Disabled {
+			clearInspectionDisableOwnership(&record)
+			record.Result.AutoAction = ""
+			record.Result.AutoActionStatus = ""
+			changed = true
+		}
+		e.records[id] = record
+	}
+	if changed {
+		e.dirty = true
+		e.generation++
+	}
+	e.mu.Unlock()
+	if changed {
+		e.requestPersist()
+	}
+	return nil
+}
+
+func summarizeInspectionRemediation(results []InspectionResult) InspectionRemediationSummary {
+	summary := InspectionRemediationSummary{}
+	for _, result := range results {
+		if result.Editable {
+			if result.Disabled {
+				summary.EditableDisabled++
+			} else {
+				summary.EditableEnabled++
+			}
+		}
+		switch normalizeInspectionRecommendation(result.Recommendation) {
+		case InspectionRecommendationDelete:
+			summary.SuggestedDelete++
+		case InspectionRecommendationDisable:
+			if result.Editable && !result.Disabled {
+				summary.SuggestedDisable++
+			} else {
+				summary.Keep++
+			}
+		case InspectionRecommendationEnable:
+			if result.Editable && result.Disabled && result.OwnedDisable {
+				summary.SuggestedEnable++
+			} else {
+				summary.Keep++
+			}
+		case InspectionRecommendationReauth:
+			summary.Reauth++
+		case InspectionRecommendationReview:
+			summary.Review++
+		default:
+			summary.Keep++
+		}
+	}
+	summary.Actionable = summary.SuggestedDelete + summary.SuggestedDisable + summary.SuggestedEnable + summary.Reauth
+	return summary
 }
 
 func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[string]AccountAutomationSummary {
@@ -1137,7 +1222,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		e.requestPersist()
 		return
 	}
-	actionSummary, actions := e.applyAutomaticActions(ctx, policy, accountsByID, next, now)
+	actionSummary, actions := e.applyAutomaticActions(ctx, policy, accountsByID, next, now, config.ManagementBaseURL, managementKey)
 	summary.AutoDisabled += actionSummary.AutoDisabled
 	summary.AutoEnabled += actionSummary.AutoEnabled
 	summary.DeletePending += actionSummary.DeletePending

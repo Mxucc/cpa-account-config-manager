@@ -320,10 +320,12 @@ export async function getUpdateStatus(): Promise<UpdateSnapshot> {
 }
 
 export async function saveUpdatePolicy(policy: UpdatePolicy, confirmAutoUpdate = false): Promise<UpdateSnapshot> {
-  return request<UpdateSnapshot>("/updates", {
+  const status = await request<UpdateSnapshot>("/updates", {
     method: "PUT",
     body: JSON.stringify({ policy, confirm_auto_update: confirmAutoUpdate }),
   });
+  const store = await loadPluginStore();
+  return reconcileUpdateStatus(status, store.response, store.error);
 }
 
 export async function checkForUpdates(): Promise<UpdateSnapshot> {
@@ -354,22 +356,36 @@ function compareStableVersions(left: [number, number, number], right: [number, n
 }
 
 export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStoreResponse | null, storeError = ""): UpdateSnapshot {
-  const githubError = status.error?.trim() || "";
-  const githubVersion = normalizedStableVersion(status.latest_version);
+  const obsoleteDirectCheckErrors = new Set([
+    "release metadata request failed",
+    "release metadata response was invalid",
+    "repository metadata is invalid",
+    "update check is unavailable",
+  ]);
+  const statusError = status.error?.trim() || "";
+  const retainedError = obsoleteDirectCheckErrors.has(statusError) ? "" : statusError;
   const currentVersion = normalizedStableVersion(status.current_version);
-  const plugin = arrayOrEmpty(store?.plugins).find((entry) => entry?.id === pluginID);
+  const plugin = store?.plugins_enabled ? arrayOrEmpty(store.plugins).find((entry) => entry?.id === pluginID) : undefined;
   const storeVersion = normalizedStableVersion(plugin?.version);
   const base: UpdateSnapshot = {
-    ...status,
-    release_source: githubVersion && !githubError ? "github" : "none",
-    github_error: githubError || undefined,
-    store_error: storeError || undefined,
+    policy: status.policy,
+    current_version: status.current_version,
+    update_available: false,
+    checking: status.checking,
+    pending: status.pending,
+    checked_at: status.checked_at,
+    release_source: "none",
+    store_error: storeError ? "plugin store metadata is unavailable" : undefined,
+    error: retainedError || undefined,
   };
 
-  if (!storeVersion || !currentVersion) return base;
+  if (!storeVersion || !currentVersion) {
+    return {
+      ...base,
+      error: retainedError || "plugin store metadata is unavailable",
+    };
+  }
   const storeIsNewer = compareStableVersions(storeVersion.parts, currentVersion.parts) > 0;
-  const githubIsAtLeastStore = githubVersion && compareStableVersions(githubVersion.parts, storeVersion.parts) >= 0;
-  if (!githubError && githubIsAtLeastStore) return base;
 
   return {
     ...base,
@@ -377,17 +393,21 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
     update_available: storeIsNewer,
     release_url: `${pluginReleaseBaseURL}${storeVersion.value}`,
     release_source: "plugin_store",
-    error: undefined,
+    error: retainedError || undefined,
   };
+}
+
+async function loadPluginStore(): Promise<{ response: PluginStoreResponse | null; error: string }> {
+  return getPluginStore().then(
+    (response) => ({ response, error: "" }),
+    () => ({ response: null, error: "plugin store metadata is unavailable" }),
+  );
 }
 
 export async function getEffectiveUpdateStatus(checkNow = false): Promise<UpdateSnapshot> {
   const [status, store] = await Promise.all([
     checkNow ? checkForUpdates() : getUpdateStatus(),
-    getPluginStore().then(
-      (response) => ({ response, error: "" }),
-      (caught: unknown) => ({ response: null, error: caught instanceof Error ? caught.message : "plugin store request failed" }),
-    ),
+    loadPluginStore(),
   ]);
   return reconcileUpdateStatus(status, store.response, store.error);
 }

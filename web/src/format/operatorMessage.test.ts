@@ -8,7 +8,7 @@ describe("operatorMessage", () => {
     expect(operatorMessage("default policy changed; create a new force-sync preview")).toContain("默认策略已变化");
     expect(operatorMessage("default policy update failed")).toBe("默认策略字段更新失败");
     expect(operatorMessage("enabling auto_delete requires explicit confirmation")).toContain("明确确认");
-    expect(operatorMessage("release metadata request failed")).toContain("GitHub Release");
+    expect(operatorMessage("plugin store metadata is unavailable")).toContain("插件商店");
     expect(operatorMessage("update state could not be persisted")).toContain("data_dir");
     expect(operatorMessage("plugin_update_requires_restart")).toContain("无法覆盖");
     expect(operatorMessage("too many model tests are running")).toContain("模型测试");

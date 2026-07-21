@@ -201,7 +201,7 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
         </section>
 
         <section className="automation-settings-section">
-          <header><ShieldCheck size={17} /><div><strong>{tx("ui.plugin_updates")}</strong><span>{tx("ui.github_releases_and_the_cpa_plugin_store")}</span></div></header>
+          <header><ShieldCheck size={17} /><div><strong>{tx("ui.plugin_updates")}</strong><span>{tx("ui.cpa_plugin_store_updates")}</span></div></header>
           <div className="automation-setting-grid">
             <SettingToggle label="ui.check_for_updates" checked={checkEnabled} disabled={saving} onChange={(checked) => { setCheckEnabled(checked); if (!checked) setAutoUpdate(false); }} />
             <SettingNumber label="ui.check_interval" suffix="ui.hours" value={checkInterval} min={1} max={168} disabled={!checkEnabled || saving} onChange={setCheckInterval} />

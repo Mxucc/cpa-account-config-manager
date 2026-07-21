@@ -3,7 +3,6 @@ package manager
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,17 +11,6 @@ import (
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
-
-type fakeUpdateHTTPHost struct {
-	request  cpaapi.HTTPRequest
-	response cpaapi.HTTPResponse
-	err      error
-}
-
-func (h *fakeUpdateHTTPHost) DoHTTP(_ context.Context, request cpaapi.HTTPRequest) (cpaapi.HTTPResponse, error) {
-	h.request = request
-	return h.response, h.err
-}
 
 func TestReleaseVersionComparisonIgnoresDevelopmentSuffix(t *testing.T) {
 	tests := []struct {
@@ -44,48 +32,59 @@ func TestReleaseVersionComparisonIgnoresDevelopmentSuffix(t *testing.T) {
 	}
 }
 
-func TestUpdateCheckerUsesFixedPublicGitHubEndpointAndPersistsSanitizedState(t *testing.T) {
+func TestUpdateCheckerRecordsPluginStoreCheckWithoutReleaseMetadata(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 14, 0, 0, 0, time.UTC)
-	host := &fakeUpdateHTTPHost{response: cpaapi.HTTPResponse{
-		StatusCode: http.StatusOK,
-		Body:       []byte(`{"tag_name":"v0.3.0","draft":false,"prerelease":false,"token":"release-secret"}`),
-	}}
-	checker := NewUpdateChecker(host, "0.2.0-dev", DefaultPluginRepository)
+	checker := NewUpdateChecker("0.2.0-dev")
 	checker.now = func() time.Time { return now }
 	checker.store = filepath.Join(t.TempDir(), "update-state.json")
-	checker.check(context.Background())
-
-	if host.request.Method != http.MethodGet || host.request.URL != "https://api.github.com/repos/Mxucc/cpa-account-config-manager/releases/latest" {
-		t.Fatalf("request = %#v", host.request)
-	}
-	if host.request.Headers.Get("Authorization") != "" || len(host.request.Body) != 0 {
-		t.Fatalf("update request carried credentials: %#v", host.request)
-	}
-	snapshot := checker.Snapshot()
-	if snapshot.LatestVersion != "0.3.0" || !snapshot.UpdateAvailable || snapshot.ReleaseURL != "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.3.0" || !snapshot.CheckedAt.Equal(now) {
+	snapshot := checker.RequestCheck()
+	if snapshot.LatestVersion != "" || snapshot.UpdateAvailable || snapshot.ReleaseURL != "" || snapshot.Error != "" || !snapshot.CheckedAt.Equal(now) {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 	stored, errRead := os.ReadFile(checker.store)
 	if errRead != nil {
 		t.Fatalf("read update state: %v", errRead)
 	}
-	if bytes.Contains(stored, []byte("release-secret")) || bytes.Contains(stored, []byte("Authorization")) {
-		t.Fatalf("update state leaked response data: %s", stored)
+	if bytes.Contains(stored, []byte("latest_version")) || bytes.Contains(stored, []byte("release metadata")) || bytes.Contains(stored, []byte("github")) {
+		t.Fatalf("update state retained direct release metadata: %s", stored)
 	}
 }
 
-func TestUpdateCheckerReturnsFixedErrorWithoutLeakingHostFailure(t *testing.T) {
-	host := &fakeUpdateHTTPHost{err: errors.New("Bearer network-secret")}
-	checker := NewUpdateChecker(host, "0.2.0", DefaultPluginRepository)
-	checker.store = filepath.Join(t.TempDir(), "update-state.json")
-	checker.check(context.Background())
+func TestUpdateCheckerClearsLegacyGitHubFailureOnLoad(t *testing.T) {
+	dataDir := t.TempDir()
+	store := filepath.Join(dataDir, "update-state.json")
+	legacy := []byte(`{"version":1,"policy":{"check_enabled":true,"check_interval_hours":24,"auto_update":false},"latest_version":"0.2.9","checked_at":"2026-07-20T14:00:00Z","error":"release metadata request failed"}`)
+	if errWrite := os.WriteFile(store, legacy, 0o600); errWrite != nil {
+		t.Fatalf("write legacy update state: %v", errWrite)
+	}
+	checker := NewUpdateChecker("0.2.9")
+	checker.Configure(Config{DataDir: dataDir})
 	snapshot := checker.Snapshot()
-	if snapshot.Error != "release metadata request failed" {
+	if snapshot.Error != "" || snapshot.LatestVersion != "" || snapshot.UpdateAvailable {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
-	raw, _ := os.ReadFile(checker.store)
-	if bytes.Contains(raw, []byte("network-secret")) || bytes.Contains(raw, []byte("Bearer")) {
-		t.Fatalf("stored update error leaked host failure: %s", raw)
+	checker.RequestCheck()
+	raw, errRead := os.ReadFile(store)
+	if errRead != nil {
+		t.Fatalf("read migrated update state: %v", errRead)
+	}
+	if bytes.Contains(raw, []byte("latest_version")) || bytes.Contains(raw, []byte("release metadata")) {
+		t.Fatalf("legacy GitHub state was not cleared: %s", raw)
+	}
+}
+
+func TestUpdateCheckerLoadsPolicyOnFirstConfigureWhenStorePathAlreadyMatches(t *testing.T) {
+	dataDir := t.TempDir()
+	store := filepath.Join(dataDir, "update-state.json")
+	stored := []byte(`{"version":1,"policy":{"check_enabled":true,"check_interval_hours":72,"auto_update":false},"checked_at":"2026-07-20T14:00:00Z"}`)
+	if errWrite := os.WriteFile(store, stored, 0o600); errWrite != nil {
+		t.Fatalf("write update state: %v", errWrite)
+	}
+	checker := NewUpdateChecker("0.2.9")
+	checker.store = store
+	checker.Configure(Config{DataDir: dataDir})
+	if checker.Snapshot().Policy.CheckIntervalHours != 72 {
+		t.Fatalf("snapshot = %#v", checker.Snapshot())
 	}
 }
 
@@ -109,18 +108,5 @@ func TestUpdatePolicyRouteRequiresExplicitAutoUpdateConfirmation(t *testing.T) {
 	})
 	if confirmed.StatusCode != http.StatusOK {
 		t.Fatalf("confirmed = %d %s", confirmed.StatusCode, confirmed.Body)
-	}
-}
-
-func TestGitHubRepositoryParserRejectsNonCanonicalURLs(t *testing.T) {
-	for _, value := range []string{
-		"http://github.com/Mxucc/cpa-account-config-manager",
-		"https://evil.example/Mxucc/cpa-account-config-manager",
-		"https://github.com/Mxucc/cpa-account-config-manager/extra",
-		"https://user@github.com/Mxucc/cpa-account-config-manager",
-	} {
-		if _, _, ok := parseGitHubRepository(value); ok {
-			t.Fatalf("repository %q was accepted", value)
-		}
 	}
 }

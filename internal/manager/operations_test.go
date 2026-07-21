@@ -205,7 +205,6 @@ func TestReconcileOperationSourcesDeduplicatesJobsScansActionsAndUpdates(t *test
 	app.inspection.mu.Unlock()
 	app.updates.mu.Lock()
 	app.updates.checkedAt = now
-	app.updates.latestVersion = "0.3.0"
 	app.updates.mu.Unlock()
 
 	app.reconcileOperationSources()
@@ -224,7 +223,7 @@ func TestReconcileOperationSourcesDeduplicatesJobsScansActionsAndUpdates(t *test
 	if seen[OperationActionAutoDisable].TargetID != "auth-1" || seen[OperationActionAutoDisable].ReasonCode != "invalid_credentials" {
 		t.Fatalf("inspection action = %#v", seen[OperationActionAutoDisable])
 	}
-	if seen[OperationActionUpdateCheck].Status != OperationStatusWarning || seen[OperationActionUpdateCheck].Version != "0.3.0" {
+	if seen[OperationActionUpdateCheck].Status != OperationStatusSucceeded || seen[OperationActionUpdateCheck].Source != OperationSourcePluginStore || seen[OperationActionUpdateCheck].ReasonCode != "check_completed" || seen[OperationActionUpdateCheck].Version != "" {
 		t.Fatalf("update operation = %#v", seen[OperationActionUpdateCheck])
 	}
 }

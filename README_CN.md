@@ -38,7 +38,6 @@
 
 - 原生插件发现、Management 路由和 Resource 路由；
 - `host.auth.list`、`host.auth.get` 与 `host.auth.save` 回调；
-- 用于公开 GitHub Release 元数据检查的 `host.http.do`；
 - `PATCH /v0/management/auth-files/status`；
 - `PATCH /v0/management/auth-files/fields`；
 - 用于确认删除的鉴权 `DELETE /v0/management/auth-files?name=<file.json>`；
@@ -265,9 +264,9 @@ CLIProxyAPI 进程需要：
 
 ## 插件更新
 
-Release 检查默认开启，每 24 小时一次，可配置 1-168 小时。后端只通过 `host.http.do` 请求固定的公开地址 `https://api.github.com/repos/Mxucc/cpa-account-config-manager/releases/latest`，不发送 Authorization Header 或账号凭据，拒绝 Draft、Prerelease 和无效语义版本；`update-state.json` 只保存策略、规范化最新版本、时间戳和稳定错误码。
+Release 检查只使用 CPA 已鉴权插件商店 Registry 作为版本来源。账号管理器不再请求 GitHub Release 接口，也不依赖 `host.http.do`；Registry 获取、平台匹配、压缩包校验和 Checksum 均继续由 CPA 负责。插件只接受自身条目的稳定语义版本；插件商店关闭、条目缺失或版本非法时会显示固定且可理解的错误，不会误报“已是最新版本”。
 
-已鉴权页面还会读取 CPA 插件商店 Registry 中的目标插件元数据。直接 GitHub 查询不受支持、被阻断或限流时，合法的插件商店稳定版本会成为更新提示来源，同时保留独立 GitHub 错误供排查；缺失或非法版本不会被采用。
+`update-state.json` 只持久化检查策略和最近检查时间。旧版本遗留的 GitHub 版本与错误会在加载时忽略，并在下次保存时清除。Management Key 只随当前浏览器请求发送给 CPA Management API，不会发往 CPA 之外，也不会被插件持久化。已鉴权管理页面保持打开时，启用的更新检查会按配置的 1-168 小时间隔重复执行。
 
 发现新版本后页面会显示提示。真正安装委托给 CPA 鉴权插件商店，由宿主负责 Registry 来源、平台匹配、归档限制、Checksum 校验和最终落盘。自动安装默认关闭，首次开启必须确认，并且只在已鉴权巡检页面打开期间运行。原生动态库可能需要重启 CPA 才能启用新版本；安装失败或文件被占用时仍可手动重试。插件不会自行下载或替换自己的动态库，也不会保存浏览器中的 Management Key。
 

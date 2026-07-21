@@ -22,7 +22,6 @@ const (
 	MethodHostAuthGet        = "host.auth.get"
 	MethodHostAuthGetRuntime = "host.auth.get_runtime"
 	MethodHostAuthSave       = "host.auth.save"
-	MethodHostHTTPDo         = "host.http.do"
 )
 
 type Metadata struct {
@@ -177,17 +176,4 @@ type HostAuthSaveRequest struct {
 type HostAuthSaveResponse struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
-}
-
-type HTTPRequest struct {
-	Method  string      `json:"method,omitempty"`
-	URL     string      `json:"url,omitempty"`
-	Headers http.Header `json:"headers,omitempty"`
-	Body    []byte      `json:"body,omitempty"`
-}
-
-type HTTPResponse struct {
-	StatusCode int         `json:"status_code"`
-	Headers    http.Header `json:"headers,omitempty"`
-	Body       []byte      `json:"body,omitempty"`
 }

@@ -70,10 +70,6 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	deletions := NewAccountDeleteService(accounts, mutations)
 	inspection.SetModelTestService(modelTests)
 	inspection.SetDeleteService(deletions)
-	var httpHost HTTPHost
-	if candidate, ok := host.(HTTPHost); ok {
-		httpHost = candidate
-	}
 	return &App{
 		config:     normalizeConfig(Config{}),
 		accounts:   accounts,
@@ -82,7 +78,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		jobs:       jobs,
 		policies:   policies,
 		inspection: inspection,
-		updates:    NewUpdateChecker(httpHost, PluginVersion, PluginRepository),
+		updates:    NewUpdateChecker(PluginVersion),
 		force:      NewForceSyncEngine(accounts, host, policies, mutations),
 		imports:    NewImportService(host, mutations),
 		usage:      usage,
@@ -195,7 +191,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/auto-delete", Description: "Execute due opt-in deletion candidates with the current Management credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/updates", Description: "Read plugin release and update-check status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/updates", Description: "Validate and save plugin update-check settings."},
-			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Request an immediate public release check."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Record an immediate CPA plugin-store update check."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations", Description: "List the persistent sanitized account-manager operation journal."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/export", Description: "Export the sanitized operation journal as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodDelete, Path: managementRoutePrefix + "/operations", Description: "Clear the operation journal while retaining a clear audit event."},

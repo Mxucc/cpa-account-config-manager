@@ -636,8 +636,7 @@ export interface UpdateSnapshot {
   pending: boolean;
   checked_at?: string;
   error?: string;
-  release_source?: "github" | "plugin_store" | "none";
-  github_error?: string;
+  release_source?: "plugin_store" | "none";
   store_error?: string;
 }
 

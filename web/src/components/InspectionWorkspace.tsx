@@ -589,7 +589,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     }
   };
 
-  const checkUpdates = async () => {
+  const checkUpdates = useCallback(async () => {
     setUpdateChecking(true);
     setError("");
     try {
@@ -599,7 +599,17 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     } finally {
       setUpdateChecking(false);
     }
-  };
+  }, [handleError]);
+
+  useEffect(() => {
+    if (!updates?.policy.check_enabled || !updates.checked_at) return;
+    const checkedAt = Date.parse(updates.checked_at);
+    if (!Number.isFinite(checkedAt)) return;
+    const intervalHours = Math.min(168, Math.max(1, updates.policy.check_interval_hours || 24));
+    const dueAt = checkedAt + intervalHours * 60 * 60 * 1000;
+    const timer = window.setTimeout(() => void checkUpdates(), Math.max(1_000, dueAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [checkUpdates, updates?.checked_at, updates?.policy.check_enabled, updates?.policy.check_interval_hours]);
 
   const saveSettings = async (inspection: InspectionPolicy, updatePolicy: UpdatePolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean, confirmUpdate: boolean) => {
     setSettingsSaving(true);
@@ -844,7 +854,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
             <div><span>{tx("ui.current_version")}</span><code>{updates?.current_version || "-"}</code></div>
             <div><span>{tx("ui.latest_version")}</span><code>{updates?.latest_version || "-"}</code></div>
             <div><span>{tx("ui.last_checked")}</span><time>{formatDateTime(updates?.checked_at)}</time></div>
-            <div><span>{tx("ui.check_status")}</span><strong>{updates?.release_source === "plugin_store" && updates.github_error ? tx("ui.github_metadata_unavailable_using_plugin_store") : updates?.error ? operatorMessage(updates.error, locale) : tx(updates?.checking || updates?.pending ? "ui.checking" : updates?.update_available ? "ui.update_available" : "ui.up_to_date")}</strong></div>
+            <div><span>{tx("ui.check_status")}</span><strong>{updates?.error ? operatorMessage(updates.error, locale) : tx(updates?.checking || updates?.pending ? "ui.checking" : updates?.update_available ? "ui.update_available" : "ui.up_to_date")}</strong></div>
           </div>
           <button className="button button-quiet" type="button" disabled={updateChecking || updates?.checking || updates?.pending} onClick={() => void checkUpdates()}>
             {updateChecking || updates?.checking || updates?.pending ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{tx("ui.check_for_updates")}

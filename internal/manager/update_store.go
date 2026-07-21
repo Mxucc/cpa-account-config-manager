@@ -12,11 +12,10 @@ import (
 const updateStoreVersion = 1
 
 type persistedUpdateState struct {
-	Version       int          `json:"version"`
-	Policy        UpdatePolicy `json:"policy"`
-	LatestVersion string       `json:"latest_version,omitempty"`
-	CheckedAt     time.Time    `json:"checked_at,omitempty"`
-	Error         string       `json:"error,omitempty"`
+	Version   int          `json:"version"`
+	Policy    UpdatePolicy `json:"policy"`
+	CheckedAt time.Time    `json:"checked_at,omitempty"`
+	Error     string       `json:"error,omitempty"`
 }
 
 func updateStorePath(dataDir string) string {
@@ -40,11 +39,6 @@ func loadUpdateState(path string) (persistedUpdateState, error) {
 		return persistedUpdateState{}, fmt.Errorf("validate update policy: %w", errPolicy)
 	}
 	state.Policy = policy
-	if _, normalized, ok := parseReleaseVersion(state.LatestVersion); ok {
-		state.LatestVersion = normalized
-	} else {
-		state.LatestVersion = ""
-	}
 	state.CheckedAt = state.CheckedAt.UTC()
 	state.Error = safeUpdateError(state.Error)
 	return state, nil

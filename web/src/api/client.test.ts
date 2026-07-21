@@ -336,6 +336,7 @@ describe("management API client", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(inspectionSnapshot))
       .mockResolvedValueOnce(jsonResponse(updateSnapshot))
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
       .mockResolvedValueOnce(jsonResponse({ attempted: 0, succeeded: 0, failed: 0, skipped: 0 }))
       .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
       .mockResolvedValueOnce(jsonResponse({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: false }));
@@ -354,15 +355,19 @@ describe("management API client", () => {
     expect(updateURL).toContain("/updates");
     expect(JSON.parse(String(updateInit.body))).toEqual({ policy: updateSnapshot.policy, confirm_auto_update: true });
 
-    const [deleteURL, deleteInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const [policyStoreURL, policyStoreInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    expect(policyStoreURL).toBe("/v0/management/plugin-store");
+    expect(new Headers(policyStoreInit.headers).get("Authorization")).toBe("Bearer management-secret");
+
+    const [deleteURL, deleteInit] = fetchMock.mock.calls[3] as [string, RequestInit];
     expect(deleteURL).toContain("/inspection/auto-delete");
     expect(deleteInit.body).toBeUndefined();
 
-    const [storeURL, storeInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+    const [storeURL, storeInit] = fetchMock.mock.calls[4] as [string, RequestInit];
     expect(storeURL).toBe("/v0/management/plugin-store");
     expect(new Headers(storeInit.headers).get("Authorization")).toBe("Bearer management-secret");
 
-    const [installURL, installInit] = fetchMock.mock.calls[4] as [string, RequestInit];
+    const [installURL, installInit] = fetchMock.mock.calls[5] as [string, RequestInit];
     expect(installURL).toBe("/v0/management/plugin-store/cpa-account-config-manager/install");
     expect(JSON.parse(String(installInit.body))).toEqual({ version: "0.3.0" });
     expect(new Headers(installInit.headers).get("Authorization")).toBe("Bearer management-secret");
@@ -382,7 +387,7 @@ describe("management API client", () => {
     });
   });
 
-  it("reconciles a failed GitHub check with authenticated plugin-store metadata", async () => {
+  it("uses authenticated plugin-store metadata as the sole update source", async () => {
     setSession("", "management-secret");
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.2.3", update_available: false, checking: false, pending: false, error: "release metadata request failed" }))
@@ -396,9 +401,9 @@ describe("management API client", () => {
       latest_version: "0.2.4",
       update_available: true,
       release_source: "plugin_store",
-      github_error: "release metadata request failed",
     });
     expect(result.error).toBeUndefined();
+    expect(result).not.toHaveProperty("github_error");
     expect(new Headers((fetchMock.mock.calls[1] as [string, RequestInit])[1].headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
@@ -410,11 +415,11 @@ describe("management API client", () => {
       error: "release metadata request failed",
     }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "v0.2.3", installed: true, installed_version: "0.2.3", update_available: false }] });
 
-    expect(result).toMatchObject({ latest_version: "0.2.3", update_available: false, release_source: "plugin_store", github_error: "release metadata request failed" });
+    expect(result).toMatchObject({ latest_version: "0.2.3", update_available: false, release_source: "plugin_store" });
     expect(result.error).toBeUndefined();
   });
 
-  it("keeps the GitHub failure explicit when store metadata is missing or invalid", () => {
+  it("reports a stable plugin-store error when store metadata is missing or invalid", () => {
     const status = {
       policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
       current_version: "0.2.3", update_available: false, checking: false, pending: false,
@@ -423,9 +428,20 @@ describe("management API client", () => {
     for (const store of [null, { plugins_enabled: true, plugins: null }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "latest", installed: true, installed_version: "0.2.3", update_available: true }] }]) {
       const result = reconcileUpdateStatus(status, store);
       expect(result.release_source).toBe("none");
-      expect(result.error).toBe("release metadata request failed");
+      expect(result.error).toBe("plugin store metadata is unavailable");
       expect(result.update_available).toBe(false);
     }
+  });
+
+  it("ignores stale direct-release metadata when the plugin store has an older stable version", () => {
+    const result = reconcileUpdateStatus({
+      policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
+      current_version: "0.2.3", latest_version: "9.9.9", update_available: true,
+      release_url: "https://example.invalid/release", checking: false, pending: false,
+    }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.4", installed: true, installed_version: "0.2.3", update_available: true }] });
+
+    expect(result).toMatchObject({ latest_version: "0.2.4", update_available: true, release_source: "plugin_store" });
+    expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.2.4");
   });
 });
 

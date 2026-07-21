@@ -116,6 +116,7 @@ const reasonLabels: Record<string, UIMessageKey> = {
   install_failed: "ui.update_installation_failed",
   update_available: "ui.update_available_2",
   up_to_date: "ui.up_to_date_2",
+  check_completed: "ui.update_check_completed",
   check_failed: "ui.update_check_failed",
   healthy_recent_success: "ui.recent_requests_are_healthy",
   quota_exhausted: "ui.account_quota_exhausted",

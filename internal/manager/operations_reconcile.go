@@ -196,24 +196,20 @@ func operationFromInspectionAction(action InspectionAction) (OperationEntry, boo
 
 func operationFromUpdateCheck(snapshot UpdateSnapshot) OperationEntry {
 	status := OperationStatusSucceeded
-	reason := "up_to_date"
+	reason := "check_completed"
 	if snapshot.Error != "" {
 		status = OperationStatusFailed
 		reason = "check_failed"
-	} else if snapshot.UpdateAvailable {
-		status = OperationStatusWarning
-		reason = "update_available"
 	}
 	return OperationEntry{
 		Category:   OperationCategoryUpdate,
 		Action:     OperationActionUpdateCheck,
 		Status:     status,
-		Source:     OperationSourceBackground,
+		Source:     OperationSourcePluginStore,
 		Scope:      OperationScopeSystem,
 		StartedAt:  snapshot.CheckedAt,
 		FinishedAt: snapshot.CheckedAt,
 		ReasonCode: reason,
-		Version:    snapshot.LatestVersion,
 	}
 }
 

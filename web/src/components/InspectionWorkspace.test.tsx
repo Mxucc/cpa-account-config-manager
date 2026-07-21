@@ -72,7 +72,7 @@ describe("InspectionWorkspace", () => {
     expect(JSON.parse(String(runRequest?.init.body))).toEqual({ mode: "full" });
   });
 
-  it("uses the plugin store version when direct GitHub release discovery fails", async () => {
+  it("uses the plugin store as the only update source without a GitHub warning", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/inspection/results")) return jsonResponse({ results: [], total: 0, page: 1, page_size: 50, pages: 0 });
@@ -87,7 +87,8 @@ describe("InspectionWorkspace", () => {
     render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
 
     expect(await screen.findByText("发现版本 0.2.4")).toBeInTheDocument();
-    expect(screen.getByText("GitHub 元数据不可用，已使用 CPA 插件商店版本")).toBeInTheDocument();
+    expect(screen.getByText("可更新")).toBeInTheDocument();
+    expect(screen.queryByText(/GitHub 元数据/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更新" })).toBeEnabled();
   });
 

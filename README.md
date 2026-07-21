@@ -110,7 +110,6 @@ CLIProxyAPI build that provides:
 
 - native plugin discovery and Management/resource routes;
 - `host.auth.list`, `host.auth.get`, and `host.auth.save` callbacks;
-- `host.http.do` for public GitHub Release metadata checks;
 - `PATCH /v0/management/auth-files/status`;
 - `PATCH /v0/management/auth-files/fields`;
 - authenticated `DELETE /v0/management/auth-files?name=<file.json>` for
@@ -537,20 +536,20 @@ to 500 action records persist in `inspection-state.json`.
 
 ## Plugin Updates
 
-Release checking is enabled by default every 24 hours; the configurable range
-is 1-168 hours. The backend calls only the canonical public
-`https://api.github.com/repos/Mxucc/cpa-account-config-manager/releases/latest`
-endpoint through `host.http.do`, sends no Authorization header or account
-credential, rejects drafts/prereleases/invalid semantic versions, and persists
-only the policy, normalized latest version, timestamp, and stable error code in
-`update-state.json`.
+Release checking uses CPA's authenticated Plugin Store registry as its only
+version source. The account manager does not call GitHub release endpoints or
+require `host.http.do`; CPA remains responsible for registry retrieval,
+platform matching, archive validation, and checksums. Only a stable semantic
+version for this plugin is accepted. Missing, disabled, or invalid store
+metadata produces a fixed operator-facing error instead of silently reporting
+that the plugin is current.
 
-The authenticated page also reads CPA's Plugin Store registry metadata. When
-direct GitHub discovery is unsupported, blocked, or rate-limited, a valid store
-version becomes the effective update source while the separate GitHub failure
-remains visible. Invalid or missing store versions are ignored. The Management
-Key is used only in the current request header and is never sent to the plugin
-backend or persisted.
+The check policy and last check timestamp persist in `update-state.json`.
+Legacy GitHub versions and errors from earlier releases are ignored and removed
+the next time the state is saved. The Management Key is sent only to CPA's
+Management API in the current browser request and is never sent outside CPA or
+persisted by the plugin. While an authenticated management page remains open,
+enabled checks repeat at the configured 1-168 hour interval.
 
 An available release produces an in-page prompt. Installation is delegated to
 CPA's authenticated plugin-store endpoints, which own registry selection,

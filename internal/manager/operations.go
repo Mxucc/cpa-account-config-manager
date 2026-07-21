@@ -327,7 +327,7 @@ func safeOperationReason(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
 	case "", "completed", "partial_failure", "operation_failed", "interrupted", "conflict",
-		"restart_required", "install_failed", "update_available", "up_to_date", "check_failed",
+		"restart_required", "install_failed", "update_available", "up_to_date", "check_completed", "check_failed",
 		"healthy_recent_success", "quota_exhausted", "token_revoked", "invalid_credentials",
 		"account_deactivated", "workspace_deactivated", "authentication_review", "billing_review",
 		"credential_permission_denied", "native_unavailable", "manual_disabled", "transient_failure",

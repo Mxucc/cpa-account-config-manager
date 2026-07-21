@@ -45,15 +45,3 @@ func (hostAdapter) SaveAuth(_ context.Context, name string, rawJSON json.RawMess
 	}
 	return response, nil
 }
-
-func (hostAdapter) DoHTTP(_ context.Context, request cpaapi.HTTPRequest) (cpaapi.HTTPResponse, error) {
-	result, errCall := callHost(cpaapi.MethodHostHTTPDo, request)
-	if errCall != nil {
-		return cpaapi.HTTPResponse{}, errCall
-	}
-	var response cpaapi.HTTPResponse
-	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
-		return cpaapi.HTTPResponse{}, fmt.Errorf("decode host http response: %w", errUnmarshal)
-	}
-	return response, nil
-}

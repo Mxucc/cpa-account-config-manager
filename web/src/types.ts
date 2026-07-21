@@ -519,6 +519,9 @@ export interface InspectionSnapshot {
   retry_completed?: number;
   stop_requested?: boolean;
   recent_runs?: InspectionRunRecord[];
+  revision?: number;
+  active_run?: InspectionRunRecord;
+  live_results?: InspectionResult[];
 }
 
 export interface InspectionRunRequest {
@@ -562,6 +565,13 @@ export interface InspectionResult {
   reviewed_at?: string;
   circuit_open?: boolean;
   circuit_reason_code?: string;
+  quota_window?: "five_hour" | "seven_day" | "multiple" | "five_hour_fallback";
+  usage_total_tokens?: number;
+  usage_last_request_at?: string;
+  codex_usage?: CodexUsageSnapshot;
+  run_id?: string;
+  run_phase?: "listing" | "primary" | "retry" | "stopped" | "completed";
+  run_observed_at?: string;
 }
 
 export interface InspectionResultList {

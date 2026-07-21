@@ -32,6 +32,8 @@ type InspectionEngine struct {
 	actions               []InspectionAction
 	runs                  []InspectionRunRecord
 	activeRunID           string
+	activeRunHealth       map[string]string
+	activeRunHealthID     string
 	lastRun               InspectionRunSummary
 	probeCursor           int
 	lastNativeRunAt       time.Time
@@ -150,6 +152,13 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.actions = state.Actions
 	e.runs = state.Runs
 	e.activeRunID = state.ActiveRunID
+	e.activeRunHealthID = e.activeRunID
+	e.activeRunHealth = make(map[string]string)
+	for id, record := range e.records {
+		if record.Result.RunID == e.activeRunID && record.Result.RunObservedAt != nil {
+			e.activeRunHealth[id] = normalizeInspectionHealth(record.Result.Health)
+		}
+	}
 	e.lastRun = state.LastRun
 	e.probeCursor = state.ProbeCursor
 	e.lastNativeRunAt = state.LastNativeRunAt
@@ -195,6 +204,8 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	activeRun := activeInspectionRun(e.runs, e.activeRunID)
+	liveResults := liveInspectionResults(e.records, e.activeRunID, maxInspectionLiveResults)
 	return InspectionSnapshot{
 		Policy:                e.policy,
 		Running:               e.running,
@@ -224,6 +235,9 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 		RetryCompleted:        e.retryCompleted,
 		StopRequested:         e.stopRequested,
 		RecentRuns:            recentInspectionRuns(e.runs, 10),
+		Revision:              e.generation,
+		ActiveRun:             activeRun,
+		LiveResults:           liveResults,
 	}
 }
 
@@ -909,6 +923,8 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	probeSweepStartedAt := e.probeSweepStartedAt
 	probeSweepTargets := append([]string(nil), e.probeSweepTargets...)
 	runMode := e.runMode
+	activeRunID := e.activeRunID
+	retryCompletedBase := e.retryCompleted
 	stopRequested := e.stopRequested
 	config := e.config
 	e.activeCancel = batchCancel
@@ -967,6 +983,12 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		summary.Truncated = len(accounts) - maxInspectionAccounts
 		accounts = accounts[:maxInspectionAccounts]
 	}
+	accountsByID := make(map[string]Account, len(accounts))
+	for _, account := range accounts {
+		if strings.TrimSpace(account.ID) != "" {
+			accountsByID[account.ID] = account
+		}
+	}
 	now := e.currentTime()
 	probeProcessed := 0
 	if runProbe {
@@ -992,34 +1014,80 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 			probePolicy.ModelProbeBatchSize = len(probeAccounts)
 			probeCursorForRun = 0
 		}
-		probeResults, nextCursor := runInspectionModelProbes(ctx, modelTests, probeAccounts, previous, probePolicy, probeCursorForRun, config.ManagementBaseURL, managementKey)
+		primaryObserved := 0
+		observePrimary := func(result ModelTestResult) {
+			account, exists := accountsByID[result.AccountID]
+			if !exists {
+				return
+			}
+			primaryObserved++
+			liveRecord := previous[result.AccountID]
+			applyModelProbeToInspection(&liveRecord, result, policy)
+			observedAt := e.currentTime()
+			decision := decideInspection(account, liveRecord, observedAt)
+			updateInspectionRecord(&liveRecord, account, decision, observedAt)
+			liveRecord.Result.RunID = activeRunID
+			liveRecord.Result.RunPhase = InspectionProbePhasePrimary
+			liveRecord.Result.RunObservedAt = timePointer(observedAt)
+			e.publishLiveProbeRecord(liveRecord, activeRunID, InspectionProbePhasePrimary, probeSweepCompleted+primaryObserved, probeSweepTotal, -1)
+		}
+		probeResults, nextCursor := runInspectionModelProbesObserved(ctx, modelTests, probeAccounts, previous, probePolicy, probeCursorForRun, config.ManagementBaseURL, managementKey, observePrimary)
 		retryCount := inspectionProbeRetryCount(probeResults)
 		if retryCount > 0 {
 			e.mu.Lock()
 			e.probePhase = InspectionProbePhaseRetry
 			e.retryTotal += retryCount
+			e.updateRunHistoryProgressLocked()
+			e.dirty = true
+			e.generation++
 			e.mu.Unlock()
 		}
-		retryResults, retryCompleted := retryInspectionProbeResults(ctx, modelTests, probeAccounts, probeResults, probePolicy, config.ManagementBaseURL, managementKey)
-		if retryCompleted > 0 {
-			e.mu.Lock()
-			e.retryCompleted += retryCompleted
-			e.mu.Unlock()
+		retryObserved := 0
+		observeRetry := func(result ModelTestResult) {
+			account, exists := accountsByID[result.AccountID]
+			if !exists {
+				return
+			}
+			retryObserved++
+			liveRecord := previous[result.AccountID]
+			applyModelProbeToInspection(&liveRecord, result, policy)
+			observedAt := e.currentTime()
+			decision := decideInspection(account, liveRecord, observedAt)
+			updateInspectionRecord(&liveRecord, account, decision, observedAt)
+			liveRecord.Result.RunID = activeRunID
+			liveRecord.Result.RunPhase = InspectionProbePhaseRetry
+			liveRecord.Result.RunObservedAt = timePointer(observedAt)
+			e.publishLiveProbeRecord(liveRecord, activeRunID, InspectionProbePhaseRetry, -1, probeSweepTotal, retryCompletedBase+retryObserved)
 		}
+		retryResults, _ := retryInspectionProbeResultsObserved(ctx, modelTests, probeAccounts, probeResults, probePolicy, config.ManagementBaseURL, managementKey, observeRetry)
 		if len(retryResults) > 0 {
 			probeResults = mergeInspectionProbeResults(probeResults, retryResults)
 		}
 		if !probeSweep {
 			probeCursor = nextCursor
 		}
+		retried := make(map[string]struct{}, len(retryResults))
+		for _, result := range retryResults {
+			retried[result.AccountID] = struct{}{}
+		}
 		for _, result := range probeResults {
 			record := previous[result.AccountID]
 			applyModelProbeToInspection(&record, result, policy)
+			phase := InspectionProbePhasePrimary
+			if _, exists := retried[result.AccountID]; exists {
+				phase = InspectionProbePhaseRetry
+			}
+			observedAt := result.TestedAt.UTC()
+			if observedAt.IsZero() {
+				observedAt = e.currentTime()
+			}
+			record.Result.RunID = activeRunID
+			record.Result.RunPhase = phase
+			record.Result.RunObservedAt = timePointer(observedAt)
 			previous[result.AccountID] = record
 		}
 	}
 	next := make(map[string]inspectionRecord, len(accounts))
-	accountsByID := make(map[string]Account, len(accounts))
 	for _, account := range accounts {
 		if ctx.Err() != nil {
 			return
@@ -1124,7 +1192,9 @@ func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[
 	}
 	e.records = records
 	if e.activeRunID != "" {
-		e.updateRunHistorySummaryLocked(summary)
+		if e.activeRunModeLocked() == InspectionRunModeNative || !ranProbe {
+			e.updateRunHistorySummaryLocked(summary)
+		}
 		if !ranProbe {
 			status := InspectionSweepStatusCompleted
 			if summary.Error != "" {
@@ -1140,6 +1210,85 @@ func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[
 	e.generation++
 	e.mu.Unlock()
 	e.persist()
+}
+
+func (e *InspectionEngine) publishLiveProbeRecord(record inspectionRecord, runID, phase string, primaryCompleted, primaryTotal, retryCompleted int) {
+	if e == nil || strings.TrimSpace(record.Result.ID) == "" {
+		return
+	}
+	e.mu.Lock()
+	e.records[record.Result.ID] = record
+	if runID != "" && e.activeRunID == runID {
+		e.probePhase = normalizeInspectionProbePhase(phase)
+		if primaryTotal >= 0 {
+			e.probeSweepTotal = min(max(0, primaryTotal), maxInspectionAccounts)
+		}
+		if primaryCompleted >= 0 {
+			e.probeSweepCompleted = min(max(0, primaryCompleted), e.probeSweepTotal)
+			e.probeSweepRemaining = max(0, e.probeSweepTotal-e.probeSweepCompleted)
+		}
+		if retryCompleted >= 0 {
+			e.retryCompleted = min(max(0, retryCompleted), e.retryTotal)
+		}
+		e.updateLiveRunSummaryLocked(record.Result)
+		e.updateRunHistoryProgressLocked()
+	}
+	e.dirty = true
+	e.generation++
+	e.mu.Unlock()
+	e.requestPersist()
+}
+
+func (e *InspectionEngine) updateLiveRunSummaryLocked(result InspectionResult) {
+	if e.activeRunID == "" || result.RunID != e.activeRunID {
+		return
+	}
+	if e.activeRunHealthID != e.activeRunID || e.activeRunHealth == nil {
+		e.activeRunHealthID = e.activeRunID
+		e.activeRunHealth = make(map[string]string)
+	}
+	previousHealth, existed := e.activeRunHealth[result.ID]
+	e.activeRunHealth[result.ID] = normalizeInspectionHealth(result.Health)
+	for index := len(e.runs) - 1; index >= 0; index-- {
+		if e.runs[index].ID != e.activeRunID {
+			continue
+		}
+		summary := &e.runs[index].Summary
+		if summary.StartedAt.IsZero() {
+			summary.StartedAt = e.runs[index].StartedAt
+		}
+		if existed {
+			decrementInspectionSummary(summary, previousHealth)
+		}
+		incrementInspectionSummary(summary, result.Health)
+		summary.Scanned = len(e.activeRunHealth)
+		summary.FinishedAt = time.Time{}
+		return
+	}
+}
+
+func (e *InspectionEngine) updateRunHistoryProgressLocked() {
+	for index := len(e.runs) - 1; index >= 0; index-- {
+		if e.runs[index].ID != e.activeRunID {
+			continue
+		}
+		e.runs[index].Status = InspectionSweepStatusRunning
+		e.runs[index].Phase = normalizeInspectionProbePhase(e.probePhase)
+		e.runs[index].PrimaryTotal = e.probeSweepTotal
+		e.runs[index].PrimaryDone = e.probeSweepCompleted
+		e.runs[index].RetryTotal = e.retryTotal
+		e.runs[index].RetryDone = e.retryCompleted
+		return
+	}
+}
+
+func (e *InspectionEngine) activeRunModeLocked() string {
+	for index := len(e.runs) - 1; index >= 0; index-- {
+		if e.runs[index].ID == e.activeRunID {
+			return e.runs[index].Mode
+		}
+	}
+	return ""
 }
 
 func (e *InspectionEngine) persist() {
@@ -1212,7 +1361,9 @@ func (e *InspectionEngine) startRunHistoryLocked(mode, source string, startedAt 
 	startedAt = startedAt.UTC()
 	id := fmt.Sprintf("inspection-%d", startedAt.UnixNano())
 	e.activeRunID = id
-	e.runs = append(e.runs, InspectionRunRecord{ID: id, Mode: mode, Source: source, Status: InspectionSweepStatusRunning, Phase: InspectionProbePhaseListing, StartedAt: startedAt})
+	e.activeRunHealthID = id
+	e.activeRunHealth = make(map[string]string)
+	e.runs = append(e.runs, InspectionRunRecord{ID: id, Mode: mode, Source: source, Status: InspectionSweepStatusRunning, Phase: InspectionProbePhaseListing, StartedAt: startedAt, Summary: InspectionRunSummary{StartedAt: startedAt}})
 	if len(e.runs) > maxInspectionRuns {
 		e.runs = e.runs[len(e.runs)-maxInspectionRuns:]
 	}
@@ -1265,6 +1416,45 @@ func recentInspectionRuns(runs []InspectionRunRecord, limit int) []InspectionRun
 		out[left], out[right] = out[right], out[left]
 	}
 	return out
+}
+
+func activeInspectionRun(runs []InspectionRunRecord, activeID string) *InspectionRunRecord {
+	if activeID == "" {
+		return nil
+	}
+	for index := len(runs) - 1; index >= 0; index-- {
+		if runs[index].ID != activeID {
+			continue
+		}
+		clone := runs[index]
+		return &clone
+	}
+	return nil
+}
+
+func liveInspectionResults(records map[string]inspectionRecord, activeID string, limit int) []InspectionResult {
+	if activeID == "" || limit <= 0 {
+		return []InspectionResult{}
+	}
+	results := make([]InspectionResult, 0, min(limit, len(records)))
+	for _, record := range records {
+		if record.Result.RunID != activeID || record.Result.RunObservedAt == nil {
+			continue
+		}
+		results = append(results, cloneInspectionResult(record.Result))
+	}
+	sort.Slice(results, func(left, right int) bool {
+		leftAt := results[left].RunObservedAt
+		rightAt := results[right].RunObservedAt
+		if leftAt != nil && rightAt != nil && !leftAt.Equal(*rightAt) {
+			return leftAt.After(*rightAt)
+		}
+		return results[left].ID < results[right].ID
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results
 }
 
 func (e *InspectionEngine) requestPersist() {
@@ -1333,6 +1523,15 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 	result.RecoverAfter = timePointer(decision.RecoverAfter)
 	result.SignalSource = normalizeInspectionSignalSource(decision.SignalSource)
 	result.StatusCode = boundedHTTPStatus(record.Signal.StatusCode)
+	result.QuotaWindow = normalizeInspectionQuotaWindow(decision.QuotaWindow)
+	result.UsageTotalTokens = 0
+	result.UsageLastRequestAt = nil
+	result.CodexUsage = nil
+	if account.Usage != nil {
+		result.UsageTotalTokens = nonNegative(account.Usage.TotalTokens)
+		result.UsageLastRequestAt = cloneTimePointer(account.Usage.LastRequestAt)
+		result.CodexUsage = cloneCodexUsage(account.Usage.Codex)
+	}
 	if decision.Health == InspectionHealthReview {
 		if previousHealth != decision.Health || previousReason != decision.ReasonCode ||
 			(result.ReviewedAt != nil && record.Signal.LastFailureAt.After(result.ReviewedAt.UTC())) {
@@ -1407,6 +1606,30 @@ func incrementInspectionSummary(summary *InspectionRunSummary, health string) {
 		summary.Disabled++
 	default:
 		summary.Unknown++
+	}
+}
+
+func decrementInspectionSummary(summary *InspectionRunSummary, health string) {
+	if summary == nil {
+		return
+	}
+	switch health {
+	case InspectionHealthHealthy:
+		summary.Healthy = max(0, summary.Healthy-1)
+	case InspectionHealthQuotaLimited:
+		summary.QuotaLimited = max(0, summary.QuotaLimited-1)
+	case InspectionHealthInvalidCredentials:
+		summary.InvalidCredentials = max(0, summary.InvalidCredentials-1)
+	case InspectionHealthDeactivated:
+		summary.Deactivated = max(0, summary.Deactivated-1)
+	case InspectionHealthReview:
+		summary.Review = max(0, summary.Review-1)
+	case InspectionHealthUnavailable:
+		summary.Unavailable = max(0, summary.Unavailable-1)
+	case InspectionHealthDisabled:
+		summary.Disabled = max(0, summary.Disabled-1)
+	default:
+		summary.Unknown = max(0, summary.Unknown-1)
 	}
 }
 

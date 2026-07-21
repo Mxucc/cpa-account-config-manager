@@ -18,6 +18,11 @@ conservative automatic actions, is primarily informed by
 concepts are independently adapted to CPA's native plugin callbacks and
 Management authentication boundary.
 
+Real-time probe publication, Codex 429 reset-window presentation, quota bars,
+and visible account operations are additionally informed by
+[`ysxk/codex-429-autoban`](https://github.com/ysxk/codex-429-autoban) and
+[`zhumengling/codex-token-usage`](https://github.com/zhumengling/codex-token-usage).
+
 ## Features
 
 - Redacted account list with a visible account/plan type, plus search and
@@ -30,6 +35,14 @@ Management authentication boundary.
 - Manual and scheduled account inspection using CPA runtime state, recent
   request outcomes, and normalized Usage evidence, with health filters,
   consecutive-event counters, recommendations, and sanitized action history.
+- Active inspection publishes each completed account immediately through an
+  authenticated no-store live snapshot. The UI refreshes running progress at
+  sub-second cadence, displays current-run result rows, quota windows and Token
+  totals, and keeps model-test, enable/disable, review and safe-delete actions
+  visible without waiting for the full batch to finish.
+- Codex 429 evidence recognizes both reset-after and absolute reset-at headers,
+  selects the later recovery when multiple exhausted windows are present, and
+  uses a bounded five-hour safety window when Codex omits window metadata.
 - Policy-aware disposition labels in the account list show inspection-owned
   disables, normalized reasons, concrete quota recovery times, evidence-based
   recovery waits, deletion recommendations, grace periods, and delete retries
@@ -139,20 +152,20 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.2.5_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.2.6_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.2.5_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.2.6_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.2.5_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.2.5_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.2.6_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.2.6_windows_amd64.zip.sha256
 ```
 
 ### 2. Install the library
@@ -161,17 +174,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so
-plugins/linux/arm64/cpa-account-config-manager-v0.2.5.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.2.5.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.2.5.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.2.6.so
+plugins/linux/arm64/cpa-account-config-manager-v0.2.6.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.2.6.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.2.6.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.6.so
 ```
 
 ### 3. Enable the plugin
@@ -706,7 +719,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.5.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.6.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.6.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -717,7 +730,7 @@ upgrading the native library.
 
 ## Management Routes
 
-All 37 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
+All 38 privileged routes are exact paths below `/v0/management/plugins/cpa-account-config-manager`:
 
 - `GET /accounts`
 - `POST /accounts/model-test`
@@ -739,6 +752,7 @@ All 37 privileged routes are exact paths below `/v0/management/plugins/cpa-accou
 - `POST /defaults/force/start`
 - `GET /defaults/force/status`
 - `GET /inspection`
+- `GET /inspection/live`
 - `PUT /inspection`
 - `POST /inspection/scan`
 - `POST /inspection/scan/native`
@@ -780,7 +794,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.2.5
+make package VERSION=0.2.6
 ```
 
 For a local build that should publish a repository link in plugin metadata,
@@ -842,6 +856,13 @@ and publishes:
   The implementation retains stricter CPA authentication, ownership and
   revision-checked deletion boundaries. Grok Inspection is available under
   the MIT License; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+- Codex 429 reset-window classification and recovery presentation reference
+  [`ysxk/codex-429-autoban`](https://github.com/ysxk/codex-429-autoban).
+  Live quota/Token visualization and visible account-pool operations reference
+  [`zhumengling/codex-token-usage`](https://github.com/zhumengling/codex-token-usage).
+  Both projects are MIT-licensed; this plugin independently adapts the concepts
+  to its existing redaction, Management authentication and owner-bound recovery
+  model. See [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 

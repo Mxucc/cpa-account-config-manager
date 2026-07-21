@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetSessionForTest, setSession } from "../store/session";
@@ -110,15 +110,73 @@ describe("InspectionWorkspace", () => {
     render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
     expect(await screen.findByText("HTTP 401", { exact: false })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "账号处置" }));
-    expect(screen.getByText("仅凭 HTTP 状态不足以执行破坏性操作，请重新测试或明确选择人工处置。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重新测试模型" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "禁用" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "删除" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "标记已解决" }));
+    const actionDialog = screen.getByRole("dialog", { name: "账号处置" });
+    expect(within(actionDialog).getByText("仅凭 HTTP 状态不足以执行破坏性操作，请重新测试或明确选择人工处置。")).toBeInTheDocument();
+    expect(within(actionDialog).getByRole("button", { name: "重新测试模型" })).toBeEnabled();
+    expect(within(actionDialog).getByRole("button", { name: "禁用" })).toBeEnabled();
+    expect(within(actionDialog).getByRole("button", { name: "删除" })).toBeEnabled();
+    await user.click(within(actionDialog).getByRole("button", { name: "标记已解决" }));
     await waitFor(() => expect(requests.some(({ url }) => url.endsWith("/inspection/review"))).toBe(true));
 
     await user.selectOptions(screen.getByRole("combobox", { name: "每页巡检结果数" }), "100");
     await waitFor(() => expect(requests.some(({ url }) => url.includes("page_size=100"))).toBe(true));
     expect(localStorage.getItem("cpa-account-config-manager:inspection-page-size")).toBe("100");
+  });
+
+  it("streams completed account results into visible inline operations while the run is active", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    let livePolls = 0;
+    const liveResult = {
+      id: "live-1", name: "live.json", provider: "codex", type: "codex", plan_type: "plus",
+      health: "quota_limited", reason_code: "quota_exhausted", confidence: "high", recommendation: "disable",
+      disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 1, healthy_streak: 0,
+      last_checked_at: "2026-07-21T10:00:01Z", recover_after: "2026-07-21T15:00:00Z", quota_window: "five_hour",
+      usage_total_tokens: 12345, codex_usage: { observed_at: "2026-07-21T10:00:01Z", five_hour: { used_percent: 75, reset_at: "2026-07-21T15:00:00Z", window_minutes: 300 } },
+      run_id: "inspection-live", run_phase: "primary", run_observed_at: "2026-07-21T10:00:01Z",
+    };
+    const activeSnapshot = {
+      ...inspectionSnapshot,
+      running: true,
+      pending: false,
+      probe_sweep_remaining: 1,
+      probe_sweep_total: 2,
+      probe_sweep_completed: 1,
+      probe_sweep_status: "running",
+      run_mode: "full",
+      probe_phase: "primary",
+      active_run: { id: "inspection-live", mode: "full", source: "manual", status: "running", phase: "primary", started_at: "2026-07-21T10:00:00Z", primary_total: 2, primary_completed: 1, retry_total: 0, retry_completed: 0, summary: { ...inspectionSnapshot.last_run, scanned: 1 } },
+      live_results: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/inspection/live")) {
+        livePolls += 1;
+        return jsonResponse({ ...activeSnapshot, revision: livePolls + 1, live_results: livePolls >= 1 ? [liveResult] : [] });
+      }
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [liveResult], total: 1, page: 1, page_size: 50, pages: 1 });
+      if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
+      if (url.includes("/batch/preview")) return jsonResponse({ id: "disable-preview", created_at: "2026-07-21T10:00:02Z", expires_at: "2026-07-21T10:05:02Z", scope_mode: "selected", total: 1, eligible: 1, read_only: 0, missing: 0, physical_files: 1, providers: { codex: 1 }, patch: { fields: ["disabled"], proxy_mutation: false }, targets: [{ id: "live-1", name: "live.json", provider: "codex", eligible: true }] });
+      if (url.endsWith("/inspection")) return jsonResponse(activeSnapshot);
+      if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.5", update_available: false, checking: false, pending: false });
+      if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [] });
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+    const liveRegion = await screen.findByRole("region", { name: "实时巡检" });
+    expect(within(liveRegion).getByText("等待首条巡检结果")).toBeInTheDocument();
+    await waitFor(() => expect(within(liveRegion).getByText("live.json")).toBeInTheDocument(), { timeout: 2500 });
+    expect(within(liveRegion).getByText("12,345")).toBeInTheDocument();
+    expect(within(liveRegion).getByText("75%")).toBeInTheDocument();
+    expect(within(liveRegion).getByRole("button", { name: "重新测试模型" })).toBeEnabled();
+    const disable = within(liveRegion).getByRole("button", { name: "禁用" });
+    expect(disable).toBeEnabled();
+    await user.click(disable);
+    await waitFor(() => expect(requests.some(({ url }) => url.includes("/batch/preview"))).toBe(true));
+    const previewRequest = requests.find(({ url }) => url.includes("/batch/preview"));
+    expect(JSON.parse(String(previewRequest?.init.body))).toEqual({ scope: { mode: "selected", ids: ["live-1"] }, patch: { disabled: true } });
   });
 });

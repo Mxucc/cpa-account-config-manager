@@ -10,6 +10,7 @@ const (
 	maxInspectionAccounts       = 10_000
 	maxInspectionActions        = 500
 	maxInspectionRuns           = 50
+	maxInspectionLiveResults    = 12
 	defaultInspectionInterval   = 30
 	defaultModelProbeInterval   = 60
 	defaultModelProbeBatchSize  = 20
@@ -92,6 +93,11 @@ const (
 	InspectionProbePhaseRetry   = "retry"
 	InspectionProbePhaseStopped = "stopped"
 	InspectionProbePhaseDone    = "completed"
+
+	InspectionQuotaWindowFiveHour         = "five_hour"
+	InspectionQuotaWindowSevenDay         = "seven_day"
+	InspectionQuotaWindowMultiple         = "multiple"
+	InspectionQuotaWindowFiveHourFallback = "five_hour_fallback"
 )
 
 type InspectionPolicy struct {
@@ -199,43 +205,53 @@ type InspectionSnapshot struct {
 	RetryCompleted        int                   `json:"retry_completed"`
 	StopRequested         bool                  `json:"stop_requested"`
 	RecentRuns            []InspectionRunRecord `json:"recent_runs"`
+	Revision              uint64                `json:"revision"`
+	ActiveRun             *InspectionRunRecord  `json:"active_run,omitempty"`
+	LiveResults           []InspectionResult    `json:"live_results"`
 }
 
 type InspectionResult struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name,omitempty"`
-	Provider            string     `json:"provider,omitempty"`
-	Type                string     `json:"type,omitempty"`
-	PlanType            string     `json:"plan_type,omitempty"`
-	Health              string     `json:"health"`
-	ReasonCode          string     `json:"reason_code"`
-	Confidence          string     `json:"confidence"`
-	Recommendation      string     `json:"recommendation"`
-	Disabled            bool       `json:"disabled"`
-	Editable            bool       `json:"editable"`
-	AutoDisableEligible bool       `json:"auto_disable_eligible"`
-	OwnedDisable        bool       `json:"owned_disable"`
-	FailureStreak       int        `json:"failure_streak"`
-	HealthyStreak       int        `json:"healthy_streak"`
-	LastCheckedAt       time.Time  `json:"last_checked_at"`
-	FirstUnhealthyAt    *time.Time `json:"first_unhealthy_at,omitempty"`
-	LastFailureAt       *time.Time `json:"last_failure_at,omitempty"`
-	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
-	RecoverAfter        *time.Time `json:"recover_after,omitempty"`
-	DeleteEligibleAt    *time.Time `json:"delete_eligible_at,omitempty"`
-	AutoAction          string     `json:"auto_action,omitempty"`
-	AutoActionStatus    string     `json:"auto_action_status,omitempty"`
-	ProbeStatus         string     `json:"probe_status,omitempty"`
-	ProbeReasonCode     string     `json:"probe_reason_code,omitempty"`
-	ProbeModel          string     `json:"probe_model,omitempty"`
-	ProbeTestedAt       *time.Time `json:"probe_tested_at,omitempty"`
-	ProbeLatencyMS      int64      `json:"probe_latency_ms,omitempty"`
-	SignalSource        string     `json:"signal_source,omitempty"`
-	StatusCode          int        `json:"status_code,omitempty"`
-	ReviewStatus        string     `json:"review_status,omitempty"`
-	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
-	CircuitOpen         bool       `json:"circuit_open"`
-	CircuitReasonCode   string     `json:"circuit_reason_code,omitempty"`
+	ID                  string              `json:"id"`
+	Name                string              `json:"name,omitempty"`
+	Provider            string              `json:"provider,omitempty"`
+	Type                string              `json:"type,omitempty"`
+	PlanType            string              `json:"plan_type,omitempty"`
+	Health              string              `json:"health"`
+	ReasonCode          string              `json:"reason_code"`
+	Confidence          string              `json:"confidence"`
+	Recommendation      string              `json:"recommendation"`
+	Disabled            bool                `json:"disabled"`
+	Editable            bool                `json:"editable"`
+	AutoDisableEligible bool                `json:"auto_disable_eligible"`
+	OwnedDisable        bool                `json:"owned_disable"`
+	FailureStreak       int                 `json:"failure_streak"`
+	HealthyStreak       int                 `json:"healthy_streak"`
+	LastCheckedAt       time.Time           `json:"last_checked_at"`
+	FirstUnhealthyAt    *time.Time          `json:"first_unhealthy_at,omitempty"`
+	LastFailureAt       *time.Time          `json:"last_failure_at,omitempty"`
+	LastSuccessAt       *time.Time          `json:"last_success_at,omitempty"`
+	RecoverAfter        *time.Time          `json:"recover_after,omitempty"`
+	DeleteEligibleAt    *time.Time          `json:"delete_eligible_at,omitempty"`
+	AutoAction          string              `json:"auto_action,omitempty"`
+	AutoActionStatus    string              `json:"auto_action_status,omitempty"`
+	ProbeStatus         string              `json:"probe_status,omitempty"`
+	ProbeReasonCode     string              `json:"probe_reason_code,omitempty"`
+	ProbeModel          string              `json:"probe_model,omitempty"`
+	ProbeTestedAt       *time.Time          `json:"probe_tested_at,omitempty"`
+	ProbeLatencyMS      int64               `json:"probe_latency_ms,omitempty"`
+	SignalSource        string              `json:"signal_source,omitempty"`
+	StatusCode          int                 `json:"status_code,omitempty"`
+	ReviewStatus        string              `json:"review_status,omitempty"`
+	ReviewedAt          *time.Time          `json:"reviewed_at,omitempty"`
+	CircuitOpen         bool                `json:"circuit_open"`
+	CircuitReasonCode   string              `json:"circuit_reason_code,omitempty"`
+	QuotaWindow         string              `json:"quota_window,omitempty"`
+	UsageTotalTokens    int64               `json:"usage_total_tokens,omitempty"`
+	UsageLastRequestAt  *time.Time          `json:"usage_last_request_at,omitempty"`
+	CodexUsage          *CodexUsageSnapshot `json:"codex_usage,omitempty"`
+	RunID               string              `json:"run_id,omitempty"`
+	RunPhase            string              `json:"run_phase,omitempty"`
+	RunObservedAt       *time.Time          `json:"run_observed_at,omitempty"`
 }
 
 // AccountAutomationSummary is the bounded inspection state exposed with an

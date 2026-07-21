@@ -14,10 +14,12 @@ const localizedSourceFiles = new Set([
   "src/i18n/uiCatalogZhTW.ts",
 ]);
 
+const ignoredSourceDirectories = new Set(["node_modules", ".git", ".codex-tasks"]);
+
 function sourceFiles(root: string, extensions: Set<string>): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.isDirectory() && (entry.name === "node_modules" || entry.name === ".git")) continue;
+    if (entry.isDirectory() && ignoredSourceDirectories.has(entry.name)) continue;
     const path = join(root, entry.name);
     if (entry.isDirectory()) files.push(...sourceFiles(path, extensions));
     else if (extensions.has(entry.name.slice(entry.name.lastIndexOf(".")))) files.push(path);

@@ -22,6 +22,7 @@ type inspectionSignal struct {
 	LastFailureAt       time.Time `json:"last_failure_at,omitempty"`
 	LastSuccessAt       time.Time `json:"last_success_at,omitempty"`
 	RecoverAfter        time.Time `json:"recover_after,omitempty"`
+	QuotaWindow         string    `json:"quota_window,omitempty"`
 }
 
 type inspectionProbeSignal struct {
@@ -213,6 +214,11 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 			record.Result.ReviewedAt = nil
 		}
 		record.Result.CircuitReasonCode = safeOptionalInspectionReason(record.Result.CircuitReasonCode)
+		record.Result.QuotaWindow = normalizeInspectionQuotaWindow(record.Result.QuotaWindow)
+		record.Result.CodexUsage = cloneCodexUsage(record.Result.CodexUsage)
+		record.Result.RunID = safeOperationIdentifier(record.Result.RunID, 128)
+		record.Result.RunPhase = normalizeInspectionProbePhase(record.Result.RunPhase)
+		record.Signal.QuotaWindow = normalizeInspectionQuotaWindow(record.Signal.QuotaWindow)
 		if record.DisableReason != "passive_circuit_open" {
 			record.Result.CircuitOpen = false
 			record.Result.CircuitReasonCode = ""
@@ -259,7 +265,19 @@ func cloneInspectionResult(result InspectionResult) InspectionResult {
 	clone.DeleteEligibleAt = cloneTimePointer(result.DeleteEligibleAt)
 	clone.ProbeTestedAt = cloneTimePointer(result.ProbeTestedAt)
 	clone.ReviewedAt = cloneTimePointer(result.ReviewedAt)
+	clone.UsageLastRequestAt = cloneTimePointer(result.UsageLastRequestAt)
+	clone.CodexUsage = cloneCodexUsage(result.CodexUsage)
+	clone.RunObservedAt = cloneTimePointer(result.RunObservedAt)
 	return clone
+}
+
+func normalizeInspectionQuotaWindow(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionQuotaWindowFiveHour, InspectionQuotaWindowSevenDay, InspectionQuotaWindowMultiple, InspectionQuotaWindowFiveHourFallback:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
 }
 
 func timePointerOrNil(value time.Time) *time.Time {

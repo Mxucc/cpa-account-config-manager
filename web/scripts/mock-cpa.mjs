@@ -8,6 +8,7 @@ let activeJob = null;
 const importPreviews = new Map();
 const forcePreviews = new Map();
 let activeForceJob = null;
+let inspectionRunUntil = 0;
 let defaultPolicy = {
   enabled: false,
   apply_mode: "missing",
@@ -283,11 +284,15 @@ function mockInspectionResults() {
       probe_tested_at: checkedAt,
       probe_latency_ms: 180 + index * 17,
       signal_source: index < 5 ? "active_probe" : "native",
-      status_code: index === 3 ? 503 : index === 2 ? 402 : undefined,
+      status_code: index === 3 ? 503 : index === 2 ? 429 : undefined,
       review_status: state[0] === "review" ? "pending" : undefined,
       circuit_open: circuit,
       circuit_reason_code: circuit ? "invalid_response" : undefined,
       recover_after: circuit ? new Date(Date.now() + 11 * 60_000).toISOString() : undefined,
+      quota_window: index === 2 ? "five_hour" : undefined,
+      usage_total_tokens: account.usage?.total_tokens || 0,
+      usage_last_request_at: account.usage?.last_request_at,
+      codex_usage: account.usage?.codex,
       last_checked_at: checkedAt,
     };
   });
@@ -298,8 +303,8 @@ function mockInspectionSnapshot(pending = false) {
   const count = (health) => results.filter((result) => result.health === health).length;
   return {
     policy: inspectionPolicy,
-    running: false,
-    pending,
+    running: pending,
+    pending: false,
     last_run: {
       scanned: results.length,
       healthy: count("healthy"),
@@ -334,6 +339,9 @@ function mockInspectionSnapshot(pending = false) {
     retry_total: 2,
     retry_completed: 1,
     stop_requested: false,
+    revision: Date.now(),
+    active_run: pending ? { id: "demo-run-current", mode: "full", source: "manual", status: "running", phase: "primary", started_at: new Date(Date.now() - 35_000).toISOString(), primary_total: 12, primary_completed: 5, retry_total: 2, retry_completed: 1, summary: { scanned: 5, healthy: 0, quota_limited: 1, invalid_credentials: 1, deactivated: 1, review: 0, unavailable: 2, disabled: 0, unknown: 0, auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } } : undefined,
+    live_results: pending ? results.slice(0, 5).map((result, index) => ({ ...result, run_id: "demo-run-current", run_phase: index === 3 ? "retry" : "primary", run_observed_at: new Date(Date.now() - index * 900).toISOString() })) : [],
     recent_runs: [
       { id: "demo-run-current", mode: "full", source: "manual", status: pending ? "running" : "completed", phase: pending ? "primary" : "completed", started_at: new Date(Date.now() - 35_000).toISOString(), finished_at: pending ? undefined : new Date().toISOString(), primary_total: 12, primary_completed: pending ? 5 : 12, retry_total: 2, retry_completed: pending ? 1 : 2, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
       { id: "demo-run-native", mode: "native", source: "manual", status: "completed", phase: "completed", started_at: new Date(Date.now() - 3_600_000).toISOString(), finished_at: new Date(Date.now() - 3_599_000).toISOString(), primary_total: 12, primary_completed: 12, retry_total: 0, retry_completed: 0, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
@@ -359,18 +367,27 @@ function mockUpdateSnapshot(pending = false) {
 }
 
 function json(response, status, body, headers = {}) {
-  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
+  response.writeHead(status, { ...corsHeaders(), "Content-Type": "application/json; charset=utf-8", ...headers });
   response.end(JSON.stringify(body));
 }
 
 function textDownload(response, body, contentType, filename, headers = {}) {
   response.writeHead(200, {
+    ...corsHeaders(),
     "Content-Type": contentType,
     "Content-Disposition": `attachment; filename="${filename}"`,
     "X-Content-Type-Options": "nosniff",
     ...headers,
   });
   response.end(body);
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "DELETE, GET, OPTIONS, PATCH, POST, PUT",
+  };
 }
 
 function csvDocument(headers, rows) {
@@ -821,6 +838,11 @@ function operationCSV(operations) {
 
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host}`);
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, corsHeaders());
+    response.end();
+    return;
+  }
   if (!authorized(request)) return json(response, 401, { error: "invalid management key" });
 
   if (request.method === "GET" && url.pathname.endsWith("/operations/export")) {
@@ -1234,9 +1256,11 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/run")) {
     const body = await readJSON(request);
+    inspectionRunUntil = Date.now() + 60_000;
     return json(response, 202, { ...mockInspectionSnapshot(true), run_mode: body.mode || "full", probe_phase: "listing" });
   }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/stop")) {
+    inspectionRunUntil = 0;
     return json(response, 202, { ...mockInspectionSnapshot(false), probe_sweep_status: "stopped", probe_phase: "stopped", stop_requested: true });
   }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/review")) {
@@ -1305,6 +1329,9 @@ const server = http.createServer(async (request, response) => {
       anomaly_cooldown_minutes: Math.min(1440, Math.max(5, Number(body.anomaly_cooldown_minutes) || 60)),
     };
     return json(response, 200, mockInspectionSnapshot());
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/inspection/live")) {
+    return json(response, 200, mockInspectionSnapshot(Date.now() < inspectionRunUntil), { "Cache-Control": "no-store" });
   }
   if (request.method === "GET" && url.pathname.endsWith("/inspection")) {
     return json(response, 200, mockInspectionSnapshot());

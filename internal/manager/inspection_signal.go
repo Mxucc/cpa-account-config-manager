@@ -21,6 +21,7 @@ type inspectionEvidence struct {
 	StatusCode          int
 	AutoDisableEligible bool
 	RecoverAfter        time.Time
+	QuotaWindow         string
 }
 
 type inspectionDecision struct {
@@ -33,6 +34,7 @@ type inspectionDecision struct {
 	FailureCount        int
 	HealthyCount        int
 	SignalSource        string
+	QuotaWindow         string
 }
 
 func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEvidence {
@@ -41,12 +43,14 @@ func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEv
 	shouldRetry := safeShouldRetry(record.ResponseHeaders)
 
 	if status == http.StatusTooManyRequests || strings.Contains(text, "usage_limit_reached") || strings.Contains(text, "quota exhausted") {
+		recoverAfter, quotaWindow := quotaRecoveryFromHeaders(record.ResponseHeaders, normalizeInspectionProvider(record.Provider), now)
 		return inspectionEvidence{
 			ReasonCode:          "quota_exhausted",
 			Confidence:          InspectionConfidenceHigh,
 			StatusCode:          status,
 			AutoDisableEligible: true,
-			RecoverAfter:        quotaRecoveryFromHeaders(record.ResponseHeaders, now),
+			RecoverAfter:        recoverAfter,
+			QuotaWindow:         quotaWindow,
 		}
 	}
 	if status == http.StatusPaymentRequired && strings.Contains(text, "deactivated_workspace") {
@@ -183,19 +187,69 @@ func safeShouldRetry(headers http.Header) *bool {
 	}
 }
 
-func quotaRecoveryFromHeaders(headers http.Header, now time.Time) time.Time {
-	var latest time.Time
-	for _, name := range []string{"x-codex-primary-reset-after-seconds", "x-codex-secondary-reset-after-seconds"} {
-		reset := parseResetAfter(headers.Get(name))
-		if reset == nil {
-			continue
-		}
-		candidate := now.Add(*reset).UTC()
-		if candidate.After(latest) {
-			latest = candidate
-		}
+func quotaRecoveryFromHeaders(headers http.Header, provider string, now time.Time) (time.Time, string) {
+	primary := rawCodexWindow{
+		usedPercent:   parseUsagePercent(headers.Get("x-codex-primary-used-percent")),
+		resetAfter:    parseResetAfter(headers.Get("x-codex-primary-reset-after-seconds")),
+		resetAt:       parseResetAt(headers.Get("x-codex-primary-reset-at"), now),
+		windowMinutes: parseWindowMinutes(headers.Get("x-codex-primary-window-minutes")),
 	}
-	return latest
+	secondary := rawCodexWindow{
+		usedPercent:   parseUsagePercent(headers.Get("x-codex-secondary-used-percent")),
+		resetAfter:    parseResetAfter(headers.Get("x-codex-secondary-reset-after-seconds")),
+		resetAt:       parseResetAt(headers.Get("x-codex-secondary-reset-at"), now),
+		windowMinutes: parseWindowMinutes(headers.Get("x-codex-secondary-window-minutes")),
+	}
+	primaryReset := codexWindowResetAt(primary, now)
+	secondaryReset := codexWindowResetAt(secondary, now)
+	primaryFull := primary.usedPercent != nil && *primary.usedPercent >= 100
+	secondaryFull := secondary.usedPercent != nil && *secondary.usedPercent >= 100
+
+	switch {
+	case primaryFull && secondaryFull:
+		return laterInspectionReset(primaryReset, secondaryReset), InspectionQuotaWindowMultiple
+	case primaryFull:
+		return primaryReset, codexWindowKind(primary, InspectionQuotaWindowFiveHour)
+	case secondaryFull:
+		return secondaryReset, codexWindowKind(secondary, InspectionQuotaWindowSevenDay)
+	}
+	if !primaryReset.IsZero() {
+		return primaryReset, codexWindowKind(primary, InspectionQuotaWindowFiveHour)
+	}
+	if !secondaryReset.IsZero() {
+		return secondaryReset, codexWindowKind(secondary, InspectionQuotaWindowSevenDay)
+	}
+	if provider == "codex" {
+		return now.Add(5 * time.Hour).UTC(), InspectionQuotaWindowFiveHourFallback
+	}
+	return time.Time{}, ""
+}
+
+func codexWindowResetAt(window rawCodexWindow, now time.Time) time.Time {
+	if window.resetAfter != nil {
+		return now.Add(*window.resetAfter).UTC()
+	}
+	if window.resetAt != nil {
+		return window.resetAt.UTC()
+	}
+	return time.Time{}
+}
+
+func codexWindowKind(window rawCodexWindow, fallback string) string {
+	if window.windowMinutes == nil {
+		return fallback
+	}
+	if *window.windowMinutes <= 360 {
+		return InspectionQuotaWindowFiveHour
+	}
+	return InspectionQuotaWindowSevenDay
+}
+
+func laterInspectionReset(left, right time.Time) time.Time {
+	if right.After(left) {
+		return right
+	}
+	return left
 }
 
 func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRecord, policy InspectionPolicy, now time.Time) {
@@ -224,11 +278,12 @@ func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRe
 	record.Signal.Confidence = evidence.Confidence
 	record.Signal.AutoDisableEligible = evidence.AutoDisableEligible
 	record.Signal.RecoverAfter = evidence.RecoverAfter
+	record.Signal.QuotaWindow = evidence.QuotaWindow
 }
 
 func decideInspection(account Account, record inspectionRecord, now time.Time) inspectionDecision {
 	now = now.UTC()
-	if limited, recoverAfter := accountQuotaLimited(account, now); limited {
+	if limited, recoverAfter, quotaWindow := accountQuotaLimited(account, now); limited {
 		return inspectionDecision{
 			Health:              InspectionHealthQuotaLimited,
 			ReasonCode:          "quota_exhausted",
@@ -237,6 +292,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			AutoDisableEligible: true,
 			RecoverAfter:        recoverAfter,
 			SignalSource:        InspectionSignalNative,
+			QuotaWindow:         quotaWindow,
 		}
 	}
 	if account.Disabled && !record.Result.OwnedDisable {
@@ -384,6 +440,7 @@ func decisionFromSignal(signal inspectionSignal) inspectionDecision {
 		Confidence:          normalizeInspectionConfidence(signal.Confidence),
 		AutoDisableEligible: signal.AutoDisableEligible,
 		RecoverAfter:        signal.RecoverAfter,
+		QuotaWindow:         signal.QuotaWindow,
 		FailureCount:        boundedCounter(signal.ConsecutiveFailures),
 		SignalSource:        InspectionSignalPassive,
 	}
@@ -415,26 +472,36 @@ func decisionFromSignal(signal inspectionSignal) inspectionDecision {
 	return decision
 }
 
-func accountQuotaLimited(account Account, now time.Time) (bool, time.Time) {
+func accountQuotaLimited(account Account, now time.Time) (bool, time.Time, string) {
 	var recoverAfter time.Time
 	limited := false
+	quotaWindow := ""
 	if account.NextRetryAfter != nil && account.NextRetryAfter.After(now) {
 		limited = true
 		recoverAfter = account.NextRetryAfter.UTC()
 	}
 	if account.Usage == nil || account.Usage.Codex == nil {
-		return limited, recoverAfter
+		return limited, recoverAfter, quotaWindow
 	}
-	for _, window := range []*UsageWindowSnapshot{account.Usage.Codex.FiveHour, account.Usage.Codex.SevenDay} {
+	for index, window := range []*UsageWindowSnapshot{account.Usage.Codex.FiveHour, account.Usage.Codex.SevenDay} {
 		if window == nil || window.UsedPercent < 100 {
 			continue
 		}
 		limited = true
+		windowKind := InspectionQuotaWindowFiveHour
+		if index == 1 {
+			windowKind = InspectionQuotaWindowSevenDay
+		}
+		if quotaWindow != "" && quotaWindow != windowKind {
+			quotaWindow = InspectionQuotaWindowMultiple
+		} else {
+			quotaWindow = windowKind
+		}
 		if window.ResetAt != nil && window.ResetAt.After(recoverAfter) {
 			recoverAfter = window.ResetAt.UTC()
 		}
 	}
-	return limited, recoverAfter
+	return limited, recoverAfter, quotaWindow
 }
 
 func recentAccountSuccess(account Account) bool {

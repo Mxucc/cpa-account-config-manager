@@ -203,6 +203,11 @@ export async function getInspection(): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection");
 }
 
+export async function getLiveInspection(): Promise<InspectionSnapshot> {
+  const response = await request<InspectionSnapshot>("/inspection/live");
+  return { ...response, live_results: arrayOrEmpty(response.live_results) };
+}
+
 export async function saveInspectionPolicy(policy: InspectionPolicy, confirmAutoDelete = false, confirmDeleteInvalidCredentials = false): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection", {
     method: "PUT",

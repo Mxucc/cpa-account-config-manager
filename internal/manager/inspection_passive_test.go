@@ -3,11 +3,39 @@ package manager
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
+
+func TestCodex429ClassifiesResetWindowsAndUsesBoundedFallback(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
+	fiveHourReset := now.Add(2 * time.Hour)
+	weeklyReset := now.Add(4 * 24 * time.Hour)
+	evidence := classifyUsageFailure(cpaapi.UsageRecord{
+		Provider: "codex", Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests},
+		ResponseHeaders: http.Header{
+			"X-Codex-Primary-Used-Percent":     []string{"100"},
+			"X-Codex-Primary-Reset-At":         []string{strconv.FormatInt(fiveHourReset.Unix(), 10)},
+			"X-Codex-Primary-Window-Minutes":   []string{"300"},
+			"X-Codex-Secondary-Used-Percent":   []string{"100"},
+			"X-Codex-Secondary-Reset-At":       []string{strconv.FormatInt(weeklyReset.Unix(), 10)},
+			"X-Codex-Secondary-Window-Minutes": []string{"10080"},
+		},
+	}, now)
+	if evidence.ReasonCode != "quota_exhausted" || evidence.QuotaWindow != InspectionQuotaWindowMultiple || !evidence.RecoverAfter.Equal(weeklyReset) {
+		t.Fatalf("dual-window evidence = %#v", evidence)
+	}
+
+	fallback := classifyUsageFailure(cpaapi.UsageRecord{
+		Provider: "codex", Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests},
+	}, now)
+	if fallback.QuotaWindow != InspectionQuotaWindowFiveHourFallback || !fallback.RecoverAfter.Equal(now.Add(5*time.Hour)) {
+		t.Fatalf("fallback evidence = %#v", fallback)
+	}
+}
 
 func passiveCircuitPolicy() InspectionPolicy {
 	policy := defaultInspectionPolicy()

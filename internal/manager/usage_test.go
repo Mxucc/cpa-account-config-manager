@@ -120,6 +120,19 @@ func TestUsageTrackerLoadsPersistedSnapshotAndExpiresQuotaWindows(t *testing.T) 
 	}
 }
 
+func TestUsageTrackerAcceptsAbsoluteCodexResetAt(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.UTC)
+	resetAt := now.Add(5 * time.Hour)
+	snapshot := parseCodexUsageHeaders(http.Header{
+		"X-Codex-Primary-Used-Percent":   []string{"100"},
+		"X-Codex-Primary-Reset-At":       []string{strconv.FormatInt(resetAt.Unix(), 10)},
+		"X-Codex-Primary-Window-Minutes": []string{"300"},
+	}, now)
+	if snapshot == nil || snapshot.FiveHour == nil || snapshot.FiveHour.ResetAt == nil || !snapshot.FiveHour.ResetAt.Equal(resetAt) {
+		t.Fatalf("absolute reset snapshot = %#v", snapshot)
+	}
+}
+
 func TestUsageCodexWindowNormalizationHandlesReversedAndLegacyHeaders(t *testing.T) {
 	now := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

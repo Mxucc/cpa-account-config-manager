@@ -43,6 +43,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/defaults/force/start":    {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/defaults/force/status":    {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/inspection":               {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/inspection/live":          {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/inspection":               {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/scan":         {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/scan/native":  {},
@@ -105,6 +106,19 @@ func TestRegistrationUsesInjectedReleaseMetadata(t *testing.T) {
 	}
 	if !registration.Capabilities.ManagementAPI || !registration.Capabilities.UsagePlugin {
 		t.Fatalf("capabilities = %#v", registration.Capabilities)
+	}
+}
+
+func TestInspectionLiveRouteDisablesCaching(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodGet,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/inspection/live",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	if response.StatusCode != http.StatusOK || response.Headers.Get("Cache-Control") != "no-store" {
+		t.Fatalf("live response = %d headers=%v body=%s", response.StatusCode, response.Headers, response.Body)
 	}
 }
 

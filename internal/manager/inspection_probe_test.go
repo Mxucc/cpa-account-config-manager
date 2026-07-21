@@ -554,3 +554,117 @@ func TestInspectionFullProbeSweepUsesExactFinalBatch(t *testing.T) {
 			nextSweep.ProbeSweepSource, nextSweep.ProbeSweepStatus, calls.Load())
 	}
 }
+
+func TestInspectionPublishesEachProbeBeforeTheBatchCompletes(t *testing.T) {
+	entries := []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "live-fast", Name: "live-fast.json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/live-fast.json"},
+		{AuthIndex: "live-slow", Name: "live-slow.json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/live-slow.json"},
+	}
+	host := &fakeAuthHost{entries: entries, details: map[string]cpaapi.HostAuthGetResponse{
+		"live-fast": {AuthIndex: "live-fast", Name: "live-fast.json", Path: "/auths/live-fast.json", JSON: json.RawMessage(`{"type":"codex","access_token":"fast-secret"}`)},
+		"live-slow": {AuthIndex: "live-slow", Name: "live-slow.json", Path: "/auths/live-slow.json", JSON: json.RawMessage(`{"type":"codex","access_token":"slow-secret"}`)},
+	}}
+	slowStarted := make(chan struct{})
+	releaseSlow := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var call managementAPICallRequest
+		_ = json.NewDecoder(request.Body).Decode(&call)
+		if call.AuthIndex == "live-slow" {
+			close(slowStarted)
+			<-releaseSlow
+		}
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.completed\"}\n\n"})
+	}))
+	defer server.Close()
+
+	accounts := NewAccountService(host)
+	service := NewModelTestService(accounts)
+	service.doer = server.Client()
+	engine := NewInspectionEngine(accounts, host, NewMutationCoordinator())
+	engine.SetModelTestService(service)
+	engine.store = ""
+	engine.config = normalizeConfig(Config{ManagementBaseURL: server.URL})
+	engine.policy = defaultInspectionPolicy()
+	engine.policy.ModelProbeEnabled = true
+	engine.policy.ModelProbeFullSweep = true
+	engine.policy.ModelProbeBatchSize = 2
+	engine.managementKey = "management-secret"
+	engine.runMode = InspectionRunModeFull
+	engine.probeSweepTotal = 2
+	engine.probeSweepRemaining = 2
+	engine.probeSweepSource = InspectionSweepSourceManual
+	engine.probeSweepStatus = InspectionSweepStatusRunning
+	engine.probeSweepStartedAt = time.Now().UTC()
+	engine.probeSweepTargets = []string{"live-fast", "live-slow"}
+	engine.startRunHistoryLocked(InspectionRunModeFull, InspectionSweepSourceManual, engine.probeSweepStartedAt)
+
+	done := make(chan struct{})
+	go func() {
+		engine.scanWithMode(context.Background(), false, true, true)
+		close(done)
+	}()
+	<-slowStarted
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := engine.Snapshot()
+		if snapshot.ProbeSweepCompleted == 1 && snapshot.ActiveRun != nil && len(snapshot.LiveResults) == 1 {
+			if snapshot.LiveResults[0].ID != "live-fast" || snapshot.LiveResults[0].RunPhase != InspectionProbePhasePrimary || snapshot.LiveResults[0].RunID != snapshot.ActiveRun.ID {
+				t.Fatalf("live result = %#v active=%#v", snapshot.LiveResults, snapshot.ActiveRun)
+			}
+			select {
+			case <-done:
+				t.Fatal("inspection completed before the blocked account was released")
+			default:
+			}
+			close(releaseSlow)
+			<-done
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(releaseSlow)
+	<-done
+	t.Fatalf("live result was not published before batch completion: %#v", engine.Snapshot())
+}
+
+func TestInspectionReloadRestoresBoundedLiveCheckpointWithoutSecrets(t *testing.T) {
+	dataDir := t.TempDir()
+	runID := "inspection-persisted-live"
+	now := time.Date(2026, time.July, 21, 11, 0, 0, 0, time.UTC)
+	resetAt := now.Add(5 * time.Hour)
+	state := persistedInspectionState{
+		Version: inspectionStoreVersion,
+		Policy:  defaultInspectionPolicy(),
+		Records: map[string]inspectionRecord{"persisted-live": {Result: InspectionResult{
+			ID: "persisted-live", Name: "persisted.json", Provider: "codex", Health: InspectionHealthQuotaLimited,
+			ReasonCode: "quota_exhausted", Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDisable,
+			QuotaWindow: InspectionQuotaWindowFiveHour, RunID: runID, RunPhase: InspectionProbePhasePrimary, RunObservedAt: timePointer(now),
+			LastCheckedAt: now, RecoverAfter: timePointer(resetAt), UsageTotalTokens: 123,
+			CodexUsage: &CodexUsageSnapshot{ObservedAt: now, FiveHour: &UsageWindowSnapshot{UsedPercent: 100, ResetAt: timePointer(resetAt), WindowMinutes: 300}},
+		}}},
+		ProbeSweepTotal: 2, ProbeSweepCompleted: 1, ProbeSweepRemaining: 1,
+		ProbeSweepSource: InspectionSweepSourceManual, ProbeSweepStatus: InspectionSweepStatusRunning, ProbeSweepStartedAt: now,
+		ProbeSweepTargets: []string{"persisted-live", "pending-live"}, RunMode: InspectionRunModeFull, ProbePhase: InspectionProbePhasePrimary,
+		Runs:        []InspectionRunRecord{{ID: runID, Mode: InspectionRunModeFull, Source: InspectionSweepSourceManual, Status: InspectionSweepStatusRunning, Phase: InspectionProbePhasePrimary, StartedAt: now, PrimaryTotal: 2, PrimaryDone: 1, Summary: InspectionRunSummary{StartedAt: now, Scanned: 1, QuotaLimited: 1}}},
+		ActiveRunID: runID,
+	}
+	if errSave := saveInspectionState(inspectionStorePath(dataDir), state); errSave != nil {
+		t.Fatalf("saveInspectionState() error = %v", errSave)
+	}
+	engine := NewInspectionEngine(NewAccountService(&fakeAuthHost{}), &fakeAuthHost{}, NewMutationCoordinator())
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	snapshot := engine.Snapshot()
+	if snapshot.ActiveRun == nil || snapshot.ActiveRun.ID != runID || len(snapshot.LiveResults) != 1 || snapshot.LiveResults[0].QuotaWindow != InspectionQuotaWindowFiveHour || snapshot.LiveResults[0].UsageTotalTokens != 123 {
+		t.Fatalf("reloaded live snapshot = %#v", snapshot)
+	}
+	raw, errRead := os.ReadFile(inspectionStorePath(dataDir))
+	if errRead != nil {
+		t.Fatalf("read inspection state: %v", errRead)
+	}
+	for _, secret := range []string{"management-secret", "access_token", "Authorization", "Set-Cookie", "raw upstream"} {
+		if bytes.Contains(raw, []byte(secret)) {
+			t.Fatalf("persisted live state leaked %q: %s", secret, raw)
+		}
+	}
+}

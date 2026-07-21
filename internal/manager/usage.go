@@ -324,6 +324,7 @@ func currentUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time) 
 type rawCodexWindow struct {
 	usedPercent   *float64
 	resetAfter    *time.Duration
+	resetAt       *time.Time
 	windowMinutes *int
 }
 
@@ -334,11 +335,13 @@ func parseCodexUsageHeaders(headers http.Header, now time.Time) *CodexUsageSnaps
 	primary := rawCodexWindow{
 		usedPercent:   parseUsagePercent(headers.Get("x-codex-primary-used-percent")),
 		resetAfter:    parseResetAfter(headers.Get("x-codex-primary-reset-after-seconds")),
+		resetAt:       parseResetAt(headers.Get("x-codex-primary-reset-at"), now),
 		windowMinutes: parseWindowMinutes(headers.Get("x-codex-primary-window-minutes")),
 	}
 	secondary := rawCodexWindow{
 		usedPercent:   parseUsagePercent(headers.Get("x-codex-secondary-used-percent")),
 		resetAfter:    parseResetAfter(headers.Get("x-codex-secondary-reset-after-seconds")),
+		resetAt:       parseResetAt(headers.Get("x-codex-secondary-reset-at"), now),
 		windowMinutes: parseWindowMinutes(headers.Get("x-codex-secondary-window-minutes")),
 	}
 	if primary.usedPercent == nil && secondary.usedPercent == nil {
@@ -386,6 +389,8 @@ func usageWindowFromRaw(raw rawCodexWindow, now time.Time) *UsageWindowSnapshot 
 	if raw.resetAfter != nil {
 		resetAt := now.Add(*raw.resetAfter).UTC()
 		window.ResetAt = &resetAt
+	} else if raw.resetAt != nil {
+		window.ResetAt = cloneTimePointer(raw.resetAt)
 	}
 	if raw.windowMinutes != nil {
 		window.WindowMinutes = *raw.windowMinutes
@@ -411,6 +416,18 @@ func parseResetAfter(value string) *time.Duration {
 		return nil
 	}
 	return &duration
+}
+
+func parseResetAt(value string, now time.Time) *time.Time {
+	seconds, errParse := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if errParse != nil || seconds <= 0 {
+		return nil
+	}
+	resetAt := time.Unix(seconds, 0).UTC()
+	if resetAt.Before(now.Add(-time.Minute)) || resetAt.After(now.Add(maxUsageResetAfter)) {
+		return nil
+	}
+	return &resetAt
 }
 
 func parseWindowMinutes(value string) *int {

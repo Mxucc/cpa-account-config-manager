@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,27 @@ func TestInspectionEmptyCollectionsUseJSONArrays(t *testing.T) {
 	}
 	if actions := engine.Actions(50); actions == nil {
 		t.Fatal("Actions is nil, want an empty JSON array")
+	}
+}
+
+func TestLiveInspectionResultsAreCurrentRunOnlyBoundedAndNewestFirst(t *testing.T) {
+	runID := "inspection-live-bound"
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	records := make(map[string]inspectionRecord)
+	for index := 0; index < maxInspectionLiveResults+8; index++ {
+		id := fmt.Sprintf("live-%02d", index)
+		observedAt := now.Add(time.Duration(index) * time.Second)
+		records[id] = inspectionRecord{Result: InspectionResult{ID: id, RunID: runID, RunPhase: InspectionProbePhasePrimary, RunObservedAt: timePointer(observedAt), Health: InspectionHealthHealthy}}
+	}
+	records["other-run"] = inspectionRecord{Result: InspectionResult{ID: "other-run", RunID: "inspection-other", RunObservedAt: timePointer(now.Add(time.Hour)), Health: InspectionHealthHealthy}}
+	results := liveInspectionResults(records, runID, maxInspectionLiveResults)
+	if len(results) != maxInspectionLiveResults || results[0].ID != "live-19" || results[len(results)-1].ID != "live-08" {
+		t.Fatalf("bounded live results = %#v", results)
+	}
+	for _, result := range results {
+		if result.RunID != runID {
+			t.Fatalf("live results included another run: %#v", result)
+		}
 	}
 }
 

@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.5"
+	PluginVersion    = "0.2.6"
 	PluginRepository = DefaultPluginRepository
 )
 
@@ -181,6 +181,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/start", Description: "Start an approved default-policy force sync."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults/force/status", Description: "Read current or last force-sync progress."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection", Description: "Read the persistent account inspection policy and scan status."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/live", Description: "Read uncached live inspection progress and newly completed account results."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/inspection", Description: "Validate and save the account inspection policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan", Description: "Request an immediate account inspection scan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan/native", Description: "Request an immediate full CPA-native account census without model probes."},
@@ -273,6 +274,15 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			}
 		}
 		return jsonResponse(http.StatusOK, a.inspection.Snapshot())
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/live":
+		managementKey := resolveManagementKey(req.Headers)
+		if managementKey != "" {
+			a.inspection.ArmModelProbes(managementKey)
+			managementKey = ""
+		}
+		response := jsonResponse(http.StatusOK, a.inspection.Snapshot())
+		response.Headers.Set("Cache-Control", "no-store")
+		return response
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/inspection":
 		return a.handlePutInspectionPolicy(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/scan":

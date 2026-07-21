@@ -115,6 +115,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [error, setError] = useState("");
   const attemptedUpdate = useRef("");
   const autoDeleteBusy = useRef(false);
+  const livePollCount = useRef(0);
 
   const handleError = useCallback((caught: unknown, target: "page" | "settings" = "page") => {
     if (caught instanceof api.APIError && caught.status === 401) {
@@ -174,13 +175,40 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   }, [refreshOverview, refreshResults]);
 
   useEffect(() => {
-    if (!snapshot?.running && !snapshot?.pending && !updates?.checking && !updates?.pending) return;
-    const timer = window.setTimeout(async () => {
-      await refreshOverview();
-      if (snapshot?.running || snapshot?.pending) await refreshResults();
-    }, 1200);
-    return () => window.clearTimeout(timer);
-  }, [refreshOverview, refreshResults, snapshot?.pending, snapshot?.running, updates?.checking, updates?.pending]);
+    const active = Boolean(snapshot?.running || snapshot?.pending || snapshot?.probe_sweep_status === "running");
+    if (!active) return;
+    let polling = false;
+    const poll = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const next = await api.getLiveInspection();
+        setSnapshot(next);
+        livePollCount.current += 1;
+        if (livePollCount.current % 2 === 0) {
+          const [nextResults, nextActions] = await Promise.all([
+            api.listInspectionResults(page, pageSize, health, search),
+            api.listInspectionActions(50),
+          ]);
+          setResults(nextResults);
+          setActions(nextActions);
+          if (nextResults.pages > 0 && page > nextResults.pages) setPage(nextResults.pages);
+        }
+      } catch (caught) {
+        handleError(caught);
+      } finally {
+        polling = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 700);
+    return () => window.clearInterval(timer);
+  }, [handleError, health, page, pageSize, search, snapshot?.pending, snapshot?.probe_sweep_status, snapshot?.running]);
+
+  useEffect(() => {
+    if (!updates?.checking && !updates?.pending) return;
+    const timer = window.setInterval(() => void refreshOverview(), 1200);
+    return () => window.clearInterval(timer);
+  }, [refreshOverview, updates?.checking, updates?.pending]);
 
   const runAutoDelete = useCallback(async () => {
     if (!snapshot?.policy.auto_delete || autoDeleteBusy.current) return;
@@ -532,6 +560,27 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         </div>
       ) : null}
 
+      {snapshot?.active_run ? (
+        <section className="inspection-live-panel" aria-label={tx("ui.live_inspection")}>
+          <header>
+            <div><Activity size={17} /><strong>{tx("ui.live_inspection")}</strong><span>{runModeLabel(snapshot.active_run.mode, locale)} · {probePhaseLabel(snapshot.active_run.phase, locale)}</span></div>
+            <div className="inspection-live-status"><span className="live-pulse" />{tx("ui.inspecting_now")}<code>{tx("ui.live_results_count", { count: snapshot.live_results?.length ?? 0 })}</code></div>
+          </header>
+          <div className="inspection-live-results">
+            {(snapshot.live_results ?? []).map((result) => (
+              <LiveInspectionResult
+                key={`${result.run_id}:${result.id}`}
+                result={result}
+                onModelTest={() => openModelTest(result)}
+                onToggle={() => void previewAccountChange([result.id], !result.disabled)}
+                onAction={() => setActionTarget(result)}
+              />
+            ))}
+            {(snapshot.live_results?.length ?? 0) === 0 ? <div className="inspection-live-empty"><LoaderCircle className="spin" size={17} />{tx("ui.waiting_for_first_live_result")}</div> : null}
+          </div>
+        </section>
+      ) : null}
+
       <div className="inspection-metrics" aria-label={tx("ui.inspection_metrics")}>
         <InspectionMetric label={tx("ui.accounts")} value={lastRun?.scanned ?? snapshot?.total ?? 0} icon={<ShieldCheck size={14} />} />
         <InspectionMetric label={tx("ui.healthy")} value={lastRun?.healthy ?? 0} tone="healthy" />
@@ -593,9 +642,9 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         ) : null}
         <div className="inspection-table-scroll">
           <table className="inspection-table">
-            <thead><tr><th className="inspection-select-cell"><input type="checkbox" aria-label={tx("ui.select_current_page")} checked={results.results.some((result) => result.editable) && results.results.filter((result) => result.editable).every((result) => selected.has(result.id))} onChange={toggleCurrentPage} /></th><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.model_probe")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th><th>{tx("ui.actions")}</th></tr></thead>
+            <thead><tr><th className="inspection-select-cell"><input type="checkbox" aria-label={tx("ui.select_current_page")} checked={results.results.some((result) => result.editable) && results.results.filter((result) => result.editable).every((result) => selected.has(result.id))} onChange={toggleCurrentPage} /></th><th>{tx("ui.healthy")}</th><th>{tx("ui.accounts")}</th><th>{tx("ui.type")}</th><th>{tx("ui.quota_and_usage")}</th><th>{tx("ui.decision")}</th><th>{tx("ui.model_probe")}</th><th>{tx("ui.streak")}</th><th>{tx("ui.recommendation")}</th><th>{tx("ui.automation")}</th><th>{tx("ui.checked")}</th><th>{tx("ui.actions")}</th></tr></thead>
             <tbody>
-              {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} selected={selected.has(result.id)} onSelect={() => toggleSelected(result.id)} onAction={() => setActionTarget(result)} />)}
+              {loading ? <InspectionLoadingRows /> : results.results.map((result) => <InspectionRow key={result.id} result={result} selected={selected.has(result.id)} onSelect={() => toggleSelected(result.id)} onModelTest={() => openModelTest(result)} onToggle={() => void previewAccountChange([result.id], !result.disabled)} onAction={() => setActionTarget(result)} />)}
             </tbody>
           </table>
           {!loading && results.results.length === 0 ? <div className="empty-state">{tx("ui.no_matching_inspection_results")}</div> : null}
@@ -681,22 +730,54 @@ function InspectionMetric({ label, value, detail, tone = "", icon }: { label: st
   return <div className={tone}><span>{icon}{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>;
 }
 
-function InspectionRow({ result, selected, onSelect, onAction }: { result: InspectionResult; selected: boolean; onSelect: () => void; onAction: () => void }) {
+function InspectionRow({ result, selected, onSelect, onModelTest, onToggle, onAction }: { result: InspectionResult; selected: boolean; onSelect: () => void; onModelTest: () => void; onToggle: () => void; onAction: () => void }) {
   const { locale, formatDateTime, tx } = useI18n();
   return (
-    <tr>
+    <tr className={result.run_id ? "inspection-result-observed" : ""}>
       <td className="inspection-select-cell"><input type="checkbox" aria-label={tx("ui.select_account", { account: result.name || result.id })} checked={selected} disabled={!result.editable} onChange={onSelect} /></td>
       <td><span className={`health-badge health-${result.health}`}><span />{healthLabel(result.health, locale)}</span></td>
       <td><div className="inspection-account"><strong>{result.name || result.id}</strong><code>{result.id}</code></div></td>
       <td><div className="inspection-type"><strong>{result.provider || tx("ui.unknown")}</strong><span>{result.plan_type || result.type || "-"}</span></div></td>
+      <td><InspectionQuotaUsage result={result} /></td>
       <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{result.status_code ? `HTTP ${result.status_code} · ` : ""}{confidenceLabel(result.confidence, locale)}{result.signal_source ? ` · ${signalSourceLabel(result.signal_source, locale)}` : ""}</span>{result.review_status ? <small className={`review-state review-${result.review_status}`}>{reviewStatusLabel(result.review_status, locale)}</small> : null}</div></td>
       <td><div className={`inspection-probe probe-${result.probe_status || "none"}`}><strong>{result.probe_reason_code ? reasonLabel(result.probe_reason_code, locale) : tx("ui.no_probe_result")}</strong><span>{result.probe_model || "-"}{result.probe_latency_ms ? ` · ${result.probe_latency_ms} ms` : ""}</span>{result.probe_tested_at ? <time title={tx("ui.last_model_probe_time", { time: formatDateTime(result.probe_tested_at) })}>{formatDateTime(result.probe_tested_at)}</time> : null}</div></td>
       <td><div className="inspection-streak"><span className="danger">{tx("ui.failures_count", { count: result.failure_streak })}</span><span className="success">{tx("ui.recovery_count", { count: result.healthy_streak })}</span></div></td>
       <td><span className={`recommendation recommendation-${result.recommendation}`}>{recommendationLabel(result.recommendation, locale)}</span></td>
       <td><div className="inspection-action-state"><strong>{result.circuit_open ? tx("ui.passive_temporary_circuit") : actionLabel(result.auto_action, locale)}</strong><span>{result.circuit_open && result.recover_after ? tx("ui.circuit_recovers_at_time", { time: formatDateTime(result.recover_after) }) : actionStatusLabel(result.auto_action_status, result.owned_disable, locale)}</span></div></td>
       <td><time>{formatDateTime(result.last_checked_at)}</time></td>
-      <td><IconButton label={tx("ui.account_action")} onClick={onAction}><Wrench size={16} /></IconButton></td>
+      <td><div className="inspection-inline-actions"><IconButton label={tx("ui.model_retest")} onClick={onModelTest}><Activity size={15} /></IconButton><IconButton label={tx(result.disabled ? "ui.enable" : "ui.disable")} disabled={!result.editable} onClick={onToggle}>{result.disabled ? <CheckSquare2 size={15} /> : <XSquare size={15} />}</IconButton><IconButton label={tx("ui.account_action")} onClick={onAction}><Wrench size={15} /></IconButton></div></td>
     </tr>
+  );
+}
+
+function LiveInspectionResult({ result, onModelTest, onToggle, onAction }: { result: InspectionResult; onModelTest: () => void; onToggle: () => void; onAction: () => void }) {
+  const { locale, formatDateTime, tx } = useI18n();
+  return (
+    <article className={`inspection-live-result health-${result.health}`}>
+      <span className="inspection-live-health" />
+      <div className="inspection-live-identity"><strong>{result.name || result.id}</strong><span>{result.provider || tx("ui.unknown")} · {result.plan_type || result.type || "-"}</span></div>
+      <div className="inspection-live-decision"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{result.status_code ? `HTTP ${result.status_code} · ` : ""}{recommendationLabel(result.recommendation, locale)}</span></div>
+      <InspectionQuotaUsage result={result} compact />
+      <time>{result.run_observed_at ? tx("ui.live_updated_at", { time: formatDateTime(result.run_observed_at) }) : formatDateTime(result.last_checked_at)}</time>
+      <div className="inspection-inline-actions"><IconButton label={tx("ui.model_retest")} onClick={onModelTest}><Activity size={15} /></IconButton><IconButton label={tx(result.disabled ? "ui.enable" : "ui.disable")} disabled={!result.editable} onClick={onToggle}>{result.disabled ? <CheckSquare2 size={15} /> : <XSquare size={15} />}</IconButton><IconButton label={tx("ui.account_action")} onClick={onAction}><Wrench size={15} /></IconButton></div>
+    </article>
+  );
+}
+
+function InspectionQuotaUsage({ result, compact = false }: { result: InspectionResult; compact?: boolean }) {
+  const { locale, formatDateTime, tx } = useI18n();
+  const windows = [
+    { key: "five_hour", label: tx("ui.5_hour_usage"), value: result.codex_usage?.five_hour },
+    { key: "seven_day", label: tx("ui.7_day_usage"), value: result.codex_usage?.seven_day },
+  ].filter((entry) => entry.value);
+  const quotaLabel = result.quota_window ? quotaWindowLabel(result.quota_window, locale) : "";
+  return (
+    <div className={`inspection-quota${compact ? " is-compact" : ""}`}>
+      <div><strong>{Number(result.usage_total_tokens ?? 0).toLocaleString(locale)}</strong><span>{tx("ui.total_tokens")}</span></div>
+      {windows.map(({ key, label, value }) => value ? <div className="inspection-quota-window" key={key}><span>{label}<b>{Math.min(100, Math.max(0, value.used_percent)).toFixed(0)}%</b></span><progress max={100} value={Math.min(100, Math.max(0, value.used_percent))} />{value.reset_at ? <small>{tx("ui.quota_reset_at", { time: formatDateTime(value.reset_at) })}</small> : null}</div> : null)}
+      {windows.length === 0 && quotaLabel ? <span className="inspection-quota-label">{quotaLabel}{result.recover_after ? ` · ${tx("ui.quota_reset_at", { time: formatDateTime(result.recover_after) })}` : ""}</span> : null}
+      {windows.length === 0 && !quotaLabel ? <span className="inspection-quota-empty">-</span> : null}
+    </div>
   );
 }
 
@@ -721,6 +802,7 @@ function InspectionActionDialog({ result, reviewing, onClose, onModelTest, onDis
           <div><dt>{tx("ui.decision")}</dt><dd>{reasonLabel(result.reason_code, locale)}</dd></div>
           <div><dt>{tx("ui.recommendation")}</dt><dd>{recommendationLabel(result.recommendation, locale)}</dd></div>
           <div><dt>{tx("ui.review_state")}</dt><dd>{reviewStatusLabel(reviewStatus, locale)}{result.reviewed_at ? ` · ${formatDateTime(result.reviewed_at)}` : ""}</dd></div>
+          {result.quota_window ? <div><dt>{tx("ui.quota_and_usage")}</dt><dd>{quotaWindowLabel(result.quota_window, locale)}{result.recover_after ? ` · ${tx("ui.quota_reset_at", { time: formatDateTime(result.recover_after) })}` : ""}</dd></div> : null}
         </dl>
         {(result.status_code === 401 || result.status_code === 402 || result.health === "review") ? <p className="inspection-safety-note"><ShieldAlert size={17} />{tx("ui.review_safety_note")}</p> : null}
         <div className="inspection-action-grid">
@@ -753,7 +835,7 @@ function ActionHistoryRow({ action }: { action: InspectionAction }) {
 }
 
 function InspectionLoadingRows() {
-  return <>{Array.from({ length: 5 }, (_, index) => <tr className="inspection-loading-row" key={index}><td colSpan={11}><span /></td></tr>)}</>;
+  return <>{Array.from({ length: 5 }, (_, index) => <tr className="inspection-loading-row" key={index}><td colSpan={12}><span /></td></tr>)}</>;
 }
 
 function inspectionResultAccount(result: InspectionResult): Account {
@@ -822,6 +904,15 @@ function reviewStatusLabel(value: NonNullable<InspectionResult["review_status"]>
 
 function confidenceLabel(value: string, locale: Locale): string {
   return translateUI(locale, value === "high" ? "ui.high_confidence" : value === "medium" ? "ui.medium_confidence" : "ui.low_confidence");
+}
+
+function quotaWindowLabel(value: NonNullable<InspectionResult["quota_window"]>, locale: Locale): string {
+  return translateUI(locale, ({
+    five_hour: "ui.quota_window_five_hour",
+    seven_day: "ui.quota_window_seven_day",
+    multiple: "ui.quota_window_multiple",
+    five_hour_fallback: "ui.quota_window_five_hour_fallback",
+  } satisfies Record<NonNullable<InspectionResult["quota_window"]>, UIMessageKey>)[value]);
 }
 
 function recommendationLabel(value: InspectionResult["recommendation"], locale: Locale): string {

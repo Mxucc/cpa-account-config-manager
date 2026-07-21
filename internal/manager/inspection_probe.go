@@ -27,6 +27,20 @@ func runInspectionModelProbes(
 	managementBaseURL string,
 	managementKey string,
 ) ([]ModelTestResult, int) {
+	return runInspectionModelProbesObserved(ctx, service, accounts, records, policy, cursor, managementBaseURL, managementKey, nil)
+}
+
+func runInspectionModelProbesObserved(
+	ctx context.Context,
+	service *ModelTestService,
+	accounts []Account,
+	records map[string]inspectionRecord,
+	policy InspectionPolicy,
+	cursor int,
+	managementBaseURL string,
+	managementKey string,
+	observe func(ModelTestResult),
+) ([]ModelTestResult, int) {
 	if service == nil || len(accounts) == 0 || strings.TrimSpace(managementKey) == "" {
 		return nil, cursor
 	}
@@ -86,11 +100,16 @@ func runInspectionModelProbes(
 			}
 		}
 	}()
-	wait.Wait()
-	close(results)
+	go func() {
+		wait.Wait()
+		close(results)
+	}()
 	out := make([]ModelTestResult, 0, len(selected))
 	for result := range results {
 		out = append(out, result)
+		if observe != nil {
+			observe(result)
+		}
 	}
 	sort.Slice(out, func(left, right int) bool { return out[left].AccountID < out[right].AccountID })
 	return out, nextCursor
@@ -150,6 +169,10 @@ func inspectionRunTargetIDs(mode string, accounts []Account, records map[string]
 }
 
 func retryInspectionProbeResults(ctx context.Context, service *ModelTestService, accounts []Account, results []ModelTestResult, policy InspectionPolicy, managementBaseURL, managementKey string) ([]ModelTestResult, int) {
+	return retryInspectionProbeResultsObserved(ctx, service, accounts, results, policy, managementBaseURL, managementKey, nil)
+}
+
+func retryInspectionProbeResultsObserved(ctx context.Context, service *ModelTestService, accounts []Account, results []ModelTestResult, policy InspectionPolicy, managementBaseURL, managementKey string, observe func(ModelTestResult)) ([]ModelTestResult, int) {
 	if service == nil || strings.TrimSpace(managementKey) == "" {
 		return nil, 0
 	}
@@ -170,6 +193,15 @@ func retryInspectionProbeResults(ctx context.Context, service *ModelTestService,
 		model := inspectionProbeModel(account, policy.ModelProbeModels)
 		completed++
 		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model}, managementBaseURL, managementKey)
+		if errRun != nil {
+			next = ModelTestResult{
+				AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
+				Status: "review", ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
+			}
+		}
+		if observe != nil {
+			observe(next)
+		}
 		if errRun != nil {
 			continue
 		}

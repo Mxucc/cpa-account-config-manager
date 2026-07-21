@@ -165,6 +165,43 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	t.requestPersist()
 }
 
+func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexUsageSnapshot) {
+	if t == nil || snapshot == nil {
+		return
+	}
+	authIndex = safeOperationIdentifier(authIndex, 256)
+	if authIndex == "" {
+		return
+	}
+	now := t.currentTime()
+	cloned := cloneCodexUsage(snapshot)
+	if cloned == nil || cloned.FiveHour == nil && cloned.SevenDay == nil {
+		return
+	}
+	cloned.ObservedAt = now
+	t.mu.Lock()
+	if _, exists := t.accounts[authIndex]; !exists && len(t.accounts) >= maxUsageAccounts {
+		t.evictOldestLocked()
+	}
+	aggregate := t.accounts[authIndex]
+	if aggregate.Codex == nil {
+		aggregate.Codex = &CodexUsageSnapshot{}
+	}
+	if cloned.FiveHour != nil {
+		aggregate.Codex.FiveHour = cloneUsageWindow(cloned.FiveHour)
+	}
+	if cloned.SevenDay != nil {
+		aggregate.Codex.SevenDay = cloneUsageWindow(cloned.SevenDay)
+	}
+	aggregate.Codex.ObservedAt = now
+	aggregate.UpdatedAt = now
+	t.accounts[authIndex] = aggregate
+	t.dirty = true
+	t.generation++
+	t.mu.Unlock()
+	t.requestPersist()
+}
+
 func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
 	if t == nil {
 		return nil

@@ -67,7 +67,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	jobs := NewJobEngineWithCoordinator(accounts, mutations)
 	policies := NewPolicyEngineWithCoordinator(host, mutations)
 	inspection := NewInspectionEngine(accounts, host, mutations)
-	modelTests := NewModelTestService(accounts)
+	modelTests := NewModelTestService(accounts, usage)
 	deletions := NewAccountDeleteService(accounts, mutations)
 	inspection.SetModelTestService(modelTests)
 	inspection.SetDeleteService(deletions)
@@ -202,7 +202,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 		},
 		Resources: []cpaapi.ResourceRoute{{
 			Path:        "/index.html",
-			Menu:        "CPA-A Config",
+			Menu:        "CPA-A Manager",
 			Description: "List, filter, and safely batch-edit CLIProxyAPI account configuration.",
 		}},
 	}
@@ -509,7 +509,44 @@ func (a *App) handleImportStart(ctx context.Context, req cpaapi.ManagementReques
 		Failed: result.Failed, Skipped: result.Skipped, StartedAt: result.StartedAt, FinishedAt: result.FinishedAt,
 		ReasonCode: operationReasonFromJobState(result.State),
 	})
+	if result.Imported > 0 {
+		managementKey := resolveManagementKey(req.Headers)
+		if managementKey != "" {
+			accountIDs := a.importedAccountIDs(ctx, result)
+			result.UsageCollectionTargets = len(accountIDs)
+			if result.UsageCollectionTargets > 0 {
+				_, errRun := a.inspection.RequestRun(InspectionRunRequest{
+					Mode: InspectionRunModeScoped, Selected: accountIDs,
+				}, managementKey)
+				result.UsageCollectionStarted = errRun == nil
+			}
+			managementKey = ""
+		}
+	}
 	return jsonResponse(http.StatusOK, result)
+}
+
+func (a *App) importedAccountIDs(ctx context.Context, result ImportResult) []string {
+	if a == nil || a.accounts == nil || result.Imported == 0 {
+		return nil
+	}
+	targets := make(map[string]struct{}, result.Imported)
+	for _, item := range result.Results {
+		if item.Status == ImportResultImported {
+			targets[strings.ToLower(strings.TrimSpace(item.TargetName))] = struct{}{}
+		}
+	}
+	accounts, errList := a.accounts.baseAccounts(ctx)
+	if errList != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(targets))
+	for _, account := range accounts {
+		if _, exists := targets[strings.ToLower(strings.TrimSpace(account.Name))]; exists {
+			ids = append(ids, account.ID)
+		}
+	}
+	return sanitizeInspectionSweepTargets(ids)
 }
 
 func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

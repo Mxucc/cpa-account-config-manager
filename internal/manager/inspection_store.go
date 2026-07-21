@@ -33,6 +33,7 @@ type inspectionProbeSignal struct {
 	Model               string    `json:"model,omitempty"`
 	TestedAt            time.Time `json:"tested_at,omitempty"`
 	LatencyMS           int64     `json:"latency_ms,omitempty"`
+	QuotaWindow         string    `json:"quota_window,omitempty"`
 	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
 	ConsecutiveSuccess  int       `json:"consecutive_success,omitempty"`
 }
@@ -200,6 +201,7 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Probe.ReasonCode = safeModelProbeReason(record.Probe.ReasonCode)
 		record.Probe.StatusCode = boundedHTTPStatus(record.Probe.StatusCode)
 		record.Probe.Model = safeModelIdentifier(record.Probe.Model)
+		record.Probe.QuotaWindow = normalizeInspectionQuotaWindow(record.Probe.QuotaWindow)
 		record.Probe.ConsecutiveFailures = boundedCounter(record.Probe.ConsecutiveFailures)
 		record.Probe.ConsecutiveSuccess = boundedCounter(record.Probe.ConsecutiveSuccess)
 		if record.Probe.LatencyMS < 0 {
@@ -406,7 +408,7 @@ func safeInspectionReason(value string) string {
 		"billing_review", "credential_permission_denied", "native_unavailable", "manual_disabled",
 		"transient_failure", "no_recent_evidence", "mutation_busy", "account_changed",
 		"account_missing", "account_read_only", "management_unavailable", "delete_failed",
-		"model_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
+		"model_response_ok", "credential_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
 		"request_timeout", "upstream_unavailable", "invalid_response", "unconfirmed_upstream_response",
 		"passive_circuit_open":
 		return strings.ToLower(strings.TrimSpace(value))

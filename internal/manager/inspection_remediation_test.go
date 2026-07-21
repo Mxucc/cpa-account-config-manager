@@ -22,7 +22,7 @@ func TestInspectionRemediationSummarySeparatesCurrentStateAndRecommendations(t *
 	}
 	summary := summarizeInspectionRemediation(results)
 	if summary.Actionable != 4 || summary.SuggestedDelete != 1 || summary.SuggestedDisable != 1 ||
-		summary.SuggestedEnable != 1 || summary.Reauth != 1 || summary.Review != 1 || summary.Keep != 1 || summary.Handled != 1 ||
+		summary.SuggestedEnable != 1 || summary.Reauth != 1 || summary.Review != 1 || summary.Keep != 2 || summary.Handled != 0 ||
 		summary.EditableEnabled != 3 || summary.EditableDisabled != 2 {
 		t.Fatalf("remediation summary = %#v", summary)
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,27 +28,34 @@ var (
 )
 
 type ModelTestRequest struct {
-	AccountID string `json:"account_id"`
-	Model     string `json:"model,omitempty"`
+	AccountID  string `json:"account_id"`
+	Model      string `json:"model,omitempty"`
+	Inspection bool   `json:"-"`
 }
 
 type ModelTestResult struct {
-	AccountID  string    `json:"account_id"`
-	Provider   string    `json:"provider"`
-	Model      string    `json:"model"`
-	Status     string    `json:"status"`
-	ProbeKind  string    `json:"probe_kind"`
-	ReasonCode string    `json:"reason_code"`
-	StatusCode int       `json:"status_code,omitempty"`
-	LatencyMS  int64     `json:"latency_ms"`
-	TestedAt   time.Time `json:"tested_at"`
+	AccountID   string    `json:"account_id"`
+	Provider    string    `json:"provider"`
+	Model       string    `json:"model"`
+	Status      string    `json:"status"`
+	ProbeKind   string    `json:"probe_kind"`
+	ReasonCode  string    `json:"reason_code"`
+	StatusCode  int       `json:"status_code,omitempty"`
+	QuotaWindow string    `json:"quota_window,omitempty"`
+	LatencyMS   int64     `json:"latency_ms"`
+	TestedAt    time.Time `json:"tested_at"`
 }
 
 type ModelTestService struct {
 	accounts  *AccountService
+	usage     credentialUsageObserver
 	doer      HTTPDoer
 	semaphore chan struct{}
 	now       func() time.Time
+}
+
+type credentialUsageObserver interface {
+	ObserveCredentialUsage(string, *CodexUsageSnapshot)
 }
 
 type modelProbe struct {
@@ -72,10 +80,12 @@ type managementAPICallRequest struct {
 }
 
 type managementAPICallResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Header     map[string][]string `json:"header"`
-	Body       string              `json:"body"`
+	StatusCode int                   `json:"status_code"`
+	Header     map[string][]string   `json:"header"`
+	Body       managementAPICallBody `json:"body"`
 }
+
+type managementAPICallBody string
 
 type codexUsageProbeEnvelope struct {
 	RateLimit      *codexUsageProbeLimit `json:"rate_limit"`
@@ -84,8 +94,8 @@ type codexUsageProbeEnvelope struct {
 
 type codexUsageProbeLimit struct {
 	Allowed              *bool                  `json:"allowed"`
-	LimitReached         bool                   `json:"limit_reached"`
-	LimitReachedCamel    bool                   `json:"limitReached"`
+	LimitReached         *bool                  `json:"limit_reached"`
+	LimitReachedCamel    *bool                  `json:"limitReached"`
 	PrimaryWindow        *codexUsageProbeWindow `json:"primary_window"`
 	PrimaryWindowCamel   *codexUsageProbeWindow `json:"primaryWindow"`
 	SecondaryWindow      *codexUsageProbeWindow `json:"secondary_window"`
@@ -93,16 +103,51 @@ type codexUsageProbeLimit struct {
 }
 
 type codexUsageProbeWindow struct {
-	UsedPercent      *float64 `json:"used_percent"`
-	UsedPercentCamel *float64 `json:"usedPercent"`
+	UsedPercent             *float64 `json:"used_percent"`
+	UsedPercentCamel        *float64 `json:"usedPercent"`
+	LimitWindowSeconds      *float64 `json:"limit_window_seconds"`
+	LimitWindowSecondsCamel *float64 `json:"limitWindowSeconds"`
+	ResetAfterSeconds       *float64 `json:"reset_after_seconds"`
+	ResetAfterSecondsCamel  *float64 `json:"resetAfterSeconds"`
+	ResetAt                 *float64 `json:"reset_at"`
+	ResetAtCamel            *float64 `json:"resetAt"`
 }
 
-func NewModelTestService(accounts *AccountService) *ModelTestService {
-	return &ModelTestService{
+func (b *managementAPICallBody) UnmarshalJSON(raw []byte) error {
+	trimmed := bytes.TrimSpace(raw)
+	if bytes.Equal(trimmed, []byte("null")) {
+		*b = ""
+		return nil
+	}
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var text string
+		if errDecode := json.Unmarshal(trimmed, &text); errDecode != nil {
+			return errDecode
+		}
+		*b = managementAPICallBody(text)
+		return nil
+	}
+	if !json.Valid(trimmed) {
+		return fmt.Errorf("api-call body is not valid JSON")
+	}
+	var compact bytes.Buffer
+	if errCompact := json.Compact(&compact, trimmed); errCompact != nil {
+		return errCompact
+	}
+	*b = managementAPICallBody(compact.String())
+	return nil
+}
+
+func NewModelTestService(accounts *AccountService, usage ...credentialUsageObserver) *ModelTestService {
+	service := &ModelTestService{
 		accounts:  accounts,
 		semaphore: make(chan struct{}, 4),
 		now:       time.Now,
 	}
+	if len(usage) > 0 {
+		service.usage = usage[0]
+	}
+	return service
 }
 
 func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string) (ModelTestResult, error) {
@@ -150,12 +195,16 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		credential := buildCodexCredentialProbe(metadata)
 		statusCode, body, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
 		if errCredential == nil {
-			status, reason := classifyCredentialProbe(statusCode, body)
-			if credentialProbeResultIsDefinitive(reason) {
+			if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices && s.usage != nil {
+				s.usage.ObserveCredentialUsage(account.ID, codexUsageProbeSnapshot(body, s.currentTime()))
+			}
+			status, reason, quotaWindow := classifyCredentialProbeDetails(statusCode, body)
+			if credentialProbeResultIsDefinitive(reason) || (request.Inspection && reason == "credential_response_ok") {
 				result.Status = status
 				result.ProbeKind = InspectionProbeKindCredential
 				result.ReasonCode = reason
 				result.StatusCode = boundedHTTPStatus(statusCode)
+				result.QuotaWindow = quotaWindow
 				result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
 				return result, nil
 			}
@@ -384,56 +433,88 @@ func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBase
 	if len(decoded.Body) > maxModelTestBodyBytes {
 		return 0, nil, fmt.Errorf("upstream model-test response exceeded the size limit")
 	}
-	return decoded.StatusCode, []byte(decoded.Body), nil
+	return decoded.StatusCode, []byte(string(decoded.Body)), nil
 }
 
 func classifyCredentialProbe(statusCode int, body []byte) (string, string) {
+	status, reason, _ := classifyCredentialProbeDetails(statusCode, body)
+	return status, reason
+}
+
+func classifyCredentialProbeDetails(statusCode int, body []byte) (string, string, string) {
 	lower := bytes.ToLower(bytes.TrimSpace(body))
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "unavailable", "authentication_failed"
-	case http.StatusPaymentRequired:
-		if bytes.Contains(lower, []byte("deactivated_workspace")) || bytes.Contains(lower, []byte("account_deactivated")) {
-			return "unavailable", "workspace_deactivated"
+		if bytes.Contains(lower, []byte("account_deactivated")) {
+			return "unavailable", "account_deactivated", ""
 		}
-		return "review", "quota_limited"
+		return "unavailable", "authentication_failed", ""
+	case http.StatusPaymentRequired:
+		if bytes.Contains(lower, []byte("deactivated_workspace")) {
+			return "unavailable", "workspace_deactivated", ""
+		}
+		if bytes.Contains(lower, []byte("account_deactivated")) {
+			return "unavailable", "account_deactivated", ""
+		}
+		return "review", "quota_limited", InspectionQuotaWindowMultiple
 	case http.StatusTooManyRequests:
-		return "review", "quota_limited"
+		return "review", "quota_limited", InspectionQuotaWindowMultiple
 	default:
 		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
-			if codexUsageProbeQuotaLimited(body) {
-				return "review", "quota_limited"
+			valid, limited, quotaWindow := codexUsageProbeState(body)
+			if !valid {
+				return "review", "invalid_response", ""
 			}
-			return "available", "credential_response_ok"
+			if limited {
+				return "review", "quota_limited", quotaWindow
+			}
+			return "available", "credential_response_ok", ""
 		}
 		if statusCode == http.StatusRequestTimeout || statusCode == http.StatusGatewayTimeout {
-			return "review", "request_timeout"
+			return "review", "request_timeout", ""
 		}
 		if statusCode >= http.StatusInternalServerError {
-			return "review", "upstream_unavailable"
+			return "review", "upstream_unavailable", ""
 		}
-		return "review", "invalid_response"
+		return "review", "invalid_response", ""
 	}
 }
 
 func codexUsageProbeQuotaLimited(body []byte) bool {
+	_, limited, _ := codexUsageProbeState(body)
+	return limited
+}
+
+func codexUsageProbeState(body []byte) (bool, bool, string) {
 	var payload codexUsageProbeEnvelope
 	if errDecode := json.Unmarshal(bytes.TrimSpace(body), &payload); errDecode != nil {
-		return false
+		return false, false, ""
 	}
 	limit := payload.RateLimit
 	if limit == nil {
 		limit = payload.RateLimitCamel
 	}
 	if limit == nil {
-		return false
+		return false, false, ""
 	}
-	if limit.LimitReached || limit.LimitReachedCamel || (limit.Allowed != nil && !*limit.Allowed) {
-		return true
+	valid := limit.Allowed != nil || limit.LimitReached != nil || limit.LimitReachedCamel != nil
+	topLevelLimited := (limit.LimitReached != nil && *limit.LimitReached) ||
+		(limit.LimitReachedCamel != nil && *limit.LimitReachedCamel) ||
+		(limit.Allowed != nil && !*limit.Allowed)
+	type probeWindow struct {
+		window   *codexUsageProbeWindow
+		fallback string
 	}
-	for _, window := range []*codexUsageProbeWindow{
-		limit.PrimaryWindow, limit.PrimaryWindowCamel, limit.SecondaryWindow, limit.SecondaryWindowCamel,
+	fiveHourLimited := false
+	longLimited := false
+	windowObserved := false
+	for _, candidate := range []probeWindow{
+		{limit.PrimaryWindow, InspectionQuotaWindowFiveHour},
+		{limit.PrimaryWindowCamel, InspectionQuotaWindowFiveHour},
+		{limit.SecondaryWindow, InspectionQuotaWindowSevenDay},
+		{limit.SecondaryWindowCamel, InspectionQuotaWindowSevenDay},
 	} {
+		window := candidate.window
 		if window == nil {
 			continue
 		}
@@ -441,11 +522,136 @@ func codexUsageProbeQuotaLimited(body []byte) bool {
 		if usedPercent == nil {
 			usedPercent = window.UsedPercentCamel
 		}
-		if usedPercent != nil && *usedPercent >= 100 {
-			return true
+		if usedPercent == nil {
+			continue
+		}
+		valid = true
+		windowObserved = true
+		if *usedPercent < 100 {
+			continue
+		}
+		windowKind := candidate.fallback
+		seconds := window.LimitWindowSeconds
+		if seconds == nil {
+			seconds = window.LimitWindowSecondsCamel
+		}
+		if seconds != nil {
+			if *seconds <= 24*60*60 {
+				windowKind = InspectionQuotaWindowFiveHour
+			} else {
+				windowKind = InspectionQuotaWindowSevenDay
+			}
+		}
+		if windowKind == InspectionQuotaWindowFiveHour {
+			fiveHourLimited = true
+		} else {
+			longLimited = true
 		}
 	}
-	return false
+	if fiveHourLimited && longLimited {
+		return valid, true, InspectionQuotaWindowMultiple
+	}
+	if longLimited {
+		return valid, true, InspectionQuotaWindowSevenDay
+	}
+	if fiveHourLimited {
+		return valid, true, InspectionQuotaWindowFiveHour
+	}
+	// Window percentages are more specific than the aggregate allowed flag.
+	// A five-hour cooldown can set allowed=false while the long window remains
+	// healthy, which must not disable an otherwise recoverable account.
+	if windowObserved {
+		return true, false, ""
+	}
+	if topLevelLimited {
+		return true, true, InspectionQuotaWindowMultiple
+	}
+	return valid, false, ""
+}
+
+func codexUsageProbeSnapshot(body []byte, now time.Time) *CodexUsageSnapshot {
+	var payload codexUsageProbeEnvelope
+	if errDecode := json.Unmarshal(bytes.TrimSpace(body), &payload); errDecode != nil {
+		return nil
+	}
+	limit := payload.RateLimit
+	if limit == nil {
+		limit = payload.RateLimitCamel
+	}
+	if limit == nil {
+		return nil
+	}
+	snapshot := &CodexUsageSnapshot{ObservedAt: now.UTC()}
+	for _, candidate := range []struct {
+		window   *codexUsageProbeWindow
+		fallback string
+	}{
+		{limit.PrimaryWindow, InspectionQuotaWindowFiveHour},
+		{limit.PrimaryWindowCamel, InspectionQuotaWindowFiveHour},
+		{limit.SecondaryWindow, InspectionQuotaWindowSevenDay},
+		{limit.SecondaryWindowCamel, InspectionQuotaWindowSevenDay},
+	} {
+		window, kind := usageWindowFromCredentialProbe(candidate.window, candidate.fallback, now)
+		if window == nil {
+			continue
+		}
+		if kind == InspectionQuotaWindowFiveHour {
+			snapshot.FiveHour = window
+		} else {
+			snapshot.SevenDay = window
+		}
+	}
+	if snapshot.FiveHour == nil && snapshot.SevenDay == nil {
+		return nil
+	}
+	return snapshot
+}
+
+func usageWindowFromCredentialProbe(raw *codexUsageProbeWindow, fallback string, now time.Time) (*UsageWindowSnapshot, string) {
+	if raw == nil {
+		return nil, ""
+	}
+	usedPercent := raw.UsedPercent
+	if usedPercent == nil {
+		usedPercent = raw.UsedPercentCamel
+	}
+	if usedPercent == nil || math.IsNaN(*usedPercent) || math.IsInf(*usedPercent, 0) || *usedPercent < 0 || *usedPercent > 10_000 {
+		return nil, ""
+	}
+	window := &UsageWindowSnapshot{UsedPercent: *usedPercent}
+	kind := fallback
+	seconds := raw.LimitWindowSeconds
+	if seconds == nil {
+		seconds = raw.LimitWindowSecondsCamel
+	}
+	if seconds != nil && !math.IsNaN(*seconds) && !math.IsInf(*seconds, 0) && *seconds > 0 && *seconds <= maxUsageWindowMinutes*60 {
+		window.WindowMinutes = int(math.Round(*seconds / 60))
+		if *seconds <= 24*60*60 {
+			kind = InspectionQuotaWindowFiveHour
+		} else {
+			kind = InspectionQuotaWindowSevenDay
+		}
+	}
+	resetAfter := raw.ResetAfterSeconds
+	if resetAfter == nil {
+		resetAfter = raw.ResetAfterSecondsCamel
+	}
+	if resetAfter != nil && !math.IsNaN(*resetAfter) && !math.IsInf(*resetAfter, 0) && *resetAfter >= 0 && *resetAfter <= maxUsageResetAfter.Seconds() {
+		resetAt := now.Add(time.Duration(*resetAfter * float64(time.Second))).UTC()
+		window.ResetAt = &resetAt
+	} else {
+		resetAtSeconds := raw.ResetAt
+		if resetAtSeconds == nil {
+			resetAtSeconds = raw.ResetAtCamel
+		}
+		if resetAtSeconds != nil && !math.IsNaN(*resetAtSeconds) && !math.IsInf(*resetAtSeconds, 0) {
+			resetAt := time.Unix(int64(*resetAtSeconds), 0).UTC()
+			if !resetAt.Before(now.Add(-time.Minute)) && !resetAt.After(now.Add(maxUsageResetAfter)) {
+				window.ResetAt = &resetAt
+			}
+		}
+	}
+	return window, kind
 }
 
 func credentialProbeResultIsDefinitive(reason string) bool {

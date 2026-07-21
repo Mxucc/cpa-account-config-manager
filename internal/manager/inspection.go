@@ -266,7 +266,7 @@ func (e *InspectionEngine) RequestRun(request InspectionRunRequest, managementKe
 		e.mu.Unlock()
 		return InspectionSnapshot{}, fmt.Errorf("inspection is already running")
 	}
-	if (mode == InspectionRunModeScoped || mode == InspectionRunModeRetry) && len(e.records) == 0 {
+	if (mode == InspectionRunModeRetry || mode == InspectionRunModeScoped && len(selected) == 0) && len(e.records) == 0 {
 		e.mu.Unlock()
 		return InspectionSnapshot{}, fmt.Errorf("inspection mode requires existing results")
 	}
@@ -722,7 +722,11 @@ func summarizeInspectionRemediation(results []InspectionResult) InspectionRemedi
 			if result.Editable && !result.Disabled {
 				summary.SuggestedDisable++
 			} else if result.Disabled {
-				summary.Handled++
+				if inspectionRecommendationHandled(result, InspectionActionDisable) {
+					summary.Handled++
+				} else {
+					summary.Keep++
+				}
 			} else {
 				summary.Review++
 			}
@@ -730,7 +734,11 @@ func summarizeInspectionRemediation(results []InspectionResult) InspectionRemedi
 			if result.Editable && result.Disabled {
 				summary.SuggestedEnable++
 			} else if !result.Disabled {
-				summary.Handled++
+				if inspectionRecommendationHandled(result, InspectionActionEnable) {
+					summary.Handled++
+				} else {
+					summary.Keep++
+				}
 			} else {
 				summary.Review++
 			}
@@ -749,6 +757,11 @@ func summarizeInspectionRemediation(results []InspectionResult) InspectionRemedi
 	}
 	summary.Actionable = summary.SuggestedDelete + summary.SuggestedDisable + summary.SuggestedEnable + summary.Reauth
 	return summary
+}
+
+func inspectionRecommendationHandled(result InspectionResult, action string) bool {
+	return normalizeInspectionAction(result.AutoAction) == action &&
+		normalizeInspectionActionStatus(result.AutoActionStatus) == InspectionActionSucceeded
 }
 
 func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[string]AccountAutomationSummary {
@@ -1787,6 +1800,10 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 	}
 	if result.Disabled && decision.Health == InspectionHealthHealthy {
 		result.Recommendation = InspectionRecommendationEnable
+	} else if result.Disabled && result.Recommendation == InspectionRecommendationDisable {
+		result.Recommendation = InspectionRecommendationKeep
+	} else if !result.Disabled && result.Recommendation == InspectionRecommendationEnable {
+		result.Recommendation = InspectionRecommendationKeep
 	}
 	result.CircuitOpen = result.OwnedDisable && record.DisableReason == "passive_circuit_open"
 	if result.CircuitOpen {

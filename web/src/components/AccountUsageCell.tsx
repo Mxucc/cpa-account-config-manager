@@ -1,4 +1,4 @@
-import { Activity } from "lucide-react";
+import { Activity, AlertTriangle } from "lucide-react";
 import type { Account, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
 
@@ -9,7 +9,7 @@ export function AccountUsageCell({ account }: { account: Account }) {
     (total, bucket) => total + safeCount(bucket.success) + safeCount(bucket.failed),
     0,
   );
-  const tokenValue = usage ? formatCompactNumber(usage.total_tokens, locale) : "--";
+  const tokenValue = formatCompactNumber(usage?.total_tokens ?? 0, locale);
   const tokenTitle = usage
     ? tx("ui.total_tokens_count", { count: formatNumber(usage.total_tokens) })
     : tx("ui.no_cpa_usage_data_received");
@@ -23,6 +23,15 @@ export function AccountUsageCell({ account }: { account: Account }) {
       : tx("ui.no_recent_cpa_request_windows");
   const codex = usage?.codex;
   const hasQuota = Boolean(codex?.five_hour || codex?.seven_day);
+  const fiveHourExhausted = safePercent(codex?.five_hour?.used_percent ?? 0) >= 100;
+  const longWindowExhausted = safePercent(codex?.seven_day?.used_percent ?? 0) >= 100;
+  const quotaExhausted = fiveHourExhausted || longWindowExhausted;
+  const quotaPlaceholderTitle = String(account.provider || account.type).toLowerCase() === "codex"
+    ? tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")
+    : tx("ui.no_cpa_usage_data_received");
+  const exhaustedAction = longWindowExhausted && !account.disabled
+    ? tx("ui.suggested_disable")
+    : tx("ui.waiting_for_quota_recovery");
 
   return (
     <div className="account-usage-cell">
@@ -37,17 +46,18 @@ export function AccountUsageCell({ account }: { account: Account }) {
         </span>
         <span className="usage-recent-total" title={recentTitle}>
           <Activity size={11} aria-hidden="true" />
-          <b>{account.recent_requests?.length ? formatCompactNumber(recentTotal, locale) : "--"}</b>
+          <b>{account.recent_requests?.length ? formatCompactNumber(recentTotal, locale) : "0"}</b>
         </span>
       </div>
       {hasQuota ? (
         <div className="usage-quota-list">
           {codex?.five_hour ? <UsageQuota label="5h" window={codex.five_hour} /> : null}
           {codex?.seven_day ? <UsageQuota label="7d" window={codex.seven_day} /> : null}
+          {quotaExhausted ? <div className="usage-quota-alert" role="status"><AlertTriangle size={10} /><span>{tx("ui.quota_exhausted")}</span><b>{exhaustedAction}</b></div> : null}
         </div>
       ) : (
-        <div className="usage-quota-empty" title={tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")}>
-          <span>{tx("ui.quota")}</span><b>--</b>
+        <div className="usage-quota-empty" title={quotaPlaceholderTitle}>
+          <Activity size={10} aria-hidden="true" /><b>{tx("ui.awaiting_usage_collection")}</b>
         </div>
       )}
     </div>

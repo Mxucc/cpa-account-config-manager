@@ -71,15 +71,17 @@ type ImportResultItem struct {
 }
 
 type ImportResult struct {
-	ID         string             `json:"id"`
-	State      string             `json:"state"`
-	Total      int                `json:"total"`
-	Imported   int                `json:"imported"`
-	Skipped    int                `json:"skipped"`
-	Failed     int                `json:"failed"`
-	StartedAt  time.Time          `json:"started_at"`
-	FinishedAt time.Time          `json:"finished_at"`
-	Results    []ImportResultItem `json:"results"`
+	ID                     string             `json:"id"`
+	State                  string             `json:"state"`
+	Total                  int                `json:"total"`
+	Imported               int                `json:"imported"`
+	Skipped                int                `json:"skipped"`
+	Failed                 int                `json:"failed"`
+	StartedAt              time.Time          `json:"started_at"`
+	FinishedAt             time.Time          `json:"finished_at"`
+	Results                []ImportResultItem `json:"results"`
+	UsageCollectionStarted bool               `json:"usage_collection_started,omitempty"`
+	UsageCollectionTargets int                `json:"usage_collection_targets,omitempty"`
 }
 
 type storedImportItem struct {

@@ -51,10 +51,11 @@ describe("AccountUsageCell", () => {
     expect(screen.getByText("142%")).toBeInTheDocument();
   });
 
-  it("shows a neutral quota placeholder for missing and stale snapshots", () => {
+  it("shows a populated collection state instead of blank usage placeholders", () => {
     const { rerender } = render(<AccountUsageCell account={baseAccount} />);
-    expect(screen.getByText("配额").parentElement).toHaveTextContent("配额--");
-    expect(screen.getByText("--", { selector: ".usage-token-total strong" })).toBeInTheDocument();
+    expect(screen.getByText("等待用量采集")).toBeInTheDocument();
+    expect(screen.getByText("0", { selector: ".usage-token-total strong" })).toBeInTheDocument();
+    expect(screen.queryByText("--")).not.toBeInTheDocument();
 
     rerender(<AccountUsageCell account={{
       ...baseAccount,
@@ -71,6 +72,29 @@ describe("AccountUsageCell", () => {
     }} />);
     expect(screen.getByText("42")).toBeInTheDocument();
     expect(screen.queryByRole("meter")).not.toBeInTheDocument();
-    expect(screen.getByText("配额").parentElement).toHaveTextContent("配额--");
+    expect(screen.getByText("等待用量采集")).toBeInTheDocument();
+  });
+
+  it("makes exhausted quota and the next action visible", () => {
+    const { rerender } = render(<AccountUsageCell account={{
+      ...baseAccount,
+      usage: {
+        input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
+        cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
+        codex: { observed_at: "2026-07-21T12:00:00Z", seven_day: { used_percent: 100, window_minutes: 10_080 } },
+      },
+    }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽建议禁用");
+
+    rerender(<AccountUsageCell account={{
+      ...baseAccount,
+      disabled: true,
+      usage: {
+        input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
+        cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
+        codex: { observed_at: "2026-07-21T12:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
+      },
+    }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽等待额度恢复");
   });
 });

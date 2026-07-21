@@ -123,6 +123,7 @@ export interface ModelTestResult {
   probe_kind?: "model" | "credential";
   reason_code: string;
   status_code?: number;
+  quota_window?: "five_hour" | "seven_day" | "multiple" | "five_hour_fallback";
   latency_ms: number;
   tested_at: string;
 }
@@ -355,6 +356,8 @@ export interface ImportResult {
   started_at: string;
   finished_at: string;
   results: ImportResultItem[];
+  usage_collection_started?: boolean;
+  usage_collection_targets?: number;
 }
 
 export type AccountExportFormat = "cpa" | "sub2api" | "cockpit" | "9router" | "codex" | "axonhub" | "codexmanager";

@@ -248,6 +248,7 @@ function ImportResultView({ result }: { result: ImportResult }) {
         <ImportMetric label={tx("ui.skipped")} value={result.skipped} tone={result.skipped ? "warning" : ""} />
         <ImportMetric label={tx("ui.failed")} value={result.failed} tone={result.failed ? "danger" : ""} />
       </div>
+      {result.usage_collection_started ? <div className="import-usage-collection" role="status"><LoaderCircle className="spin" size={15} /><span>{tx("ui.collecting_usage_for_count_imported_accounts", { count: result.usage_collection_targets ?? result.imported })}</span></div> : null}
       <div className="import-result-list">
         {visibleResults.map((item) => (
           <div className="import-result-row" key={`${item.index}:${item.target_name}`}>

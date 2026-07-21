@@ -267,4 +267,68 @@ describe("InspectionWorkspace", () => {
     expect(previewBodies[3]).toEqual({ scope: { mode: "selected", ids: ["enable-1"] }, patch: { disabled: false } });
     expect(jobCount).toBe(2);
   });
+
+  it("renders the corrected 151-account remediation distribution", async () => {
+    const summary = {
+      actionable: 68,
+      suggested_delete: 43,
+      suggested_disable: 0,
+      suggested_enable: 24,
+      reauth: 1,
+      deletable_reauth: 1,
+      review: 0,
+      keep: 83,
+      handled: 0,
+      editable_enabled: 7,
+      editable_disabled: 144,
+    };
+    const result = {
+      id: "healthy-disabled",
+      name: "healthy-disabled.json",
+      provider: "codex",
+      health: "healthy",
+      reason_code: "credential_response_ok",
+      confidence: "high",
+      recommendation: "enable",
+      disabled: true,
+      editable: true,
+      auto_disable_eligible: false,
+      owned_disable: false,
+      failure_streak: 0,
+      healthy_streak: 1,
+      last_checked_at: "2026-07-21T18:00:00Z",
+      signal_source: "active_probe",
+      probe_kind: "credential",
+      status_code: 200,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [result], summary, total: 151, page: 1, page_size: 50, pages: 4 });
+      if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
+      if (url.endsWith("/inspection")) return jsonResponse({
+        ...inspectionSnapshot,
+        total: 151,
+        probe_sweep_remaining: 0,
+        probe_sweep_total: 151,
+        probe_sweep_completed: 151,
+        probe_sweep_status: "completed",
+        last_run: { ...inspectionSnapshot.last_run, scanned: 151, healthy: 31, quota_limited: 48, invalid_credentials: 1, deactivated: 43, unavailable: 28 },
+      });
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const queue = await screen.findByRole("region", { name: "巡检处置队列" });
+    expect(within(queue).getByText("建议处理 68 项")).toBeInTheDocument();
+    expect(within(queue).getByText("43")).toBeInTheDocument();
+    expect(within(queue).getByText("24")).toBeInTheDocument();
+    expect(within(queue).getByText("1")).toBeInTheDocument();
+    expect(within(queue).getByText("83")).toBeInTheDocument();
+    expect(within(queue).getAllByText("0").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText("凭据用量响应正常")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "执行建议操作" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "删除需重新登录账号（1）" })).toBeEnabled();
+  });
 });

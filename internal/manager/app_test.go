@@ -86,7 +86,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	if len(expected) != 0 {
 		t.Fatalf("missing routes = %#v", expected)
 	}
-	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" || registration.Resources[0].Menu != "CPA-A Config" {
+	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" || registration.Resources[0].Menu != "CPA-A Manager" {
 		t.Fatalf("resources = %#v", registration.Resources)
 	}
 }

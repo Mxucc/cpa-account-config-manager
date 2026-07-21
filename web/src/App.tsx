@@ -187,6 +187,7 @@ export default function App() {
   const [importPreviewing, setImportPreviewing] = useState(false);
   const [importStarting, setImportStarting] = useState(false);
   const [importError, setImportError] = useState("");
+  const [importUsageCollectionActive, setImportUsageCollectionActive] = useState(false);
   const [exportTarget, setExportTarget] = useState<"accounts" | "results" | null>(null);
   const [accountExportScope, setAccountExportScope] = useState<TargetScope | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -249,11 +250,11 @@ export default function App() {
     setNotice(errorText(error, locale));
   }, [locale]);
 
-  const refreshAccounts = useCallback(async () => {
+  const refreshAccounts = useCallback(async (silent = false) => {
     if (authState !== "ready") return;
     const requestID = accountRequest.current + 1;
     accountRequest.current = requestID;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const response = await api.listAccounts(page, pageSize, apiFilters);
       if (requestID !== accountRequest.current) return;
@@ -270,6 +271,35 @@ export default function App() {
   useEffect(() => {
     void refreshAccounts();
   }, [refreshAccounts]);
+
+  useEffect(() => {
+    if (!importUsageCollectionActive || authState !== "ready") return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const snapshot = await api.getInspection();
+        if (cancelled) return;
+        await refreshAccounts(true);
+        if (cancelled) return;
+        if (snapshot.running || snapshot.pending || snapshot.probe_sweep_remaining > 0) {
+          timer = window.setTimeout(poll, 1500);
+        } else {
+          setImportUsageCollectionActive(false);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setImportUsageCollectionActive(false);
+          handleAPIError(error);
+        }
+      }
+    };
+    timer = window.setTimeout(poll, 700);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [authState, handleAPIError, importUsageCollectionActive, refreshAccounts]);
 
   useEffect(() => {
     if (authState !== "ready") return;
@@ -714,6 +744,7 @@ export default function App() {
       const result = await api.startImport(importPreview.id);
       setImportPreview(null);
       setImportResult(result);
+      setImportUsageCollectionActive(Boolean(result.usage_collection_started));
       setNotice(result.failed || result.skipped
         ? tx("ui.added_count_accounts_failed_not_written", { count: result.imported, failed: result.failed + result.skipped })
         : tx("ui.added_count_accounts", { count: result.imported }));

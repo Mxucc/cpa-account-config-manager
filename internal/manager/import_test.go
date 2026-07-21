@@ -9,6 +9,7 @@ import (
 	"errors"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -522,6 +523,109 @@ func TestImportRoutesPreviewAndStartWithoutCredentialLeak(t *testing.T) {
 	})
 	if resourceResponse.StatusCode != http.StatusNotFound {
 		t.Fatalf("resource import status = %d, want 404", resourceResponse.StatusCode)
+	}
+}
+
+func TestImportedAccountIDsResolveOnlySuccessfulTargetFiles(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "new-auth", Name: "new@example.com.json", Provider: "codex", Source: "file", Path: "/auths/new@example.com.json"},
+			{AuthIndex: "existing-auth", Name: "existing.json", Provider: "codex", Source: "file", Path: "/auths/existing.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{},
+	}
+	app := NewApp(host, []byte("index"))
+	defer app.Close()
+	ids := app.importedAccountIDs(context.Background(), ImportResult{
+		Imported: 1,
+		Results: []ImportResultItem{
+			{TargetName: "NEW@example.com.json", Status: ImportResultImported},
+			{TargetName: "existing.json", Status: ImportResultSkipped},
+		},
+	})
+	if len(ids) != 1 || ids[0] != "new-auth" {
+		t.Fatalf("imported account ids = %#v", ids)
+	}
+}
+
+type importUsageAuthHost struct {
+	*fakeAuthHost
+}
+
+func (h *importUsageAuthHost) SaveAuth(ctx context.Context, name string, rawJSON json.RawMessage) (cpaapi.HostAuthSaveResponse, error) {
+	response, errSave := h.fakeAuthHost.SaveAuth(ctx, name, rawJSON)
+	if errSave != nil {
+		return response, errSave
+	}
+	h.mu.Lock()
+	h.entries = append(h.entries, cpaapi.HostAuthFileEntry{
+		AuthIndex: name, Name: name, Provider: "codex", Type: "oauth", Source: "file", Path: response.Path,
+	})
+	h.details[name] = cpaapi.HostAuthGetResponse{
+		AuthIndex: name, Name: name, Path: response.Path, JSON: append(json.RawMessage(nil), rawJSON...),
+	}
+	h.mu.Unlock()
+	return response, nil
+}
+
+func TestImportStartsScopedUsageCollectionAndPersistsQuota(t *testing.T) {
+	host := &importUsageAuthHost{fakeAuthHost: &fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}}}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"status_code":200,"body":{"rate_limit":{"allowed":true,"primary_window":{"used_percent":18,"limit_window_seconds":18000,"reset_after_seconds":3600},"secondary_window":{"used_percent":64,"limit_window_seconds":604800,"reset_after_seconds":7200}}}}`))
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	previewResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/import/preview",
+		Headers: http.Header{
+			"Content-Type":          []string{"application/json"},
+			"X-Cpa-Import-Filename": []string{"usage.json"},
+		},
+		Body: []byte(`{"email":"usage@example.com","account_id":"usage-account","access_token":"upstream-secret"}`),
+	})
+	if previewResponse.StatusCode != http.StatusOK {
+		t.Fatalf("preview status = %d body=%s", previewResponse.StatusCode, previewResponse.Body)
+	}
+	var preview ImportPreview
+	if errDecode := json.Unmarshal(previewResponse.Body, &preview); errDecode != nil {
+		t.Fatalf("decode preview: %v", errDecode)
+	}
+	startBody, _ := json.Marshal(ImportStartRequest{PreviewID: preview.ID})
+	startResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/import/start",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    startBody,
+	})
+	if startResponse.StatusCode != http.StatusOK || bytes.Contains(startResponse.Body, []byte("upstream-secret")) {
+		t.Fatalf("start status = %d body=%s", startResponse.StatusCode, startResponse.Body)
+	}
+	var result ImportResult
+	if errDecode := json.Unmarshal(startResponse.Body, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	if !result.UsageCollectionStarted || result.UsageCollectionTargets != 1 {
+		t.Fatalf("usage collection result = %#v", result)
+	}
+	authIndex := preview.Items[0].TargetName
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot := app.usage.Snapshot(authIndex)
+		if snapshot != nil && snapshot.Codex != nil && snapshot.Codex.FiveHour != nil && snapshot.Codex.SevenDay != nil {
+			if snapshot.Codex.FiveHour.UsedPercent != 18 || snapshot.Codex.SevenDay.UsedPercent != 64 {
+				t.Fatalf("imported usage snapshot = %#v", snapshot)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("imported account usage was not collected")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

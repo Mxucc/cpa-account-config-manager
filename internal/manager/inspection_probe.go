@@ -75,7 +75,7 @@ func runInspectionModelProbesObserved(
 			defer wait.Done()
 			for account := range jobs {
 				model := inspectionProbeModel(account, policy.ModelProbeModels)
-				result, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model}, managementBaseURL, managementKey)
+				result, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true}, managementBaseURL, managementKey)
 				if errRun != nil {
 					result = ModelTestResult{
 						AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
@@ -218,7 +218,7 @@ func retryInspectionProbeResultsObserved(ctx context.Context, service *ModelTest
 		}
 		model := inspectionProbeModel(account, policy.ModelProbeModels)
 		completed++
-		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model}, managementBaseURL, managementKey)
+		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true}, managementBaseURL, managementKey)
 		if errRun != nil {
 			next = ModelTestResult{
 				AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
@@ -301,6 +301,7 @@ func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResul
 		Status: normalizeModelProbeStatus(result.Status), Kind: normalizeInspectionProbeKind(result.ProbeKind),
 		ReasonCode: safeModelProbeReason(result.ReasonCode), StatusCode: boundedHTTPStatus(result.StatusCode),
 		Model: safeModelIdentifier(result.Model), TestedAt: result.TestedAt.UTC(), LatencyMS: maxInt64(0, result.LatencyMS),
+		QuotaWindow: normalizeInspectionQuotaWindow(result.QuotaWindow),
 	}
 	window := time.Duration(normalizeInspectionPolicy(policy).PassiveFailureWindowMinutes) * time.Minute
 	if next.ReasonCode == "model_response_ok" || next.Status == "available" {
@@ -318,4 +319,5 @@ func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResul
 	record.Result.ProbeModel = record.Probe.Model
 	record.Result.ProbeTestedAt = cloneTimePointer(timePointerOrNil(record.Probe.TestedAt))
 	record.Result.ProbeLatencyMS = record.Probe.LatencyMS
+	record.Result.QuotaWindow = record.Probe.QuotaWindow
 }

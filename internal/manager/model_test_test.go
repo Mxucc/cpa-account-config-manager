@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -181,5 +182,107 @@ func TestBuildModelProbeUsesAPIKeyEndpointForRuntimeAccountMetadata(t *testing.T
 	}
 	if model != "gpt-5.4" || probe.url != "https://api.openai.com/v1/responses" || probe.kind != "openai" {
 		t.Fatalf("API-key probe = %#v model=%q", probe, model)
+	}
+}
+
+func TestManagementAPICallResponseAcceptsCompatibleStatusCodeShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "snake case number", raw: `{"status_code":402,"body":{"detail":{"code":"deactivated_workspace"}}}`, want: 402},
+		{name: "camel case number", raw: `{"statusCode":402,"body":{"detail":{"code":"deactivated_workspace"}}}`, want: 402},
+		{name: "snake case string", raw: `{"status_code":"401","body":{"error":{"code":"invalid_token"}}}`, want: 401},
+		{name: "camel case string", raw: `{"statusCode":"200","body":{"rateLimit":{"allowed":true}}}`, want: 200},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var response managementAPICallResponse
+			if errDecode := json.Unmarshal([]byte(test.raw), &response); errDecode != nil {
+				t.Fatalf("json.Unmarshal() error = %v", errDecode)
+			}
+			if response.StatusCode != test.want {
+				t.Fatalf("StatusCode = %d, want %d", response.StatusCode, test.want)
+			}
+		})
+	}
+	for _, raw := range []string{
+		`{"status_code":99,"body":null}`,
+		`{"statusCode":600,"body":null}`,
+		`{"status_code":401.5,"body":null}`,
+		`{"status_code":1e100,"body":null}`,
+		`{"statusCode":"not-a-status","body":null}`,
+	} {
+		var response managementAPICallResponse
+		if errDecode := json.Unmarshal([]byte(raw), &response); errDecode == nil {
+			t.Fatalf("json.Unmarshal(%s) succeeded, want a bounded status-code error", raw)
+		}
+	}
+}
+
+func TestAuthMetadataPrefersOAuthAndResolvesCompatibleAccountIDShapes(t *testing.T) {
+	jwtPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"chatgpt_account_id":"jwt-account"}`))
+	tests := []struct {
+		name      string
+		raw       string
+		accountID string
+	}{
+		{name: "metadata camel case", raw: `{"access_token":"oauth-secret","api_key":"api-secret","metadata":{"chatgptAccountId":"metadata-account"}}`, accountID: "metadata-account"},
+		{name: "attributes object token", raw: `{"access_token":"oauth-secret","attributes":{"id_token":{"accountId":"object-account"}}}`, accountID: "object-account"},
+		{name: "JSON token", raw: `{"access_token":"oauth-secret","id_token":"{\"account_id\":\"json-account\"}"}`, accountID: "json-account"},
+		{name: "JWT token", raw: `{"access_token":"oauth-secret","id_token":"header.` + jwtPayload + `.signature"}`, accountID: "jwt-account"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			host := &fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{
+				"auth-1": {AuthIndex: "auth-1", JSON: json.RawMessage(test.raw)},
+			}}
+			service := NewModelTestService(NewAccountService(host))
+			metadata := service.authMetadata(t.Context(), "auth-1")
+			if !metadata.hasAccessToken || metadata.usesAPIKey() {
+				t.Fatalf("credential kind = %#v, want OAuth precedence", metadata)
+			}
+			if metadata.accountID != test.accountID {
+				t.Fatalf("accountID = %q, want %q", metadata.accountID, test.accountID)
+			}
+		})
+	}
+}
+
+func TestInspectionCredentialProbeOverridesMisleadingAPIKeyType(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-1", Name: "operator.json", Provider: "codex", Type: "codex",
+			AccountType: "api_key", Source: "file", Path: "/auths/operator.json", Disabled: true,
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-1": {
+				AuthIndex: "auth-1", Name: "operator.json", Path: "/auths/operator.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"oauth-secret","account_id":"workspace-123"}`),
+			},
+		},
+	}
+	var received managementAPICallRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"statusCode":"402","body":{"detail":{"code":"deactivated_workspace"}}}`))
+	}))
+	defer server.Close()
+
+	service := NewModelTestService(NewAccountService(host))
+	service.doer = server.Client()
+	result, errRun := service.Run(t.Context(), ModelTestRequest{AccountID: "auth-1", Inspection: true}, server.URL, "management-secret")
+	if errRun != nil {
+		t.Fatalf("Run() error = %v", errRun)
+	}
+	if received.URL != "https://chatgpt.com/backend-api/wham/usage" {
+		t.Fatalf("probe URL = %q, want the OAuth credential endpoint", received.URL)
+	}
+	if result.ProbeKind != InspectionProbeKindCredential || result.StatusCode != 402 || result.ReasonCode != "workspace_deactivated" {
+		t.Fatalf("result = %#v", result)
 	}
 }

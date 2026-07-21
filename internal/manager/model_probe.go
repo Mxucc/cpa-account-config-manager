@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -67,8 +69,9 @@ type modelProbe struct {
 }
 
 type modelTestAuthMetadata struct {
-	hasAPIKey bool
-	accountID string
+	hasAPIKey      bool
+	hasAccessToken bool
+	accountID      string
 }
 
 type managementAPICallRequest struct {
@@ -86,6 +89,58 @@ type managementAPICallResponse struct {
 }
 
 type managementAPICallBody string
+
+func (r *managementAPICallResponse) UnmarshalJSON(raw []byte) error {
+	var envelope struct {
+		StatusCode      json.RawMessage       `json:"status_code"`
+		StatusCodeCamel json.RawMessage       `json:"statusCode"`
+		Header          map[string][]string   `json:"header"`
+		Body            managementAPICallBody `json:"body"`
+	}
+	if errDecode := json.Unmarshal(raw, &envelope); errDecode != nil {
+		return errDecode
+	}
+	statusRaw := envelope.StatusCode
+	if len(bytes.TrimSpace(statusRaw)) == 0 {
+		statusRaw = envelope.StatusCodeCamel
+	}
+	statusCode, errStatus := decodeManagementStatusCode(statusRaw)
+	if errStatus != nil {
+		return errStatus
+	}
+	*r = managementAPICallResponse{StatusCode: statusCode, Header: envelope.Header, Body: envelope.Body}
+	return nil
+}
+
+func decodeManagementStatusCode(raw json.RawMessage) (int, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return 0, nil
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	if errDecode := decoder.Decode(&value); errDecode != nil {
+		return 0, fmt.Errorf("decode upstream status code: %w", errDecode)
+	}
+	var text string
+	switch typed := value.(type) {
+	case json.Number:
+		text = typed.String()
+	case string:
+		text = strings.TrimSpace(typed)
+	default:
+		return 0, fmt.Errorf("upstream status code must be a number or numeric string")
+	}
+	number, errParse := strconv.ParseFloat(text, 64)
+	if errParse != nil || math.IsNaN(number) || math.IsInf(number, 0) || number != math.Trunc(number) {
+		return 0, fmt.Errorf("upstream status code is invalid")
+	}
+	if number < 100 || number > 599 {
+		return 0, fmt.Errorf("upstream status code is outside the HTTP range")
+	}
+	return int(number), nil
+}
 
 type codexUsageProbeEnvelope struct {
 	RateLimit      *codexUsageProbeLimit `json:"rate_limit"`
@@ -179,7 +234,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	account := resolved.Accounts[0]
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)))
 	metadata := s.authMetadata(ctx, account.ID)
-	if accountTypeUsesAPIKey(account.AccountType) {
+	if !metadata.hasAccessToken && accountTypeUsesAPIKey(account.AccountType) {
 		metadata.hasAPIKey = true
 	}
 	startedAt := s.currentTime()
@@ -191,7 +246,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
 	defer cancel()
-	if provider == "codex" && !metadata.hasAPIKey {
+	if provider == "codex" && !metadata.usesAPIKey() {
 		credential := buildCodexCredentialProbe(metadata)
 		statusCode, body, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
 		if errCredential == nil {
@@ -271,12 +326,106 @@ func (s *ModelTestService) authMetadata(ctx context.Context, authIndex string) m
 	if errDecode := json.Unmarshal(detail.JSON, &raw); errDecode != nil {
 		return modelTestAuthMetadata{}
 	}
-	metadata := modelTestAuthMetadata{hasAPIKey: strings.TrimSpace(modelTestStringValue(raw, "api_key")) != ""}
-	metadata.accountID = safeOperationIdentifier(firstNonEmpty(
-		modelTestStringValue(raw, "account_id"),
-		modelTestStringValue(raw, "chatgpt_account_id"),
-	), 256)
+	records := modelTestCredentialRecords(raw)
+	metadata := modelTestAuthMetadata{
+		hasAPIKey:      modelTestRecordsHaveString(records, "api_key", "apiKey"),
+		hasAccessToken: modelTestRecordsHaveString(records, "access_token", "accessToken"),
+		accountID:      safeOperationIdentifier(modelTestResolveAccountID(records), 256),
+	}
 	return metadata
+}
+
+func (m modelTestAuthMetadata) usesAPIKey() bool {
+	return m.hasAPIKey && !m.hasAccessToken
+}
+
+func modelTestCredentialRecords(raw map[string]any) []map[string]any {
+	records := []map[string]any{raw}
+	for _, key := range []string{"metadata", "attributes", "credentials", "tokens"} {
+		if nested, ok := raw[key].(map[string]any); ok {
+			records = append(records, nested)
+		}
+	}
+	return records
+}
+
+func modelTestRecordsHaveString(records []map[string]any, keys ...string) bool {
+	for _, record := range records {
+		for _, key := range keys {
+			if strings.TrimSpace(modelTestStringValue(record, key)) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func modelTestResolveAccountID(records []map[string]any) string {
+	for _, record := range records {
+		if accountID := modelTestAccountIDCandidate(record, 0); accountID != "" {
+			return accountID
+		}
+	}
+	for _, record := range records {
+		for _, key := range []string{"id_token", "idToken"} {
+			if accountID := modelTestAccountIDFromToken(record[key]); accountID != "" {
+				return accountID
+			}
+		}
+	}
+	return ""
+}
+
+func modelTestAccountIDCandidate(record map[string]any, depth int) string {
+	if record == nil || depth > 4 {
+		return ""
+	}
+	for _, key := range []string{"chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"} {
+		switch value := record[key].(type) {
+		case string:
+			if candidate := strings.TrimSpace(value); candidate != "" {
+				return candidate
+			}
+		case map[string]any:
+			if candidate := modelTestAccountIDCandidate(value, depth+1); candidate != "" {
+				return candidate
+			}
+		}
+	}
+	for _, key := range []string{"metadata", "attributes", "credentials", "tokens", "https://api.openai.com/auth"} {
+		if nested, ok := record[key].(map[string]any); ok {
+			if candidate := modelTestAccountIDCandidate(nested, depth+1); candidate != "" {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func modelTestAccountIDFromToken(value any) string {
+	var payload map[string]any
+	switch typed := value.(type) {
+	case map[string]any:
+		payload = typed
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return ""
+		}
+		if errDecode := json.Unmarshal([]byte(trimmed), &payload); errDecode != nil {
+			segments := strings.Split(trimmed, ".")
+			if len(segments) < 2 {
+				return ""
+			}
+			decoded, errBase64 := base64.RawURLEncoding.DecodeString(segments[1])
+			if errBase64 != nil || json.Unmarshal(decoded, &payload) != nil {
+				return ""
+			}
+		}
+	default:
+		return ""
+	}
+	return modelTestAccountIDCandidate(payload, 0)
 }
 
 func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMetadata) (modelProbe, string, bool, error) {
@@ -293,7 +442,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		if model == "" {
 			model = "gpt-5.4"
 		}
-		if metadata.hasAPIKey {
+		if metadata.usesAPIKey() {
 			data, errMarshal := marshal(openAIResponsesProbePayload(model, false))
 			return modelProbe{kind: "openai", url: "https://api.openai.com/v1/responses", headers: bearerJSONHeaders(false), data: data}, model, true, errMarshal
 		}
@@ -318,7 +467,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		}
 		data, errMarshal := marshal(map[string]any{"model": model, "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "hi"}}})
 		headers := map[string]string{"Content-Type": "application/json", "Accept": "application/json", "anthropic-version": "2023-06-01"}
-		if metadata.hasAPIKey {
+		if metadata.usesAPIKey() {
 			headers["x-api-key"] = "$TOKEN$"
 		} else {
 			headers["Authorization"] = "Bearer $TOKEN$"
@@ -335,7 +484,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 			"generationConfig": map[string]int{"maxOutputTokens": 1},
 		})
 		headers := map[string]string{"Content-Type": "application/json", "Accept": "application/json"}
-		if metadata.hasAPIKey || provider == "aistudio" {
+		if metadata.usesAPIKey() || provider == "aistudio" {
 			headers["x-goog-api-key"] = "$TOKEN$"
 		} else {
 			headers["Authorization"] = "Bearer $TOKEN$"

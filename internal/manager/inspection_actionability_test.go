@@ -241,6 +241,62 @@ func TestInspectionReference151DistributionIsActionable(t *testing.T) {
 	}
 }
 
+func TestInspectionReference141DistributionSurvivesCompatibleCPAResponseShapes(t *testing.T) {
+	now := time.Date(2026, time.July, 22, 8, 0, 0, 0, time.UTC)
+	results := make([]InspectionResult, 0, 141)
+	appendResponses := func(count int, prefix string, disabled bool, responseJSON string) {
+		for index := 0; index < count; index++ {
+			var response managementAPICallResponse
+			if errDecode := json.Unmarshal([]byte(responseJSON), &response); errDecode != nil {
+				t.Fatalf("decode %s response: %v", prefix, errDecode)
+			}
+			status, reason, quotaWindow := classifyCredentialProbeDetails(response.StatusCode, []byte(response.Body))
+			account := Account{
+				ID: fmt.Sprintf("%s-%03d", prefix, index), Provider: "codex",
+				Disabled: disabled, Editable: true,
+			}
+			record := inspectionRecord{}
+			applyModelProbeToInspection(&record, ModelTestResult{
+				AccountID: account.ID, Status: status, ProbeKind: InspectionProbeKindCredential,
+				ReasonCode: reason, StatusCode: response.StatusCode, QuotaWindow: quotaWindow, TestedAt: now,
+			}, defaultInspectionPolicy())
+			updateInspectionRecord(&record, account, decideInspection(account, record, now), now)
+			results = append(results, record.Result)
+		}
+	}
+
+	appendResponses(43, "delete", true, `{"statusCode":"402","body":{"detail":{"code":"deactivated_workspace"}}}`)
+	appendResponses(33, "enable", true, `{"status_code":200,"body":{"rate_limit":{"allowed":true,"primary_window":{"used_percent":12,"limit_window_seconds":18000},"secondary_window":{"used_percent":30,"limit_window_seconds":604800}}}}`)
+	appendResponses(7, "reauth", true, `{"status_code":"401","body":{"error":{"code":"invalid_token"}}}`)
+	appendResponses(28, "quota", true, `{"statusCode":200,"body":{"rateLimit":{"allowed":false,"secondaryWindow":{"usedPercent":100,"limitWindowSeconds":604800}}}}`)
+	appendResponses(30, "healthy", false, `{"statusCode":"200","body":{"rateLimit":{"allowed":true,"secondaryWindow":{"usedPercent":40,"limitWindowSeconds":604800}}}}`)
+
+	summary := summarizeInspectionRemediation(results)
+	if len(results) != 141 || summary.Actionable != 83 || summary.SuggestedDelete != 43 ||
+		summary.SuggestedDisable != 0 || summary.SuggestedEnable != 33 || summary.Reauth != 7 ||
+		summary.DeletableReauth != 7 || summary.Keep != 58 || summary.Handled != 0 || summary.Review != 0 {
+		t.Fatalf("141-account remediation summary = %#v", summary)
+	}
+}
+
+func TestInspectionCredentialSuccessQualifiesAsAutomaticRecoveryEvidence(t *testing.T) {
+	disabledAt := time.Date(2026, time.July, 22, 7, 0, 0, 0, time.UTC)
+	record := inspectionRecord{
+		DisabledAt: disabledAt,
+		Probe: inspectionProbeSignal{
+			ReasonCode: "credential_response_ok",
+			TestedAt:   disabledAt.Add(time.Minute),
+		},
+	}
+	if !inspectionRecoveryEvidenceAfter(record, disabledAt) {
+		t.Fatal("a healthy credential probe after disable was not accepted as recovery evidence")
+	}
+	record.Probe.TestedAt = disabledAt
+	if inspectionRecoveryEvidenceAfter(record, disabledAt) {
+		t.Fatal("a credential probe at or before disable was accepted as recovery evidence")
+	}
+}
+
 func TestScopedInspectionAcceptsNewImportedAccountWithoutPreviousRecords(t *testing.T) {
 	engine := NewInspectionEngine(NewAccountService(&fakeAuthHost{}), &fakeAuthHost{}, NewMutationCoordinator())
 	engine.SetModelTestService(NewModelTestService(engine.accounts))

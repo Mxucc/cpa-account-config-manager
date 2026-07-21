@@ -269,8 +269,8 @@ export default function App() {
   }, [apiFilters, authState, handleAPIError, page, pageSize]);
 
   useEffect(() => {
-    void refreshAccounts();
-  }, [refreshAccounts]);
+    if (activeView === "accounts") void refreshAccounts();
+  }, [activeView, refreshAccounts]);
 
   useEffect(() => {
     if (!importUsageCollectionActive || authState !== "ready") return;

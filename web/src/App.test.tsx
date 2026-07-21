@@ -92,6 +92,47 @@ describe("primary account batch flow", () => {
     expect(within(details).getByText("额度已耗尽")).toBeInTheDocument();
   });
 
+  it("refreshes the account state when returning to the accounts view", async () => {
+    const user = userEvent.setup();
+    let disabled = true;
+    const accountRequests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      if (url.includes("/operations")) {
+        return jsonResponse({
+          operations: [], total: 0, page: 1, page_size: 500, pages: 0,
+          summary: { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 },
+          retained: 0, retention_limit: 500, extended_history: false, archived_segments: 0,
+        });
+      }
+      if (url.includes("/accounts")) {
+        accountRequests.push(url);
+        return jsonResponse({ accounts: [{ ...account, disabled }], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      return jsonResponse({});
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("账号已禁用")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "操作日志" }));
+    disabled = false;
+    const requestsBeforeReturn = accountRequests.length;
+    await user.click(screen.getByRole("button", { name: "账号" }));
+
+    await waitFor(() => expect(accountRequests.length).toBeGreaterThan(requestsBeforeReturn));
+    await waitFor(() => expect(screen.queryByText("账号已禁用")).not.toBeInTheDocument());
+  });
+
   it("logs in, selects an account, previews an opted-in edit, and opens completed results", async () => {
     const user = userEvent.setup();
     const requests: Array<{ url: string; init: RequestInit }> = [];

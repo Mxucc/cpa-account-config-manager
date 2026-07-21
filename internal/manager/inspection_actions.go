@@ -265,7 +265,12 @@ func inspectionRecoveryEvidenceAfter(record inspectionRecord, disabledAt time.Ti
 	if !record.Signal.LastSuccessAt.IsZero() && record.Signal.LastSuccessAt.After(disabledAt) {
 		return true
 	}
-	return record.Probe.ReasonCode == "model_response_ok" && record.Probe.TestedAt.After(disabledAt)
+	switch record.Probe.ReasonCode {
+	case "model_response_ok", "credential_response_ok":
+		return record.Probe.TestedAt.After(disabledAt)
+	default:
+		return false
+	}
 }
 
 func markInspectionDeleteCandidate(policy InspectionPolicy, record *inspectionRecord, now time.Time) bool {

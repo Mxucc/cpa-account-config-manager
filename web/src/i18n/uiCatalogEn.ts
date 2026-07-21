@@ -92,6 +92,8 @@ export const enUI = {
   "ui.inspection_conclusion": "Inspection conclusion",
   "ui.disposition_detail": "Disposition detail",
   "ui.auto_disable": "Auto-disable",
+  "ui.auto_disable_status": "Auto-disable {status}",
+  "ui.auto_enable_status": "Auto-enable {status}",
   "ui.auto_enable": "Auto-enable",
   "ui.auto_delete": "Auto-delete",
   "ui.on": "On",

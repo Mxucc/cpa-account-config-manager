@@ -94,6 +94,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.inspection_conclusion": "巡檢結論",
   "ui.disposition_detail": "處置說明",
   "ui.auto_disable": "自動停用",
+  "ui.auto_disable_status": "自動停用 {status}",
+  "ui.auto_enable_status": "自動啟用 {status}",
   "ui.auto_enable": "自動啟用",
   "ui.auto_delete": "自動刪除",
   "ui.on": "已開啟",

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -150,6 +151,35 @@ func TestCompletedAbnormalModelProbeBypassesOrdinaryFailureThreshold(t *testing.
 	record.Probe.Status = "unsupported"
 	if shouldAutoDisableInspection(policy, Account{ID: "unsupported", Editable: true}, record) {
 		t.Fatal("unsupported provider requested an automatic disable")
+	}
+}
+
+func TestInspectionProbeOrderingPrioritizesUnavailableAndOwnedRecoveryAccounts(t *testing.T) {
+	accounts := []Account{
+		{ID: "healthy", Editable: true},
+		{ID: "owned", Disabled: true, Editable: true},
+		{ID: "unavailable", Unavailable: true, Editable: true},
+	}
+	records := map[string]inspectionRecord{
+		"owned": {Result: InspectionResult{ID: "owned", OwnedDisable: true}},
+	}
+	eligible := inspectionProbeEligibleAccounts(accounts, records, false)
+	sortInspectionProbeAccounts(eligible, records)
+	got := []string{eligible[0].ID, eligible[1].ID, eligible[2].ID}
+	want := []string{"unavailable", "owned", "healthy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("probe priority = %v, want %v", got, want)
+	}
+}
+
+func TestExplicitNativeQuotaDisablesWithoutOrdinaryFailureThreshold(t *testing.T) {
+	policy := normalizeInspectionPolicy(InspectionPolicy{AutoDisable: true})
+	record := inspectionRecord{Result: InspectionResult{
+		Health: InspectionHealthQuotaLimited, ReasonCode: "quota_exhausted", Confidence: InspectionConfidenceHigh,
+		Recommendation: InspectionRecommendationDisable, AutoDisableEligible: true, SignalSource: InspectionSignalNative, FailureStreak: 1,
+	}}
+	if !shouldAutoDisableInspection(policy, Account{ID: "quota", Editable: true}, record) {
+		t.Fatal("explicit native quota exhaustion did not request immediate disable")
 	}
 }
 

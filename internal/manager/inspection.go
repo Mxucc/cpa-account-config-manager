@@ -1639,12 +1639,14 @@ func inspectionHealthIsStrongFailure(health string) bool {
 
 func inspectionDecisionIsStrongFailure(decision inspectionDecision) bool {
 	return inspectionHealthIsStrongFailure(decision.Health) ||
-		(decision.SignalSource == InspectionSignalActiveProbe && decision.AutoDisableEligible)
+		(decision.SignalSource == InspectionSignalActiveProbe && decision.AutoDisableEligible) ||
+		(decision.ReasonCode == "native_unavailable" && decision.AutoDisableEligible)
 }
 
 func inspectionResultIsStrongFailure(result InspectionResult) bool {
 	return inspectionHealthIsStrongFailure(result.Health) ||
-		(result.SignalSource == InspectionSignalActiveProbe && result.AutoDisableEligible)
+		(result.SignalSource == InspectionSignalActiveProbe && result.AutoDisableEligible) ||
+		(result.ReasonCode == "native_unavailable" && result.AutoDisableEligible)
 }
 
 func inspectionHealthRank(health string) int {

@@ -352,11 +352,12 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 	}
 	if account.Unavailable || status == "transient upstream error" || status == "upstream temporarily unavailable" || status == "cloudflare challenge" {
 		return inspectionDecision{
-			Health:         InspectionHealthUnavailable,
-			ReasonCode:     "native_unavailable",
-			Confidence:     InspectionConfidenceMedium,
-			Recommendation: InspectionRecommendationReview,
-			SignalSource:   InspectionSignalNative,
+			Health:              InspectionHealthUnavailable,
+			ReasonCode:          "native_unavailable",
+			Confidence:          InspectionConfidenceMedium,
+			Recommendation:      InspectionRecommendationDisable,
+			AutoDisableEligible: true,
+			SignalSource:        InspectionSignalNative,
 		}
 	}
 	if !record.Signal.LastSuccessAt.IsZero() && record.Signal.LastSuccessAt.After(record.Signal.LastFailureAt) {

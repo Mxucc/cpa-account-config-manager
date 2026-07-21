@@ -18,6 +18,7 @@ function interpolate(template: string, values: TranslationValues): string {
   return template.replace(/\{([a-z_]+)\}/gi, (_, name: string) => String(values[name] ?? `{${name}}`));
 }
 
-export function translateUI(locale: Locale, key: UIMessageKey, values: TranslationValues = {}): string {
-  return interpolate(uiCatalogs[locale][key], values);
+export function translateUI(locale: Locale, key: UIMessageKey | undefined, values: TranslationValues = {}): string {
+  const template = (key ? uiCatalogs[locale]?.[key] : undefined) ?? (key ? enUI[key] : undefined) ?? uiCatalogs[locale]?.["ui.unknown"] ?? enUI["ui.unknown"] ?? "Unknown";
+  return interpolate(template, values);
 }

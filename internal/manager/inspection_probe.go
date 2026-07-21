@@ -48,7 +48,7 @@ func runInspectionModelProbesObserved(
 	if len(eligible) == 0 {
 		return nil, 0
 	}
-	sort.SliceStable(eligible, func(left, right int) bool { return eligible[left].ID < eligible[right].ID })
+	sortInspectionProbeAccounts(eligible, records)
 	if cursor < 0 || cursor >= len(eligible) {
 		cursor = 0
 	}
@@ -130,9 +130,30 @@ func inspectionProbeEligibleAccounts(accounts []Account, records map[string]insp
 	return eligible
 }
 
+func sortInspectionProbeAccounts(accounts []Account, records map[string]inspectionRecord) {
+	sort.SliceStable(accounts, func(left, right int) bool {
+		leftPriority := inspectionProbePriority(accounts[left], records[accounts[left].ID])
+		rightPriority := inspectionProbePriority(accounts[right], records[accounts[right].ID])
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		return accounts[left].ID < accounts[right].ID
+	})
+}
+
+func inspectionProbePriority(account Account, record inspectionRecord) int {
+	if !account.Disabled && (account.Unavailable || record.Result.Health == InspectionHealthUnavailable || record.Result.Recommendation == InspectionRecommendationDisable) {
+		return 0
+	}
+	if account.Disabled && record.Result.OwnedDisable {
+		return 1
+	}
+	return 2
+}
+
 func inspectionProbeEligibleAccountIDs(accounts []Account, records map[string]inspectionRecord, scanManuallyDisabled bool) []string {
 	eligible := inspectionProbeEligibleAccounts(accounts, records, scanManuallyDisabled)
-	sort.SliceStable(eligible, func(left, right int) bool { return eligible[left].ID < eligible[right].ID })
+	sortInspectionProbeAccounts(eligible, records)
 	ids := make([]string, 0, len(eligible))
 	for _, account := range eligible {
 		ids = append(ids, account.ID)

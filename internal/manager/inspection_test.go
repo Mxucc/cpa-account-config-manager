@@ -442,6 +442,50 @@ func TestInspectionAutomationDisablesAndOnlyRecoversOwnedAccount(t *testing.T) {
 	}
 }
 
+func TestInspectionRepeatedNativeUnavailableDisablesAndFreshEvidenceReenablesOwnedAccount(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 3, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	host.entries[0].Status = "error"
+	host.entries[0].StatusMessage = "provider reported account unavailable"
+	host.entries[0].Unavailable = true
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+
+	engine.mu.Lock()
+	engine.policy = InspectionPolicy{
+		ScanIntervalMinutes: 30, FailureThreshold: 2, RecoveryThreshold: 1,
+		AutoDisable: true, AutoEnable: true, DeleteGraceHours: 168, DeleteBatchSize: 10,
+	}
+	engine.mu.Unlock()
+
+	engine.scan(context.Background())
+	first := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]
+	if first.Health != InspectionHealthUnavailable || !first.AutoDisableEligible || first.FailureStreak != 1 || first.Disabled {
+		t.Fatalf("first native unavailable result = %#v", first)
+	}
+	engine.scan(context.Background())
+	disabled := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]
+	if !disabled.Disabled || !disabled.OwnedDisable || disabled.AutoAction != InspectionActionDisable || disabled.AutoActionStatus != InspectionActionSucceeded {
+		t.Fatalf("repeated native unavailable result = %#v", disabled)
+	}
+
+	host.mu.Lock()
+	host.entries[0].Disabled = true
+	host.entries[0].Unavailable = false
+	host.entries[0].Status = "ready"
+	host.entries[0].StatusMessage = ""
+	host.mu.Unlock()
+	now = now.Add(time.Hour)
+	engine.Observe(cpaapi.UsageRecord{Provider: "codex", AuthIndex: "inspection-account", Failed: false})
+	engine.scan(context.Background())
+	recovered := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]
+	if recovered.Disabled || recovered.OwnedDisable || recovered.AutoAction != InspectionActionEnable || recovered.AutoActionStatus != InspectionActionSucceeded {
+		t.Fatalf("recovered native unavailable result = %#v", recovered)
+	}
+}
+
 func TestInspectionAutoDeleteRequiresGraceOwnershipAndCurrentManagementKey(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
 	host := inspectionEditableHost(false)

@@ -508,6 +508,8 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           <div className="automation-sources">
             <span className={`automation-live ${snapshot?.policy.enabled ? "is-on" : ""}`}><span />{tx(snapshot?.policy.enabled ? "ui.scheduled_inspection" : "ui.manual")}</span>
             {snapshot?.policy.model_probe_enabled ? <span className={`automation-live ${snapshot.active_probe_armed ? "is-on" : "is-waiting"}`}><span />{tx(snapshot.active_probe_armed ? "ui.active_probe_ready" : "ui.active_probe_waiting_for_auth")}</span> : null}
+            <span className={`automation-live ${snapshot?.policy.auto_disable ? "is-on" : ""}`}><span />{tx("ui.auto_disable_status", { status: tx(snapshot?.policy.auto_disable ? "ui.on" : "ui.off") })}</span>
+            <span className={`automation-live ${snapshot?.policy.auto_enable ? "is-on" : ""}`}><span />{tx("ui.auto_enable_status", { status: tx(snapshot?.policy.auto_enable ? "ui.on" : "ui.off") })}</span>
             {snapshot?.anomaly_trigger_pending || (snapshot?.probe_sweep_remaining ?? 0) > 0 ? <span className="automation-live is-waiting"><span />{tx("ui.full_active_inspection_queued")}</span> : null}
           </div>
           <div><strong>{tx("ui.account_health_inspection")}</strong><span>{snapshot?.running || snapshot?.pending ? tx("ui.reading_cpa_status") : tx("ui.last_completed_time", { time: formatDateTime(lastRun?.finished_at) })}</span></div>
@@ -856,9 +858,10 @@ function inspectionResultAccount(result: InspectionResult): Account {
   };
 }
 
-function healthLabel(value: InspectionHealth, locale: Locale): string {
-  const source = ({ healthy: "ui.healthy", quota_limited: "ui.quota_limited", invalid_credentials: "ui.invalid_credentials", deactivated: "ui.deactivated", review: "ui.needs_review", unavailable: "ui.unavailable", disabled: "ui.disabled", unknown: "ui.insufficient_evidence" } satisfies Record<InspectionHealth, UIMessageKey>)[value];
-  return translateUI(locale, source);
+function healthLabel(value: InspectionHealth | string | undefined, locale: Locale): string {
+  const sources: Partial<Record<string, UIMessageKey>> = { healthy: "ui.healthy", quota_limited: "ui.quota_limited", invalid_credentials: "ui.invalid_credentials", deactivated: "ui.deactivated", review: "ui.needs_review", unavailable: "ui.unavailable", disabled: "ui.disabled", unknown: "ui.insufficient_evidence" };
+  const source = value ? sources[value] : undefined;
+  return translateUI(locale, source ?? "ui.insufficient_evidence");
 }
 
 function reasonLabel(value: string, locale: Locale): string {

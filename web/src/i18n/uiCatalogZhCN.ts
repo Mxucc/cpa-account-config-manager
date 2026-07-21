@@ -94,6 +94,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.inspection_conclusion": "巡检结论",
   "ui.disposition_detail": "处置说明",
   "ui.auto_disable": "自动禁用",
+  "ui.auto_disable_status": "自动禁用 {status}",
+  "ui.auto_enable_status": "自动启用 {status}",
   "ui.auto_enable": "自动启用",
   "ui.auto_delete": "自动删除",
   "ui.on": "已开启",

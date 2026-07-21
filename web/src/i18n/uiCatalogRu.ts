@@ -94,6 +94,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.inspection_conclusion": "Результат проверки",
   "ui.disposition_detail": "Описание решения",
   "ui.auto_disable": "Автоотключение",
+  "ui.auto_disable_status": "Автоотключение: {status}",
+  "ui.auto_enable_status": "Автовключение: {status}",
   "ui.auto_enable": "Автовключение",
   "ui.auto_delete": "Автоудаление",
   "ui.on": "Включено",

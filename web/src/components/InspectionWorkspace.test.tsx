@@ -91,6 +91,26 @@ describe("InspectionWorkspace", () => {
     expect(screen.getByRole("button", { name: "更新" })).toBeEnabled();
   });
 
+  it("renders unknown runtime health values without crashing", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "future-1", name: "future.json", provider: "codex", type: "oauth", health: "provider_unhealthy", reason_code: "native_unavailable", confidence: "medium", recommendation: "review", disabled: false, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z" }], total: 1, page: 1, page_size: 50, pages: 1 });
+      if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
+      if (url.endsWith("/inspection")) return jsonResponse(inspectionSnapshot);
+      if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.6", update_available: false, checking: false, pending: false });
+      if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [] });
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    expect(await screen.findByText("future.json")).toBeInTheDocument();
+    expect(screen.getAllByText("证据不足").length).toBeGreaterThan(0);
+    expect(screen.getByText("自动禁用 未开启")).toBeInTheDocument();
+    expect(screen.getByText("自动启用 未开启")).toBeInTheDocument();
+  });
+
   it("exposes safe operator actions for bare 401 review results and persists page size", async () => {
     const user = userEvent.setup();
     const requests: Array<{ url: string; init: RequestInit }> = [];

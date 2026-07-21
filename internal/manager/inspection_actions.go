@@ -214,6 +214,9 @@ func shouldAutoDisableInspection(policy InspectionPolicy, account Account, recor
 	if record.Result.SignalSource == InspectionSignalActiveProbe {
 		return record.Probe.ReasonCode != "" && record.Probe.ReasonCode != "model_response_ok" && record.Probe.Status != "unsupported"
 	}
+	if record.Result.SignalSource == InspectionSignalNative && record.Result.Confidence == InspectionConfidenceHigh {
+		return true
+	}
 	if !inspectionResultIsStrongFailure(record.Result) && record.Result.ReasonCode != "credential_permission_denied" {
 		return false
 	}

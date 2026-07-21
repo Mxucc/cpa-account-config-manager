@@ -196,6 +196,6 @@ const catalogs: Record<Locale, Record<MessageKey, string>> = {
 export type TranslationValues = Record<string, string | number>;
 
 export function translate(locale: Locale, key: MessageKey, values: TranslationValues = {}): string {
-  const template = catalogs[locale][key];
+  const template = catalogs[locale]?.[key] ?? en[key] ?? String(key);
   return template.replace(/\{([a-z_]+)\}/gi, (_, name: string) => String(values[name] ?? `{${name}}`));
 }

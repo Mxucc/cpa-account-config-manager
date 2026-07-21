@@ -450,7 +450,6 @@ describe("management API client", () => {
     });
     expect(result.error).toBeUndefined();
     expect(result).not.toHaveProperty("github_error");
-    expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/latest");
     expect(new Headers((fetchMock.mock.calls[1] as [string, RequestInit])[1].headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
@@ -477,28 +476,7 @@ describe("management API client", () => {
       expect(result.release_source).toBe("none");
       expect(result.error).toBe("plugin store metadata is unavailable");
       expect(result.update_available).toBe(false);
-      expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/latest");
     }
-  });
-
-  it("does not downgrade release information while the plugin store cache lags behind", () => {
-    const result = reconcileUpdateStatus({
-      policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
-      current_version: "0.2.92", update_available: false, checking: false, pending: false,
-    }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.91", installed: true, installed_version: "0.2.92", update_available: false }] });
-
-    expect(result).toMatchObject({ latest_version: "0.2.92", update_available: false, release_source: "plugin_store" });
-    expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/latest");
-  });
-
-  it("keeps update checks usable for an untagged development build", () => {
-    const result = reconcileUpdateStatus({
-      policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
-      current_version: "0.0.0-dev", update_available: false, checking: false, pending: false,
-    }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.92", installed: true, installed_version: "0.0.0-dev", update_available: true }] });
-
-    expect(result).toMatchObject({ latest_version: "0.2.92", update_available: true, release_source: "plugin_store" });
-    expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/latest");
   });
 
   it("ignores stale direct-release metadata when the plugin store has an older stable version", () => {
@@ -509,7 +487,7 @@ describe("management API client", () => {
     }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.4", installed: true, installed_version: "0.2.3", update_available: true }] });
 
     expect(result).toMatchObject({ latest_version: "0.2.4", update_available: true, release_source: "plugin_store" });
-    expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/latest");
+    expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.2.4");
   });
 });
 

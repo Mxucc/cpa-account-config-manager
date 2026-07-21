@@ -447,13 +447,10 @@ export async function getPluginStore(): Promise<PluginStoreResponse> {
 }
 
 const pluginID = "cpa-account-config-manager";
-const pluginLatestReleaseURL = "https://github.com/Mxucc/cpa-account-config-manager/releases/latest";
+const pluginReleaseBaseURL = "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v";
 
-function normalizedPluginVersion(value: string | undefined, allowSuffix = false): { value: string; parts: [number, number, number] } | null {
-  const pattern = allowSuffix
-    ? /^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
-    : /^v?(\d+)\.(\d+)\.(\d+)$/;
-  const match = pattern.exec((value ?? "").trim());
+function normalizedStableVersion(value: string | undefined): { value: string; parts: [number, number, number] } | null {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec((value ?? "").trim());
   if (!match) return null;
   const parts = [Number(match[1]), Number(match[2]), Number(match[3])] as [number, number, number];
   if (parts.some((part) => !Number.isSafeInteger(part))) return null;
@@ -476,9 +473,9 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
   ]);
   const statusError = status.error?.trim() || "";
   const retainedError = obsoleteDirectCheckErrors.has(statusError) ? "" : statusError;
-  const currentVersion = normalizedPluginVersion(status.current_version, true);
+  const currentVersion = normalizedStableVersion(status.current_version);
   const plugin = store?.plugins_enabled ? arrayOrEmpty(store.plugins).find((entry) => entry?.id === pluginID) : undefined;
-  const storeVersion = normalizedPluginVersion(plugin?.version);
+  const storeVersion = normalizedStableVersion(plugin?.version);
   const base: UpdateSnapshot = {
     policy: status.policy,
     current_version: status.current_version,
@@ -486,7 +483,6 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
     checking: status.checking,
     pending: status.pending,
     checked_at: status.checked_at,
-    release_url: currentVersion ? pluginLatestReleaseURL : undefined,
     release_source: "none",
     store_error: storeError ? "plugin store metadata is unavailable" : undefined,
     error: retainedError || undefined,
@@ -498,15 +494,13 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
       error: retainedError || "plugin store metadata is unavailable",
     };
   }
-  const versionComparison = compareStableVersions(storeVersion.parts, currentVersion.parts);
-  const storeIsNewer = versionComparison > 0;
-  const latestVersion = versionComparison < 0 ? currentVersion.value : storeVersion.value;
+  const storeIsNewer = compareStableVersions(storeVersion.parts, currentVersion.parts) > 0;
 
   return {
     ...base,
-    latest_version: latestVersion,
+    latest_version: storeVersion.value,
     update_available: storeIsNewer,
-    release_url: pluginLatestReleaseURL,
+    release_url: `${pluginReleaseBaseURL}${storeVersion.value}`,
     release_source: "plugin_store",
     error: retainedError || undefined,
   };

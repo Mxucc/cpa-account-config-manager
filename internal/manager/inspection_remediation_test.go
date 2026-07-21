@@ -12,7 +12,7 @@ import (
 
 func TestInspectionRemediationSummarySeparatesCurrentStateAndRecommendations(t *testing.T) {
 	results := []InspectionResult{
-		{ID: "delete", Recommendation: InspectionRecommendationDelete, Editable: true},
+		{ID: "delete", Health: InspectionHealthDeactivated, ReasonCode: "workspace_deactivated", Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDelete, Editable: true},
 		{ID: "disable", Recommendation: InspectionRecommendationDisable, Editable: true},
 		{ID: "already-disabled", Recommendation: InspectionRecommendationDisable, Editable: true, Disabled: true},
 		{ID: "enable", Recommendation: InspectionRecommendationEnable, Editable: true, Disabled: true, OwnedDisable: true},
@@ -22,7 +22,7 @@ func TestInspectionRemediationSummarySeparatesCurrentStateAndRecommendations(t *
 	}
 	summary := summarizeInspectionRemediation(results)
 	if summary.Actionable != 4 || summary.SuggestedDelete != 1 || summary.SuggestedDisable != 1 ||
-		summary.SuggestedEnable != 1 || summary.Reauth != 1 || summary.Review != 1 || summary.Keep != 2 ||
+		summary.SuggestedEnable != 1 || summary.Reauth != 1 || summary.Review != 1 || summary.Keep != 1 || summary.Handled != 1 ||
 		summary.EditableEnabled != 3 || summary.EditableDisabled != 2 {
 		t.Fatalf("remediation summary = %#v", summary)
 	}

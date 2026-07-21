@@ -1,7 +1,7 @@
 PLUGIN_ID := cpa-account-config-manager
 DIST_DIR := $(CURDIR)/dist
 WEB_DIR := $(CURDIR)/web
-VERSION ?= 0.2.8
+VERSION ?= 0.2.9
 REPOSITORY ?=
 
 PLUGIN_LDFLAGS := -X cpa-account-config-manager/internal/manager.PluginVersion=$(VERSION)
@@ -18,7 +18,7 @@ else
 PLUGIN_EXT := so
 endif
 
-.PHONY: build web plugin package test verify clean
+.PHONY: build web plugin package test version-check verify clean
 
 build: plugin
 
@@ -43,7 +43,12 @@ test:
 	go test ./...
 	cd $(WEB_DIR) && npm test -- --run
 
-verify:
+version-check:
+	grep -Fq 'PluginVersion    = "$(VERSION)"' internal/manager/app.go
+	grep -Fq '$(PLUGIN_ID)_$(VERSION)_linux_amd64.zip' README.md
+	grep -Fq '$(PLUGIN_ID)_$(VERSION)_linux_amd64.zip' README_CN.md
+
+verify: version-check
 	test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './web/node_modules/*'))"
 	go test ./...
 	go test -race ./...

@@ -598,6 +598,7 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 	results := make([]InspectionResult, 0, len(e.records))
 	for _, record := range e.records {
 		result := cloneInspectionResult(record.Result)
+		result.ManualDeleteEligible = inspectionManualDeleteAllowed(result)
 		if query.Health != "" && result.Health != query.Health {
 			continue
 		}
@@ -706,25 +707,38 @@ func summarizeInspectionRemediation(results []InspectionResult) InspectionRemedi
 		}
 		switch normalizeInspectionRecommendation(result.Recommendation) {
 		case InspectionRecommendationDelete:
-			summary.SuggestedDelete++
+			if inspectionManualDeleteAllowed(result) {
+				summary.SuggestedDelete++
+			} else {
+				summary.Review++
+			}
 		case InspectionRecommendationDisable:
 			if result.Editable && !result.Disabled {
 				summary.SuggestedDisable++
+			} else if result.Disabled {
+				summary.Handled++
 			} else {
-				summary.Keep++
+				summary.Review++
 			}
 		case InspectionRecommendationEnable:
-			if result.Editable && result.Disabled && result.OwnedDisable {
+			if result.Editable && result.Disabled {
 				summary.SuggestedEnable++
+			} else if !result.Disabled {
+				summary.Handled++
 			} else {
-				summary.Keep++
+				summary.Review++
 			}
 		case InspectionRecommendationReauth:
 			summary.Reauth++
+			if inspectionManualDeleteAllowed(result) {
+				summary.DeletableReauth++
+			}
 		case InspectionRecommendationReview:
 			summary.Review++
-		default:
+		case InspectionRecommendationKeep:
 			summary.Keep++
+		default:
+			summary.Review++
 		}
 	}
 	summary.Actionable = summary.SuggestedDelete + summary.SuggestedDisable + summary.SuggestedEnable + summary.Reauth
@@ -1083,7 +1097,8 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		e.generation++
 		e.mu.Unlock()
 		if probeSweep && len(probeSweepTargets) == 0 {
-			probeSweepTargets = inspectionRunTargetIDs(runMode, accounts, previous, policy.ScanManuallyDisabled)
+			scanManuallyDisabled := inspectionRunScansManuallyDisabled(runMode, probeSweepSource, policy.ScanManuallyDisabled)
+			probeSweepTargets = inspectionRunTargetIDs(runMode, accounts, previous, scanManuallyDisabled)
 			probeSweepTotal = len(probeSweepTargets)
 			probeSweepCompleted = 0
 			probeSweepRemaining = max(0, probeSweepTotal-probeSweepCompleted)
@@ -1279,6 +1294,16 @@ func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[
 	if e.activeRunID != "" {
 		if e.activeRunModeLocked() == InspectionRunModeNative || !ranProbe {
 			e.updateRunHistorySummaryLocked(summary)
+		} else {
+			for index := len(e.runs) - 1; index >= 0; index-- {
+				if e.runs[index].ID != e.activeRunID {
+					continue
+				}
+				accumulated := mergeInspectionRunSummary(e.runs[index].Summary, summary)
+				e.runs[index].Summary = accumulated
+				e.lastRun = accumulated
+				break
+			}
 		}
 		if !ranProbe {
 			status := InspectionSweepStatusCompleted
@@ -1295,6 +1320,20 @@ func (e *InspectionEngine) finishScan(summary InspectionRunSummary, records map[
 	e.generation++
 	e.mu.Unlock()
 	e.persist()
+}
+
+func mergeInspectionRunSummary(previous, current InspectionRunSummary) InspectionRunSummary {
+	merged := current
+	if !previous.StartedAt.IsZero() {
+		merged.StartedAt = previous.StartedAt.UTC()
+	}
+	merged.AutoDisabled = previous.AutoDisabled + current.AutoDisabled
+	merged.AutoEnabled = previous.AutoEnabled + current.AutoEnabled
+	merged.Failed = previous.Failed + current.Failed
+	if merged.Error == "" {
+		merged.Error = previous.Error
+	}
+	return merged
 }
 
 func (e *InspectionEngine) publishLiveProbeRecord(record inspectionRecord, runID, phase string, primaryCompleted, primaryTotal, retryCompleted int) {
@@ -1608,6 +1647,9 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 	result.RecoverAfter = timePointer(decision.RecoverAfter)
 	result.SignalSource = normalizeInspectionSignalSource(decision.SignalSource)
 	result.StatusCode = boundedHTTPStatus(record.Signal.StatusCode)
+	if result.SignalSource == InspectionSignalActiveProbe {
+		result.StatusCode = boundedHTTPStatus(record.Probe.StatusCode)
+	}
 	result.QuotaWindow = normalizeInspectionQuotaWindow(decision.QuotaWindow)
 	result.UsageTotalTokens = 0
 	result.UsageLastRequestAt = nil
@@ -1658,7 +1700,7 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 		result.HealthyStreak = 0
 		result.FirstUnhealthyAt = nil
 	}
-	if result.OwnedDisable && decision.Health == InspectionHealthHealthy {
+	if result.Disabled && decision.Health == InspectionHealthHealthy {
 		result.Recommendation = InspectionRecommendationEnable
 	}
 	result.CircuitOpen = result.OwnedDisable && record.DisableReason == "passive_circuit_open"

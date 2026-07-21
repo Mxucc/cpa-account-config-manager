@@ -56,8 +56,13 @@ func TestInspectionProbeEligibilityRespectsManualDisablePolicyAndOwnership(t *te
 
 	now := time.Date(2026, time.July, 21, 8, 0, 0, 0, time.UTC)
 	decision := decideInspection(accounts[1], inspectionRecord{Probe: inspectionProbeSignal{ReasonCode: "model_response_ok", TestedAt: now}}, now)
-	if decision.Health != InspectionHealthDisabled || decision.ReasonCode != "manual_disabled" {
-		t.Fatalf("manual-disabled decision was overwritten by probe evidence: %#v", decision)
+	if decision.Health != InspectionHealthHealthy || decision.ReasonCode != "model_response_ok" {
+		t.Fatalf("manual-disabled account ignored fresh successful probe evidence: %#v", decision)
+	}
+	record := inspectionRecord{}
+	updateInspectionRecord(&record, accounts[1], decision, now)
+	if record.Result.Recommendation != InspectionRecommendationEnable || record.Result.OwnedDisable {
+		t.Fatalf("healthy manually disabled account did not become an explicit enable suggestion: %#v", record.Result)
 	}
 }
 
@@ -116,7 +121,7 @@ func TestInspectionProbeDecisionDisablesEveryCompletedAbnormalModelTest(t *testi
 		recommend   string
 	}{
 		{reason: "model_response_ok", health: InspectionHealthHealthy, recommend: InspectionRecommendationKeep},
-		{reason: "authentication_failed", health: InspectionHealthInvalidCredentials, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "authentication_failed", health: InspectionHealthInvalidCredentials, autoDisable: true, recommend: InspectionRecommendationReauth},
 		{reason: "quota_limited", health: InspectionHealthQuotaLimited, autoDisable: true, recommend: InspectionRecommendationDisable},
 		{reason: "model_not_found", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
 		{reason: "request_timeout", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
@@ -224,9 +229,13 @@ func TestInspectionModelProbeBatchUsesProviderModelsAndRotates(t *testing.T) {
 	host := &fakeAuthHost{entries: entries, details: details}
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls.Add(1)
 		var call managementAPICallRequest
 		_ = json.NewDecoder(request.Body).Decode(&call)
+		if call.Method == http.MethodGet {
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{}`})
+			return
+		}
+		calls.Add(1)
 		if !bytes.Contains([]byte(call.Data), []byte(`"model":"codex-inspection-model"`)) {
 			t.Errorf("probe payload = %s", call.Data)
 		}
@@ -382,10 +391,16 @@ func TestManualInspectionRunsActiveModelProbeWithCurrentManagementCredential(t *
 	}
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls.Add(1)
 		if request.Header.Get("Authorization") != "Bearer current-management-secret" {
 			t.Errorf("Management authorization was not forwarded")
 		}
+		var call managementAPICallRequest
+		_ = json.NewDecoder(request.Body).Decode(&call)
+		if call.Method == http.MethodGet {
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{}`})
+			return
+		}
+		calls.Add(1)
 		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.completed\"}\n\n"})
 	}))
 	defer server.Close()
@@ -433,9 +448,13 @@ func TestManualFullInspectionProbesEveryEligibleAccountAndNativeInspectionDoesNo
 	var callsMu sync.Mutex
 	seen := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls.Add(1)
 		var call managementAPICallRequest
 		_ = json.NewDecoder(request.Body).Decode(&call)
+		if call.Method == http.MethodGet {
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{}`})
+			return
+		}
+		calls.Add(1)
 		callsMu.Lock()
 		seen[call.AuthIndex]++
 		callsMu.Unlock()
@@ -521,9 +540,13 @@ func TestInspectionFullProbeSweepUsesExactFinalBatch(t *testing.T) {
 	var seenMu sync.Mutex
 	seen := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls.Add(1)
 		var call managementAPICallRequest
 		_ = json.NewDecoder(request.Body).Decode(&call)
+		if call.Method == http.MethodGet {
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{}`})
+			return
+		}
+		calls.Add(1)
 		seenMu.Lock()
 		seen[call.AuthIndex]++
 		seenMu.Unlock()
@@ -599,6 +622,10 @@ func TestInspectionPublishesEachProbeBeforeTheBatchCompletes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var call managementAPICallRequest
 		_ = json.NewDecoder(request.Body).Decode(&call)
+		if call.Method == http.MethodGet {
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{}`})
+			return
+		}
 		if call.AuthIndex == "live-slow" {
 			close(slowStarted)
 			<-releaseSlow

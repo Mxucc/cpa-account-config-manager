@@ -609,7 +609,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .inspection-remediation > header strong { font-size: 12px; }
 .inspection-remediation > header span { color: var(--text-secondary); font-size: 9px; line-height: 1.4; }
 .inspection-remediation > header b { width: fit-content; color: var(--blue); font-size: 9px; font-weight: 600; }
-.inspection-remediation-counts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(70px, 1fr)); }
+.inspection-remediation-counts { min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(70px, 1fr)); }
 .inspection-remediation-counts > span { min-width: 70px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 9px 11px; border-right: 1px solid var(--border-color); }
 .inspection-remediation-counts small { overflow: hidden; color: var(--text-tertiary); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .inspection-remediation-counts strong { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 15px; font-variant-numeric: tabular-nums; }
@@ -1067,6 +1067,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .update-banner { grid-template-columns: auto minmax(0, 1fr); padding: 10px 12px; }
   .update-banner > a, .update-banner > .button { grid-column: 2; grid-row: auto; justify-self: start; }
   .inspection-filter-bar > select { width: 100%; }
+  .inspection-remediation-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); overflow-x: visible; }
+  .inspection-remediation-counts > span { min-width: 0; border-bottom: 1px solid var(--border-color); }
+  .inspection-remediation-counts > span:nth-child(4), .inspection-remediation-counts > span:last-child { border-right: none; }
+  .inspection-remediation-counts > span:nth-child(n + 5) { border-bottom: none; }
   .inspection-remediation-actions { flex-direction: column; }
   .inspection-page-size { width: 100%; justify-content: space-between; }
   .inspection-export-format { flex: 1 1 auto; justify-content: space-between; }

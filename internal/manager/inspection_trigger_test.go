@@ -179,10 +179,11 @@ func TestInspectionScanExecutesDueInvalidCredentialDeleteServerSide(t *testing.T
 			ID: "inspection-account", Name: "inspection.json", Provider: "codex",
 			Health: InspectionHealthInvalidCredentials, ReasonCode: "authentication_failed",
 			Confidence: InspectionConfidenceHigh, Disabled: true, Editable: true, OwnedDisable: true,
+			SignalSource: InspectionSignalActiveProbe, ProbeKind: InspectionProbeKindCredential,
 			FailureStreak: engine.policy.FailureThreshold, DeleteEligibleAt: &eligibleAt,
 			AutoAction: InspectionActionDeleteCandidate, AutoActionStatus: InspectionActionPending,
 		},
-		Probe:         inspectionProbeSignal{Status: "unavailable", ReasonCode: "authentication_failed", Model: "gpt-5.4", TestedAt: now},
+		Probe:         inspectionProbeSignal{Status: "unavailable", Kind: InspectionProbeKindCredential, ReasonCode: "authentication_failed", Model: "gpt-5.4", TestedAt: now},
 		DisableReason: "authentication_failed", DisabledAt: now.Add(-48 * time.Hour),
 		DisabledName: "inspection.json", DisabledPath: "/auths/inspection.json",
 	}

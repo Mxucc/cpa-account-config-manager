@@ -207,15 +207,16 @@ describe("InspectionWorkspace", () => {
     let currentJobID = "";
     let jobCount = 0;
     const inspected = [
-      { id: "delete-1", name: "delete.json", provider: "codex", health: "deactivated", reason_code: "workspace_deactivated", confidence: "high", recommendation: "delete", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "passive" },
+      { id: "delete-1", name: "delete.json", provider: "codex", health: "deactivated", reason_code: "workspace_deactivated", confidence: "high", recommendation: "delete", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "active_probe", probe_kind: "credential", status_code: 402, manual_delete_eligible: true },
       { id: "disable-1", name: "disable.json", provider: "codex", health: "quota_limited", reason_code: "quota_exhausted", confidence: "high", recommendation: "disable", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z" },
-      { id: "enable-1", name: "enable.json", provider: "codex", health: "healthy", reason_code: "healthy_recent_success", confidence: "high", recommendation: "enable", disabled: true, editable: true, auto_disable_eligible: false, owned_disable: true, failure_streak: 0, healthy_streak: 2, last_checked_at: "2026-07-21T10:00:00Z" },
-      { id: "reauth-1", name: "reauth.json", provider: "codex", health: "invalid_credentials", reason_code: "invalid_credentials", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "native" },
+      { id: "enable-1", name: "enable.json", provider: "codex", health: "healthy", reason_code: "healthy_recent_success", confidence: "high", recommendation: "enable", disabled: true, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 0, healthy_streak: 2, last_checked_at: "2026-07-21T10:00:00Z" },
+      { id: "reauth-credential", name: "reauth-credential.json", provider: "codex", health: "invalid_credentials", reason_code: "invalid_credentials", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "active_probe", probe_kind: "credential", status_code: 401, manual_delete_eligible: true },
+      { id: "reauth-model", name: "reauth-model.json", provider: "codex", health: "invalid_credentials", reason_code: "authentication_failed", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "active_probe", probe_kind: "model", status_code: 401, manual_delete_eligible: false },
     ];
-    const summary = { actionable: 4, suggested_delete: 1, suggested_disable: 1, suggested_enable: 1, reauth: 1, review: 0, keep: 0, editable_enabled: 3, editable_disabled: 1 };
+    const summary = { actionable: 5, suggested_delete: 1, suggested_disable: 1, suggested_enable: 1, reauth: 2, deletable_reauth: 1, review: 0, keep: 0, handled: 0, editable_enabled: 4, editable_disabled: 1 };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
-      if (url.includes("/inspection/results")) return jsonResponse({ results: inspected, summary, total: 4, page: 1, page_size: url.includes("page_size=200") ? 200 : 50, pages: 1 });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: inspected, summary, total: 5, page: 1, page_size: url.includes("page_size=200") ? 200 : 50, pages: 1 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
       if (url.endsWith("/batch/preview")) {
         const body = JSON.parse(String(init.body)) as { scope: { ids: string[] }; patch: { disabled: boolean } };
@@ -232,7 +233,7 @@ describe("InspectionWorkspace", () => {
         return jsonResponse({ id: currentJobID, state: "running", running: true, total: 1, eligible: 1, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 1, patch: { fields: ["disabled"] }, retry_available: false, persisted: true }, 202);
       }
       if (url.includes("/batch/status")) return jsonResponse({ id: currentJobID, state: "completed", running: false, total: 1, eligible: 1, done: 1, succeeded: 1, failed: 0, conflicts: 0, skipped: 0, workers: 1, patch: { fields: ["disabled"] }, retry_available: false, persisted: true });
-      if (url.endsWith("/inspection")) return jsonResponse({ ...inspectionSnapshot, probe_sweep_remaining: 0, probe_sweep_total: 4, probe_sweep_completed: 4, probe_sweep_status: "completed", anomaly_eligible: 4, anomaly_count: 3, anomaly_percent: 75 });
+      if (url.endsWith("/inspection")) return jsonResponse({ ...inspectionSnapshot, probe_sweep_remaining: 0, probe_sweep_total: 5, probe_sweep_completed: 5, probe_sweep_status: "completed", anomaly_eligible: 5, anomaly_count: 4, anomaly_percent: 80 });
       if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.7", update_available: false, checking: false, pending: false });
       if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [] });
       return jsonResponse({});
@@ -242,7 +243,11 @@ describe("InspectionWorkspace", () => {
     render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
 
     expect(await screen.findByRole("region", { name: "巡检处置队列" })).toBeInTheDocument();
-    expect(screen.getByText("建议处理 4 项")).toBeInTheDocument();
+    expect(screen.getByText("建议处理 5 项")).toBeInTheDocument();
+    expect(screen.getByText("已处置")).toBeInTheDocument();
+    const metrics = screen.getByLabelText("巡检统计");
+    expect(within(metrics).getByText("需要复核")).toBeInTheDocument();
+    expect(within(metrics).getByText("暂不可用")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "执行建议操作" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "删除需重新登录账号（1）" })).toBeEnabled();
 
@@ -251,16 +256,24 @@ describe("InspectionWorkspace", () => {
     expect(previewBodies[0]).toEqual({ scope: { mode: "selected", ids: ["enable-1"] }, patch: { disabled: false } });
     await user.click(within(screen.getByRole("dialog", { name: "变更预览" })).getByRole("button", { name: "取消" }));
 
-    await user.click(screen.getByRole("button", { name: "禁用筛选中的已启用账号（3）" }));
+    await user.click(screen.getByRole("button", { name: "禁用筛选中的已启用账号（4）" }));
     await waitFor(() => expect(previewBodies).toHaveLength(2));
-    expect(previewBodies[1]).toEqual({ scope: { mode: "selected", ids: ["delete-1", "disable-1", "reauth-1"] }, patch: { disabled: true } });
+    expect(previewBodies[1]).toEqual({ scope: { mode: "selected", ids: ["delete-1", "disable-1", "reauth-credential", "reauth-model"] }, patch: { disabled: true } });
     await user.click(within(screen.getByRole("dialog", { name: "变更预览" })).getByRole("button", { name: "取消" }));
+
+    await user.click(screen.getByRole("button", { name: "删除需重新登录账号（1）" }));
+    const reauthRemediation = await screen.findByRole("dialog", { name: "确认删除需重新登录账号" });
+    await user.click(within(reauthRemediation).getByRole("button", { name: "确认并执行" }));
+    await waitFor(() => expect(deleteBodies).toEqual([{ account_ids: ["reauth-credential"], confirm: true }]));
 
     await user.click(screen.getByRole("button", { name: "执行建议操作" }));
     const remediation = await screen.findByRole("dialog", { name: "确认执行建议操作" });
     expect(within(remediation).getByText("删除后无法恢复")).toBeInTheDocument();
     await user.click(within(remediation).getByRole("button", { name: "确认并执行" }));
-    await waitFor(() => expect(deleteBodies).toEqual([{ account_ids: ["delete-1"], confirm: true }]));
+    await waitFor(() => expect(deleteBodies).toEqual([
+      { account_ids: ["reauth-credential"], confirm: true },
+      { account_ids: ["delete-1"], confirm: true },
+    ]));
     await waitFor(() => expect(previewBodies).toHaveLength(4));
     expect(previewBodies[2]).toEqual({ scope: { mode: "selected", ids: ["disable-1"] }, patch: { disabled: true } });
     expect(previewBodies[3]).toEqual({ scope: { mode: "selected", ids: ["enable-1"] }, patch: { disabled: false } });

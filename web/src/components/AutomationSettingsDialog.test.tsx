@@ -28,7 +28,7 @@ describe("AutomationSettingsDialog", () => {
     await user.click(screen.getByLabelText("自动删除"));
     expect(screen.getByLabelText("自动禁用")).toBeChecked();
     await user.click(screen.getByLabelText("删除持续失效的凭据"));
-    await user.click(screen.getByLabelText("巡检人工禁用账号"));
+    await user.click(screen.getByLabelText("定时巡检人工禁用账号"));
     await user.click(screen.getByLabelText("全量定时主动巡检"));
     await user.click(screen.getByLabelText("启用异常占比触发"));
     await user.click(screen.getByLabelText("自动更新"));

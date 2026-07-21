@@ -260,7 +260,7 @@ function mockInspectionResults() {
     ["unavailable", "native_unavailable", "medium", "review", false],
     ["healthy", "healthy_recent_success", "high", "enable", false],
   ];
-  return accounts.slice(0, 12).map((account, index) => {
+  return accounts.map((account, index) => {
     const state = states[index] || ["healthy", "healthy_recent_success", "high", "keep", false];
     const circuit = index === 4;
     return {
@@ -280,12 +280,14 @@ function mockInspectionResults() {
       failure_streak: circuit ? 5 : state[4] ? Math.min(5, index + 1) : 0,
       healthy_streak: state[0] === "healthy" ? index - 3 : 0,
       probe_status: index < 5 ? "unavailable" : "available",
+      probe_kind: index < 2 ? "credential" : "model",
       probe_reason_code: index < 2 ? "authentication_failed" : index === 2 ? "quota_limited" : index < 5 ? "upstream_unavailable" : "model_response_ok",
       probe_model: account.provider === "gemini" ? "gemini-2.0-flash" : "gpt-5.4",
       probe_tested_at: checkedAt,
       probe_latency_ms: 180 + index * 17,
       signal_source: index < 5 ? "active_probe" : "native",
-      status_code: index === 3 ? 503 : index === 2 ? 429 : undefined,
+      status_code: index === 0 ? 402 : index === 1 ? 401 : index === 3 ? 503 : index === 2 ? 429 : undefined,
+      manual_delete_eligible: index < 2,
       review_status: state[0] === "review" ? "pending" : undefined,
       circuit_open: circuit,
       circuit_reason_code: circuit ? "invalid_response" : undefined,
@@ -306,8 +308,10 @@ function mockInspectionRemediationSummary(results) {
     suggested_disable: 0,
     suggested_enable: 0,
     reauth: 0,
+    deletable_reauth: 0,
     review: 0,
     keep: 0,
+    handled: 0,
     editable_enabled: 0,
     editable_disabled: 0,
   };
@@ -316,10 +320,16 @@ function mockInspectionRemediationSummary(results) {
       if (result.disabled) summary.editable_disabled += 1;
       else summary.editable_enabled += 1;
     }
-    if (result.recommendation === "delete") summary.suggested_delete += 1;
+    if (result.recommendation === "delete" && result.manual_delete_eligible) summary.suggested_delete += 1;
+    else if (result.recommendation === "delete") summary.review += 1;
     else if (result.recommendation === "disable" && result.editable && !result.disabled) summary.suggested_disable += 1;
-    else if (result.recommendation === "enable" && result.editable && result.disabled && result.owned_disable) summary.suggested_enable += 1;
-    else if (result.recommendation === "reauth") summary.reauth += 1;
+    else if (result.recommendation === "disable" && result.disabled) summary.handled += 1;
+    else if (result.recommendation === "enable" && result.editable && result.disabled) summary.suggested_enable += 1;
+    else if (result.recommendation === "enable" && !result.disabled) summary.handled += 1;
+    else if (result.recommendation === "reauth") {
+      summary.reauth += 1;
+      if (result.manual_delete_eligible) summary.deletable_reauth += 1;
+    }
     else if (result.recommendation === "review") summary.review += 1;
     else summary.keep += 1;
   }
@@ -330,6 +340,7 @@ function mockInspectionRemediationSummary(results) {
 function mockInspectionSnapshot(pending = false) {
   const results = mockInspectionResults();
   const count = (health) => results.filter((result) => result.health === health).length;
+  const primaryCompleted = pending ? Math.min(5, results.length) : results.length;
   return {
     policy: inspectionPolicy,
     running: pending,
@@ -357,23 +368,23 @@ function mockInspectionSnapshot(pending = false) {
     active_probe_armed: true,
     last_native_run_at: new Date().toISOString(),
     last_probe_run_at: new Date(Date.now() - 60_000).toISOString(),
-    probe_sweep_remaining: pending ? 7 : 0,
-    probe_sweep_total: 12,
-    probe_sweep_completed: pending ? 5 : 12,
+    probe_sweep_remaining: Math.max(0, results.length - primaryCompleted),
+    probe_sweep_total: results.length,
+    probe_sweep_completed: primaryCompleted,
     probe_sweep_source: "manual",
     probe_sweep_status: pending ? "running" : "completed",
     probe_sweep_started_at: new Date(Date.now() - 35_000).toISOString(),
     run_mode: "full",
     probe_phase: pending ? "primary" : "completed",
     retry_total: 2,
-    retry_completed: 1,
+    retry_completed: pending ? 1 : 2,
     stop_requested: false,
     revision: Date.now(),
-    active_run: pending ? { id: "demo-run-current", mode: "full", source: "manual", status: "running", phase: "primary", started_at: new Date(Date.now() - 35_000).toISOString(), primary_total: 12, primary_completed: 5, retry_total: 2, retry_completed: 1, summary: { scanned: 5, healthy: 0, quota_limited: 1, invalid_credentials: 1, deactivated: 1, review: 0, unavailable: 2, disabled: 0, unknown: 0, auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } } : undefined,
+    active_run: pending ? { id: "demo-run-current", mode: "full", source: "manual", status: "running", phase: "primary", started_at: new Date(Date.now() - 35_000).toISOString(), primary_total: results.length, primary_completed: primaryCompleted, retry_total: 2, retry_completed: 1, summary: { scanned: primaryCompleted, healthy: 0, quota_limited: 1, invalid_credentials: 1, deactivated: 1, review: 0, unavailable: 2, disabled: 0, unknown: 0, auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } } : undefined,
     live_results: pending ? results.slice(0, 5).map((result, index) => ({ ...result, run_id: "demo-run-current", run_phase: index === 3 ? "retry" : "primary", run_observed_at: new Date(Date.now() - index * 900).toISOString() })) : [],
     recent_runs: [
-      { id: "demo-run-current", mode: "full", source: "manual", status: pending ? "running" : "completed", phase: pending ? "primary" : "completed", started_at: new Date(Date.now() - 35_000).toISOString(), finished_at: pending ? undefined : new Date().toISOString(), primary_total: 12, primary_completed: pending ? 5 : 12, retry_total: 2, retry_completed: pending ? 1 : 2, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
-      { id: "demo-run-native", mode: "native", source: "manual", status: "completed", phase: "completed", started_at: new Date(Date.now() - 3_600_000).toISOString(), finished_at: new Date(Date.now() - 3_599_000).toISOString(), primary_total: 12, primary_completed: 12, retry_total: 0, retry_completed: 0, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
+      { id: "demo-run-current", mode: "full", source: "manual", status: pending ? "running" : "completed", phase: pending ? "primary" : "completed", started_at: new Date(Date.now() - 35_000).toISOString(), finished_at: pending ? undefined : new Date().toISOString(), primary_total: results.length, primary_completed: primaryCompleted, retry_total: 2, retry_completed: pending ? 1 : 2, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
+      { id: "demo-run-native", mode: "native", source: "manual", status: "completed", phase: "completed", started_at: new Date(Date.now() - 3_600_000).toISOString(), finished_at: new Date(Date.now() - 3_599_000).toISOString(), primary_total: results.length, primary_completed: results.length, retry_total: 0, retry_completed: 0, summary: { scanned: results.length, healthy: count("healthy"), quota_limited: count("quota_limited"), invalid_credentials: count("invalid_credentials"), deactivated: count("deactivated"), review: count("review"), unavailable: count("unavailable"), disabled: count("disabled"), unknown: count("unknown"), auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 } },
     ],
     anomaly_eligible: 10,
     anomaly_count: 5,

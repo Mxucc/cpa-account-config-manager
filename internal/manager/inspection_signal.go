@@ -295,6 +295,9 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			QuotaWindow:         quotaWindow,
 		}
 	}
+	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
+		return decision
+	}
 	if account.Disabled && !record.Result.OwnedDisable {
 		return inspectionDecision{
 			Health:         InspectionHealthDisabled,
@@ -303,9 +306,6 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			Recommendation: InspectionRecommendationKeep,
 			SignalSource:   InspectionSignalNative,
 		}
-	}
-	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
-		return decision
 	}
 	if activeInspectionSignal(record.Signal, now) {
 		return decisionFromSignal(record.Signal)
@@ -402,7 +402,13 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 	case "authentication_failed":
 		return inspectionDecision{
 			Health: InspectionHealthInvalidCredentials, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDisable,
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+		}, true
+	case "workspace_deactivated", "account_deactivated":
+		return inspectionDecision{
+			Health: InspectionHealthDeactivated, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDelete,
 			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "quota_limited":

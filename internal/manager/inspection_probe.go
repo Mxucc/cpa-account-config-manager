@@ -79,7 +79,8 @@ func runInspectionModelProbesObserved(
 				if errRun != nil {
 					result = ModelTestResult{
 						AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
-						Status: "review", ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
+						Status: "review", ProbeKind: InspectionProbeKindModel,
+						ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
 					}
 				}
 				select {
@@ -189,6 +190,10 @@ func inspectionRunTargetIDs(mode string, accounts []Account, records map[string]
 	return out
 }
 
+func inspectionRunScansManuallyDisabled(mode, source string, configured bool) bool {
+	return configured || (normalizeInspectionRunMode(mode) == InspectionRunModeFull && normalizeInspectionSweepSource(source) == InspectionSweepSourceManual)
+}
+
 func retryInspectionProbeResults(ctx context.Context, service *ModelTestService, accounts []Account, results []ModelTestResult, policy InspectionPolicy, managementBaseURL, managementKey string) ([]ModelTestResult, int) {
 	return retryInspectionProbeResultsObserved(ctx, service, accounts, results, policy, managementBaseURL, managementKey, nil)
 }
@@ -217,7 +222,8 @@ func retryInspectionProbeResultsObserved(ctx context.Context, service *ModelTest
 		if errRun != nil {
 			next = ModelTestResult{
 				AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
-				Status: "review", ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
+				Status: "review", ProbeKind: InspectionProbeKindModel,
+				ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
 			}
 		}
 		if observe != nil {
@@ -292,7 +298,8 @@ func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResul
 	}
 	previous := record.Probe
 	next := inspectionProbeSignal{
-		Status: normalizeModelProbeStatus(result.Status), ReasonCode: safeModelProbeReason(result.ReasonCode),
+		Status: normalizeModelProbeStatus(result.Status), Kind: normalizeInspectionProbeKind(result.ProbeKind),
+		ReasonCode: safeModelProbeReason(result.ReasonCode), StatusCode: boundedHTTPStatus(result.StatusCode),
 		Model: safeModelIdentifier(result.Model), TestedAt: result.TestedAt.UTC(), LatencyMS: maxInt64(0, result.LatencyMS),
 	}
 	window := time.Duration(normalizeInspectionPolicy(policy).PassiveFailureWindowMinutes) * time.Minute
@@ -306,6 +313,7 @@ func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResul
 	}
 	record.Probe = next
 	record.Result.ProbeStatus = record.Probe.Status
+	record.Result.ProbeKind = record.Probe.Kind
 	record.Result.ProbeReasonCode = record.Probe.ReasonCode
 	record.Result.ProbeModel = record.Probe.Model
 	record.Result.ProbeTestedAt = cloneTimePointer(timePointerOrNil(record.Probe.TestedAt))

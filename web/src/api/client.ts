@@ -16,6 +16,7 @@ import type {
   InspectionAction,
   InspectionDeleteRun,
   InspectionPolicy,
+  InspectionRemediationSummary,
   InspectionResultList,
   InspectionResult,
   InspectionRunRequest,
@@ -246,20 +247,23 @@ export async function listInspectionResults(page: number, pageSize: number, heal
   if (health) query.set("health", health);
   if (search) query.set("search", search);
   const response = await request<InspectionResultList>("/inspection/results", {}, query);
+	const summary = response.summary as Partial<InspectionRemediationSummary> | null | undefined;
   return {
     ...response,
     results: arrayOrEmpty(response.results),
-    summary: response.summary ?? {
-      actionable: 0,
-      suggested_delete: 0,
-      suggested_disable: 0,
-      suggested_enable: 0,
-      reauth: 0,
-      review: 0,
-      keep: 0,
-      editable_enabled: 0,
-      editable_disabled: 0,
-    },
+		summary: {
+			actionable: summary?.actionable ?? 0,
+			suggested_delete: summary?.suggested_delete ?? 0,
+			suggested_disable: summary?.suggested_disable ?? 0,
+			suggested_enable: summary?.suggested_enable ?? 0,
+			reauth: summary?.reauth ?? 0,
+			deletable_reauth: summary?.deletable_reauth ?? 0,
+			review: summary?.review ?? 0,
+			keep: summary?.keep ?? 0,
+			handled: summary?.handled ?? 0,
+			editable_enabled: summary?.editable_enabled ?? 0,
+			editable_disabled: summary?.editable_disabled ?? 0,
+		},
   };
 }
 

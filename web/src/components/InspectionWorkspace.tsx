@@ -68,8 +68,10 @@ const emptyRemediationSummary: InspectionRemediationSummary = {
   suggested_disable: 0,
   suggested_enable: 0,
   reauth: 0,
+  deletable_reauth: 0,
   review: 0,
   keep: 0,
+  handled: 0,
   editable_enabled: 0,
   editable_disabled: 0,
 };
@@ -438,15 +440,15 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
       const source = await collectFilteredResults(mode === "selected" ? "" : health, mode === "selected" ? "" : search);
       const candidates = mode === "selected" ? source.filter((result) => selected.has(result.id)) : source;
       const deleteIDs = candidates
-        .filter((result) => mode === "reauth"
+        .filter((result) => result.manual_delete_eligible && (mode === "reauth"
           ? result.recommendation === "reauth"
-          : result.recommendation === "delete" || (mode === "selected" && result.recommendation === "reauth"))
+          : result.recommendation === "delete" || (mode === "selected" && result.recommendation === "reauth")))
         .map((result) => result.id);
       const disableIDs = mode === "recommended"
         ? candidates.filter((result) => result.editable && !result.disabled && result.recommendation === "disable").map((result) => result.id)
         : [];
       const enableIDs = mode === "recommended"
-        ? candidates.filter((result) => result.editable && result.disabled && result.owned_disable && result.recommendation === "enable").map((result) => result.id)
+        ? candidates.filter((result) => result.editable && result.disabled && result.recommendation === "enable").map((result) => result.id)
         : [];
       if (deleteIDs.length + disableIDs.length + enableIDs.length === 0) {
         throw new Error(tx("ui.no_recommended_actions_available"));
@@ -713,7 +715,8 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         <InspectionMetric label={tx("ui.healthy")} value={lastRun?.healthy ?? 0} tone="healthy" />
         <InspectionMetric label={tx("ui.invalid_credentials")} value={(lastRun?.invalid_credentials ?? 0) + (lastRun?.deactivated ?? 0)} tone="danger" />
         <InspectionMetric label={tx("ui.quota_limited")} value={lastRun?.quota_limited ?? 0} tone="warning" />
-        <InspectionMetric label={tx("ui.needs_review")} value={(lastRun?.review ?? 0) + (lastRun?.unavailable ?? 0)} tone="review" />
+        <InspectionMetric label={tx("ui.needs_review")} value={lastRun?.review ?? 0} tone="review" />
+        <InspectionMetric label={tx("ui.unavailable")} value={lastRun?.unavailable ?? 0} tone="review" />
         <InspectionMetric label={tx("ui.auto_disable")} value={lastRun?.auto_disabled ?? 0} />
         <InspectionMetric label={tx("ui.auto_enable")} value={lastRun?.auto_enabled ?? 0} tone="healthy" />
         <InspectionMetric label={tx("ui.pending_deletion")} value={lastRun?.delete_pending ?? 0} tone="danger" />
@@ -738,14 +741,15 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           <span className="healthy"><small>{tx("ui.suggested_enable")}</small><strong>{remediation.suggested_enable}</strong></span>
           <span className="review"><small>{tx("ui.relogin_required")}</small><strong>{remediation.reauth}</strong></span>
           <span><small>{tx("ui.keep")}</small><strong>{remediation.keep}</strong></span>
+          <span className="healthy"><small>{tx("ui.handled")}</small><strong>{remediation.handled}</strong></span>
           <span><small>{tx("ui.manual_review")}</small><strong>{remediation.review}</strong></span>
         </div>
         <div className="inspection-remediation-actions">
           <button className="button button-primary" type="button" disabled={resolvingFiltered || remediating || remediation.suggested_delete + remediation.suggested_disable + remediation.suggested_enable === 0} onClick={() => void openRemediation("recommended")}>
             {resolvingFiltered || remediating ? <LoaderCircle className="spin" size={15} /> : <Wrench size={15} />}{tx("ui.execute_recommended_actions")}
           </button>
-          <button className="button button-danger" type="button" disabled={resolvingFiltered || remediating || remediation.reauth === 0} onClick={() => void openRemediation("reauth")}>
-            <Trash2 size={15} />{tx("ui.delete_relogin_accounts", { count: remediation.reauth })}
+          <button className="button button-danger" type="button" disabled={resolvingFiltered || remediating || remediation.deletable_reauth === 0} onClick={() => void openRemediation("reauth")}>
+            <Trash2 size={15} />{tx("ui.delete_relogin_accounts", { count: remediation.deletable_reauth })}
           </button>
         </div>
       </section>
@@ -934,7 +938,7 @@ function InspectionRow({ result, selected, onSelect, onModelTest, onToggle, onAc
       <td><div className="inspection-type"><strong>{result.provider || tx("ui.unknown")}</strong><span>{result.plan_type || result.type || "-"}</span></div></td>
       <td><InspectionQuotaUsage result={result} /></td>
       <td><div className="inspection-reason"><strong>{reasonLabel(result.reason_code, locale)}</strong><span>{result.status_code ? `HTTP ${result.status_code} · ` : ""}{confidenceLabel(result.confidence, locale)}{result.signal_source ? ` · ${signalSourceLabel(result.signal_source, locale)}` : ""}</span>{result.review_status ? <small className={`review-state review-${result.review_status}`}>{reviewStatusLabel(result.review_status, locale)}</small> : null}</div></td>
-      <td><div className={`inspection-probe probe-${result.probe_status || "none"}`}><strong>{result.probe_reason_code ? reasonLabel(result.probe_reason_code, locale) : tx("ui.no_probe_result")}</strong><span>{result.probe_model || "-"}{result.probe_latency_ms ? ` · ${result.probe_latency_ms} ms` : ""}</span>{result.probe_tested_at ? <time title={tx("ui.last_model_probe_time", { time: formatDateTime(result.probe_tested_at) })}>{formatDateTime(result.probe_tested_at)}</time> : null}</div></td>
+      <td><div className={`inspection-probe probe-${result.probe_status || "none"}`}><strong>{result.probe_reason_code ? reasonLabel(result.probe_reason_code, locale) : tx("ui.no_probe_result")}</strong><span>{result.probe_kind === "credential" ? tx("ui.credential_preflight") : result.probe_model || "-"}{result.probe_latency_ms ? ` · ${result.probe_latency_ms} ms` : ""}</span>{result.probe_tested_at ? <time title={tx("ui.last_model_probe_time", { time: formatDateTime(result.probe_tested_at) })}>{formatDateTime(result.probe_tested_at)}</time> : null}</div></td>
       <td><div className="inspection-streak"><span className="danger">{tx("ui.failures_count", { count: result.failure_streak })}</span><span className="success">{tx("ui.recovery_count", { count: result.healthy_streak })}</span></div></td>
       <td><span className={`recommendation recommendation-${result.recommendation}`}>{recommendationLabel(result.recommendation, locale)}</span></td>
       <td><div className="inspection-action-state"><strong>{result.circuit_open ? tx("ui.passive_temporary_circuit") : actionLabel(result.auto_action, locale)}</strong><span>{result.circuit_open && result.recover_after ? tx("ui.circuit_recovers_at_time", { time: formatDateTime(result.recover_after) }) : actionStatusLabel(result.auto_action_status, result.owned_disable, locale)}</span></div></td>

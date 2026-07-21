@@ -120,7 +120,9 @@ export interface ModelTestResult {
   provider: string;
   model: string;
   status: ModelTestStatus;
+  probe_kind?: "model" | "credential";
   reason_code: string;
+  status_code?: number;
   latency_ms: number;
   tested_at: string;
 }
@@ -554,6 +556,7 @@ export interface InspectionResult {
   delete_eligible_at?: string;
   auto_action?: "disable" | "enable" | "delete" | "delete_candidate";
   probe_status?: "available" | "unavailable" | "review" | "unsupported";
+  probe_kind?: "model" | "credential";
   probe_reason_code?: string;
   probe_model?: string;
   probe_tested_at?: string;
@@ -572,6 +575,7 @@ export interface InspectionResult {
   run_id?: string;
   run_phase?: "listing" | "primary" | "retry" | "stopped" | "completed";
   run_observed_at?: string;
+  manual_delete_eligible: boolean;
 }
 
 export interface InspectionResultList {
@@ -589,8 +593,10 @@ export interface InspectionRemediationSummary {
   suggested_disable: number;
   suggested_enable: number;
   reauth: number;
+  deletable_reauth: number;
   review: number;
   keep: number;
+  handled: number;
   editable_enabled: number;
   editable_disabled: number;
 }

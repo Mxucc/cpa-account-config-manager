@@ -291,6 +291,9 @@ func inspectionDeleteReasonAllowed(policy InspectionPolicy, record inspectionRec
 		record.Result.FailureStreak < policy.FailureThreshold {
 		return false
 	}
+	if record.Result.SignalSource == InspectionSignalActiveProbe && record.Result.ProbeKind != InspectionProbeKindCredential {
+		return false
+	}
 	switch record.DisableReason {
 	case "invalid_credentials", "token_revoked", "authentication_failed":
 		return true
@@ -458,7 +461,8 @@ func inspectionManualDeleteAllowed(result InspectionResult) bool {
 	if recommendation == InspectionRecommendationDelete && health == InspectionHealthDeactivated {
 		return reason == "account_deactivated" || reason == "workspace_deactivated"
 	}
-	if recommendation != InspectionRecommendationReauth || health != InspectionHealthInvalidCredentials || result.SignalSource == InspectionSignalActiveProbe {
+	if recommendation != InspectionRecommendationReauth || health != InspectionHealthInvalidCredentials ||
+		(result.SignalSource == InspectionSignalActiveProbe && result.ProbeKind != InspectionProbeKindCredential) {
 		return false
 	}
 	return reason == "invalid_credentials" || reason == "token_revoked" || reason == "authentication_failed"

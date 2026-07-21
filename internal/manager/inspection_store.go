@@ -27,7 +27,9 @@ type inspectionSignal struct {
 
 type inspectionProbeSignal struct {
 	Status              string    `json:"status,omitempty"`
+	Kind                string    `json:"kind,omitempty"`
 	ReasonCode          string    `json:"reason_code,omitempty"`
+	StatusCode          int       `json:"status_code,omitempty"`
 	Model               string    `json:"model,omitempty"`
 	TestedAt            time.Time `json:"tested_at,omitempty"`
 	LatencyMS           int64     `json:"latency_ms,omitempty"`
@@ -194,7 +196,9 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Signal.ConsecutiveFailures = boundedCounter(record.Signal.ConsecutiveFailures)
 		record.Signal.ConsecutiveSuccess = boundedCounter(record.Signal.ConsecutiveSuccess)
 		record.Probe.Status = normalizeModelProbeStatus(record.Probe.Status)
+		record.Probe.Kind = normalizeInspectionProbeKind(record.Probe.Kind)
 		record.Probe.ReasonCode = safeModelProbeReason(record.Probe.ReasonCode)
+		record.Probe.StatusCode = boundedHTTPStatus(record.Probe.StatusCode)
 		record.Probe.Model = safeModelIdentifier(record.Probe.Model)
 		record.Probe.ConsecutiveFailures = boundedCounter(record.Probe.ConsecutiveFailures)
 		record.Probe.ConsecutiveSuccess = boundedCounter(record.Probe.ConsecutiveSuccess)
@@ -202,6 +206,7 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 			record.Probe.LatencyMS = 0
 		}
 		record.Result.ProbeStatus = record.Probe.Status
+		record.Result.ProbeKind = record.Probe.Kind
 		record.Result.ProbeReasonCode = record.Probe.ReasonCode
 		record.Result.ProbeModel = record.Probe.Model
 		record.Result.ProbeTestedAt = cloneTimePointer(timePointerOrNil(record.Probe.TestedAt))
@@ -290,6 +295,15 @@ func timePointerOrNil(value time.Time) *time.Time {
 func normalizeModelProbeStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "available", "unavailable", "review", "unsupported":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeInspectionProbeKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionProbeKindModel, InspectionProbeKindCredential:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""

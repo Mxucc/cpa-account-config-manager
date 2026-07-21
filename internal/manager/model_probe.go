@@ -36,7 +36,9 @@ type ModelTestResult struct {
 	Provider   string    `json:"provider"`
 	Model      string    `json:"model"`
 	Status     string    `json:"status"`
+	ProbeKind  string    `json:"probe_kind"`
 	ReasonCode string    `json:"reason_code"`
+	StatusCode int       `json:"status_code,omitempty"`
 	LatencyMS  int64     `json:"latency_ms"`
 	TestedAt   time.Time `json:"tested_at"`
 }
@@ -50,6 +52,7 @@ type ModelTestService struct {
 
 type modelProbe struct {
 	kind    string
+	method  string
 	url     string
 	headers map[string]string
 	data    string
@@ -72,6 +75,26 @@ type managementAPICallResponse struct {
 	StatusCode int                 `json:"status_code"`
 	Header     map[string][]string `json:"header"`
 	Body       string              `json:"body"`
+}
+
+type codexUsageProbeEnvelope struct {
+	RateLimit      *codexUsageProbeLimit `json:"rate_limit"`
+	RateLimitCamel *codexUsageProbeLimit `json:"rateLimit"`
+}
+
+type codexUsageProbeLimit struct {
+	Allowed              *bool                  `json:"allowed"`
+	LimitReached         bool                   `json:"limit_reached"`
+	LimitReachedCamel    bool                   `json:"limitReached"`
+	PrimaryWindow        *codexUsageProbeWindow `json:"primary_window"`
+	PrimaryWindowCamel   *codexUsageProbeWindow `json:"primaryWindow"`
+	SecondaryWindow      *codexUsageProbeWindow `json:"secondary_window"`
+	SecondaryWindowCamel *codexUsageProbeWindow `json:"secondaryWindow"`
+}
+
+type codexUsageProbeWindow struct {
+	UsedPercent      *float64 `json:"used_percent"`
+	UsedPercentCamel *float64 `json:"usedPercent"`
 }
 
 func NewModelTestService(accounts *AccountService) *ModelTestService {
@@ -114,31 +137,55 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	if accountTypeUsesAPIKey(account.AccountType) {
 		metadata.hasAPIKey = true
 	}
-	probe, selectedModel, supported, errProbe := buildModelProbe(provider, model, metadata)
-	if errProbe != nil {
-		return ModelTestResult{}, errProbe
-	}
-
 	startedAt := s.currentTime()
 	result := ModelTestResult{
 		AccountID: account.ID,
 		Provider:  provider,
-		Model:     selectedModel,
+		Model:     model,
 		TestedAt:  startedAt,
 	}
+	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
+	defer cancel()
+	if provider == "codex" && !metadata.hasAPIKey {
+		credential := buildCodexCredentialProbe(metadata)
+		statusCode, body, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
+		if errCredential == nil {
+			status, reason := classifyCredentialProbe(statusCode, body)
+			if credentialProbeResultIsDefinitive(reason) {
+				result.Status = status
+				result.ProbeKind = InspectionProbeKindCredential
+				result.ReasonCode = reason
+				result.StatusCode = boundedHTTPStatus(statusCode)
+				result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
+				return result, nil
+			}
+		} else if errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+			result.Status = "review"
+			result.ProbeKind = InspectionProbeKindCredential
+			result.ReasonCode = "request_timeout"
+			result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
+			return result, nil
+		} else if errors.Is(probeCtx.Err(), context.Canceled) {
+			return ModelTestResult{}, probeCtx.Err()
+		}
+	}
+	probe, selectedModel, supported, errProbe := buildModelProbe(provider, model, metadata)
+	if errProbe != nil {
+		return ModelTestResult{}, errProbe
+	}
+	result.Model = selectedModel
+	result.ProbeKind = InspectionProbeKindModel
 	if !supported {
 		result.Status = "unsupported"
 		result.ReasonCode = "unsupported_provider"
 		return result, nil
 	}
 
-	testCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
-	defer cancel()
-	upstreamStatus, upstreamBody, errCall := s.callManagementAPI(testCtx, managementBaseURL, managementKey, account.ID, probe)
+	upstreamStatus, upstreamBody, errCall := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, probe)
 	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
 	if errCall != nil {
 		result.Status = "review"
-		if errors.Is(testCtx.Err(), context.DeadlineExceeded) || errors.Is(errCall, context.DeadlineExceeded) {
+		if errors.Is(probeCtx.Err(), context.DeadlineExceeded) || errors.Is(errCall, context.DeadlineExceeded) {
 			result.ReasonCode = "request_timeout"
 		} else {
 			result.ReasonCode = "upstream_unavailable"
@@ -146,7 +193,21 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		return result, nil
 	}
 	result.Status, result.ReasonCode = classifyModelProbe(probe.kind, upstreamStatus, upstreamBody)
+	result.StatusCode = boundedHTTPStatus(upstreamStatus)
 	return result, nil
+}
+
+func buildCodexCredentialProbe(metadata modelTestAuthMetadata) modelProbe {
+	headers := bearerJSONHeaders(false)
+	headers["Originator"] = "codex_cli_rs"
+	headers["User-Agent"] = "codex_cli_rs/0.1.0"
+	if metadata.accountID != "" {
+		headers["Chatgpt-Account-Id"] = metadata.accountID
+	}
+	return modelProbe{
+		kind: "credential", method: http.MethodGet,
+		url: "https://chatgpt.com/backend-api/wham/usage", headers: headers,
+	}
 }
 
 func (s *ModelTestService) authMetadata(ctx context.Context, authIndex string) modelTestAuthMetadata {
@@ -281,7 +342,7 @@ func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBase
 	}
 	payload, errMarshal := json.Marshal(managementAPICallRequest{
 		AuthIndex: authIndex,
-		Method:    http.MethodPost,
+		Method:    firstNonEmpty(probe.method, http.MethodPost),
 		URL:       probe.url,
 		Header:    probe.headers,
 		Data:      probe.data,
@@ -324,6 +385,76 @@ func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBase
 		return 0, nil, fmt.Errorf("upstream model-test response exceeded the size limit")
 	}
 	return decoded.StatusCode, []byte(decoded.Body), nil
+}
+
+func classifyCredentialProbe(statusCode int, body []byte) (string, string) {
+	lower := bytes.ToLower(bytes.TrimSpace(body))
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "unavailable", "authentication_failed"
+	case http.StatusPaymentRequired:
+		if bytes.Contains(lower, []byte("deactivated_workspace")) || bytes.Contains(lower, []byte("account_deactivated")) {
+			return "unavailable", "workspace_deactivated"
+		}
+		return "review", "quota_limited"
+	case http.StatusTooManyRequests:
+		return "review", "quota_limited"
+	default:
+		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			if codexUsageProbeQuotaLimited(body) {
+				return "review", "quota_limited"
+			}
+			return "available", "credential_response_ok"
+		}
+		if statusCode == http.StatusRequestTimeout || statusCode == http.StatusGatewayTimeout {
+			return "review", "request_timeout"
+		}
+		if statusCode >= http.StatusInternalServerError {
+			return "review", "upstream_unavailable"
+		}
+		return "review", "invalid_response"
+	}
+}
+
+func codexUsageProbeQuotaLimited(body []byte) bool {
+	var payload codexUsageProbeEnvelope
+	if errDecode := json.Unmarshal(bytes.TrimSpace(body), &payload); errDecode != nil {
+		return false
+	}
+	limit := payload.RateLimit
+	if limit == nil {
+		limit = payload.RateLimitCamel
+	}
+	if limit == nil {
+		return false
+	}
+	if limit.LimitReached || limit.LimitReachedCamel || (limit.Allowed != nil && !*limit.Allowed) {
+		return true
+	}
+	for _, window := range []*codexUsageProbeWindow{
+		limit.PrimaryWindow, limit.PrimaryWindowCamel, limit.SecondaryWindow, limit.SecondaryWindowCamel,
+	} {
+		if window == nil {
+			continue
+		}
+		usedPercent := window.UsedPercent
+		if usedPercent == nil {
+			usedPercent = window.UsedPercentCamel
+		}
+		if usedPercent != nil && *usedPercent >= 100 {
+			return true
+		}
+	}
+	return false
+}
+
+func credentialProbeResultIsDefinitive(reason string) bool {
+	switch safeModelProbeReason(reason) {
+	case "authentication_failed", "workspace_deactivated", "account_deactivated", "quota_limited":
+		return true
+	default:
+		return false
+	}
 }
 
 func classifyModelProbe(kind string, statusCode int, body []byte) (string, string) {

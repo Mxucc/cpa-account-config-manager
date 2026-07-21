@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.91"
+	PluginVersion    = "0.2.92"
 	PluginRepository = DefaultPluginRepository
 )
 

@@ -69,20 +69,20 @@ Token 累计和 Codex 额度进度还会使用原生 Usage Plugin 的 `usage.han
 Linux：
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.2.91_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_0.2.92_linux_amd64.zip.sha256
 ```
 
 macOS：
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.2.91_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_0.2.92_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.2.91_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.2.91_windows_amd64.zip.sha256
+Get-FileHash .\cpa-account-config-manager_0.2.92_windows_amd64.zip -Algorithm SHA256
+Get-Content .\cpa-account-config-manager_0.2.92_windows_amd64.zip.sha256
 ```
 
 ### 2. 放置动态库
@@ -90,16 +90,16 @@ Get-Content .\cpa-account-config-manager_0.2.91_windows_amd64.zip.sha256
 解压后，将动态库放进 CLIProxyAPI 插件目录。推荐使用宿主优先扫描的平台子目录：
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.2.91.so
-plugins/linux/arm64/cpa-account-config-manager-v0.2.91.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.2.91.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.2.91.dll
+plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so
+plugins/linux/arm64/cpa-account-config-manager-v0.2.92.so
+plugins/darwin/arm64/cpa-account-config-manager-v0.2.92.dylib
+plugins/windows/amd64/cpa-account-config-manager-v0.2.92.dll
 ```
 
 Linux/macOS 上确保 CLIProxyAPI 服务账号可读、可执行：
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.91.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so
 ```
 
 ### 3. 启用插件
@@ -343,7 +343,7 @@ Release 检查只使用 CPA 已鉴权插件商店 Registry 作为版本来源。
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.91.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.91.so:ro
+      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -405,7 +405,7 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.2.91
+make package VERSION=0.2.92
 ```
 
 如果本地构建需要在插件元数据中显示仓库链接，可给 `make build` 或 `make package` 传入 `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager`。GitHub Actions 会自动注入实际仓库地址。

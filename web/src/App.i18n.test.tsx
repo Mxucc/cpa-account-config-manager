@@ -33,7 +33,7 @@ const account = {
     owned_disable: true,
     disable_reason: "quota_exhausted",
     disabled_at: "2026-07-20T07:00:00Z",
-    recover_after: "2026-07-21T10:30:00Z",
+    recover_after: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
     auto_disable_eligible: true,
     inspection_enabled: true,
     auto_disable_enabled: true,

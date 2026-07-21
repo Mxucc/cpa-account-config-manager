@@ -45,7 +45,7 @@ describe("primary account batch flow", () => {
 
   it("renders automatic disable reason and expected recovery in the account row", async () => {
     const user = userEvent.setup();
-    const recoverAfter = "2026-07-21T10:30:00Z";
+    const recoverAfter = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
     const automatedAccount = {
       ...account,
       disabled: true,

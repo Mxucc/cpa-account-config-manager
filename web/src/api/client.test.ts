@@ -17,6 +17,7 @@ import {
   reconcileUpdateStatus,
   saveDefaultPolicy,
   saveInspectionPolicy,
+  saveOperationRetentionSettings,
   saveUpdatePolicy,
   scanFullInspection,
   scanNativeInspection,
@@ -121,15 +122,58 @@ describe("management API client", () => {
         summary: { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 },
         total: 0,
         page: 1,
-        page_size: 50,
+        page_size: 500,
         pages: 0,
+        extended_history: false,
+        archived_segments: 0,
+        retention_limit: 500,
+        retained: 0,
       }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(listAccounts(1, 50, {})).resolves.toMatchObject({ accounts: [] });
     await expect(listInspectionResults(1, 50)).resolves.toMatchObject({ results: [] });
     await expect(listInspectionActions()).resolves.toEqual([]);
-    await expect(listOperations(1, 50)).resolves.toMatchObject({ operations: [] });
+    await expect(listOperations(1)).resolves.toMatchObject({
+      operations: [], page_size: 500, extended_history: false, archived_segments: 0, retention_limit: 500, retained: 0,
+    });
+  });
+
+  it("uses fixed operation pages and persists extended-history settings", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        operations: [], summary: { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 },
+        total: 0, page: 2, page_size: 500, pages: 0, extended_history: false, archived_segments: 0, retention_limit: 500, retained: 0,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ extended_history: true, page_size: 500, retained: 500, archived_segments: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listOperations(2, { category: "inspection" });
+    const [listURL] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(listURL).toContain("page=2");
+    expect(listURL).toContain("page_size=500");
+    expect(listURL).toContain("category=inspection");
+
+    await expect(saveOperationRetentionSettings(true)).resolves.toMatchObject({ extended_history: true, page_size: 500 });
+    const [settingsURL, settingsInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(settingsURL).toContain("/operations/settings");
+    expect(settingsInit.method).toBe("PUT");
+    expect(JSON.parse(String(settingsInit.body))).toEqual({ extended_history: true });
+  });
+
+  it("cancels an in-flight operation-log request from its caller", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init: RequestInit = {}) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    const pending = listOperations(1, {}, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    const [, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
+    expect(init.signal?.aborted).toBe(true);
   });
 
   it("sends selected scope and patch values only in the authenticated request", async () => {

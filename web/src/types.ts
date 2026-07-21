@@ -407,7 +407,18 @@ export interface OperationListResponse {
   page: number;
   page_size: number;
   pages: number;
+  extended_history: boolean;
+  archived_segments: number;
+  retention_limit: number;
+  retained: number;
   storage_error?: string;
+}
+
+export interface OperationRetentionSettings {
+  extended_history: boolean;
+  page_size: number;
+  retained: number;
+  archived_segments: number;
 }
 
 export interface OperationFilters {

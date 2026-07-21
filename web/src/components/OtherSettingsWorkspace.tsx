@@ -83,8 +83,24 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
 
   useEffect(() => {
     if (!updates?.checking && !updates?.pending) return;
-    const timer = window.setInterval(() => void refreshPlugin().catch(handleError), 1200);
-    return () => window.clearInterval(timer);
+    let polling = false;
+    let cancelled = false;
+    const poll = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        await refreshPlugin();
+      } catch (caught) {
+        if (!cancelled) handleError(caught);
+      } finally {
+        polling = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [handleError, refreshPlugin, updates?.checking, updates?.pending]);
 
   const installUpdate = useCallback(async (automatic = false) => {

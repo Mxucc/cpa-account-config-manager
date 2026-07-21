@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +81,7 @@ func TestOperationJournalPersistsFiltersUpsertsAndBoundsEntries(t *testing.T) {
 	if loaded.Total != 2 || loaded.Operations[0].RelatedJobID != "job-1" {
 		t.Fatalf("loaded = %#v", loaded)
 	}
-	info, errStat := os.Stat(filepath.Join(dataDir, "operation-log.json"))
+	info, errStat := os.Stat(operationManifestPath(operationStoreDirectory(dataDir)))
 	if errStat != nil {
 		t.Fatal(errStat)
 	}
@@ -112,7 +112,7 @@ func TestOperationJournalSanitizesPersistedFieldsAndRetainsClearEvent(t *testing
 	if response.Total != 1 || cleared.Action != OperationActionJournalClear || response.Operations[0].Action != OperationActionJournalClear {
 		t.Fatalf("clear response = %#v entry=%#v", response, cleared)
 	}
-	raw, errRead := os.ReadFile(journal.store)
+	raw, errRead := os.ReadFile(operationManifestPath(journal.store))
 	if errRead != nil {
 		t.Fatal(errRead)
 	}
@@ -121,6 +121,218 @@ func TestOperationJournalSanitizesPersistedFieldsAndRetainsClearEvent(t *testing
 			t.Fatalf("journal leaked %q: %s", secret, raw)
 		}
 	}
+}
+
+func TestOperationJournalDefaultsToLatestFixedPageAndMigratesLegacyStore(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	journal := NewOperationJournal()
+	journal.now = func() time.Time { return now }
+	journal.Configure(Config{DataDir: dataDir})
+	for index := 0; index < operationPageSize+10; index++ {
+		now = now.Add(time.Second)
+		journal.Record(operationTestEntry(index, now))
+	}
+	response := journal.List(OperationQuery{Page: 1, PageSize: 20})
+	if response.Total != operationPageSize || response.Retained != operationPageSize || response.PageSize != operationPageSize || response.Pages != 1 || response.ExtendedHistory || response.ArchivedSegments != 0 {
+		t.Fatalf("default retention response = %#v", response)
+	}
+	if response.Operations[0].TargetID != fmt.Sprintf("auth-%d", operationPageSize+9) || response.Operations[len(response.Operations)-1].TargetID != "auth-10" {
+		t.Fatalf("default retention boundaries = first:%#v last:%#v", response.Operations[0], response.Operations[len(response.Operations)-1])
+	}
+	if files := operationSegmentFiles(t, operationStoreDirectory(dataDir)); len(files) != 0 {
+		t.Fatalf("default retention created segments: %#v", files)
+	}
+	hugePage := journal.List(OperationQuery{Page: int(^uint(0) >> 1)})
+	if len(hugePage.Operations) != 0 || hugePage.Total != operationPageSize || hugePage.Pages != 1 {
+		t.Fatalf("huge page boundary = %#v", hugePage)
+	}
+	reloaded := NewOperationJournal()
+	reloaded.Configure(Config{DataDir: dataDir})
+	if loaded := reloaded.List(OperationQuery{Page: 1}); loaded.Total != operationPageSize || loaded.PageSize != operationPageSize {
+		t.Fatalf("reloaded default retention = %#v", loaded)
+	}
+
+	legacyDir := t.TempDir()
+	legacyOperations := make([]OperationEntry, 0, operationPageSize+10)
+	for index := 0; index < operationPageSize+10; index++ {
+		legacyOperations = append(legacyOperations, operationTestEntry(index, now.Add(time.Duration(index)*time.Second)))
+	}
+	if errSave := savePrivateJSON(legacyOperationStorePath(legacyDir), legacyPersistedOperationState{
+		Version: legacyOperationStoreVersion, Operations: legacyOperations,
+	}); errSave != nil {
+		t.Fatal(errSave)
+	}
+	migrated := NewOperationJournal()
+	migrated.Configure(Config{DataDir: legacyDir})
+	if result := migrated.List(OperationQuery{Page: 1}); result.Total != operationPageSize || result.Operations[len(result.Operations)-1].TargetID != "auth-10" {
+		t.Fatalf("legacy migration = %#v", result)
+	}
+	if _, errStat := os.Stat(legacyOperationStorePath(legacyDir)); !os.IsNotExist(errStat) {
+		t.Fatalf("legacy journal was not removed after migration: %v", errStat)
+	}
+}
+
+func TestOperationJournalExtendedHistoryRotatesUpsertsDisablesAndClears(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 7, 21, 11, 0, 0, 0, time.UTC)
+	journal := NewOperationJournal()
+	journal.now = func() time.Time { return now }
+	journal.Configure(Config{DataDir: dataDir})
+	settings, errEnable := journal.UpdateRetentionSettings(true)
+	if errEnable != nil || !settings.ExtendedHistory || settings.PageSize != operationPageSize {
+		t.Fatalf("enable extended history settings=%#v err=%v", settings, errEnable)
+	}
+	for index := 0; index <= operationPageSize; index++ {
+		now = now.Add(time.Second)
+		journal.Record(operationTestEntry(index, now))
+	}
+	settings = journal.RetentionSettings()
+	if settings.Retained != operationPageSize+1 || settings.ArchivedSegments != 1 {
+		t.Fatalf("rotated settings = %#v", settings)
+	}
+	if files := operationSegmentFiles(t, operationStoreDirectory(dataDir)); len(files) != 1 {
+		t.Fatalf("rotated segment files = %#v", files)
+	}
+	firstPage := journal.List(OperationQuery{Page: 1, PageSize: 1})
+	secondPage := journal.List(OperationQuery{Page: 2, PageSize: 1})
+	if firstPage.PageSize != operationPageSize || firstPage.Total != operationPageSize+1 || len(firstPage.Operations) != operationPageSize ||
+		secondPage.Pages != 2 || len(secondPage.Operations) != 1 {
+		t.Fatalf("extended fixed pages first=%#v second=%#v", firstPage, secondPage)
+	}
+
+	now = now.Add(time.Minute)
+	updated := journal.Upsert("event-0", OperationEntry{
+		Category: OperationCategoryBatch, Action: OperationActionBatchEdit, Status: OperationStatusFailed,
+		Source: OperationSourceManual, Scope: OperationScopeSelected, Failed: 1,
+		StartedAt: now.Add(-time.Minute), FinishedAt: now, ReasonCode: "operation_failed",
+	})
+	if updated.EventID != "event-0" || updated.TargetID != "auth-0" || updated.Status != OperationStatusFailed {
+		t.Fatalf("archived upsert = %#v", updated)
+	}
+	all := append(journal.List(OperationQuery{Page: 1}).Operations, journal.List(OperationQuery{Page: 2}).Operations...)
+	matched := 0
+	for _, entry := range all {
+		if entry.EventID == "event-0" {
+			matched++
+			if entry.Status != OperationStatusFailed {
+				t.Fatalf("archived upsert was not persisted: %#v", entry)
+			}
+		}
+	}
+	if matched != 1 {
+		t.Fatalf("archived upsert matches = %d", matched)
+	}
+	orphanPath := operationSegmentPath(operationStoreDirectory(dataDir), 99999999)
+	if errWrite := os.WriteFile(orphanPath, []byte(`{"version":1,"operations":[]}`), 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+
+	reloaded := NewOperationJournal()
+	reloaded.Configure(Config{DataDir: dataDir})
+	if loaded := reloaded.RetentionSettings(); !loaded.ExtendedHistory || loaded.Retained != operationPageSize+1 || loaded.ArchivedSegments != 1 {
+		t.Fatalf("reloaded extended settings = %#v", loaded)
+	}
+	if _, errStat := os.Stat(orphanPath); !os.IsNotExist(errStat) {
+		t.Fatalf("orphaned segment was not removed: %v", errStat)
+	}
+	disabled, errDisable := reloaded.UpdateRetentionSettings(false)
+	if errDisable != nil || disabled.ExtendedHistory || disabled.Retained != operationPageSize || disabled.ArchivedSegments != 0 {
+		t.Fatalf("disable extended history settings=%#v err=%v", disabled, errDisable)
+	}
+	if files := operationSegmentFiles(t, operationStoreDirectory(dataDir)); len(files) != 0 {
+		t.Fatalf("disable retained segment files: %#v", files)
+	}
+
+	if _, errEnable = reloaded.UpdateRetentionSettings(true); errEnable != nil {
+		t.Fatal(errEnable)
+	}
+	now = now.Add(time.Second)
+	reloaded.now = func() time.Time { return now }
+	reloaded.Record(operationTestEntry(operationPageSize+1, now))
+	if files := operationSegmentFiles(t, operationStoreDirectory(dataDir)); len(files) != 1 {
+		t.Fatalf("second rotation segment files = %#v", files)
+	}
+	cleared := reloaded.Clear()
+	if cleared.Action != OperationActionJournalClear || reloaded.RetentionSettings().Retained != 1 {
+		t.Fatalf("clear result=%#v settings=%#v", cleared, reloaded.RetentionSettings())
+	}
+	if files := operationSegmentFiles(t, operationStoreDirectory(dataDir)); len(files) != 0 {
+		t.Fatalf("clear retained segment files: %#v", files)
+	}
+}
+
+func TestOperationJournalPagesAcrossSegmentsAndExportsOneSortedSnapshot(t *testing.T) {
+	dataDir := t.TempDir()
+	journal := NewOperationJournal()
+	journal.Configure(Config{DataDir: dataDir})
+	if _, errEnable := journal.UpdateRetentionSettings(true); errEnable != nil {
+		t.Fatal(errEnable)
+	}
+	base := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	all := make([]OperationEntry, 0, operationPageSize*2+5)
+	for index := 0; index < operationPageSize*2+5; index++ {
+		all = append(all, operationTestEntry(index, base.Add(time.Duration(index)*time.Second)))
+	}
+	store := operationStoreDirectory(dataDir)
+	if errSave := saveOperationSegment(store, 1, all[:operationPageSize]); errSave != nil {
+		t.Fatal(errSave)
+	}
+	if errSave := saveOperationSegment(store, 2, all[operationPageSize:operationPageSize*2]); errSave != nil {
+		t.Fatal(errSave)
+	}
+	journal.mu.Lock()
+	journal.segments = []persistedOperationSegment{{ID: 1, Count: operationPageSize}, {ID: 2, Count: operationPageSize}}
+	journal.operations = cloneOperationEntries(all[operationPageSize*2:])
+	journal.nextSegmentID = 3
+	journal.mu.Unlock()
+
+	first := journal.List(OperationQuery{Page: 1})
+	second := journal.List(OperationQuery{Page: 2})
+	third := journal.List(OperationQuery{Page: 3})
+	if first.Total != len(all) || first.Summary.Total != len(all) || first.Summary.Succeeded != len(all) || first.Pages != 3 {
+		t.Fatalf("first page summary = %#v", first)
+	}
+	if len(first.Operations) != operationPageSize || first.Operations[0].TargetID != "auth-1004" || first.Operations[operationPageSize-1].TargetID != "auth-505" {
+		t.Fatalf("first page boundaries = first:%#v last:%#v", first.Operations[0], first.Operations[len(first.Operations)-1])
+	}
+	if len(second.Operations) != operationPageSize || second.Operations[0].TargetID != "auth-504" || second.Operations[operationPageSize-1].TargetID != "auth-5" {
+		t.Fatalf("second page boundaries = first:%#v last:%#v", second.Operations[0], second.Operations[len(second.Operations)-1])
+	}
+	if len(third.Operations) != 5 || third.Operations[0].TargetID != "auth-4" || third.Operations[4].TargetID != "auth-0" {
+		t.Fatalf("third page = %#v", third.Operations)
+	}
+	exported, errExport := journal.ExportSnapshot(OperationQuery{})
+	if errExport != nil || len(exported) != len(all) || exported[0].TargetID != "auth-1004" || exported[len(exported)-1].TargetID != "auth-0" {
+		t.Fatalf("exported snapshot count=%d first=%#v last=%#v error=%v", len(exported), exported[0], exported[len(exported)-1], errExport)
+	}
+}
+
+func operationTestEntry(index int, at time.Time) OperationEntry {
+	return OperationEntry{
+		EventID: fmt.Sprintf("event-%d", index), Category: OperationCategoryBatch,
+		Action: OperationActionBatchEdit, Status: OperationStatusSucceeded, Source: OperationSourceManual,
+		Scope: OperationScopeSingle, TargetID: fmt.Sprintf("auth-%d", index), TargetCount: 1, Succeeded: 1,
+		StartedAt: at, FinishedAt: at,
+	}
+}
+
+func operationSegmentFiles(t *testing.T, store string) []string {
+	t.Helper()
+	entries, errRead := os.ReadDir(store)
+	if errRead != nil {
+		if os.IsNotExist(errRead) {
+			return nil
+		}
+		t.Fatal(errRead)
+	}
+	files := make([]string, 0)
+	for _, entry := range entries {
+		if operationSegmentFilename(entry.Name()) {
+			files = append(files, entry.Name())
+		}
+	}
+	return files
 }
 
 func TestOperationManagementRoutesListExportClearAndStrictRecord(t *testing.T) {
@@ -151,13 +363,32 @@ func TestOperationManagementRoutesListExportClearAndStrictRecord(t *testing.T) {
 	if entry.Version != "0.3.0" || entry.ReasonCode != "restart_required" || entry.Source != OperationSourcePluginStore {
 		t.Fatalf("entry = %#v", entry)
 	}
+	settingsPath := "/v0/management/plugins/cpa-account-config-manager/operations/settings"
+	defaultSettings := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{Method: http.MethodGet, Path: settingsPath})
+	if defaultSettings.StatusCode != http.StatusOK || !bytes.Contains(defaultSettings.Body, []byte(`"extended_history":false`)) ||
+		!bytes.Contains(defaultSettings.Body, []byte(`"page_size":500`)) {
+		t.Fatalf("default settings = %d %s", defaultSettings.StatusCode, defaultSettings.Body)
+	}
+	invalidSettings := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Body: []byte(`{}`),
+	})
+	if invalidSettings.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid settings = %d %s", invalidSettings.StatusCode, invalidSettings.Body)
+	}
+	savedSettings := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Body: []byte(`{"extended_history":true}`),
+	})
+	if savedSettings.StatusCode != http.StatusOK || !bytes.Contains(savedSettings.Body, []byte(`"extended_history":true`)) {
+		t.Fatalf("saved settings = %d %s", savedSettings.StatusCode, savedSettings.Body)
+	}
 
 	listed := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   "/v0/management/plugins/cpa-account-config-manager/operations",
 		Query:  url.Values{"category": []string{"update"}, "page_size": []string{"20"}},
 	})
-	if listed.StatusCode != http.StatusOK || !bytes.Contains(listed.Body, []byte(`"total":1`)) {
+	if listed.StatusCode != http.StatusOK || !bytes.Contains(listed.Body, []byte(`"total":1`)) ||
+		!bytes.Contains(listed.Body, []byte(`"page_size":500`)) || !bytes.Contains(listed.Body, []byte(`"extended_history":true`)) {
 		t.Fatalf("list response = %d %s", listed.StatusCode, listed.Body)
 	}
 	exported := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{

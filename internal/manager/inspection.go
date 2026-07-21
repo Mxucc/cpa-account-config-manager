@@ -572,6 +572,12 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 		e.mu.Unlock()
 		return
 	}
+	if e.records == nil {
+		e.records = make(map[string]inspectionRecord)
+	}
+	if _, exists := e.records[authIndex]; !exists {
+		e.ensureInspectionRecordCapacityLocked(authIndex)
+	}
 	inspection := e.records[authIndex]
 	inspection.Result.ID = authIndex
 	applyUsageRecordToInspection(&inspection, record, e.policy, now)
@@ -1473,6 +1479,85 @@ func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {
 	}
 }
 
+func (e *InspectionEngine) ensureInspectionRecordCapacityLocked(incomingID string) {
+	if incomingID == "" {
+		return
+	}
+	for len(e.records) >= maxInspectionAccounts {
+		candidate := oldestEvictableInspectionRecord(e.records)
+		if candidate == "" {
+			return
+		}
+		delete(e.records, candidate)
+	}
+}
+
+func oldestEvictableInspectionRecord(records map[string]inspectionRecord) string {
+	candidate := ""
+	protectedCandidate := ""
+	for id, record := range records {
+		if inspectionRecordProtected(record) {
+			if olderInspectionRecord(id, record, protectedCandidate, records[protectedCandidate]) {
+				protectedCandidate = id
+			}
+			continue
+		}
+		if olderInspectionRecord(id, record, candidate, records[candidate]) {
+			candidate = id
+		}
+	}
+	if candidate != "" {
+		return candidate
+	}
+	return protectedCandidate
+}
+
+func inspectionRecordProtected(record inspectionRecord) bool {
+	return record.Result.OwnedDisable || record.Result.DeleteEligibleAt != nil ||
+		record.Result.Recommendation == InspectionRecommendationDelete ||
+		record.Result.AutoActionStatus == InspectionActionPending ||
+		!record.DeleteRetryAfter.IsZero()
+}
+
+func olderInspectionRecord(id string, record inspectionRecord, candidateID string, candidate inspectionRecord) bool {
+	if candidateID == "" {
+		return true
+	}
+	activity := inspectionRecordActivityTime(record)
+	candidateActivity := inspectionRecordActivityTime(candidate)
+	if activity.Equal(candidateActivity) {
+		return id < candidateID
+	}
+	return activity.Before(candidateActivity)
+}
+
+func inspectionRecordActivityTime(record inspectionRecord) time.Time {
+	activity := record.Result.LastCheckedAt
+	for _, observedAt := range []time.Time{
+		record.Signal.LastFailureAt,
+		record.Signal.LastSuccessAt,
+		record.Probe.TestedAt,
+		record.DisabledAt,
+		record.DeleteRetryAfter,
+	} {
+		if observedAt.After(activity) {
+			activity = observedAt
+		}
+	}
+	for _, observedAt := range []*time.Time{
+		record.Result.LastFailureAt,
+		record.Result.LastSuccessAt,
+		record.Result.ProbeTestedAt,
+		record.Result.RunObservedAt,
+		record.Result.ReviewedAt,
+	} {
+		if observedAt != nil && observedAt.After(activity) {
+			activity = *observedAt
+		}
+	}
+	return activity
+}
+
 func (e *InspectionEngine) startRunHistoryLocked(mode, source string, startedAt time.Time) {
 	mode = normalizeInspectionRunMode(mode)
 	source = normalizeInspectionSweepSource(source)
@@ -1708,6 +1793,23 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 		result.FailureStreak = max(result.FailureStreak, record.Signal.ConsecutiveFailures, record.Probe.ConsecutiveFailures)
 	} else {
 		result.CircuitReasonCode = ""
+	}
+	if result.OwnedDisable && result.Disabled && decision.Health == InspectionHealthDeactivated &&
+		decision.Recommendation == InspectionRecommendationDelete && decision.Confidence == InspectionConfidenceHigh &&
+		(record.DisableReason != decision.ReasonCode) {
+		switch decision.ReasonCode {
+		case "account_deactivated", "workspace_deactivated":
+			record.DisableReason = decision.ReasonCode
+			record.DisabledAt = now.UTC()
+			record.DisabledRecoverAfter = time.Time{}
+			record.DeleteRetryAfter = time.Time{}
+			result.RecoverAfter = nil
+			result.DeleteEligibleAt = nil
+			result.AutoAction = ""
+			result.AutoActionStatus = ""
+			result.CircuitOpen = false
+			result.CircuitReasonCode = ""
+		}
 	}
 	record.Result = result
 }

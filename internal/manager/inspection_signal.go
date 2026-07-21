@@ -283,6 +283,9 @@ func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRe
 
 func decideInspection(account Account, record inspectionRecord, now time.Time) inspectionDecision {
 	now = now.UTC()
+	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
+		return decision
+	}
 	if limited, recoverAfter, quotaWindow := accountQuotaLimited(account, now); limited {
 		return inspectionDecision{
 			Health:              InspectionHealthQuotaLimited,
@@ -294,9 +297,6 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			SignalSource:        InspectionSignalNative,
 			QuotaWindow:         quotaWindow,
 		}
-	}
-	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
-		return decision
 	}
 	if account.Disabled && !record.Result.OwnedDisable {
 		return inspectionDecision{

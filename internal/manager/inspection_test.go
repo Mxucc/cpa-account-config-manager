@@ -27,6 +27,54 @@ func TestInspectionEmptyCollectionsUseJSONArrays(t *testing.T) {
 	}
 }
 
+func TestPassiveInspectionRecordsStayBoundedAndPreserveProtectedCandidates(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 14, 0, 0, 0, time.UTC)
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.now = func() time.Time { return now }
+	for index := 0; index < maxInspectionAccounts; index++ {
+		id := fmt.Sprintf("passive-%05d", index)
+		engine.records[id] = inspectionRecord{Result: InspectionResult{
+			ID: id, LastCheckedAt: now.Add(time.Duration(index) * time.Second),
+		}}
+	}
+	protectedID := "passive-00000"
+	protected := engine.records[protectedID]
+	protected.Result.OwnedDisable = true
+	protected.Result.Recommendation = InspectionRecommendationDelete
+	engine.records[protectedID] = protected
+
+	now = now.Add(24 * time.Hour)
+	engine.Observe(cpaapi.UsageRecord{AuthIndex: "passive-new", Provider: "codex"})
+	if len(engine.records) != maxInspectionAccounts {
+		t.Fatalf("runtime records = %d, want %d", len(engine.records), maxInspectionAccounts)
+	}
+	if _, exists := engine.records[protectedID]; !exists {
+		t.Fatal("protected delete/disable candidate was evicted")
+	}
+	if _, exists := engine.records["passive-00001"]; exists {
+		t.Fatal("oldest unprotected passive record was not evicted")
+	}
+	if _, exists := engine.records["passive-new"]; !exists {
+		t.Fatal("new passive record was not retained")
+	}
+
+	oversized := cloneInspectionRecords(engine.records)
+	oversized["overflow"] = inspectionRecord{Result: InspectionResult{ID: "overflow"}}
+	path := inspectionStorePath(t.TempDir())
+	if errSave := saveInspectionState(path, persistedInspectionState{
+		Version: inspectionStoreVersion, Policy: defaultInspectionPolicy(), Records: oversized,
+	}); errSave != nil {
+		t.Fatalf("save bounded inspection state: %v", errSave)
+	}
+	loaded, errLoad := loadInspectionState(path)
+	if errLoad != nil {
+		t.Fatalf("load bounded inspection state: %v", errLoad)
+	}
+	if len(loaded.Records) != maxInspectionAccounts {
+		t.Fatalf("persisted records = %d, want %d", len(loaded.Records), maxInspectionAccounts)
+	}
+}
+
 func TestInspectionStoreMigratesLegacyModelAuthenticationReauthToDisable(t *testing.T) {
 	records := sanitizeInspectionRecords(map[string]inspectionRecord{
 		"legacy-model": {

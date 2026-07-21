@@ -28,6 +28,7 @@ import type {
   OperationExportFormat,
   OperationFilters,
   OperationListResponse,
+  OperationRetentionSettings,
   PluginInstallResult,
   PluginStoreResponse,
   PolicySnapshot,
@@ -546,14 +547,42 @@ export async function recordBrowserOperation(action: "update_install", status: "
   });
 }
 
-export async function listOperations(page: number, pageSize: number, filters: OperationFilters = {}): Promise<OperationListResponse> {
-  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+export async function listOperations(page: number, filters: OperationFilters = {}, signal?: AbortSignal): Promise<OperationListResponse> {
+  const query = new URLSearchParams({ page: String(page), page_size: "500" });
   if (filters.category) query.set("category", filters.category);
   if (filters.status) query.set("status", filters.status);
   if (filters.source) query.set("source", filters.source);
   if (filters.search) query.set("search", filters.search);
-  const response = await request<OperationListResponse>("/operations", {}, query);
-  return { ...response, operations: arrayOrEmpty(response.operations) };
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
+  let response: OperationListResponse;
+  try {
+    response = await request<OperationListResponse>("/operations", { signal: controller.signal }, query);
+  } finally {
+    globalThis.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
+  const total = Number.isFinite(response.total) ? Math.max(0, response.total) : 0;
+  return {
+    ...response,
+    operations: arrayOrEmpty(response.operations),
+    total,
+    page_size: 500,
+    extended_history: response.extended_history === true,
+    archived_segments: Number.isFinite(response.archived_segments) ? Math.max(0, response.archived_segments) : 0,
+    retention_limit: 500,
+    retained: Number.isFinite(response.retained) ? Math.max(0, response.retained) : total,
+  };
+}
+
+export async function saveOperationRetentionSettings(extendedHistory: boolean): Promise<OperationRetentionSettings> {
+  return request<OperationRetentionSettings>("/operations/settings", {
+    method: "PUT",
+    body: JSON.stringify({ extended_history: extendedHistory }),
+  });
 }
 
 export async function clearOperations(): Promise<{ operation: OperationEntry; retained: number }> {

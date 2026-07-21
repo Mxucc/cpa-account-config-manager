@@ -340,12 +340,17 @@ export default function App() {
   useEffect(() => {
     if (!policyOpen || authState !== "ready" || !policySnapshot) return;
     let cancelled = false;
+    let polling = false;
     const refresh = async () => {
+      if (polling) return;
+      polling = true;
       try {
         const snapshot = await api.getDefaultPolicy();
         if (!cancelled) setPolicySnapshot(snapshot);
       } catch (error) {
         if (!cancelled && error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      } finally {
+        polling = false;
       }
     };
     const timer = window.setInterval(() => void refresh(), 2000);

@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Archive,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -16,7 +17,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
@@ -47,11 +48,15 @@ const emptyResponse: OperationListResponse = {
   summary: { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 },
   total: 0,
   page: 1,
-  page_size: 50,
+  page_size: 500,
   pages: 0,
+  extended_history: false,
+  archived_segments: 0,
+  retention_limit: 500,
+  retained: 0,
 };
 
-const pageSizeOptions = [20, 50, 100, 200] as const;
+const operationPageSize = 500;
 
 const categoryLabels: Record<OperationCategory, UIMessageKey> = {
   account: "ui.accounts",
@@ -167,7 +172,6 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
   const { locale, tx, formatDateTime } = useI18n();
   const [data, setData] = useState<OperationListResponse>(emptyResponse);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
   const [category, setCategory] = useState<OperationCategory | "">("");
   const [status, setStatus] = useState<OperationStatus | "">("");
   const [source, setSource] = useState<OperationSource | "">("");
@@ -182,6 +186,8 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
   const [clearOpen, setClearOpen] = useState(false);
   const [clearConfirmed, setClearConfirmed] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [savingRetention, setSavingRetention] = useState(false);
+  const refreshSequence = useRef(0);
 
   const filters = useMemo<OperationFilters>(() => ({ category, status, source, search }), [category, search, source, status]);
 
@@ -193,19 +199,22 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
     setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.operation_log_request_failed"), locale));
   }, [locale, onAPIError]);
 
-  const refresh = useCallback(async (quiet = false) => {
+  const refresh = useCallback(async (quiet = false, signal?: AbortSignal) => {
+    const sequence = ++refreshSequence.current;
     if (!quiet) setLoading(true);
     try {
-      const next = await api.listOperations(page, pageSize, filters);
+      const next = await api.listOperations(page, filters, signal);
+      if (signal?.aborted || sequence !== refreshSequence.current) return;
       setData(next);
       setError("");
       if (next.pages > 0 && page > next.pages) setPage(next.pages);
     } catch (caught) {
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       handleError(caught);
     } finally {
-      if (!quiet) setLoading(false);
+      if (!quiet && sequence === refreshSequence.current) setLoading(false);
     }
-  }, [filters, handleError, page, pageSize]);
+  }, [filters, handleError, page]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -216,9 +225,23 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
   }, [searchDraft]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(true), 5_000);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    let polling = false;
+    const poll = async (quiet: boolean) => {
+      if (polling) return;
+      polling = true;
+      try {
+        await refresh(quiet, controller.signal);
+      } finally {
+        polling = false;
+      }
+    };
+    void poll(false);
+    const timer = window.setInterval(() => void poll(true), 5_000);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [refresh]);
 
   const download = async () => {
@@ -232,6 +255,28 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
       handleError(caught);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const saveRetention = async (enabled: boolean) => {
+    setSavingRetention(true);
+    try {
+      const settings = await api.saveOperationRetentionSettings(enabled);
+      setData((current) => ({
+        ...current,
+        extended_history: settings.extended_history,
+        archived_segments: settings.archived_segments,
+        retention_limit: operationPageSize,
+        retained: settings.retained,
+        page_size: operationPageSize,
+      }));
+      setPage(1);
+      await refresh();
+      onNotice(tx(settings.extended_history ? "ui.extended_operation_history_enabled" : "ui.extended_operation_history_disabled"));
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setSavingRetention(false);
     }
   };
 
@@ -259,9 +304,14 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
       <header className="operation-toolbar">
         <div className="operation-title">
           <span className="operation-title-icon"><ScrollText size={18} /></span>
-          <div><strong>{tx("ui.account_manager_operation_log")}</strong><span>{data.storage_error ? tx("ui.storage_state_error") : tx("ui.retaining_the_latest_count_audit_records", { count: Math.max(data.summary.total, data.total) })}</span></div>
+          <div><strong>{tx("ui.account_manager_operation_log")}</strong><span>{data.storage_error ? tx("ui.storage_state_error") : data.extended_history ? tx("ui.retaining_count_audit_records_in_count_files", { count: data.retained, files: data.archived_segments + 1 }) : tx("ui.retaining_the_latest_count_audit_records", { count: data.retention_limit || operationPageSize })}</span></div>
         </div>
         <div className="operation-toolbar-actions">
+          <label className="operation-retention-control" title={tx("ui.retain_operation_logs_beyond_latest_count", { count: operationPageSize })}>
+            <Archive size={15} />
+            <span>{tx("ui.extended_operation_history")}</span>
+            <input type="checkbox" checked={data.extended_history} disabled={savingRetention || loading} onChange={(event) => void saveRetention(event.target.checked)} aria-label={tx("ui.extended_operation_history")} />
+          </label>
           <button className="button" type="button" onClick={() => setExportOpen(true)}><Download size={16} />{tx("ui.export")}</button>
           <IconButton label={tx("ui.refresh_operation_log")} disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
           <IconButton className="operation-clear-button" label={tx("ui.clear_operation_log")} onClick={() => { setClearConfirmed(false); setClearOpen(true); }}><Trash2 size={17} /></IconButton>
@@ -325,7 +375,7 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
       </div>
 
       <div className="pagination operation-pagination">
-        <label className="page-size-control"><span>{tx("ui.per_page")}</span><select aria-label={tx("ui.operation_logs_per_page")} value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>{pageSizeOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <span className="operation-fixed-page-size">{tx("ui.fixed_count_operation_logs_per_page", { count: operationPageSize })}</span>
         <span>{tx("ui.page_page_slash_pages_count_records", { page: data.page || 1, pages: data.pages || 1, count: data.total })}</span>
         <IconButton label={tx("ui.previous_log_page")} disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={17} /></IconButton>
         <strong>{page}</strong>

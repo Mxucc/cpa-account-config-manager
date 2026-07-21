@@ -132,7 +132,7 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 func saveInspectionState(path string, state persistedInspectionState) error {
 	state.Version = inspectionStoreVersion
 	state.Policy = normalizeInspectionPolicy(state.Policy)
-	state.Records = cloneInspectionRecords(state.Records)
+	state.Records = sanitizeInspectionRecords(state.Records)
 	state.Actions = append([]InspectionAction(nil), state.Actions...)
 	state.ProbeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)
 	state.RunHealth = append([]string(nil), state.RunHealth...)

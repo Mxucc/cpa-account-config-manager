@@ -66,6 +66,116 @@ func TestInspectionProbeEligibilityRespectsManualDisablePolicyAndOwnership(t *te
 	}
 }
 
+func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
+	resetAt := now.Add(6 * time.Hour)
+	account := Account{
+		ID: "cached-quota", Name: "cached-quota.json", Provider: "codex",
+		Disabled: true, Editable: true, NextRetryAfter: &resetAt,
+		Usage: &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{
+			FiveHour: &UsageWindowSnapshot{UsedPercent: 100, ResetAt: &resetAt},
+		}},
+	}
+	tests := []struct {
+		name               string
+		probe              inspectionProbeSignal
+		wantHealth         string
+		wantReason         string
+		wantRecommendation string
+	}{
+		{
+			name: "deactivated workspace is deleted",
+			probe: inspectionProbeSignal{
+				Status: "unavailable", Kind: InspectionProbeKindCredential,
+				ReasonCode: "workspace_deactivated", StatusCode: http.StatusPaymentRequired, TestedAt: now,
+			},
+			wantHealth: InspectionHealthDeactivated, wantReason: "workspace_deactivated", wantRecommendation: InspectionRecommendationDelete,
+		},
+		{
+			name: "successful model probe is healthy",
+			probe: inspectionProbeSignal{
+				Status: "available", Kind: InspectionProbeKindModel,
+				ReasonCode: "model_response_ok", StatusCode: http.StatusOK, TestedAt: now,
+			},
+			wantHealth: InspectionHealthHealthy, wantReason: "model_response_ok", wantRecommendation: InspectionRecommendationKeep,
+		},
+		{
+			name: "credential failure requires reauthentication",
+			probe: inspectionProbeSignal{
+				Status: "unavailable", Kind: InspectionProbeKindCredential,
+				ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now,
+			},
+			wantHealth: InspectionHealthInvalidCredentials, wantReason: "authentication_failed", wantRecommendation: InspectionRecommendationReauth,
+		},
+		{
+			name: "current quota response remains quota limited",
+			probe: inspectionProbeSignal{
+				Status: "review", Kind: InspectionProbeKindCredential,
+				ReasonCode: "quota_limited", StatusCode: http.StatusPaymentRequired, TestedAt: now,
+			},
+			wantHealth: InspectionHealthQuotaLimited, wantReason: "quota_limited", wantRecommendation: InspectionRecommendationDisable,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decision := decideInspection(account, inspectionRecord{Probe: test.probe}, now)
+			if decision.Health != test.wantHealth || decision.ReasonCode != test.wantReason || decision.Recommendation != test.wantRecommendation || decision.SignalSource != InspectionSignalActiveProbe {
+				t.Fatalf("fresh probe decision = %#v", decision)
+			}
+		})
+	}
+
+	staleProbe := inspectionProbeSignal{
+		Status: "available", Kind: InspectionProbeKindModel,
+		ReasonCode: "model_response_ok", StatusCode: http.StatusOK, TestedAt: now.Add(-modelProbeEvidenceTTL - time.Second),
+	}
+	staleDecision := decideInspection(account, inspectionRecord{Probe: staleProbe}, now)
+	if staleDecision.Health != InspectionHealthQuotaLimited || staleDecision.ReasonCode != "quota_exhausted" || staleDecision.SignalSource != InspectionSignalNative {
+		t.Fatalf("stale probe overrode cached quota: %#v", staleDecision)
+	}
+}
+
+func TestInspectionDeactivatedDisabledAccountEntersDeleteQueue(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
+	resetAt := now.Add(6 * time.Hour)
+	account := Account{
+		ID: "deactivated", Name: "deactivated.json", Provider: "codex",
+		Disabled: true, Editable: true, NextRetryAfter: &resetAt,
+	}
+	record := inspectionRecord{
+		Result: InspectionResult{OwnedDisable: true, CircuitOpen: true, CircuitReasonCode: "quota_limited"},
+		Probe: inspectionProbeSignal{
+			Status: "unavailable", Kind: InspectionProbeKindCredential,
+			ReasonCode: "workspace_deactivated", StatusCode: http.StatusPaymentRequired, TestedAt: now,
+		},
+		DisableReason: "quota_exhausted", DisabledRecoverAfter: resetAt,
+	}
+	decision := decideInspection(account, record, now)
+	updateInspectionRecord(&record, account, decision, now)
+	summary := summarizeInspectionRemediation([]InspectionResult{record.Result})
+	if record.Result.Recommendation != InspectionRecommendationDelete || !inspectionManualDeleteAllowed(record.Result) ||
+		summary.SuggestedDelete != 1 || summary.Actionable != 1 || summary.Handled != 0 {
+		t.Fatalf("deactivated disabled remediation result=%#v summary=%#v", record.Result, summary)
+	}
+	if record.DisableReason != "workspace_deactivated" || !record.DisabledAt.Equal(now) ||
+		!record.DisabledRecoverAfter.IsZero() || record.Result.RecoverAfter != nil ||
+		record.Result.CircuitOpen || record.Result.CircuitReasonCode != "" {
+		t.Fatalf("deactivation did not replace stale quota disable state: %#v", record)
+	}
+	policy := defaultInspectionPolicy()
+	policy.AutoDelete = true
+	policy.DeleteGraceHours = 24
+	if markInspectionDeleteCandidate(policy, &record, now.Add(23*time.Hour)) {
+		t.Fatal("deactivated account became deletable before the new grace period elapsed")
+	}
+	if record.Result.DeleteEligibleAt == nil || !record.Result.DeleteEligibleAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("deactivation delete eligibility = %#v", record.Result.DeleteEligibleAt)
+	}
+	if !markInspectionDeleteCandidate(policy, &record, now.Add(24*time.Hour)) {
+		t.Fatal("deactivated account did not become deletable at the grace-period boundary")
+	}
+}
+
 func TestInspectionRunTargetModesAndInvalidHealthBoundaries(t *testing.T) {
 	accounts := []Account{{ID: "healthy"}, {ID: "review"}, {ID: "new"}, {ID: "manual", Disabled: true}}
 	records := map[string]inspectionRecord{

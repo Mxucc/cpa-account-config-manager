@@ -7,8 +7,7 @@ import (
 )
 
 const (
-	maxOperationEntries  = 2_000
-	maxOperationPageSize = 200
+	operationPageSize = 500
 
 	OperationCategoryAccount       = "account"
 	OperationCategoryBatch         = "batch"
@@ -99,13 +98,17 @@ type OperationSummary struct {
 }
 
 type OperationListResponse struct {
-	Operations   []OperationEntry `json:"operations"`
-	Summary      OperationSummary `json:"summary"`
-	Total        int              `json:"total"`
-	Page         int              `json:"page"`
-	PageSize     int              `json:"page_size"`
-	Pages        int              `json:"pages"`
-	StorageError string           `json:"storage_error,omitempty"`
+	Operations       []OperationEntry `json:"operations"`
+	Summary          OperationSummary `json:"summary"`
+	Total            int              `json:"total"`
+	Page             int              `json:"page"`
+	PageSize         int              `json:"page_size"`
+	Pages            int              `json:"pages"`
+	ExtendedHistory  bool             `json:"extended_history"`
+	ArchivedSegments int              `json:"archived_segments"`
+	RetentionLimit   int              `json:"retention_limit"`
+	Retained         int              `json:"retained"`
+	StorageError     string           `json:"storage_error,omitempty"`
 }
 
 type OperationQuery struct {
@@ -123,16 +126,22 @@ type OperationRecordRequest struct {
 	Version string `json:"version,omitempty"`
 }
 
+type OperationRetentionSettings struct {
+	ExtendedHistory  bool `json:"extended_history"`
+	PageSize         int  `json:"page_size"`
+	Retained         int  `json:"retained"`
+	ArchivedSegments int  `json:"archived_segments"`
+}
+
+type OperationRetentionUpdateRequest struct {
+	ExtendedHistory *bool `json:"extended_history"`
+}
+
 func normalizeOperationQuery(query OperationQuery) OperationQuery {
 	if query.Page < 1 {
 		query.Page = 1
 	}
-	if query.PageSize < 1 {
-		query.PageSize = 50
-	}
-	if query.PageSize > maxOperationPageSize {
-		query.PageSize = maxOperationPageSize
-	}
+	query.PageSize = operationPageSize
 	query.Category = normalizeOperationCategory(query.Category)
 	query.Status = normalizeOperationStatus(query.Status)
 	query.Source = normalizeOperationSource(query.Source)

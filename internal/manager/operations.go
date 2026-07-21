@@ -1,7 +1,9 @@
 package manager
 
 import (
+	"container/heap"
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -11,13 +13,16 @@ import (
 )
 
 type OperationJournal struct {
-	mu         sync.RWMutex
-	storeMu    sync.Mutex
-	store      string
-	operations []OperationEntry
-	storageErr string
-	configured bool
-	now        func() time.Time
+	mu              sync.RWMutex
+	storeMu         sync.Mutex
+	store           string
+	operations      []OperationEntry
+	segments        []persistedOperationSegment
+	nextSegmentID   uint64
+	extendedHistory bool
+	storageErr      string
+	configured      bool
+	now             func() time.Time
 }
 
 func NewOperationJournal() *OperationJournal {
@@ -28,27 +33,62 @@ func (j *OperationJournal) Configure(config Config) {
 	if j == nil {
 		return
 	}
-	path := operationStorePath(normalizeConfig(config).DataDir)
+	dataDir := normalizeConfig(config).DataDir
+	store := operationStoreDirectory(dataDir)
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
 	j.mu.RLock()
-	sameStore := j.configured && j.store == path
+	sameStore := j.configured && j.store == store
 	j.mu.RUnlock()
 	if sameStore {
 		return
 	}
-	operations := []OperationEntry(nil)
+	manifest, errLoad := loadOperationManifest(operationManifestPath(store))
+	migrated := false
 	storageErr := ""
-	state, errLoad := loadOperationState(path)
-	if errLoad == nil {
-		operations = state.Operations
-	} else if !errors.Is(errLoad, os.ErrNotExist) {
+	if errors.Is(errLoad, os.ErrNotExist) {
+		legacy, errLegacy := loadLegacyOperationState(legacyOperationStorePath(dataDir))
+		switch {
+		case errLegacy == nil:
+			manifest = persistedOperationManifest{
+				Version: operationManifestVersion, NextSegmentID: 1,
+				Operations: legacy.Operations,
+			}
+			migrated = true
+		case errors.Is(errLegacy, os.ErrNotExist):
+			manifest = persistedOperationManifest{Version: operationManifestVersion, NextSegmentID: 1}
+		default:
+			storageErr = "operation journal could not be loaded"
+		}
+	} else if errLoad != nil {
 		storageErr = "operation journal could not be loaded"
 	}
 	j.mu.Lock()
-	j.store = path
-	j.operations = operations
+	j.store = store
+	j.operations = cloneOperationEntries(manifest.Operations)
+	j.segments = append([]persistedOperationSegment(nil), manifest.Segments...)
+	j.nextSegmentID = manifest.NextSegmentID
+	if j.nextSegmentID == 0 {
+		j.nextSegmentID = 1
+	}
+	j.extendedHistory = manifest.ExtendedHistory
 	j.storageErr = storageErr
 	j.configured = true
 	j.mu.Unlock()
+	if storageErr == "" && migrated {
+		if errPersist := j.persistLocked(); errPersist == nil {
+			_ = os.Remove(legacyOperationStorePath(dataDir))
+		}
+	}
+	if storageErr == "" {
+		retainedSegments := manifest.Segments
+		if !manifest.ExtendedHistory {
+			retainedSegments = nil
+		}
+		if errRemove := removeUnreferencedOperationSegmentFiles(store, retainedSegments); errRemove != nil {
+			j.setStorageError("operation journal could not remove archived segments")
+		}
+	}
 }
 
 func (j *OperationJournal) Record(entry OperationEntry) OperationEntry {
@@ -59,11 +99,13 @@ func (j *OperationJournal) Record(entry OperationEntry) OperationEntry {
 	if !ok {
 		return OperationEntry{}
 	}
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
 	j.mu.Lock()
 	j.operations = append(j.operations, normalized)
 	j.trimLocked()
 	j.mu.Unlock()
-	j.persist()
+	_ = j.persistLocked()
 	return cloneOperationEntry(normalized)
 }
 
@@ -79,95 +121,127 @@ func (j *OperationJournal) Upsert(eventID string, entry OperationEntry) Operatio
 	if !ok {
 		return OperationEntry{}
 	}
-	changed := true
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
 	j.mu.Lock()
 	for index := range j.operations {
 		if j.operations[index].EventID != normalized.EventID {
 			continue
 		}
-		if normalized.Scope == "" {
-			normalized.Scope = j.operations[index].Scope
-		}
-		if normalized.TargetID == "" {
-			normalized.TargetID = j.operations[index].TargetID
-		}
-		if normalized.Format == "" {
-			normalized.Format = j.operations[index].Format
-		}
-		if normalized.Version == "" {
-			normalized.Version = j.operations[index].Version
-		}
-		normalized.ID = j.operations[index].ID
-		changed = !operationEntryEqual(j.operations[index], normalized)
+		normalized = mergeOperationEntry(j.operations[index], normalized)
+		changed := !operationEntryEqual(j.operations[index], normalized)
 		j.operations[index] = normalized
 		j.mu.Unlock()
 		if changed {
-			j.persist()
+			_ = j.persistLocked()
 		}
 		return cloneOperationEntry(normalized)
 	}
+	segments := append([]persistedOperationSegment(nil), j.segments...)
+	store := j.store
+	extended := j.extendedHistory
+	j.mu.Unlock()
+	if extended {
+		for index := len(segments) - 1; index >= 0; index-- {
+			operations, errLoad := loadOperationSegment(store, segments[index])
+			if errLoad != nil {
+				j.setStorageError("operation journal could not be loaded")
+				return OperationEntry{}
+			}
+			for entryIndex := range operations {
+				if operations[entryIndex].EventID != normalized.EventID {
+					continue
+				}
+				normalized = mergeOperationEntry(operations[entryIndex], normalized)
+				if operationEntryEqual(operations[entryIndex], normalized) {
+					return cloneOperationEntry(normalized)
+				}
+				operations[entryIndex] = normalized
+				if errSave := saveOperationSegment(store, segments[index].ID, operations); errSave != nil {
+					j.setStorageError("operation journal could not be persisted")
+					return OperationEntry{}
+				}
+				j.setStorageError("")
+				return cloneOperationEntry(normalized)
+			}
+		}
+	}
+	j.mu.Lock()
 	j.operations = append(j.operations, normalized)
 	j.trimLocked()
 	j.mu.Unlock()
-	j.persist()
+	_ = j.persistLocked()
 	return cloneOperationEntry(normalized)
 }
 
 func (j *OperationJournal) List(query OperationQuery) OperationListResponse {
 	query = normalizeOperationQuery(query)
 	if j == nil {
-		return OperationListResponse{Operations: []OperationEntry{}, Page: query.Page, PageSize: query.PageSize}
+		return OperationListResponse{Operations: []OperationEntry{}, Page: query.Page, PageSize: query.PageSize, RetentionLimit: operationPageSize}
 	}
+	j.storeMu.Lock()
 	j.mu.RLock()
-	operations := cloneOperationEntries(j.operations)
 	storageErr := j.storageErr
+	extended := j.extendedHistory
+	archivedSegments := len(j.segments)
+	retained := len(j.operations) + len(j.segments)*operationPageSize
 	j.mu.RUnlock()
-	sort.SliceStable(operations, func(left, right int) bool {
-		leftTime := operationSortTime(operations[left])
-		rightTime := operationSortTime(operations[right])
-		if leftTime.Equal(rightTime) {
-			return operations[left].ID > operations[right].ID
-		}
-		return leftTime.After(rightTime)
-	})
-	filtered := operations[:0]
-	for _, operation := range operations {
-		if query.Category != "" && operation.Category != query.Category {
-			continue
-		}
-		if query.Status != "" && operation.Status != query.Status {
-			continue
-		}
-		if query.Source != "" && operation.Source != query.Source {
-			continue
-		}
-		if query.Search != "" && !operationMatchesSearch(operation, query.Search) {
-			continue
-		}
-		filtered = append(filtered, operation)
+	start, selectionLimit := operationPageBounds(query.Page, query.PageSize, retained)
+	selected, summary, total, errLoad := j.selectOperationsLocked(query, selectionLimit)
+	if errLoad != nil {
+		storageErr = "operation journal could not be loaded"
+		j.setStorageError(storageErr)
 	}
-	total := len(filtered)
-	start := (query.Page - 1) * query.PageSize
-	if start > total {
-		start = total
+	j.storeMu.Unlock()
+	sort.Slice(selected, func(left, right int) bool { return operationNewer(selected[left], selected[right]) })
+	if start > len(selected) || start >= total {
+		start = len(selected)
 	}
 	end := start + query.PageSize
-	if end > total {
-		end = total
+	if end < start || end > len(selected) {
+		end = len(selected)
 	}
 	pages := 0
 	if total > 0 {
-		pages = (total + query.PageSize - 1) / query.PageSize
+		pages = (total-1)/query.PageSize + 1
 	}
 	return OperationListResponse{
-		Operations:   cloneOperationEntries(filtered[start:end]),
-		Summary:      summarizeOperations(filtered),
-		Total:        total,
-		Page:         query.Page,
-		PageSize:     query.PageSize,
-		Pages:        pages,
-		StorageError: storageErr,
+		Operations:       cloneOperationEntries(selected[start:end]),
+		Summary:          summary,
+		Total:            total,
+		Page:             query.Page,
+		PageSize:         query.PageSize,
+		Pages:            pages,
+		ExtendedHistory:  extended,
+		ArchivedSegments: archivedSegments,
+		RetentionLimit:   operationPageSize,
+		Retained:         retained,
+		StorageError:     storageErr,
 	}
+}
+
+// ExportSnapshot reads the filtered journal once. Export rendering already
+// requires an O(N) response body, so this avoids multiplying that cost by the
+// number of API pages while preserving the list ordering.
+func (j *OperationJournal) ExportSnapshot(query OperationQuery) ([]OperationEntry, error) {
+	query = normalizeOperationQuery(query)
+	if j == nil {
+		return []OperationEntry{}, nil
+	}
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
+	operations := make([]OperationEntry, 0)
+	errLoad := j.scanOperationsLocked(func(operation OperationEntry) {
+		if operationMatchesQuery(operation, query) {
+			operations = append(operations, operation)
+		}
+	})
+	if errLoad != nil {
+		j.setStorageError("operation journal could not be loaded")
+		return nil, errLoad
+	}
+	sort.Slice(operations, func(left, right int) bool { return operationNewer(operations[left], operations[right]) })
+	return operations, nil
 }
 
 func (j *OperationJournal) Clear() OperationEntry {
@@ -184,43 +258,123 @@ func (j *OperationJournal) Clear() OperationEntry {
 		StartedAt:  now,
 		FinishedAt: now,
 	}, now)
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
 	j.mu.Lock()
 	j.operations = []OperationEntry{entry}
+	j.segments = nil
 	j.mu.Unlock()
-	j.persist()
+	if errPersist := j.persistLocked(); errPersist == nil {
+		if errRemove := removeOperationSegmentFiles(j.store); errRemove != nil {
+			j.setStorageError("operation journal could not remove archived segments")
+		}
+	}
 	return cloneOperationEntry(entry)
 }
 
-func (j *OperationJournal) persist() {
+func (j *OperationJournal) RetentionSettings() OperationRetentionSettings {
 	if j == nil {
-		return
+		return OperationRetentionSettings{PageSize: operationPageSize}
+	}
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.retentionSettingsLocked()
+}
+
+func (j *OperationJournal) UpdateRetentionSettings(enabled bool) (OperationRetentionSettings, error) {
+	if j == nil {
+		return OperationRetentionSettings{PageSize: operationPageSize}, fmt.Errorf("operation journal is unavailable")
 	}
 	j.storeMu.Lock()
 	defer j.storeMu.Unlock()
 	j.mu.RLock()
-	path := j.store
-	configured := j.configured
-	operations := cloneOperationEntries(j.operations)
+	current := j.extendedHistory
 	j.mu.RUnlock()
-	if !configured || strings.TrimSpace(path) == "" {
+	if current == enabled {
+		return j.RetentionSettings(), nil
+	}
+	if !enabled {
+		operations, _, _, errLoad := j.selectOperationsLocked(OperationQuery{}, operationPageSize)
+		if errLoad != nil {
+			j.setStorageError("operation journal could not be loaded")
+			return j.RetentionSettings(), fmt.Errorf("operation journal history could not be loaded")
+		}
+		sort.Slice(operations, func(left, right int) bool { return operationNewer(operations[right], operations[left]) })
 		j.mu.Lock()
-		j.storageErr = "operation journal storage is unavailable"
+		previousOperations := cloneOperationEntries(j.operations)
+		previousSegments := append([]persistedOperationSegment(nil), j.segments...)
+		j.operations = cloneOperationEntries(operations)
+		j.segments = nil
+		j.extendedHistory = false
 		j.mu.Unlock()
-		return
-	}
-	errSave := saveOperationState(path, operations)
-	j.mu.Lock()
-	if errSave != nil {
-		j.storageErr = "operation journal could not be persisted"
+		if errPersist := j.persistLocked(); errPersist != nil {
+			j.mu.Lock()
+			j.operations = previousOperations
+			j.segments = previousSegments
+			j.extendedHistory = true
+			j.mu.Unlock()
+			return j.RetentionSettings(), errPersist
+		}
+		if errRemove := removeOperationSegmentFiles(j.store); errRemove != nil {
+			j.setStorageError("operation journal could not remove archived segments")
+			return j.RetentionSettings(), fmt.Errorf("operation journal archived segments could not be removed")
+		}
 	} else {
-		j.storageErr = ""
+		j.mu.Lock()
+		j.extendedHistory = true
+		j.mu.Unlock()
+		if errPersist := j.persistLocked(); errPersist != nil {
+			j.mu.Lock()
+			j.extendedHistory = false
+			j.mu.Unlock()
+			return j.RetentionSettings(), errPersist
+		}
 	}
-	j.mu.Unlock()
+	return j.RetentionSettings(), nil
+}
+
+func (j *OperationJournal) persistLocked() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.configured || strings.TrimSpace(j.store) == "" {
+		j.storageErr = "operation journal storage is unavailable"
+		return fmt.Errorf("operation journal storage is unavailable")
+	}
+	if !j.extendedHistory {
+		j.trimLocked()
+	}
+	for j.extendedHistory && len(j.operations) > operationPageSize {
+		segmentOperations := cloneOperationEntries(j.operations[:operationPageSize])
+		segmentID := j.nextSegmentID
+		if segmentID == 0 {
+			segmentID = 1
+		}
+		if errSave := saveOperationSegment(j.store, segmentID, segmentOperations); errSave != nil {
+			j.storageErr = "operation journal could not be persisted"
+			return errSave
+		}
+		j.segments = append(j.segments, persistedOperationSegment{ID: segmentID, Count: operationPageSize})
+		j.nextSegmentID = segmentID + 1
+		j.operations = append([]OperationEntry(nil), j.operations[operationPageSize:]...)
+	}
+	manifest := persistedOperationManifest{
+		Version:         operationManifestVersion,
+		ExtendedHistory: j.extendedHistory,
+		NextSegmentID:   j.nextSegmentID,
+		Segments:        append([]persistedOperationSegment(nil), j.segments...),
+		Operations:      cloneOperationEntries(j.operations),
+	}
+	if errSave := saveOperationManifest(j.store, manifest); errSave != nil {
+		j.storageErr = "operation journal could not be persisted"
+		return errSave
+	}
+	j.storageErr = ""
+	return nil
 }
 
 func (j *OperationJournal) trimLocked() {
-	if len(j.operations) > maxOperationEntries {
-		j.operations = append([]OperationEntry(nil), j.operations[len(j.operations)-maxOperationEntries:]...)
+	if !j.extendedHistory && len(j.operations) > operationPageSize {
+		j.operations = append([]OperationEntry(nil), j.operations[len(j.operations)-operationPageSize:]...)
 	}
 }
 
@@ -232,9 +386,9 @@ func (j *OperationJournal) currentTime() time.Time {
 	return now().UTC()
 }
 
-func sanitizePersistedOperations(entries []OperationEntry) []OperationEntry {
-	if len(entries) > maxOperationEntries {
-		entries = entries[len(entries)-maxOperationEntries:]
+func sanitizePersistedOperations(entries []OperationEntry, limit int) []OperationEntry {
+	if limit > 0 && len(entries) > limit {
+		entries = entries[len(entries)-limit:]
 	}
 	out := make([]OperationEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -244,6 +398,136 @@ func sanitizePersistedOperations(entries []OperationEntry) []OperationEntry {
 		}
 	}
 	return out
+}
+
+func (j *OperationJournal) scanOperationsLocked(visit func(OperationEntry)) error {
+	j.mu.RLock()
+	store := j.store
+	segments := append([]persistedOperationSegment(nil), j.segments...)
+	current := cloneOperationEntries(j.operations)
+	extended := j.extendedHistory
+	j.mu.RUnlock()
+	var firstErr error
+	if extended {
+		for _, segment := range segments {
+			page, errLoad := loadOperationSegment(store, segment)
+			if errLoad != nil {
+				if firstErr == nil {
+					firstErr = errLoad
+				}
+				continue
+			}
+			for _, operation := range page {
+				visit(operation)
+			}
+		}
+	}
+	for _, operation := range current {
+		visit(operation)
+	}
+	return firstErr
+}
+
+func (j *OperationJournal) selectOperationsLocked(query OperationQuery, limit int) ([]OperationEntry, OperationSummary, int, error) {
+	query = normalizeOperationQuery(query)
+	if limit < 0 {
+		limit = 0
+	}
+	selected := &operationOldestHeap{}
+	if limit > 0 {
+		*selected = make([]OperationEntry, 0, limit)
+	}
+	summary := OperationSummary{}
+	total := 0
+	errLoad := j.scanOperationsLocked(func(operation OperationEntry) {
+		if !operationMatchesQuery(operation, query) {
+			return
+		}
+		total++
+		addOperationSummary(&summary, operation)
+		if limit == 0 {
+			return
+		}
+		if selected.Len() < limit {
+			heap.Push(selected, operation)
+			return
+		}
+		if operationNewer(operation, (*selected)[0]) {
+			(*selected)[0] = operation
+			heap.Fix(selected, 0)
+		}
+	})
+	summary.Total = total
+	return append([]OperationEntry(nil), (*selected)...), summary, total, errLoad
+}
+
+func operationPageBounds(page, pageSize, retained int) (int, int) {
+	if page < 1 || pageSize < 1 || retained < 1 {
+		return 0, 0
+	}
+	offset := page - 1
+	if offset > retained/pageSize {
+		return retained, 0
+	}
+	start := offset * pageSize
+	if start >= retained {
+		return retained, 0
+	}
+	limit := start + pageSize
+	if limit < start || limit > retained {
+		limit = retained
+	}
+	return start, limit
+}
+
+type operationOldestHeap []OperationEntry
+
+func (h operationOldestHeap) Len() int { return len(h) }
+func (h operationOldestHeap) Less(left, right int) bool {
+	return operationNewer(h[right], h[left])
+}
+func (h operationOldestHeap) Swap(left, right int) { h[left], h[right] = h[right], h[left] }
+func (h *operationOldestHeap) Push(value any) {
+	*h = append(*h, value.(OperationEntry))
+}
+func (h *operationOldestHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
+}
+
+func (j *OperationJournal) retentionSettingsLocked() OperationRetentionSettings {
+	return OperationRetentionSettings{
+		ExtendedHistory:  j.extendedHistory,
+		PageSize:         operationPageSize,
+		Retained:         len(j.operations) + len(j.segments)*operationPageSize,
+		ArchivedSegments: len(j.segments),
+	}
+}
+
+func (j *OperationJournal) setStorageError(message string) {
+	j.mu.Lock()
+	j.storageErr = message
+	j.mu.Unlock()
+}
+
+func mergeOperationEntry(existing, replacement OperationEntry) OperationEntry {
+	if replacement.Scope == "" {
+		replacement.Scope = existing.Scope
+	}
+	if replacement.TargetID == "" {
+		replacement.TargetID = existing.TargetID
+	}
+	if replacement.Format == "" {
+		replacement.Format = existing.Format
+	}
+	if replacement.Version == "" {
+		replacement.Version = existing.Version
+	}
+	replacement.ID = existing.ID
+	return replacement
 }
 
 func normalizeOperationEntry(entry OperationEntry, now time.Time) (OperationEntry, bool) {
@@ -349,6 +633,22 @@ func operationSortTime(entry OperationEntry) time.Time {
 	return entry.StartedAt
 }
 
+func operationNewer(left, right OperationEntry) bool {
+	leftTime := operationSortTime(left)
+	rightTime := operationSortTime(right)
+	if leftTime.Equal(rightTime) {
+		return left.ID > right.ID
+	}
+	return leftTime.After(rightTime)
+}
+
+func operationMatchesQuery(entry OperationEntry, query OperationQuery) bool {
+	return (query.Category == "" || entry.Category == query.Category) &&
+		(query.Status == "" || entry.Status == query.Status) &&
+		(query.Source == "" || entry.Source == query.Source) &&
+		(query.Search == "" || operationMatchesSearch(entry, query.Search))
+}
+
 func operationMatchesSearch(entry OperationEntry, search string) bool {
 	haystack := strings.ToLower(strings.Join([]string{
 		entry.ID, entry.Category, entry.Action, entry.Status, entry.Source, entry.Scope,
@@ -361,20 +661,24 @@ func operationMatchesSearch(entry OperationEntry, search string) bool {
 func summarizeOperations(entries []OperationEntry) OperationSummary {
 	summary := OperationSummary{Total: len(entries)}
 	for _, entry := range entries {
-		switch entry.Status {
-		case OperationStatusRunning:
-			summary.Running++
-		case OperationStatusSucceeded:
-			summary.Succeeded++
-		case OperationStatusFailed:
-			summary.Failed++
-		case OperationStatusInterrupted:
-			summary.Interrupted++
-		case OperationStatusPartial, OperationStatusWarning, OperationStatusSkipped:
-			summary.Attention++
-		}
+		addOperationSummary(&summary, entry)
 	}
 	return summary
+}
+
+func addOperationSummary(summary *OperationSummary, entry OperationEntry) {
+	switch entry.Status {
+	case OperationStatusRunning:
+		summary.Running++
+	case OperationStatusSucceeded:
+		summary.Succeeded++
+	case OperationStatusFailed:
+		summary.Failed++
+	case OperationStatusInterrupted:
+		summary.Interrupted++
+	case OperationStatusPartial, OperationStatusWarning, OperationStatusSkipped:
+		summary.Attention++
+	}
 }
 
 func cloneOperationEntry(entry OperationEntry) OperationEntry {

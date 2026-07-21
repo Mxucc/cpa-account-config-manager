@@ -195,6 +195,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Record an immediate CPA plugin-store update check."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations", Description: "List the persistent sanitized account-manager operation journal."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/export", Description: "Export the sanitized operation journal as JSON, CSV, or JSON Lines."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/settings", Description: "Read operation-journal retention settings."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/operations/settings", Description: "Persist operation-journal retention settings."},
 			{Method: http.MethodDelete, Path: managementRoutePrefix + "/operations", Description: "Clear the operation journal while retaining a clear audit event."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/operations/record", Description: "Record a strict browser-owned plugin-store update outcome."},
 		},
@@ -321,6 +323,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleListOperations(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations/export":
 		return a.handleExportOperations(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations/settings":
+		return jsonResponse(http.StatusOK, a.operations.RetentionSettings())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/operations/settings":
+		return a.handlePutOperationRetentionSettings(req)
 	case method == http.MethodDelete && path == "/v0/management"+managementRoutePrefix+"/operations":
 		return a.handleClearOperations()
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/operations/record":
@@ -362,7 +368,7 @@ func (a *App) handleExportInspection(req cpaapi.ManagementRequest) cpaapi.Manage
 }
 
 func (a *App) handleListOperations(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
-	query := operationQueryFromRequest(req, 50)
+	query := operationQueryFromRequest(req, operationPageSize)
 	return jsonResponse(http.StatusOK, a.operations.List(query))
 }
 
@@ -371,14 +377,12 @@ func (a *App) handleExportOperations(req cpaapi.ManagementRequest) cpaapi.Manage
 	if format == "" {
 		format = "json"
 	}
-	query := operationQueryFromRequest(req, maxOperationEntries)
+	query := operationQueryFromRequest(req, operationPageSize)
 	query.Page = 1
-	query.PageSize = maxOperationPageSize
-	response := a.operations.List(query)
-	entries := append([]OperationEntry(nil), response.Operations...)
-	for page := 2; page <= response.Pages; page++ {
-		query.Page = page
-		entries = append(entries, a.operations.List(query).Operations...)
+	query.PageSize = operationPageSize
+	entries, errSnapshot := a.operations.ExportSnapshot(query)
+	if errSnapshot != nil {
+		return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "operation journal could not be exported"})
 	}
 	download, errRender := renderOperationExport(format, entries, time.Now().UTC())
 	if errRender != nil {
@@ -393,6 +397,21 @@ func (a *App) handleExportOperations(req cpaapi.ManagementRequest) cpaapi.Manage
 		},
 		Body: download.Body,
 	}
+}
+
+func (a *App) handlePutOperationRetentionSettings(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request OperationRetentionUpdateRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	if request.ExtendedHistory == nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "extended_history is required"})
+	}
+	settings, errUpdate := a.operations.UpdateRetentionSettings(*request.ExtendedHistory)
+	if errUpdate != nil {
+		return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "operation journal settings could not be persisted"})
+	}
+	return jsonResponse(http.StatusOK, settings)
 }
 
 func operationQueryFromRequest(req cpaapi.ManagementRequest, pageSize int) OperationQuery {

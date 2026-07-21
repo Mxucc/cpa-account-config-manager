@@ -26,8 +26,12 @@ const operationResponse: OperationListResponse = {
   summary: { total: 1, running: 0, succeeded: 0, failed: 0, attention: 1, interrupted: 0 },
   total: 1,
   page: 1,
-  page_size: 50,
+  page_size: 500,
   pages: 1,
+  extended_history: false,
+  archived_segments: 0,
+  retention_limit: 500,
+  retained: 1,
 };
 
 describe("OperationLogWorkspace", () => {
@@ -36,6 +40,7 @@ describe("OperationLogWorkspace", () => {
     vi.spyOn(api, "listOperations").mockResolvedValue(operationResponse);
     vi.spyOn(api, "downloadOperationExport").mockResolvedValue({ filename: "operations.csv", exported: 1 });
     vi.spyOn(api, "clearOperations").mockResolvedValue({ operation: { ...operationResponse.operations[0], id: "clear-1", category: "journal", action: "journal_clear", status: "succeeded" }, retained: 1 });
+    vi.spyOn(api, "saveOperationRetentionSettings").mockResolvedValue({ extended_history: true, page_size: 500, retained: 1, archived_segments: 0 });
   });
 
   it("filters, inspects, and opens a currently available related job", async () => {
@@ -48,7 +53,7 @@ describe("OperationLogWorkspace", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole("combobox", { name: "操作类别" }), "batch");
-    await waitFor(() => expect(api.listOperations).toHaveBeenLastCalledWith(1, 50, expect.objectContaining({ category: "batch" })));
+    await waitFor(() => expect(api.listOperations).toHaveBeenLastCalledWith(1, expect.objectContaining({ category: "batch" }), expect.any(AbortSignal)));
 
     await user.click(screen.getByRole("button", { name: "查看操作详情" }));
     const details = screen.getByRole("dialog", { name: "操作详情" });
@@ -57,6 +62,22 @@ describe("OperationLogWorkspace", () => {
     expect(screen.queryByText("partial_failure")).not.toBeInTheDocument();
     await user.click(within(details).getByRole("button", { name: "打开关联任务" }));
     expect(onOpenRelatedJob).toHaveBeenCalledWith(operationResponse.operations[0]);
+  });
+
+  it("uses fixed 500-entry pages and persists extended history", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={onNotice} onOpenRelatedJob={() => undefined} />);
+
+    await screen.findByText("批量修改");
+    expect(screen.getByText("每页固定 500 条操作日志")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "每页操作日志数" })).not.toBeInTheDocument();
+    const toggle = screen.getByRole("checkbox", { name: "扩展历史留存" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() => expect(api.saveOperationRetentionSettings).toHaveBeenCalledWith(true));
+    expect(onNotice).toHaveBeenCalledWith("已开启操作日志扩展历史留存");
+    expect(api.listOperations).toHaveBeenCalledWith(1, expect.any(Object), expect.any(AbortSignal));
   });
 
   it("shows model-test actions and reasons in Chinese while preserving the technical model ID", async () => {

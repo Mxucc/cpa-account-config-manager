@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AutomationSettingsDialog } from "./AutomationSettingsDialog";
 
 describe("AutomationSettingsDialog", () => {
-  it("requires explicit confirmation before enabling delete and update automation", async () => {
+  it("requires explicit confirmation before enabling destructive inspection automation", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     render(
@@ -18,7 +18,6 @@ describe("AutomationSettingsDialog", () => {
           auto_delete: false, auto_delete_invalid_credentials: false, delete_grace_hours: 168, delete_batch_size: 10,
           anomaly_trigger_enabled: false, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
         }}
-        updates={{ check_enabled: true, check_interval_hours: 24, auto_update: false }}
         saving={false}
         onClose={() => undefined}
         onSave={onSave}
@@ -31,7 +30,6 @@ describe("AutomationSettingsDialog", () => {
     await user.click(screen.getByLabelText("定时巡检人工禁用账号"));
     await user.click(screen.getByLabelText("全量定时主动巡检"));
     await user.click(screen.getByLabelText("启用异常占比触发"));
-    await user.click(screen.getByLabelText("自动更新"));
     await user.click(screen.getByLabelText("被动临时熔断"));
     await user.click(screen.getByRole("button", { name: "保存设置" }));
     expect(screen.getByRole("alert")).toHaveTextContent("确认风险");
@@ -42,12 +40,9 @@ describe("AutomationSettingsDialog", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("确认风险");
     await user.click(screen.getByLabelText("确认删除失效凭据"));
     await user.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("确认风险");
-    await user.click(screen.getByLabelText("确认开启自动更新"));
-    await user.click(screen.getByRole("button", { name: "保存设置" }));
 
     expect(onSave).toHaveBeenCalledTimes(1);
-    const [inspection, updates, confirmDelete, confirmDeleteInvalid, confirmUpdate] = onSave.mock.calls[0];
+    const [inspection, confirmDelete, confirmDeleteInvalid] = onSave.mock.calls[0];
     expect(inspection).toMatchObject({
       enabled: true,
       model_probe_full_sweep: true,
@@ -64,9 +59,7 @@ describe("AutomationSettingsDialog", () => {
     });
     expect(inspection.scan_manually_disabled).toBe(true);
     expect(inspection.model_probe_models).toEqual({ codex: "gpt-5.4", openai: "gpt-5.4", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", xai: "grok-4" });
-    expect(updates).toMatchObject({ check_enabled: true, auto_update: true });
     expect(confirmDelete).toBe(true);
     expect(confirmDeleteInvalid).toBe(true);
-    expect(confirmUpdate).toBe(true);
   });
 });

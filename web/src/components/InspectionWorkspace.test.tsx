@@ -31,7 +31,7 @@ describe("InspectionWorkspace", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows inspection evidence and installs an available update through the host store", async () => {
+  it("shows inspection evidence and starts a full active inspection", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -42,9 +42,6 @@ describe("InspectionWorkspace", () => {
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [{ id: "action-1", account_id: "auth-1", name: "operator.json", provider: "codex", action: "disable", status: "pending", reason_code: "invalid_credentials", created_at: "2026-07-20T08:00:00Z" }] });
       if (url.endsWith("/inspection/run")) return jsonResponse({ ...inspectionSnapshot, pending: true, run_mode: "full", probe_phase: "listing" }, 202);
       if (url.endsWith("/inspection")) return jsonResponse(inspectionSnapshot);
-      if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.2.0", latest_version: "0.3.0", update_available: true, release_url: "https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.3.0", checking: false, pending: false, checked_at: "2026-07-20T08:00:00Z" });
-      if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] });
-      if (url.endsWith("/plugin-store/cpa-account-config-manager/install")) return jsonResponse({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: false });
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -54,17 +51,9 @@ describe("InspectionWorkspace", () => {
     expect(await screen.findByText("凭据无效或过期")).toBeInTheDocument();
     expect(screen.getByText("重新授权")).toBeInTheDocument();
     expect(screen.queryByText("等待删除", { exact: false })).not.toBeInTheDocument();
-    expect(await screen.findByText("发现版本 0.3.0")).toBeInTheDocument();
     expect(screen.getByText("已完成 2/5 · 剩余 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "快速巡检" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "开始巡检" })).toBeEnabled();
-
-    await user.click(screen.getByRole("button", { name: "更新" }));
-    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("0.3.0")));
-    const installRequest = requests.find(({ url }) => url.endsWith("/plugin-store/cpa-account-config-manager/install"));
-    expect(installRequest).toBeDefined();
-    expect(JSON.parse(String(installRequest?.init.body))).toEqual({ version: "0.3.0" });
-    expect(new Headers(installRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret");
 
     await user.click(screen.getByRole("button", { name: "开始巡检" }));
     const runRequest = requests.find(({ url }) => url.endsWith("/inspection/run"));
@@ -72,24 +61,22 @@ describe("InspectionWorkspace", () => {
     expect(JSON.parse(String(runRequest?.init.body))).toEqual({ mode: "full" });
   });
 
-  it("uses the plugin store as the only update source without a GitHub warning", async () => {
+  it("does not request or render plugin update controls inside inspection", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/inspection/results")) return jsonResponse({ results: [], total: 0, page: 1, page_size: 50, pages: 0 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
       if (url.endsWith("/inspection")) return jsonResponse({ ...inspectionSnapshot, total: 0, action_count: 0 });
-      if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.2.3", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z", error: "release metadata request failed" });
-      if (url === "/v0/management/plugin-store") return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.4", installed: true, installed_version: "0.2.3", update_available: true }] });
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
 
-    expect(await screen.findByText("发现版本 0.2.4")).toBeInTheDocument();
-    expect(screen.getByText("可更新")).toBeInTheDocument();
-    expect(screen.queryByText(/GitHub 元数据/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "更新" })).toBeEnabled();
+    expect(await screen.findByRole("region", { name: "巡检与自动化" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "插件更新" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/updates"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/plugin-store"))).toBe(false);
   });
 
   it("renders unknown runtime health values without crashing", async () => {

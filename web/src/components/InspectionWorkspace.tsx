@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Clock3,
   Download,
-  ExternalLink,
   LoaderCircle,
   RefreshCw,
   ScanSearch,
@@ -16,7 +15,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
-  UploadCloud,
   Wrench,
   X,
   XSquare,
@@ -38,8 +36,6 @@ import type {
   InspectionSnapshot,
   JobSnapshot,
   ModelTestResult,
-  UpdatePolicy,
-  UpdateSnapshot,
 } from "../types";
 import { AutomationSettingsDialog } from "./AutomationSettingsDialog";
 import { IconButton } from "./IconButton";
@@ -102,7 +98,6 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [snapshot, setSnapshot] = useState<InspectionSnapshot | null>(null);
   const [results, setResults] = useState<InspectionResultList>(emptyResults);
   const [actions, setActions] = useState<InspectionAction[]>([]);
-  const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<InspectionPageSize>(() => readInspectionPageSize());
   const [health, setHealth] = useState<"" | InspectionHealth>("");
@@ -132,14 +127,11 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
-  const [updateChecking, setUpdateChecking] = useState(false);
-  const [installing, setInstalling] = useState(false);
   const [autoDeleting, setAutoDeleting] = useState(false);
   const [remediationPlan, setRemediationPlan] = useState<RemediationPlan | null>(null);
   const [remediating, setRemediating] = useState(false);
   const [remediationError, setRemediationError] = useState("");
   const [error, setError] = useState("");
-  const attemptedUpdate = useRef("");
   const autoDeleteBusy = useRef(false);
   const livePollCount = useRef(0);
 
@@ -155,17 +147,12 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
 
   const refreshOverview = useCallback(async () => {
     try {
-      const [nextSnapshot, nextActions, nextUpdates] = await Promise.all([
+      const [nextSnapshot, nextActions] = await Promise.all([
         api.getInspection(),
         api.listInspectionActions(50),
-        api.getEffectiveUpdateStatus(),
       ]);
       setSnapshot(nextSnapshot);
       setActions(nextActions);
-      setUpdates(nextUpdates);
-      if (nextUpdates.policy.check_enabled && !nextUpdates.checked_at && !nextUpdates.checking && !nextUpdates.pending) {
-        setUpdates(await api.getEffectiveUpdateStatus(true));
-      }
     } catch (caught) {
       handleError(caught);
     }
@@ -230,12 +217,6 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     return () => window.clearInterval(timer);
   }, [handleError, health, page, pageSize, search, snapshot?.pending, snapshot?.probe_sweep_status, snapshot?.running]);
 
-  useEffect(() => {
-    if (!updates?.checking && !updates?.pending) return;
-    const timer = window.setInterval(() => void refreshOverview(), 1200);
-    return () => window.clearInterval(timer);
-  }, [refreshOverview, updates?.checking, updates?.pending]);
-
   const runAutoDelete = useCallback(async () => {
     if (!snapshot?.policy.auto_delete || autoDeleteBusy.current) return;
     autoDeleteBusy.current = true;
@@ -262,33 +243,6 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     const timer = window.setInterval(() => void runAutoDelete(), 60_000);
     return () => window.clearInterval(timer);
   }, [runAutoDelete, snapshot?.policy.auto_delete]);
-
-  const installUpdate = useCallback(async (automatic = false) => {
-    const version = updates?.latest_version;
-    if (!version || installing) return;
-    setInstalling(true);
-    setError("");
-    try {
-      const result = await api.installPluginUpdate(version);
-      attemptedUpdate.current = version;
-      setUpdates((current) => current ? { ...current, current_version: result.version, update_available: false } : current);
-      onNotice(result.restart_required
-        ? tx("ui.plugin_version_installed_restart_cpa_to_activate_it", { version: result.version })
-        : tx("ui.plugin_version_installed_refresh_to_use_the_new_version", { version: result.version }));
-    } catch (caught) {
-      attemptedUpdate.current = version;
-      handleError(caught);
-      if (automatic) setError(tx("ui.auto_update_did_not_complete_retry_it_from_update_status"));
-    } finally {
-      setInstalling(false);
-    }
-  }, [handleError, installing, locale, onNotice, updates?.latest_version]);
-
-  useEffect(() => {
-    if (!updates?.policy.auto_update || !updates.update_available || !updates.latest_version || attemptedUpdate.current === updates.latest_version) return;
-    attemptedUpdate.current = updates.latest_version;
-    void installUpdate(true);
-  }, [installUpdate, updates]);
 
   const runNativeScan = async () => {
     setScanningMode("native");
@@ -589,38 +543,13 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     }
   };
 
-  const checkUpdates = useCallback(async () => {
-    setUpdateChecking(true);
-    setError("");
-    try {
-      setUpdates(await api.getEffectiveUpdateStatus(true));
-    } catch (caught) {
-      handleError(caught);
-    } finally {
-      setUpdateChecking(false);
-    }
-  }, [handleError]);
-
-  useEffect(() => {
-    if (!updates?.policy.check_enabled || !updates.checked_at) return;
-    const checkedAt = Date.parse(updates.checked_at);
-    if (!Number.isFinite(checkedAt)) return;
-    const intervalHours = Math.min(168, Math.max(1, updates.policy.check_interval_hours || 24));
-    const dueAt = checkedAt + intervalHours * 60 * 60 * 1000;
-    const timer = window.setTimeout(() => void checkUpdates(), Math.max(1_000, dueAt - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [checkUpdates, updates?.checked_at, updates?.policy.check_enabled, updates?.policy.check_interval_hours]);
-
-  const saveSettings = async (inspection: InspectionPolicy, updatePolicy: UpdatePolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean, confirmUpdate: boolean) => {
+  const saveSettings = async (inspection: InspectionPolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean) => {
     setSettingsSaving(true);
     setSettingsError("");
     try {
-      const nextInspection = await api.saveInspectionPolicy(inspection, confirmDelete, confirmDeleteInvalid);
-      const nextUpdates = await api.saveUpdatePolicy(updatePolicy, confirmUpdate);
-      setSnapshot(nextInspection);
-      setUpdates(nextUpdates);
+      setSnapshot(await api.saveInspectionPolicy(inspection, confirmDelete, confirmDeleteInvalid));
       setSettingsOpen(false);
-      onNotice(tx("ui.inspection_and_update_settings_saved"));
+      onNotice(tx("ui.inspection_settings_saved"));
     } catch (caught) {
       handleError(caught, "settings");
     } finally {
@@ -670,18 +599,9 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           </button>
           {snapshot?.running || snapshot?.pending ? <IconButton label={tx("ui.stop_inspection")} disabled={scanningMode === "stop"} onClick={() => void stopActiveInspection()}>{scanningMode === "stop" ? <LoaderCircle className="spin" size={17} /> : <XSquare size={17} />}</IconButton> : null}
           <IconButton label={tx("ui.refresh_inspection")} disabled={loading} onClick={() => void Promise.all([refreshOverview(), refreshResults()])}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
-          <IconButton label={tx("ui.inspection_and_automation_settings")} disabled={!snapshot || !updates} onClick={() => { setSettingsError(""); setSettingsOpen(true); }}><Settings2 size={17} /></IconButton>
+          <IconButton label={tx("ui.inspection_and_automation_settings")} disabled={!snapshot} onClick={() => { setSettingsError(""); setSettingsOpen(true); }}><Settings2 size={17} /></IconButton>
         </div>
       </header>
-
-      {updates?.update_available ? (
-        <div className="update-banner" role="status">
-          <UploadCloud size={19} />
-          <div><strong>{tx("ui.version_version_available", { version: updates.latest_version || "-" })}</strong><span>{tx("ui.current_version_verified_and_installed_through_the_cpa_plugin_store", { version: updates.current_version })}</span></div>
-          {updates.release_url ? <a href={updates.release_url} target="_blank" rel="noopener noreferrer">{tx("ui.release_notes")}<ExternalLink size={13} /></a> : null}
-          <button className="button button-primary" type="button" disabled={installing} onClick={() => void installUpdate()}>{installing ? <LoaderCircle className="spin" size={15} /> : <UploadCloud size={15} />}{tx("ui.updated_2")}</button>
-        </div>
-      ) : null}
 
       {error || snapshot?.storage_error || lastRun?.error ? (
         <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error || operatorMessage(snapshot?.storage_error || lastRun?.error, locale)}</span><IconButton label={tx("ui.dismiss_inspection_message")} onClick={() => setError("")}><X size={14} /></IconButton></div>
@@ -840,7 +760,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
         </section>
       ) : null}
 
-      <div className="automation-lower-grid">
+      <div className="automation-lower-grid automation-history-only">
         <section className="action-history">
           <header><div><strong>{tx("ui.automation_history")}</strong><span>{tx("ui.latest_count", { count: Math.min(actions.length, 8) })}</span></div>{autoDeleting ? <LoaderCircle className="spin" size={15} /> : <Clock3 size={15} />}</header>
           <div className="action-history-list">
@@ -848,28 +768,15 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
             {actions.length === 0 ? <div className="automation-empty">{tx("ui.no_automation_actions")}</div> : null}
           </div>
         </section>
-        <section className="update-status">
-          <header><div><strong>{tx("ui.plugin_updates")}</strong><span>{tx(updates?.policy.auto_update ? "ui.automatic_installation_on" : "ui.manual_installation")}</span></div><ShieldCheck size={15} /></header>
-          <div className="update-status-body">
-            <div><span>{tx("ui.current_version")}</span><code>{updates?.current_version || "-"}</code></div>
-            <div><span>{tx("ui.latest_version")}</span><code>{updates?.latest_version || "-"}</code></div>
-            <div><span>{tx("ui.last_checked")}</span><time>{formatDateTime(updates?.checked_at)}</time></div>
-            <div><span>{tx("ui.check_status")}</span><strong>{updates?.error ? operatorMessage(updates.error, locale) : tx(updates?.checking || updates?.pending ? "ui.checking" : updates?.update_available ? "ui.update_available" : "ui.up_to_date")}</strong></div>
-          </div>
-          <button className="button button-quiet" type="button" disabled={updateChecking || updates?.checking || updates?.pending} onClick={() => void checkUpdates()}>
-            {updateChecking || updates?.checking || updates?.pending ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{tx("ui.check_for_updates")}
-          </button>
-        </section>
       </div>
 
-      {settingsOpen && snapshot && updates ? (
+      {settingsOpen && snapshot ? (
         <AutomationSettingsDialog
           inspection={snapshot.policy}
-          updates={updates.policy}
           saving={settingsSaving}
           error={settingsError}
           onClose={() => setSettingsOpen(false)}
-          onSave={(inspection, updatePolicy, confirmDelete, confirmDeleteInvalid, confirmUpdate) => void saveSettings(inspection, updatePolicy, confirmDelete, confirmDeleteInvalid, confirmUpdate)}
+          onSave={(inspection, confirmDelete, confirmDeleteInvalid) => void saveSettings(inspection, confirmDelete, confirmDeleteInvalid)}
         />
       ) : null}
       {actionTarget ? (

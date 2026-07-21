@@ -524,7 +524,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .credential-export .export-format-options > label:last-child:nth-child(odd) { grid-column: 1 / -1; }
 
 .workspace-bar { min-width: 0; min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px 18px; margin-bottom: 16px; }
-.workspace-tabs { flex: 0 1 auto; width: fit-content; min-height: 42px; display: grid; grid-template-columns: repeat(3, minmax(148px, 1fr)); border: 1px solid var(--border-primary); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-tertiary); }
+.workspace-tabs { flex: 0 1 auto; width: fit-content; min-height: 42px; display: grid; grid-template-columns: repeat(4, minmax(132px, 1fr)); border: 1px solid var(--border-primary); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-tertiary); }
 .workspace-controls { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .workspace-tabs button { min-width: 0; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: none; border-right: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 700; cursor: pointer; }
 .workspace-tabs button:last-child { border-right: none; }
@@ -760,6 +760,41 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .update-status-body span { color: var(--text-secondary); font-size: 8px; }
 .update-status-body code, .update-status-body time, .update-status-body strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .update-status > .button { min-height: 38px; margin: 8px 12px; }
+.automation-history-only { grid-template-columns: minmax(0, 1fr); }
+
+.other-settings-panel { min-width: 0; overflow: hidden; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-primary); box-shadow: var(--shadow-md); }
+.other-settings-toolbar { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px 12px 20px; border-bottom: 1px solid var(--border-color); }
+.other-settings-toolbar > div { min-width: 0; display: grid; gap: 3px; }
+.other-settings-toolbar strong { font-size: 16px; }
+.other-settings-toolbar span { color: var(--text-secondary); font-size: 10px; }
+.other-settings-grid { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-section { min-width: 0; display: flex; flex-direction: column; }
+.settings-section + .settings-section { border-left: 1px solid var(--border-color); }
+.settings-section > header { min-height: 58px; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); background: var(--bg-tertiary); }
+.settings-section > header > div { min-width: 0; display: grid; gap: 3px; }
+.settings-section > header strong { color: var(--text-primary); font-size: 12px; }
+.settings-section > header span { color: var(--text-secondary); font-size: 9px; }
+.settings-version-grid { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-version-grid > div { min-width: 0; min-height: 72px; display: grid; align-content: center; gap: 5px; padding: 10px 16px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+.settings-version-grid > div:nth-child(2n) { border-right: none; }
+.settings-version-grid span { color: var(--text-secondary); font-size: 9px; }
+.settings-version-grid code, .settings-version-grid time, .settings-version-grid strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.settings-version-grid code { color: var(--text-primary); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-weight: 700; }
+.settings-version-grid .status-warning { color: var(--warning); }
+.settings-update-callout { min-height: 46px; display: flex; align-items: center; gap: 9px; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border-color)); color: var(--warning); background: var(--warning-soft); }
+.settings-update-callout strong { color: var(--text-primary); font-size: 11px; }
+.update-policy-controls { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--border-color); }
+.update-policy-controls > label { min-width: 0; min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 9px 12px; border-right: 1px solid var(--border-color); }
+.update-policy-controls > label:last-child { border-right: none; }
+.update-policy-controls > label > span:first-child { color: var(--text-secondary); font-size: 9px; }
+.update-policy-controls input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--primary-color); }
+.update-policy-controls .number-suffix { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.update-policy-controls .number-suffix input { width: 62px; height: 32px; border: none; padding: 0 7px; color: var(--text-primary); background: var(--bg-primary); font-size: 10px; }
+.update-policy-controls .number-suffix b { padding: 0 7px; color: var(--text-tertiary); font-size: 8px; font-weight: 600; }
+.other-settings-confirmation { margin: 10px 12px 0; }
+.settings-section-actions { min-height: 58px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; margin-top: auto; padding: 9px 12px; }
+.settings-section-actions .button { min-width: 0; }
+.settings-section-actions a { text-decoration: none; }
 
 .operation-panel { min-width: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-primary); box-shadow: var(--shadow-sm); }
 .operation-toolbar { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px 10px 18px; border-bottom: 1px solid var(--border-color); }
@@ -955,6 +990,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .with-job-panel .bulk-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .with-job-panel .bulk-actions .button { min-width: 0; padding-inline: 7px; }
   .automation-lower-grid { grid-template-columns: 1fr; }
+  .other-settings-grid { grid-template-columns: 1fr; }
+  .settings-section + .settings-section { border-top: 1px solid var(--border-color); border-left: none; }
   .action-history { border-right: none; border-bottom: 1px solid var(--border-color); }
   .inspection-remediation { grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.3fr); }
   .inspection-remediation-actions { grid-column: 1 / -1; min-width: 0; flex-direction: row; border-top: 1px solid var(--border-color); }
@@ -1041,9 +1078,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .header-actions { flex: 1 1 auto; width: auto; justify-content: flex-end; }
   .brand-block div > span { font-size: 11px; }
   .brand-block h1 { font-size: 20px; line-height: 1.08; white-space: normal; overflow: visible; text-overflow: clip; }
-  .workspace-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .workspace-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-tabs button { padding-inline: 8px; }
   .workspace-tabs button { gap: 5px; font-size: 9px; }
+  .update-policy-controls { grid-template-columns: 1fr; }
+  .update-policy-controls > label { border-right: none; border-bottom: 1px solid var(--border-color); }
+  .update-policy-controls > label:last-child { border-bottom: none; }
   .automation-toolbar { display: grid; padding: 12px; }
   .automation-title { align-items: flex-start; }
   .automation-toolbar-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -34,6 +34,7 @@ import { IconButton } from "./components/IconButton";
 import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { OperationLogWorkspace } from "./components/OperationLogWorkspace";
+import { OtherSettingsWorkspace } from "./components/OtherSettingsWorkspace";
 import { JobPanel, jobStateLabel } from "./components/JobPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { ModelTestDialog } from "./components/ModelTestDialog";
@@ -139,7 +140,7 @@ interface EditorContext {
 export default function App() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"accounts" | "inspection" | "operations">("accounts");
+  const [activeView, setActiveView] = useState<"accounts" | "inspection" | "operations" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -793,6 +794,7 @@ export default function App() {
             <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} />{tx("ui.accounts")}</button>
             <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} />{tx("ui.inspection_and_automation")}</button>
             <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} />{tx("ui.operation_log")}</button>
+            <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} />{tx("ui.other_settings")}</button>
           </nav>
           <div className="workspace-controls">
             <div className="header-status">
@@ -947,7 +949,7 @@ export default function App() {
         </section>
         ) : activeView === "inspection" ? (
           <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
-        ) : (
+        ) : activeView === "operations" ? (
           <OperationLogWorkspace
             activeJobIDs={[job?.id, forceJob?.id].filter((id): id is string => Boolean(id))}
             onAPIError={handleAPIError}
@@ -962,6 +964,8 @@ export default function App() {
               }
             }}
           />
+        ) : (
+          <OtherSettingsWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
         )}
       </div>
 

@@ -72,6 +72,7 @@ it("renders major account surfaces in English and follows a live CPA switch to C
   await user.click(screen.getByRole("button", { name: "Verify and continue" }));
 
   expect(await screen.findByRole("heading", { name: "Account Management" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Other Settings" })).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Account filters" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "Provider" })).toBeInTheDocument();
   expect(screen.getByText("Auto-disabled", { selector: ".automation-disposition-badge" })).toBeInTheDocument();
@@ -82,5 +83,6 @@ it("renders major account surfaces in English and follows a live CPA switch to C
     window.dispatchEvent(new StorageEvent("storage", { key: CPA_LANGUAGE_STORAGE_KEY, oldValue: english, newValue: chinese }));
   });
   expect(await screen.findByRole("heading", { name: "账号管理" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "其他配置" })).toBeInTheDocument();
   expect(screen.getByText("自动禁用", { selector: ".automation-disposition-badge" })).toBeInTheDocument();
 });

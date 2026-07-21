@@ -1382,6 +1382,12 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname.endsWith("/inspection")) {
     return json(response, 200, mockInspectionSnapshot());
   }
+  if (request.method === "GET" && url.pathname === "/v0/management/latest-version") {
+    return json(response, 200, { "latest-version": "v7.2.93" }, {
+      "X-CPA-Version": "v7.2.92",
+      "X-CPA-Build-Date": "2026-07-20T08:00:00Z",
+    });
+  }
   if (request.method === "POST" && url.pathname.endsWith("/updates/check")) {
     return json(response, 202, mockUpdateSnapshot(true));
   }

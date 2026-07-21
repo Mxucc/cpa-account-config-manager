@@ -7,6 +7,7 @@ import type {
   AccountListResponse,
   BatchPatch,
   BatchPreview,
+	CPAServerVersionSnapshot,
 	DefaultPolicy,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
@@ -104,6 +105,114 @@ async function managementRequest<T>(path: string, init: RequestInit = {}): Promi
     throw new APIError(response.status, message);
   }
   return (await response.json()) as T;
+}
+
+interface ParsedCPAServerVersion {
+  core: [number, number, number];
+  prerelease: string[];
+}
+
+function safeCPAVersionLabel(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 64 || !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(trimmed)) return "";
+  return /^v?\d+\.\d+\.\d+(?:[-+].+)?$/i.test(trimmed)
+    ? `v${trimmed.replace(/^v/i, "")}`
+    : trimmed;
+}
+
+function safeCPAHeaderText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= 96 && !/[\u0000-\u001f\u007f]/.test(trimmed) ? trimmed : "";
+}
+
+function parseCPAServerVersion(value: string): ParsedCPAServerVersion | null {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/i.exec(value.trim());
+  if (!match) return null;
+  const core = [Number(match[1]), Number(match[2]), Number(match[3])] as [number, number, number];
+  if (core.some((part) => !Number.isSafeInteger(part) || part < 0 || part > 1_000_000)) return null;
+  const prerelease = match[4] ? match[4].split(".") : [];
+  if (prerelease.some((part) => !part)) return null;
+  return { core, prerelease };
+}
+
+function comparePrereleaseIdentifiers(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) {
+    if (left.length === right.length) return 0;
+    return left.length === 0 ? 1 : -1;
+  }
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const leftPart = left[index];
+    const rightPart = right[index];
+    if (leftPart === undefined || rightPart === undefined) return leftPart === undefined ? -1 : 1;
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) return Number(leftPart) < Number(rightPart) ? -1 : 1;
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
+}
+
+export function compareCPAServerVersions(left: string, right: string): number | null {
+  const parsedLeft = parseCPAServerVersion(left);
+  const parsedRight = parseCPAServerVersion(right);
+  if (!parsedLeft || !parsedRight) return null;
+  for (let index = 0; index < parsedLeft.core.length; index += 1) {
+    if (parsedLeft.core[index] !== parsedRight.core[index]) {
+      return parsedLeft.core[index] < parsedRight.core[index] ? -1 : 1;
+    }
+  }
+  return comparePrereleaseIdentifiers(parsedLeft.prerelease, parsedRight.prerelease);
+}
+
+export async function getCPAServerVersionStatus(): Promise<CPAServerVersionSnapshot> {
+  const session = getSession();
+  if (!session) throw new APIError(401, "ui.management_key_is_not_set");
+  const headers = new Headers({ Accept: "application/json", Authorization: `Bearer ${session.managementKey}` });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15_000);
+  let response: Response;
+  try {
+    response = await fetch(buildManagementURL("/latest-version"), { headers, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+  if (response.status === 401) throw new APIError(401, "ui.authentication_failed");
+
+  const currentVersion = safeCPAVersionLabel(response.headers.get("X-CPA-Version") || response.headers.get("X-Server-Version"));
+  const currentBuildDate = safeCPAHeaderText(response.headers.get("X-CPA-Build-Date") || response.headers.get("X-Server-Build-Date"));
+  let latestVersion = "";
+  if (response.ok) {
+    try {
+      const payload = await response.json() as Record<string, unknown>;
+      latestVersion = safeCPAVersionLabel(payload["latest-version"] ?? payload.latest_version ?? payload.latest);
+    } catch {
+      latestVersion = "";
+    }
+  }
+
+  const comparison = currentVersion && latestVersion ? compareCPAServerVersions(currentVersion, latestVersion) : null;
+  const error = !currentVersion
+    ? "current_version_unavailable" as const
+    : !latestVersion
+      ? "latest_version_unavailable" as const
+      : comparison === null
+        ? "version_comparison_unavailable" as const
+        : undefined;
+  return {
+    current_version: currentVersion || undefined,
+    latest_version: latestVersion || undefined,
+    current_build_date: currentBuildDate || undefined,
+    update_available: comparison !== null && comparison < 0,
+    checked_at: new Date().toISOString(),
+    release_url: latestVersion && parseCPAServerVersion(latestVersion)
+      ? `https://github.com/router-for-me/CLIProxyAPI/releases/tag/${encodeURIComponent(latestVersion)}`
+      : undefined,
+    error,
+  };
 }
 
 function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {

@@ -3,10 +3,12 @@ import {
   createAccountDeletePreview,
   createImportPreview,
   createPreview,
+  compareCPAServerVersions,
   deleteAccount,
   downloadExport,
   executeInspectionAutoDelete,
   getEffectiveUpdateStatus,
+  getCPAServerVersionStatus,
   installPluginUpdate,
   listAccounts,
   listInspectionActions,
@@ -47,6 +49,50 @@ describe("management API client", () => {
     expect(url).toContain("page=2");
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
+  });
+
+  it("reads the connected and latest CPA server versions from the authenticated CPA endpoint", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ "latest-version": "v7.2.93" }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "X-CPA-Version": "7.2.92",
+        "X-CPA-Build-Date": "2026-07-20T08:00:00Z",
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getCPAServerVersionStatus()).resolves.toMatchObject({
+      current_version: "v7.2.92",
+      latest_version: "v7.2.93",
+      current_build_date: "2026-07-20T08:00:00Z",
+      update_available: true,
+      release_url: "https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.93",
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cpa.example/v0/management/latest-version");
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
+  });
+
+  it("compares CPA semantic versions including prereleases without treating build metadata as newer", () => {
+    expect(compareCPAServerVersions("v7.2.92", "v7.2.93")).toBe(-1);
+    expect(compareCPAServerVersions("v7.2.93-rc.1", "v7.2.93")).toBe(-1);
+    expect(compareCPAServerVersions("v7.2.93", "v7.2.93-rc.2")).toBe(1);
+    expect(compareCPAServerVersions("v7.2.93+build.1", "7.2.93+build.2")).toBe(0);
+    expect(compareCPAServerVersions("dev", "v7.2.93")).toBeNull();
+  });
+
+  it("keeps the current CPA version but never exposes a failed latest-version response body", async () => {
+    setSession("", "management-secret");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "upstream token secret-value" }), {
+      status: 502,
+      headers: { "Content-Type": "application/json", "X-CPA-Version": "v7.2.92" },
+    })));
+
+    const status = await getCPAServerVersionStatus();
+    expect(status).toMatchObject({ current_version: "v7.2.92", update_available: false, error: "latest_version_unavailable" });
+    expect(JSON.stringify(status)).not.toContain("secret-value");
   });
 
   it("uses separate fixed routes for quick native and full server inspection", async () => {

@@ -162,6 +162,7 @@ describe("primary account batch flow", () => {
 
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "账号管理" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "其他配置" })).toBeInTheDocument();
     const githubLink = screen.getByRole("link", { name: "打开项目 GitHub" });
     expect(githubLink).toHaveAttribute("href", "https://github.com/Mxucc/cpa-account-config-manager/");
     expect(githubLink).toHaveAttribute("rel", "noopener noreferrer");

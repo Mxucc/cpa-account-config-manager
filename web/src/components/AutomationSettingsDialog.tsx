@@ -1,20 +1,19 @@
 import { AlertTriangle, LoaderCircle, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { InspectionPolicy, UpdatePolicy } from "../types";
+import type { InspectionPolicy } from "../types";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
 interface AutomationSettingsDialogProps {
   inspection: InspectionPolicy;
-  updates: UpdatePolicy;
   saving: boolean;
   error?: string;
   onClose: () => void;
-  onSave: (inspection: InspectionPolicy, updates: UpdatePolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean, confirmUpdate: boolean) => void;
+  onSave: (inspection: InspectionPolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean) => void;
 }
 
-export function AutomationSettingsDialog({ inspection, updates, saving, error = "", onClose, onSave }: AutomationSettingsDialogProps) {
+export function AutomationSettingsDialog({ inspection, saving, error = "", onClose, onSave }: AutomationSettingsDialogProps) {
   const { tx } = useI18n();
   const [scheduleEnabled, setScheduleEnabled] = useState(inspection.enabled);
   const [scanInterval, setScanInterval] = useState(String(inspection.scan_interval_minutes));
@@ -40,12 +39,8 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
   const [anomalyThreshold, setAnomalyThreshold] = useState(String(inspection.anomaly_threshold_percent));
   const [anomalyMinimum, setAnomalyMinimum] = useState(String(inspection.anomaly_minimum_accounts));
   const [anomalyCooldown, setAnomalyCooldown] = useState(String(inspection.anomaly_cooldown_minutes));
-  const [checkEnabled, setCheckEnabled] = useState(updates.check_enabled);
-  const [checkInterval, setCheckInterval] = useState(String(updates.check_interval_hours));
-  const [autoUpdate, setAutoUpdate] = useState(updates.auto_update);
   const [confirmDelete, setConfirmDelete] = useState(inspection.auto_delete);
   const [confirmDeleteInvalid, setConfirmDeleteInvalid] = useState(inspection.auto_delete_invalid_credentials);
-  const [confirmUpdate, setConfirmUpdate] = useState(updates.auto_update);
   const [formError, setFormError] = useState("");
 
   const save = () => {
@@ -63,7 +58,6 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
     const anomalyPct = Number(anomalyThreshold);
     const anomalyMin = Number(anomalyMinimum);
     const anomalyCooldownMinutes = Number(anomalyCooldown);
-    const updateHours = Number(checkInterval);
     if (!Number.isInteger(scanMinutes) || scanMinutes < 5 || scanMinutes > 1440) return setFormError(tx("ui.inspection_interval_must_be_between_5_and_1440_minutes"));
     if (!Number.isInteger(probeMinutes) || probeMinutes < 5 || probeMinutes > 1440) return setFormError(tx("ui.model_probe_interval_must_be_between_5_and_1440_minutes"));
     if (!Number.isInteger(probeBatch) || probeBatch < 1 || probeBatch > 200) return setFormError(tx("ui.model_probe_batch_must_be_between_1_and_200_accounts"));
@@ -78,13 +72,10 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
     if (!Number.isInteger(anomalyPct) || anomalyPct < 1 || anomalyPct > 100) return setFormError(tx("ui.anomaly_threshold_must_be_between_1_and_100_percent"));
     if (!Number.isInteger(anomalyMin) || anomalyMin < 1 || anomalyMin > 10000) return setFormError(tx("ui.anomaly_minimum_must_be_between_1_and_10000_accounts"));
     if (!Number.isInteger(anomalyCooldownMinutes) || anomalyCooldownMinutes < 5 || anomalyCooldownMinutes > 1440) return setFormError(tx("ui.anomaly_cooldown_must_be_between_5_and_1440_minutes"));
-    if (!Number.isInteger(updateHours) || updateHours < 1 || updateHours > 168) return setFormError(tx("ui.update_check_interval_must_be_between_1_and_168_hours"));
     if (autoDelete && !autoDisable) return setFormError(tx("ui.auto_delete_requires_auto_disable"));
     if (passiveCircuit && (!autoDisable || !autoEnable)) return setFormError(tx("ui.passive_circuit_requires_auto_disable_and_auto_enable"));
     if (autoDelete && !inspection.auto_delete && !confirmDelete) return setFormError(tx("ui.confirm_the_risk_before_enabling_auto_delete"));
     if (autoDeleteInvalid && !inspection.auto_delete_invalid_credentials && !confirmDeleteInvalid) return setFormError(tx("ui.confirm_the_risk_before_deleting_invalid_credentials"));
-    if (autoUpdate && !checkEnabled) return setFormError(tx("ui.auto_update_requires_update_checks"));
-    if (autoUpdate && !updates.auto_update && !confirmUpdate) return setFormError(tx("ui.confirm_the_risk_before_enabling_auto_update"));
     onSave({
       enabled: scheduleEnabled,
       scan_interval_minutes: scanMinutes,
@@ -110,11 +101,7 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
       anomaly_threshold_percent: anomalyPct,
       anomaly_minimum_accounts: anomalyMin,
       anomaly_cooldown_minutes: anomalyCooldownMinutes,
-    }, {
-      check_enabled: checkEnabled,
-      check_interval_hours: updateHours,
-      auto_update: autoUpdate,
-    }, confirmDelete, confirmDeleteInvalid, confirmUpdate);
+    }, confirmDelete, confirmDeleteInvalid);
   };
 
   return (
@@ -196,21 +183,6 @@ export function AutomationSettingsDialog({ inspection, updates, saving, error = 
             <label className="destructive-confirmation">
               <input type="checkbox" checked={confirmDeleteInvalid} disabled={saving} onChange={(event) => setConfirmDeleteInvalid(event.target.checked)} aria-label={tx("ui.confirm_invalid_credential_deletion")} />
               <Trash2 size={15} /><span>{tx("ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation")}</span>
-            </label>
-          ) : null}
-        </section>
-
-        <section className="automation-settings-section">
-          <header><ShieldCheck size={17} /><div><strong>{tx("ui.plugin_updates")}</strong><span>{tx("ui.cpa_plugin_store_updates")}</span></div></header>
-          <div className="automation-setting-grid">
-            <SettingToggle label="ui.check_for_updates" checked={checkEnabled} disabled={saving} onChange={(checked) => { setCheckEnabled(checked); if (!checked) setAutoUpdate(false); }} />
-            <SettingNumber label="ui.check_interval" suffix="ui.hours" value={checkInterval} min={1} max={168} disabled={!checkEnabled || saving} onChange={setCheckInterval} />
-            <SettingToggle label="ui.auto_update" checked={autoUpdate} disabled={saving} onChange={(checked) => { setAutoUpdate(checked); if (checked) setCheckEnabled(true); }} />
-          </div>
-          {autoUpdate && !updates.auto_update ? (
-            <label className="destructive-confirmation update-confirmation">
-              <input type="checkbox" checked={confirmUpdate} disabled={saving} onChange={(event) => setConfirmUpdate(event.target.checked)} aria-label={tx("ui.confirm_auto_update")} />
-              <ShieldCheck size={15} /><span>{tx("ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open")}</span>
             </label>
           ) : null}
         </section>

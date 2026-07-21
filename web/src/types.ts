@@ -659,3 +659,13 @@ export interface PluginInstallResult {
   version: string;
   restart_required: boolean;
 }
+
+export interface CPAServerVersionSnapshot {
+  current_version?: string;
+  latest_version?: string;
+  current_build_date?: string;
+  update_available: boolean;
+  checked_at: string;
+  release_url?: string;
+  error?: "current_version_unavailable" | "latest_version_unavailable" | "version_comparison_unavailable";
+}

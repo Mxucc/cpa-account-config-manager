@@ -26,7 +26,8 @@ const (
 )
 
 var (
-	PluginVersion    = "0.2.92"
+	// PluginVersion is replaced by release builds through the Go linker.
+	PluginVersion    = "0.0.0-dev"
 	PluginRepository = DefaultPluginRepository
 )
 

@@ -151,20 +151,21 @@ Download the archive for the CLIProxyAPI host platform from
 Linux verification with a per-archive checksum file:
 
 ```bash
-sha256sum -c cpa-account-config-manager_0.2.92_linux_amd64.zip.sha256
+sha256sum -c cpa-account-config-manager_*_linux_amd64.zip.sha256
 ```
 
 macOS verification:
 
 ```bash
-shasum -a 256 -c cpa-account-config-manager_0.2.92_darwin_arm64.zip.sha256
+shasum -a 256 -c cpa-account-config-manager_*_darwin_arm64.zip.sha256
 ```
 
 Windows PowerShell verification:
 
 ```powershell
-Get-FileHash .\cpa-account-config-manager_0.2.92_windows_amd64.zip -Algorithm SHA256
-Get-Content .\cpa-account-config-manager_0.2.92_windows_amd64.zip.sha256
+$archive = Get-ChildItem .\cpa-account-config-manager_*_windows_amd64.zip -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-FileHash $archive.FullName -Algorithm SHA256
+Get-Content "$($archive.FullName).sha256"
 ```
 
 ### 2. Install the library
@@ -173,17 +174,17 @@ Extract the archive and place the library in CLIProxyAPI's plugin directory.
 The host checks the platform-specific directory first and then the plugin root:
 
 ```text
-plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so
-plugins/linux/arm64/cpa-account-config-manager-v0.2.92.so
-plugins/darwin/arm64/cpa-account-config-manager-v0.2.92.dylib
-plugins/windows/amd64/cpa-account-config-manager-v0.2.92.dll
+plugins/linux/amd64/cpa-account-config-manager-v<version>.so
+plugins/linux/arm64/cpa-account-config-manager-v<version>.so
+plugins/darwin/arm64/cpa-account-config-manager-v<version>.dylib
+plugins/windows/amd64/cpa-account-config-manager-v<version>.dll
 ```
 
 On Linux and macOS, make the library readable and executable by the
 CLIProxyAPI service account:
 
 ```bash
-chmod 755 plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so
+chmod 755 plugins/linux/amd64/cpa-account-config-manager-v*.so
 ```
 
 ### 3. Enable the plugin
@@ -718,7 +719,7 @@ container, then enable the plugin in the mounted configuration:
 services:
   cpa:
     volumes:
-      - ./plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so:/app/plugins/linux/amd64/cpa-account-config-manager-v0.2.92.so:ro
+      - ./plugins/linux/amd64:/app/plugins/linux/amd64:ro
       - ./plugin-data:/app/data/cpa-account-config-manager
 ```
 
@@ -793,8 +794,16 @@ cd web
 npm ci
 cd ..
 make verify
-make package VERSION=0.2.92
+make build
 ```
+
+On an exact annotated `vX.Y.Z` tag, `make package` derives the package and
+runtime version from that tag. On an untagged commit, `make build` injects the
+explicit `0.0.0-dev` version; pass `VERSION=<version>` only when a local package
+needs a deliberate version override. The GitHub Release workflow always uses
+the pushed release tag, matching the CPA plugin-store contract in which the
+latest GitHub release tag is the install version and the registry version is
+only a display fallback.
 
 For a local build that should publish a repository link in plugin metadata,
 pass `REPOSITORY=https://github.com/<owner>/cpa-account-config-manager` to

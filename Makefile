@@ -1,7 +1,8 @@
 PLUGIN_ID := cpa-account-config-manager
 DIST_DIR := $(CURDIR)/dist
 WEB_DIR := $(CURDIR)/web
-VERSION ?= 0.2.92
+GIT_RELEASE_TAG := $(shell git describe --tags --exact-match --match "v[0-9]*.[0-9]*.[0-9]*" 2>/dev/null)
+VERSION ?= $(or $(patsubst v%,%,$(GIT_RELEASE_TAG)),0.0.0-dev)
 REPOSITORY ?=
 
 PLUGIN_LDFLAGS := -X cpa-account-config-manager/internal/manager.PluginVersion=$(VERSION)
@@ -44,9 +45,9 @@ test:
 	cd $(WEB_DIR) && npm test -- --run
 
 version-check:
-	grep -Fq 'PluginVersion    = "$(VERSION)"' internal/manager/app.go
-	grep -Fq '$(PLUGIN_ID)_$(VERSION)_linux_amd64.zip' README.md
-	grep -Fq '$(PLUGIN_ID)_$(VERSION)_linux_amd64.zip' README_CN.md
+	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$$'
+	grep -Fq 'PluginVersion    = "0.0.0-dev"' internal/manager/app.go
+	test -z "$$(grep -E '$(PLUGIN_ID)[-_]v?[0-9]+\.[0-9]+\.[0-9]+' README.md README_CN.md)"
 
 verify: version-check
 	test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './web/node_modules/*'))"

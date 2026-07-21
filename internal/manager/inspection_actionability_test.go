@@ -67,6 +67,70 @@ func TestInspectionRemediationSummarySeparatesHandledAndBlockedFromKeep(t *testi
 	}
 }
 
+func TestInspectionAuthenticationFailuresHaveExecutableProbeKindSpecificRemediation(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
+	accounts := []Account{
+		{ID: "credential-401", Editable: true},
+		{ID: "model-401", Editable: true},
+	}
+	probeResults := []ModelTestResult{
+		{AccountID: "credential-401", Status: "unavailable", ProbeKind: InspectionProbeKindCredential, ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now},
+		{AccountID: "model-401", Status: "unavailable", ProbeKind: InspectionProbeKindModel, ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now},
+	}
+	records := make([]inspectionRecord, len(accounts))
+	results := make([]InspectionResult, 0, len(accounts))
+	for index := range accounts {
+		applyModelProbeToInspection(&records[index], probeResults[index], defaultInspectionPolicy())
+		decision := decideInspection(accounts[index], records[index], now)
+		updateInspectionRecord(&records[index], accounts[index], decision, now)
+		results = append(results, records[index].Result)
+	}
+
+	summary := summarizeInspectionRemediation(results)
+	if summary.Reauth != 1 || summary.DeletableReauth != 1 || summary.SuggestedDisable != 1 ||
+		summary.Actionable != 2 || summary.Review != 0 || summary.Keep != 0 || summary.Handled != 0 {
+		t.Fatalf("probe-kind remediation summary = %#v; results = %#v", summary, results)
+	}
+}
+
+func TestInspectionReported194AccountDistributionRemainsCompleteAfterProbeKindFix(t *testing.T) {
+	results := make([]InspectionResult, 0, 194)
+	appendResults := func(count int, template InspectionResult) {
+		for index := 0; index < count; index++ {
+			result := template
+			result.ID = fmt.Sprintf("%s-%03d", template.ID, index)
+			results = append(results, result)
+		}
+	}
+	appendResults(42, InspectionResult{
+		ID: "delete", Health: InspectionHealthDeactivated, ReasonCode: "workspace_deactivated",
+		Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDelete,
+		Editable: true, SignalSource: InspectionSignalActiveProbe, ProbeKind: InspectionProbeKindCredential,
+	})
+	appendResults(3, InspectionResult{
+		ID: "model-auth", Health: InspectionHealthUnavailable, ReasonCode: "authentication_failed",
+		Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationDisable,
+		Editable: true, AutoDisableEligible: true, SignalSource: InspectionSignalActiveProbe, ProbeKind: InspectionProbeKindModel,
+	})
+	appendResults(2, InspectionResult{ID: "enable", Health: InspectionHealthHealthy, Recommendation: InspectionRecommendationEnable, Editable: true, Disabled: true})
+	appendResults(5, InspectionResult{
+		ID: "reauth", Health: InspectionHealthInvalidCredentials, ReasonCode: "authentication_failed",
+		Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+		Editable: true, SignalSource: InspectionSignalActiveProbe, ProbeKind: InspectionProbeKindCredential,
+	})
+	appendResults(4, InspectionResult{ID: "keep", Health: InspectionHealthHealthy, Recommendation: InspectionRecommendationKeep, Editable: true})
+	appendResults(138, InspectionResult{ID: "handled", Health: InspectionHealthUnavailable, Recommendation: InspectionRecommendationDisable, Editable: true, Disabled: true})
+
+	summary := summarizeInspectionRemediation(results)
+	partitioned := summary.SuggestedDelete + summary.SuggestedDisable + summary.SuggestedEnable +
+		summary.Reauth + summary.Review + summary.Keep + summary.Handled
+	if len(results) != 194 || partitioned != len(results) || summary.SuggestedDelete != 42 ||
+		summary.SuggestedDisable != 3 || summary.SuggestedEnable != 2 || summary.Reauth != 5 ||
+		summary.DeletableReauth != 5 || summary.Keep != 4 || summary.Handled != 138 || summary.Review != 0 {
+		t.Fatalf("194-account remediation partition = %#v; partitioned=%d", summary, partitioned)
+	}
+}
+
 func TestManualFullInspectionIncludesManuallyDisabledAccounts(t *testing.T) {
 	if !inspectionRunScansManuallyDisabled(InspectionRunModeFull, InspectionSweepSourceManual, false) {
 		t.Fatal("manual full inspection excluded manually disabled accounts")

@@ -212,9 +212,9 @@ describe("InspectionWorkspace", () => {
       { id: "disable-1", name: "disable.json", provider: "codex", health: "quota_limited", reason_code: "quota_exhausted", confidence: "high", recommendation: "disable", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z" },
       { id: "enable-1", name: "enable.json", provider: "codex", health: "healthy", reason_code: "healthy_recent_success", confidence: "high", recommendation: "enable", disabled: true, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 0, healthy_streak: 2, last_checked_at: "2026-07-21T10:00:00Z" },
       { id: "reauth-credential", name: "reauth-credential.json", provider: "codex", health: "invalid_credentials", reason_code: "invalid_credentials", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "active_probe", probe_kind: "credential", status_code: 401, manual_delete_eligible: true },
-      { id: "reauth-model", name: "reauth-model.json", provider: "codex", health: "invalid_credentials", reason_code: "authentication_failed", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "active_probe", probe_kind: "model", status_code: 401, manual_delete_eligible: false },
+      { id: "reauth-model", name: "reauth-model.json", provider: "codex", health: "unavailable", reason_code: "authentication_failed", confidence: "medium", recommendation: "disable", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 3, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z", signal_source: "active_probe", probe_kind: "model", status_code: 401, manual_delete_eligible: false },
     ];
-    const summary = { actionable: 5, suggested_delete: 1, suggested_disable: 1, suggested_enable: 1, reauth: 2, deletable_reauth: 1, review: 0, keep: 0, handled: 0, editable_enabled: 4, editable_disabled: 1 };
+    const summary = { actionable: 5, suggested_delete: 1, suggested_disable: 2, suggested_enable: 1, reauth: 1, deletable_reauth: 1, review: 0, keep: 0, handled: 0, editable_enabled: 4, editable_disabled: 1 };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       if (url.includes("/inspection/results")) return jsonResponse({ results: inspected, summary, total: 5, page: 1, page_size: url.includes("page_size=200") ? 200 : 50, pages: 1 });
@@ -276,7 +276,7 @@ describe("InspectionWorkspace", () => {
       { account_ids: ["delete-1"], confirm: true },
     ]));
     await waitFor(() => expect(previewBodies).toHaveLength(4));
-    expect(previewBodies[2]).toEqual({ scope: { mode: "selected", ids: ["disable-1"] }, patch: { disabled: true } });
+    expect(previewBodies[2]).toEqual({ scope: { mode: "selected", ids: ["disable-1", "reauth-model"] }, patch: { disabled: true } });
     expect(previewBodies[3]).toEqual({ scope: { mode: "selected", ids: ["enable-1"] }, patch: { disabled: false } });
     expect(jobCount).toBe(2);
   });

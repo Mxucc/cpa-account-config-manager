@@ -27,6 +27,37 @@ func TestInspectionEmptyCollectionsUseJSONArrays(t *testing.T) {
 	}
 }
 
+func TestInspectionStoreMigratesLegacyModelAuthenticationReauthToDisable(t *testing.T) {
+	records := sanitizeInspectionRecords(map[string]inspectionRecord{
+		"legacy-model": {
+			Result: InspectionResult{
+				Health: InspectionHealthInvalidCredentials, ReasonCode: "authentication_failed",
+				Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+				Editable: true, SignalSource: InspectionSignalActiveProbe,
+			},
+			Probe: inspectionProbeSignal{Status: "unavailable", Kind: InspectionProbeKindModel, ReasonCode: "authentication_failed"},
+		},
+		"credential": {
+			Result: InspectionResult{
+				Health: InspectionHealthInvalidCredentials, ReasonCode: "authentication_failed",
+				Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+				Editable: true, SignalSource: InspectionSignalActiveProbe,
+			},
+			Probe: inspectionProbeSignal{Status: "unavailable", Kind: InspectionProbeKindCredential, ReasonCode: "authentication_failed"},
+		},
+	})
+
+	model := records["legacy-model"].Result
+	if model.Health != InspectionHealthUnavailable || model.Recommendation != InspectionRecommendationDisable ||
+		model.Confidence != InspectionConfidenceMedium || !model.AutoDisableEligible {
+		t.Fatalf("migrated model authentication result = %#v", model)
+	}
+	credential := records["credential"].Result
+	if credential.Health != InspectionHealthInvalidCredentials || credential.Recommendation != InspectionRecommendationReauth {
+		t.Fatalf("credential authentication result was migrated = %#v", credential)
+	}
+}
+
 func TestLiveInspectionResultsAreCurrentRunOnlyBoundedAndNewestFirst(t *testing.T) {
 	runID := "inspection-live-bound"
 	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)

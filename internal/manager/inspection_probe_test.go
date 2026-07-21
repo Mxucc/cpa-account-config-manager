@@ -121,7 +121,7 @@ func TestInspectionProbeDecisionDisablesEveryCompletedAbnormalModelTest(t *testi
 		recommend   string
 	}{
 		{reason: "model_response_ok", health: InspectionHealthHealthy, recommend: InspectionRecommendationKeep},
-		{reason: "authentication_failed", health: InspectionHealthInvalidCredentials, autoDisable: true, recommend: InspectionRecommendationReauth},
+		{reason: "authentication_failed", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
 		{reason: "quota_limited", health: InspectionHealthQuotaLimited, autoDisable: true, recommend: InspectionRecommendationDisable},
 		{reason: "model_not_found", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
 		{reason: "request_timeout", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
@@ -129,13 +129,32 @@ func TestInspectionProbeDecisionDisablesEveryCompletedAbnormalModelTest(t *testi
 		{reason: "invalid_response", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
 	}
 	for _, test := range tests {
-		decision, ok := decisionFromModelProbe(inspectionProbeSignal{ReasonCode: test.reason, TestedAt: now}, now)
+		decision, ok := decisionFromModelProbe(inspectionProbeSignal{Kind: InspectionProbeKindModel, ReasonCode: test.reason, TestedAt: now}, now)
 		if !ok || decision.Health != test.health || decision.AutoDisableEligible != test.autoDisable || decision.Recommendation != test.recommend {
 			t.Errorf("decision for %s = %#v, ok=%v", test.reason, decision, ok)
 		}
 	}
 	if _, ok := decisionFromModelProbe(inspectionProbeSignal{Status: "unsupported", ReasonCode: "unsupported_provider", TestedAt: now}, now); ok {
 		t.Fatal("unsupported provider was treated as a completed abnormal model test")
+	}
+}
+
+func TestInspectionProbeAuthenticationFailureUsesProbeKindForActionability(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 3, 30, 0, 0, time.UTC)
+	credential, okCredential := decisionFromModelProbe(inspectionProbeSignal{
+		Kind: InspectionProbeKindCredential, ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now,
+	}, now)
+	if !okCredential || credential.Health != InspectionHealthInvalidCredentials ||
+		credential.Recommendation != InspectionRecommendationReauth || !credential.AutoDisableEligible {
+		t.Fatalf("credential authentication decision = %#v, ok=%v", credential, okCredential)
+	}
+
+	model, okModel := decisionFromModelProbe(inspectionProbeSignal{
+		Kind: InspectionProbeKindModel, ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now,
+	}, now)
+	if !okModel || model.Health != InspectionHealthUnavailable ||
+		model.Recommendation != InspectionRecommendationDisable || !model.AutoDisableEligible {
+		t.Fatalf("model authentication decision = %#v, ok=%v", model, okModel)
 	}
 }
 

@@ -1076,7 +1076,7 @@ function reasonLabel(value: string, locale: Locale): string {
     account_deactivated: "ui.account_deactivated", workspace_deactivated: "ui.workspace_deactivated", authentication_review: "ui.authentication_needs_review",
     billing_review: "ui.billing_or_quota_needs_review", credential_permission_denied: "ui.credential_permission_denied", native_unavailable: "ui.cpa_marked_unavailable", manual_disabled: "ui.manually_disabled_2",
     transient_failure: "ui.temporary_upstream_failure", no_recent_evidence: "ui.no_recent_evidence",
-    model_response_ok: "ui.model_response_is_healthy", authentication_failed: "ui.credentials_invalid_or_expired",
+    model_response_ok: "ui.model_response_is_healthy", authentication_failed: "ui.authentication_failed",
     quota_limited: "ui.upstream_quota_or_rate_limited_2", model_not_found: "ui.model_unavailable_or_missing",
     request_timeout: "ui.model_test_timed_out", upstream_unavailable: "ui.upstream_service_unavailable",
     invalid_response: "ui.could_not_validate_upstream_response", unsupported_provider: "ui.provider_unsupported",

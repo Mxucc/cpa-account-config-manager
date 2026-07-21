@@ -213,6 +213,7 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Result.ProbeLatencyMS = record.Probe.LatencyMS
 		record.DisableReason = safeInspectionReason(record.DisableReason)
 		record.Result.SignalSource = normalizeInspectionSignalSource(record.Result.SignalSource)
+		migrateLegacyModelAuthenticationResult(&record)
 		record.Result.StatusCode = boundedHTTPStatus(record.Result.StatusCode)
 		record.Result.ReviewStatus = normalizeInspectionReviewStatus(record.Result.ReviewStatus, record.Result.Health)
 		if record.Result.ReviewStatus == "" {
@@ -231,6 +232,18 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		out[key] = record
 	}
 	return out
+}
+
+func migrateLegacyModelAuthenticationResult(record *inspectionRecord) {
+	if record == nil || record.Result.SignalSource != InspectionSignalActiveProbe ||
+		record.Probe.ReasonCode != "authentication_failed" || record.Probe.Kind == InspectionProbeKindCredential ||
+		record.Result.Recommendation != InspectionRecommendationReauth {
+		return
+	}
+	record.Result.Health = InspectionHealthUnavailable
+	record.Result.Confidence = InspectionConfidenceMedium
+	record.Result.Recommendation = InspectionRecommendationDisable
+	record.Result.AutoDisableEligible = true
 }
 
 func sanitizeInspectionActions(actions []InspectionAction) []InspectionAction {

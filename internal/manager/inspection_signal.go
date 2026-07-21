@@ -400,6 +400,13 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 			HealthyCount: probe.ConsecutiveSuccess, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "authentication_failed":
+		if probe.Kind != InspectionProbeKindCredential {
+			return inspectionDecision{
+				Health: InspectionHealthUnavailable, ReasonCode: probe.ReasonCode,
+				Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationDisable,
+				AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+			}, true
+		}
 		return inspectionDecision{
 			Health: InspectionHealthInvalidCredentials, ReasonCode: probe.ReasonCode,
 			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,

@@ -246,7 +246,10 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
 	defer cancel()
-	if provider == "codex" && !metadata.usesAPIKey() {
+	// Inspection must use the Codex credential endpoint even when CPA runtime
+	// metadata says api_key. The runtime label can be stale or describe the
+	// routing adapter rather than the physical auth file.
+	if provider == "codex" && (request.Inspection || !metadata.usesAPIKey()) {
 		credential := buildCodexCredentialProbe(metadata)
 		statusCode, body, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
 		if errCredential == nil {

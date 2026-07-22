@@ -250,16 +250,16 @@ export default function App() {
     setNotice(errorText(error, locale));
   }, [locale]);
 
-  const refreshAccounts = useCallback(async (silent = false) => {
+  const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters) => {
     if (authState !== "ready") return;
     const requestID = accountRequest.current + 1;
     accountRequest.current = requestID;
     if (!silent) setLoading(true);
     try {
-      const response = await api.listAccounts(page, pageSize, apiFilters);
+      const response = await api.listAccounts(requestedPage, pageSize, requestedFilters);
       if (requestID !== accountRequest.current) return;
       setData(response);
-      if (response.pages > 0 && page > response.pages) setPage(response.pages);
+      if (response.pages > 0 && requestedPage > response.pages) setPage(response.pages);
     } catch (error) {
       if (requestID !== accountRequest.current) return;
       handleAPIError(error);
@@ -859,7 +859,7 @@ export default function App() {
           <section className="filter-bar" aria-label={tx("ui.account_filters")}>
             <div className="filter-heading">
               <div><strong>{tx("ui.filter_accounts")}</strong><span>{tx(hasActiveFilters ? "ui.filters_applied" : "ui.all_accounts")}</span></div>
-              <button className="button button-quiet reset-filters" type="button" disabled={!hasActiveFilters} onClick={() => { setFilters({ ...EMPTY_ACCOUNT_FILTERS }); setSearchDraft(""); setPage(1); setSelected(new Set()); }}>
+              <button className="button button-quiet reset-filters" type="button" disabled={!hasActiveFilters} onClick={() => { setFilters({ ...EMPTY_ACCOUNT_FILTERS }); setSearchDraft(""); setPage(1); setSelected(new Set()); void refreshAccounts(false, 1, {}); }}>
                 {tx("ui.reset")}
               </button>
             </div>

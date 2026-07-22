@@ -286,3 +286,40 @@ func TestInspectionCredentialProbeOverridesMisleadingAPIKeyType(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestInspectionCodexAlwaysUsesCredentialProbeForAPIKeyRuntimeMetadata(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-1", Name: "operator.json", Provider: "codex", Type: "codex",
+			AccountType: "api_key", Source: "file", Path: "/auths/operator.json", Disabled: true,
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-1": {
+				AuthIndex: "auth-1", Name: "operator.json", Path: "/auths/operator.json",
+				JSON: json.RawMessage(`{"type":"codex","api_key":"runtime-label-only"}`),
+			},
+		},
+	}
+	var received managementAPICallRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"status_code":402,"body":{"detail":{"code":"deactivated_workspace"}}}`))
+	}))
+	defer server.Close()
+
+	service := NewModelTestService(NewAccountService(host))
+	service.doer = server.Client()
+	result, errRun := service.Run(t.Context(), ModelTestRequest{AccountID: "auth-1", Inspection: true}, server.URL, "management-secret")
+	if errRun != nil {
+		t.Fatalf("Run() error = %v", errRun)
+	}
+	if received.URL != "https://chatgpt.com/backend-api/wham/usage" {
+		t.Fatalf("probe URL = %q, want the Codex credential endpoint", received.URL)
+	}
+	if result.ProbeKind != InspectionProbeKindCredential || result.ReasonCode != "workspace_deactivated" {
+		t.Fatalf("result = %#v", result)
+	}
+}

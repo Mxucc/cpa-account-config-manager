@@ -360,6 +360,17 @@ describe("primary account batch flow", () => {
     await user.click(screen.getByRole("button", { name: "重置" }));
     expect(screen.getByLabelText("搜索账号")).toHaveValue("");
     expect(screen.getByLabelText("状态")).toHaveValue("");
+    await waitFor(() => expect(requests.some((url) => {
+      const parsed = new URL(url, "http://localhost");
+      return parsed.pathname.endsWith("/accounts")
+        && parsed.searchParams.get("page") === "1"
+        && parsed.searchParams.get("search") === null
+        && parsed.searchParams.get("provider") === null
+        && parsed.searchParams.get("type") === null
+        && parsed.searchParams.get("status") === null
+        && parsed.searchParams.get("disabled") === null
+        && parsed.searchParams.get("editability") === null;
+    })).toBe(true));
     await waitFor(() => expect(localStorage.getItem(ACCOUNT_FILTERS_STORAGE_KEY)).toBeNull());
   });
 

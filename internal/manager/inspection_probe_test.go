@@ -643,6 +643,82 @@ func TestManualFullInspectionProbesEveryEligibleAccountAndNativeInspectionDoesNo
 	t.Fatal("native inspection did not complete")
 }
 
+func TestManualFullInspectionActuallyProbesManuallyDisabledUnavailableAccounts(t *testing.T) {
+	entries := []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "manual-delete", Name: "manual-delete.json", Provider: "codex", Type: "oauth", Source: "file", Path: "/auths/manual-delete.json", Disabled: true, Unavailable: true},
+		{AuthIndex: "manual-reauth", Name: "manual-reauth.json", Provider: "codex", Type: "oauth", Source: "file", Path: "/auths/manual-reauth.json", Disabled: true, Unavailable: true},
+		{AuthIndex: "manual-enable", Name: "manual-enable.json", Provider: "codex", Type: "oauth", Source: "file", Path: "/auths/manual-enable.json", Disabled: true, Unavailable: true},
+	}
+	details := map[string]cpaapi.HostAuthGetResponse{}
+	for _, entry := range entries {
+		details[entry.AuthIndex] = cpaapi.HostAuthGetResponse{
+			AuthIndex: entry.AuthIndex, Name: entry.Name, Path: entry.Path,
+			JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-id"}`),
+		}
+	}
+	host := &fakeAuthHost{entries: entries, details: details}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var call managementAPICallRequest
+		if errDecode := json.NewDecoder(request.Body).Decode(&call); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		calls.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		switch call.AuthIndex {
+		case "manual-delete":
+			_, _ = writer.Write([]byte(`{"status_code":402,"body":{"detail":{"code":"deactivated_workspace"}}}`))
+		case "manual-reauth":
+			_, _ = writer.Write([]byte(`{"status_code":401,"body":{"error":{"message":"Your authentication token has been invalidated"}}}`))
+		case "manual-enable":
+			_, _ = writer.Write([]byte(`{"status_code":200,"body":{"rate_limit":{"allowed":true,"primary_window":{"used_percent":10,"limit_window_seconds":18000},"secondary_window":{"used_percent":20,"limit_window_seconds":604800}}}}`))
+		default:
+			t.Errorf("unexpected auth index %q", call.AuthIndex)
+			_, _ = writer.Write([]byte(`{"status_code":500,"body":{}}`))
+		}
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	app.inspection.mu.Lock()
+	app.inspection.policy.ModelProbeBatchSize = len(entries)
+	app.inspection.policy.ScanManuallyDisabled = false
+	app.inspection.mu.Unlock()
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management/plugins/cpa-account-config-manager/inspection/scan",
+		Headers: http.Header{"Authorization": []string{"Bearer current-management-secret"}},
+	})
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("manual full response = %d %s", response.StatusCode, response.Body)
+	}
+	waitInspectionSweep(t, app.inspection, InspectionSweepStatusCompleted)
+
+	results := app.inspection.ListResults(InspectionResultQuery{Page: 1, PageSize: 50})
+	if calls.Load() != int32(len(entries)) || results.Total != len(entries) {
+		t.Fatalf("manual disabled calls=%d results=%#v", calls.Load(), results)
+	}
+	byID := make(map[string]InspectionResult, len(results.Results))
+	for _, result := range results.Results {
+		byID[result.ID] = result
+	}
+	if result := byID["manual-delete"]; result.Health != InspectionHealthDeactivated || result.Recommendation != InspectionRecommendationDelete || result.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("delete result = %#v", result)
+	}
+	if result := byID["manual-reauth"]; result.Health != InspectionHealthInvalidCredentials || result.Recommendation != InspectionRecommendationReauth || result.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("reauth result = %#v", result)
+	}
+	if result := byID["manual-enable"]; result.Health != InspectionHealthHealthy || result.Recommendation != InspectionRecommendationEnable || result.StatusCode != http.StatusOK {
+		t.Fatalf("enable result = %#v", result)
+	}
+	if summary := results.Summary; summary.Actionable != 3 || summary.SuggestedDelete != 1 || summary.Reauth != 1 || summary.SuggestedEnable != 1 || summary.Keep != 0 || summary.Handled != 0 || summary.Review != 0 {
+		t.Fatalf("manual disabled remediation = %#v", summary)
+	}
+}
+
 func waitInspectionSweep(t *testing.T, engine *InspectionEngine, wantStatus string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

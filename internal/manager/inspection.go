@@ -1131,6 +1131,10 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 			probeProcessed = len(batchTargets)
 			probeAccounts = inspectionProbeAccountsForTargets(accounts, batchTargets)
 			probePolicy.ModelProbeBatchSize = len(probeAccounts)
+			// Sweep targets already passed the run-mode and disabled-account policy
+			// checks. Do not silently filter explicitly selected or manual-full
+			// disabled accounts a second time while executing the batch.
+			probePolicy.ScanManuallyDisabled = true
 			probeCursorForRun = 0
 		}
 		primaryObserved := 0
@@ -1206,6 +1210,10 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 			previous[result.AccountID] = record
 		}
 	}
+	// Probe timestamps are captured while the batch runs. Refresh the decision
+	// clock after the batch so freshly observed evidence is not rejected as a
+	// future timestamp and replaced by stale native account state.
+	now = e.currentTime()
 	next := make(map[string]inspectionRecord, len(accounts))
 	for _, account := range accounts {
 		if ctx.Err() != nil {

@@ -14,6 +14,7 @@ import {
   listInspectionActions,
   listInspectionResults,
   listOperations,
+	persistCurrentSettings,
   reconcileUpdateStatus,
   saveDefaultPolicy,
   saveInspectionPolicy,
@@ -146,6 +147,7 @@ describe("management API client", () => {
         operations: [], summary: { total: 0, running: 0, succeeded: 0, failed: 0, attention: 0, interrupted: 0 },
         total: 0, page: 2, page_size: 500, pages: 0, extended_history: false, archived_segments: 0, retention_limit: 500, retained: 0,
       }))
+			.mockResolvedValueOnce(jsonResponse({ status: "ok" }))
       .mockResolvedValueOnce(jsonResponse({ extended_history: true, page_size: 500, retained: 500, archived_segments: 0 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -156,7 +158,12 @@ describe("management API client", () => {
     expect(listURL).toContain("category=inspection");
 
     await expect(saveOperationRetentionSettings(true)).resolves.toMatchObject({ extended_history: true, page_size: 500 });
-    const [settingsURL, settingsInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+		const [configURL, configInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+		expect(configURL).toContain("/plugins/cpa-account-config-manager/config");
+		expect(configInit.method).toBe("PATCH");
+		expect(JSON.parse(String(configInit.body))).toEqual({ operation_settings: { extended_history: true } });
+
+    const [settingsURL, settingsInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(settingsURL).toContain("/operations/settings");
     expect(settingsInit.method).toBe("PUT");
     expect(JSON.parse(String(settingsInit.body))).toEqual({ extended_history: true });
@@ -424,7 +431,9 @@ describe("management API client", () => {
       current_version: "0.2.0", latest_version: "0.3.0", update_available: true, checking: false, pending: false,
     };
     const fetchMock = vi.fn()
+			.mockResolvedValueOnce(jsonResponse({ status: "ok" }))
       .mockResolvedValueOnce(jsonResponse(inspectionSnapshot))
+			.mockResolvedValueOnce(jsonResponse({ status: "ok" }))
       .mockResolvedValueOnce(jsonResponse(updateSnapshot))
       .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
       .mockResolvedValueOnce(jsonResponse({ attempted: 0, succeeded: 0, failed: 0, skipped: 0 }))
@@ -437,32 +446,88 @@ describe("management API client", () => {
     await executeInspectionAutoDelete();
     await installPluginUpdate("0.3.0");
 
-    const [inspectionURL, inspectionInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+		const [inspectionConfigURL, inspectionConfigInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(inspectionConfigURL).toContain("/plugins/cpa-account-config-manager/config");
+		expect(JSON.parse(String(inspectionConfigInit.body))).toEqual({ inspection_policy: inspectionSnapshot.policy });
+
+    const [inspectionURL, inspectionInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(inspectionURL).toContain("/inspection");
     expect(JSON.parse(String(inspectionInit.body))).toEqual({ ...inspectionSnapshot.policy, confirm_auto_delete: true, confirm_delete_invalid_credentials: true });
 
-    const [updateURL, updateInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+		const [updateConfigURL, updateConfigInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+		expect(updateConfigURL).toContain("/plugins/cpa-account-config-manager/config");
+		expect(JSON.parse(String(updateConfigInit.body))).toEqual({ update_policy: updateSnapshot.policy });
+
+    const [updateURL, updateInit] = fetchMock.mock.calls[3] as [string, RequestInit];
     expect(updateURL).toContain("/updates");
     expect(JSON.parse(String(updateInit.body))).toEqual({ policy: updateSnapshot.policy, confirm_auto_update: true });
 
-    const [policyStoreURL, policyStoreInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+		const [policyStoreURL, policyStoreInit] = fetchMock.mock.calls[4] as [string, RequestInit];
     expect(policyStoreURL).toBe("/v0/management/plugin-store");
     expect(new Headers(policyStoreInit.headers).get("Authorization")).toBe("Bearer management-secret");
 
-    const [deleteURL, deleteInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+		const [deleteURL, deleteInit] = fetchMock.mock.calls[5] as [string, RequestInit];
     expect(deleteURL).toContain("/inspection/auto-delete");
     expect(deleteInit.body).toBeUndefined();
 
-    const [storeURL, storeInit] = fetchMock.mock.calls[4] as [string, RequestInit];
+		const [storeURL, storeInit] = fetchMock.mock.calls[6] as [string, RequestInit];
     expect(storeURL).toBe("/v0/management/plugin-store");
     expect(new Headers(storeInit.headers).get("Authorization")).toBe("Bearer management-secret");
 
-    const [installURL, installInit] = fetchMock.mock.calls[5] as [string, RequestInit];
+		const [installURL, installInit] = fetchMock.mock.calls[7] as [string, RequestInit];
     expect(installURL).toBe("/v0/management/plugin-store/cpa-account-config-manager/install");
     expect(JSON.parse(String(installInit.body))).toEqual({ version: "0.3.0" });
     expect(new Headers(installInit.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
+
+	it("migrates all current server settings into one CPA plugin-config patch", async () => {
+		setSession("", "management-secret");
+		const defaultPolicy = { enabled: true, apply_mode: "missing" as const, scan_interval_seconds: 15, priority: 0, websockets: false };
+		const inspectionPolicy = {
+			enabled: true, scan_interval_minutes: 30,
+			model_probe_enabled: true, model_probe_full_sweep: true, scan_manually_disabled: true, model_probe_interval_minutes: 60, model_probe_batch_size: 20,
+			model_probe_models: { codex: "gpt-5.4", openai: "gpt-5.4", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", xai: "grok-4" },
+			failure_threshold: 3, recovery_threshold: 2, passive_circuit_enabled: true, passive_failure_threshold: 5,
+			passive_failure_window_minutes: 180, passive_circuit_minutes: 15, auto_disable: true, auto_enable: true,
+			auto_delete: false, auto_delete_invalid_credentials: false, delete_grace_hours: 168, delete_batch_size: 10,
+			anomaly_trigger_enabled: true, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
+		};
+		const updatePolicy = { check_enabled: true, check_interval_hours: 12, auto_update: true };
+		const fetchMock = vi.fn(async (input: RequestInfo | URL, _init: RequestInit = {}) => {
+			const url = String(input);
+			if (url.endsWith("/defaults")) return jsonResponse({ policy: defaultPolicy });
+			if (url.endsWith("/inspection")) return jsonResponse({ policy: inspectionPolicy });
+			if (url.endsWith("/updates")) return jsonResponse({ policy: updatePolicy });
+			if (url.endsWith("/operations/settings")) return jsonResponse({ extended_history: true, page_size: 500, retained: 500, archived_segments: 0 });
+			if (url.endsWith("/config")) return jsonResponse({ status: "ok" });
+			return jsonResponse({}, 404);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await persistCurrentSettings();
+
+		const configCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/config"));
+		expect(configCall).toBeDefined();
+		const [, configInit] = configCall as [RequestInfo | URL, RequestInit];
+		expect(configInit.method).toBe("PATCH");
+		expect(JSON.parse(String(configInit.body))).toEqual({
+			default_policy: defaultPolicy,
+			inspection_policy: inspectionPolicy,
+			update_policy: updatePolicy,
+			operation_settings: { extended_history: true },
+		});
+		expect(String(configInit.body)).not.toContain("management-secret");
+	});
+
+	it("stops a settings save when CPA plugin-config persistence fails", async () => {
+		setSession("", "management-secret");
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: "save failed" }, 500));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(saveOperationRetentionSettings(true)).rejects.toMatchObject({ message: "ui.settings_persistence_failed" });
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
 
   it("preserves the stable restart-required plugin-store error code", async () => {
     setSession("", "management-secret");

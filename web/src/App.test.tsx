@@ -771,7 +771,11 @@ describe("primary account batch flow", () => {
 
     const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");
     expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false });
-    const configRequest = requests.find(({ url, init }) => url.endsWith("/config") && init.method === "PATCH");
+		const configRequest = requests.find(({ url, init }) => {
+			if (!url.endsWith("/config") || init.method !== "PATCH") return false;
+			const body = JSON.parse(String(init.body)) as { default_policy?: { priority?: number | null } };
+			return body.default_policy?.priority === 0;
+		});
     expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false } });
     expect(requests.indexOf(configRequest!)).toBeLessThan(requests.indexOf(putRequest!));
     expect(localStorage.length).toBe(0);

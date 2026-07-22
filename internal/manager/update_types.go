@@ -14,9 +14,9 @@ const (
 )
 
 type UpdatePolicy struct {
-	CheckEnabled       bool `json:"check_enabled"`
-	CheckIntervalHours int  `json:"check_interval_hours"`
-	AutoUpdate         bool `json:"auto_update"`
+	CheckEnabled       bool `json:"check_enabled" yaml:"check_enabled"`
+	CheckIntervalHours int  `json:"check_interval_hours" yaml:"check_interval_hours"`
+	AutoUpdate         bool `json:"auto_update" yaml:"auto_update"`
 }
 
 type UpdatePolicyRequest struct {

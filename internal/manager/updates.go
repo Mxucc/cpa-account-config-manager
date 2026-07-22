@@ -40,13 +40,27 @@ func (c *UpdateChecker) Configure(config Config) {
 	}
 	config = normalizeConfig(config)
 	storePath := updateStorePath(config.DataDir)
+	configuredPolicy, hasConfiguredPolicy, errConfiguredPolicy := updatePolicyFromConfig(config)
 	c.mu.RLock()
 	sameStore := c.configured && c.store == storePath
 	c.mu.RUnlock()
 	if sameStore {
 		c.mu.Lock()
 		c.config = config
+		currentPolicy := c.policy
+		if hasConfiguredPolicy && errConfiguredPolicy != nil {
+			c.error = "update state could not be loaded"
+		} else if hasConfiguredPolicy && c.error == "update state could not be loaded" {
+			c.error = ""
+		}
 		c.mu.Unlock()
+		if hasConfiguredPolicy && errConfiguredPolicy == nil && currentPolicy != configuredPolicy {
+			if _, errSave := c.SetPolicy(configuredPolicy); errSave != nil {
+				c.mu.Lock()
+				c.error = "update state could not be persisted"
+				c.mu.Unlock()
+			}
+		}
 		return
 	}
 
@@ -57,6 +71,18 @@ func (c *UpdateChecker) Configure(config Config) {
 	} else if !errors.Is(errLoad, os.ErrNotExist) {
 		state.Error = "update state could not be loaded"
 	}
+	if hasConfiguredPolicy {
+		if errConfiguredPolicy != nil {
+			state.Error = "update state could not be loaded"
+		} else {
+			state.Policy = configuredPolicy
+			c.storeMu.Lock()
+			if errSave := saveUpdateState(storePath, state); errSave != nil {
+				state.Error = "update state could not be persisted"
+			}
+			c.storeMu.Unlock()
+		}
+	}
 	c.mu.Lock()
 	c.config = config
 	c.store = storePath
@@ -65,6 +91,17 @@ func (c *UpdateChecker) Configure(config Config) {
 	c.error = retainedUpdateStateError(state.Error)
 	c.configured = true
 	c.mu.Unlock()
+}
+
+func updatePolicyFromConfig(config Config) (UpdatePolicy, bool, error) {
+	if config.UpdatePolicy == nil {
+		return UpdatePolicy{}, false, nil
+	}
+	policy, errValidate := validateUpdatePolicy(*config.UpdatePolicy)
+	if errValidate != nil {
+		return UpdatePolicy{}, true, errValidate
+	}
+	return policy, true, nil
 }
 
 func (c *UpdateChecker) Snapshot() UpdateSnapshot {

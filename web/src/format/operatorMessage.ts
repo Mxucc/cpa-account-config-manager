@@ -7,6 +7,7 @@ const directMessages: Record<string, UIMessageKey> = {
   "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store": "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store",
   "ui.authentication_failed": "ui.authentication_failed",
   "ui.request_failed": "ui.request_failed",
+	"ui.settings_persistence_failed": "ui.settings_persistence_failed",
 };
 
 export function operatorMessage(message?: string, locale: Locale = "zh-CN"): string {

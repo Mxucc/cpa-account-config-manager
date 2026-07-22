@@ -39,7 +39,13 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
 			StatusCode: http.StatusOK,
-			Body:       "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}\n\n",
+			Header: map[string][]string{
+				"Content-Type":  {"text/event-stream"},
+				"X-Request-ID":  {"request-123"},
+				"Set-Cookie":    {"session=response-cookie-secret"},
+				"Authorization": {"Bearer response-header-secret"},
+			},
+			Body: "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}\naccess_token=response-body-secret\n\n",
 		})
 	}))
 	defer server.Close()
@@ -67,13 +73,19 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 	if result.Status != "available" || result.ReasonCode != "model_response_ok" || result.Model != "gpt-5.4" {
 		t.Fatalf("result = %#v", result)
 	}
+	if result.Response == nil || result.Response.Format != "text" || !strings.Contains(result.Response.Body, "response.completed") {
+		t.Fatalf("response preview = %#v", result.Response)
+	}
+	if len(result.Response.Headers) != 2 || result.Response.Headers[0].Name != "content-type" || result.Response.Headers[1].Name != "x-request-id" {
+		t.Fatalf("safe response headers = %#v", result.Response.Headers)
+	}
 	if received.AuthIndex != "auth-1" || received.URL != "https://chatgpt.com/backend-api/codex/responses" {
 		t.Fatalf("CPA api-call target = %#v", received)
 	}
 	if received.Header["Authorization"] != "Bearer $TOKEN$" || received.Header["Chatgpt-Account-Id"] != "workspace-123" {
 		t.Fatalf("probe headers = %#v", received.Header)
 	}
-	for _, secret := range []string{"management-secret", "upstream-secret"} {
+	for _, secret := range []string{"management-secret", "upstream-secret", "response-cookie-secret", "response-header-secret", "response-body-secret"} {
 		if strings.Contains(string(response.Body), secret) || strings.Contains(received.Data, secret) {
 			t.Fatalf("model test leaked %q", secret)
 		}
@@ -90,6 +102,56 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 	rawOperation, _ := json.Marshal(operation)
 	if strings.Contains(string(rawOperation), "upstream-secret") || strings.Contains(string(rawOperation), "management-secret") {
 		t.Fatalf("operation leaked a secret: %s", rawOperation)
+	}
+}
+
+func TestModelTestResponsePreviewAllowListsDiagnosticsAndRedactsSecrets(t *testing.T) {
+	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
+		StatusCode: http.StatusTooManyRequests,
+		Header: map[string][]string{
+			"Content-Type":          {"application/json"},
+			"Retry-After":           {"45"},
+			"X-RateLimit-Remaining": {"0"},
+			"X-Request-ID":          {"request-429"},
+			"Set-Cookie":            {"session=cookie-secret"},
+			"Authorization":         {"Bearer header-secret"},
+		},
+		Body: []byte(`{
+			"error":{"type":"rate_limit_error","code":"weekly_limit_reached","message":"Rate limited for private@example.com; retry later","access_token":"body-token-secret"},
+			"rate_limit":{"allowed":false,"limit_reached":true,"secondary_window":{"used_percent":100,"reset_after_seconds":3600}},
+			"account_id":"workspace-secret",
+			"unknown_private_field":"must-not-be-returned",
+			"output":{"text":"Authorization: Bearer inline-secret-token"}
+		}`),
+	})
+	if preview == nil || preview.Format != "json" || preview.Truncated {
+		t.Fatalf("preview = %#v", preview)
+	}
+	for _, expected := range []string{"rate_limit_error", "weekly_limit_reached", "used_percent", "reset_after_seconds", "[redacted]", "[redacted-email]", "_omitted_fields"} {
+		if !strings.Contains(preview.Body, expected) {
+			t.Errorf("preview body missing %q: %s", expected, preview.Body)
+		}
+	}
+	for _, secret := range []string{"private@example.com", "body-token-secret", "workspace-secret", "must-not-be-returned", "inline-secret-token", "cookie-secret", "header-secret"} {
+		encoded, _ := json.Marshal(preview)
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("preview leaked %q: %s", secret, encoded)
+		}
+	}
+	if len(preview.Headers) != 4 {
+		t.Fatalf("safe headers = %#v", preview.Headers)
+	}
+}
+
+func TestModelTestResponsePreviewBoundsTextAndMarksTruncation(t *testing.T) {
+	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
+		Body: []byte("api_key=plain-secret upstream diagnostic " + strings.Repeat("x", maxModelTestPreviewBytes*2)),
+	})
+	if preview == nil || preview.Format != "text" || !preview.Truncated || len(preview.Body) > maxModelTestPreviewBytes+32 {
+		t.Fatalf("bounded preview = %#v", preview)
+	}
+	if strings.Contains(preview.Body, "plain-secret") || !strings.Contains(preview.Body, "[truncated]") {
+		t.Fatalf("text preview was not safely truncated: %q", preview.Body)
 	}
 }
 
@@ -285,6 +347,9 @@ func TestInspectionCredentialProbeOverridesMisleadingAPIKeyType(t *testing.T) {
 	if result.ProbeKind != InspectionProbeKindCredential || result.StatusCode != 402 || result.ReasonCode != "workspace_deactivated" {
 		t.Fatalf("result = %#v", result)
 	}
+	if result.Response != nil {
+		t.Fatalf("inspection result retained an upstream response preview: %#v", result.Response)
+	}
 }
 
 func TestInspectionCodexAlwaysUsesCredentialProbeForAPIKeyRuntimeMetadata(t *testing.T) {
@@ -321,5 +386,8 @@ func TestInspectionCodexAlwaysUsesCredentialProbeForAPIKeyRuntimeMetadata(t *tes
 	}
 	if result.ProbeKind != InspectionProbeKindCredential || result.ReasonCode != "workspace_deactivated" {
 		t.Fatalf("result = %#v", result)
+	}
+	if result.Response != nil {
+		t.Fatalf("inspection result retained an upstream response preview: %#v", result.Response)
 	}
 }

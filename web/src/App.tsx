@@ -231,6 +231,12 @@ export default function App() {
       setSession(panelAuth.apiBase, panelAuth.managementKey);
       try {
         await api.verifySession();
+        try {
+          await api.persistCurrentSettings();
+        } catch (error) {
+          if (error instanceof api.APIError && error.status === 401) throw error;
+          if (active) setNotice(operatorMessage(error instanceof Error ? error.message : "ui.settings_persistence_failed", locale));
+        }
         if (active) setAuthState("ready");
       } catch {
         clearSession();
@@ -431,6 +437,12 @@ export default function App() {
     setSession(baseURL, managementKey);
     try {
       await api.verifySession();
+      try {
+        await api.persistCurrentSettings();
+      } catch (error) {
+        if (error instanceof api.APIError && error.status === 401) throw error;
+        setNotice(operatorMessage(error instanceof Error ? error.message : "ui.settings_persistence_failed", locale));
+      }
       setAuthState("ready");
     } catch (error) {
       clearSession();

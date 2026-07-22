@@ -245,6 +245,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .model-test-outcome dl > div { min-width: 0; display: grid; gap: 4px; padding: 9px 10px; background: var(--bg-primary); }
 .model-test-outcome dt { color: var(--text-tertiary); font-size: 10px; }
 .model-test-outcome dd { margin: 0; color: var(--text-primary); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-test-response { min-width: 0; display: grid; gap: 10px; padding-top: 2px; }
+.model-test-response-heading { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.model-test-response-heading > div { min-width: 0; display: grid; gap: 2px; }
+.model-test-response-heading strong { color: var(--text-primary); font-size: 12px; }
+.model-test-response-heading span { color: var(--text-tertiary); font-size: 10px; }
+.model-test-response-heading > span { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.model-test-response-headers { min-width: 0; display: grid; gap: 1px; border: 1px solid var(--border-color); background: var(--border-color); }
+.model-test-response-headers > div { min-width: 0; display: grid; grid-template-columns: minmax(112px, 0.35fr) minmax(0, 1fr); gap: 10px; padding: 7px 9px; background: var(--bg-primary); }
+.model-test-response-headers code, .model-test-response-headers span { min-width: 0; overflow-wrap: anywhere; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 10px; }
+.model-test-response-headers code { color: var(--text-secondary); }
+.model-test-response-headers span { color: var(--text-primary); }
+.model-test-response pre { min-width: 0; max-height: 280px; margin: 0; padding: 11px 12px; overflow: auto; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.model-test-response pre code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; line-height: 1.55; }
 .state-active { background: var(--success); }
 .state-disabled { background: var(--muted); }
 .state-error, .state-unavailable { background: var(--danger); }

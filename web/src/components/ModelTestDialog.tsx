@@ -45,6 +45,13 @@ const reasonLabels: Record<string, UIMessageKey> = {
   unsupported_provider: "ui.this_provider_does_not_support_safe_model_testing_yet",
 };
 
+const quotaWindowLabels: Record<NonNullable<ModelTestResult["quota_window"]>, UIMessageKey> = {
+  five_hour: "ui.quota_window_five_hour",
+  seven_day: "ui.quota_window_seven_day",
+  multiple: "ui.quota_window_multiple",
+  five_hour_fallback: "ui.quota_window_five_hour_fallback",
+};
+
 export function ModelTestDialog({ account, result, error, testing, onClose, onTest }: ModelTestDialogProps) {
   const { locale, tx } = useI18n();
   const provider = (account.provider || account.type || "").trim().toLowerCase();
@@ -101,14 +108,32 @@ export function ModelTestDialog({ account, result, error, testing, onClose, onTe
 function ModelTestOutcome({ result }: { result: ModelTestResult }) {
   const { formatDateTime, tx } = useI18n();
   const Icon = result.status === "available" ? CheckCircle2 : result.status === "unavailable" ? XCircle : ShieldQuestion;
+  const responseHeaders = Array.isArray(result.response?.headers) ? result.response.headers : [];
   return (
     <section className={`model-test-outcome outcome-${result.status}`} aria-label={tx("ui.model_test_result")}>
       <div className="model-test-outcome-heading"><Icon size={21} /><div><strong>{tx(statusLabels[result.status])}</strong><span>{tx(reasonLabels[result.reason_code] || "ui.the_test_result_requires_manual_confirmation")}</span></div></div>
       <dl>
         <div><dt>{tx("ui.model")}</dt><dd>{result.model}</dd></div>
+        <div><dt>{tx("ui.http_status")}</dt><dd>{result.status_code || "-"}</dd></div>
+        <div><dt>{tx("ui.probe_type")}</dt><dd>{result.probe_kind === "credential" ? tx("ui.credential_probe") : result.probe_kind === "model" ? tx("ui.model_probe") : "-"}</dd></div>
         <div><dt>{tx("ui.latency")}</dt><dd>{result.latency_ms >= 0 ? `${result.latency_ms} ms` : "-"}</dd></div>
+        {result.quota_window ? <div><dt>{tx("ui.quota_window")}</dt><dd>{tx(quotaWindowLabels[result.quota_window])}</dd></div> : null}
         <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(result.tested_at)}</dd></div>
       </dl>
+      {result.response ? (
+        <div className="model-test-response">
+          <div className="model-test-response-heading">
+            <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
+            <span>{result.response.format.toUpperCase()}{result.response.truncated ? ` · ${tx("ui.truncated")}` : ""}</span>
+          </div>
+          {responseHeaders.length > 0 ? (
+            <div className="model-test-response-headers" aria-label={tx("ui.response_headers")}>
+              {responseHeaders.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
+            </div>
+          ) : null}
+          <pre aria-label={tx("ui.response_body")}><code>{result.response.body || tx("ui.empty_response_body")}</code></pre>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -295,11 +295,27 @@ export async function getDefaultPolicy(): Promise<PolicySnapshot> {
 	return request<PolicySnapshot>("/defaults");
 }
 
+interface PersistentPluginSettings {
+	default_policy?: DefaultPolicy;
+	inspection_policy?: InspectionPolicy;
+	update_policy?: UpdatePolicy;
+	operation_settings?: Pick<OperationRetentionSettings, "extended_history">;
+}
+
+async function persistPluginSettings(settings: PersistentPluginSettings): Promise<void> {
+	try {
+		await request<unknown>("/config", {
+			method: "PATCH",
+			body: JSON.stringify(settings),
+		});
+	} catch (error) {
+		if (error instanceof APIError) throw new APIError(error.status, "ui.settings_persistence_failed");
+		throw error;
+	}
+}
+
 export async function saveDefaultPolicy(policy: DefaultPolicy): Promise<PolicySnapshot> {
-	await request<{ status: string }>("/config", {
-		method: "PATCH",
-		body: JSON.stringify({ default_policy: policy }),
-	});
+	await persistPluginSettings({ default_policy: policy });
 	return request<PolicySnapshot>("/defaults", {
 		method: "PUT",
 		body: JSON.stringify(policy),
@@ -320,6 +336,7 @@ export async function getLiveInspection(): Promise<InspectionSnapshot> {
 }
 
 export async function saveInspectionPolicy(policy: InspectionPolicy, confirmAutoDelete = false, confirmDeleteInvalidCredentials = false): Promise<InspectionSnapshot> {
+	await persistPluginSettings({ inspection_policy: policy });
   return request<InspectionSnapshot>("/inspection", {
     method: "PUT",
     body: JSON.stringify({ ...policy, confirm_auto_delete: confirmAutoDelete, confirm_delete_invalid_credentials: confirmDeleteInvalidCredentials }),
@@ -430,6 +447,7 @@ export async function getUpdateStatus(): Promise<UpdateSnapshot> {
 }
 
 export async function saveUpdatePolicy(policy: UpdatePolicy, confirmAutoUpdate = false): Promise<UpdateSnapshot> {
+	await persistPluginSettings({ update_policy: policy });
   const status = await request<UpdateSnapshot>("/updates", {
     method: "PUT",
     body: JSON.stringify({ policy, confirm_auto_update: confirmAutoUpdate }),
@@ -579,10 +597,30 @@ export async function listOperations(page: number, filters: OperationFilters = {
 }
 
 export async function saveOperationRetentionSettings(extendedHistory: boolean): Promise<OperationRetentionSettings> {
+	await persistPluginSettings({ operation_settings: { extended_history: extendedHistory } });
   return request<OperationRetentionSettings>("/operations/settings", {
     method: "PUT",
     body: JSON.stringify({ extended_history: extendedHistory }),
   });
+}
+
+export async function getOperationRetentionSettings(): Promise<OperationRetentionSettings> {
+	return request<OperationRetentionSettings>("/operations/settings");
+}
+
+export async function persistCurrentSettings(): Promise<void> {
+	const [defaults, inspection, updates, operations] = await Promise.all([
+		getDefaultPolicy(),
+		getInspection(),
+		getUpdateStatus(),
+		getOperationRetentionSettings(),
+	]);
+	await persistPluginSettings({
+		default_policy: defaults.policy,
+		inspection_policy: inspection.policy,
+		update_policy: updates.policy,
+		operation_settings: { extended_history: operations.extended_history === true },
+	});
 }
 
 export async function clearOperations(): Promise<{ operation: OperationEntry; retained: number }> {

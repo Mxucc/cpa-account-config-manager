@@ -488,7 +488,7 @@ func TestCredentialProbeReauthCanBeConfirmedForDeletionButModelFailureCannot(t *
 	}
 }
 
-func TestModelTestServiceUsesDefinitiveCodexCredentialProbeWithoutLeakingResponse(t *testing.T) {
+func TestModelTestServiceUsesDefinitiveCodexCredentialProbeWithSanitizedManualResponse(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{
 			AuthIndex: "credential-401", Name: "credential-401.json", Provider: "codex", Type: "oauth",
@@ -530,7 +530,10 @@ func TestModelTestServiceUsesDefinitiveCodexCredentialProbeWithoutLeakingRespons
 		t.Fatalf("credential result=%#v credential_calls=%d model_calls=%d", result, credentialCalls, modelCalls)
 	}
 	encoded, _ := json.Marshal(result)
-	for _, secret := range []string{"private credential failure", "upstream-secret", "management-secret"} {
+	if result.Response == nil || !strings.Contains(result.Response.Body, "private credential failure") {
+		t.Fatalf("credential response preview = %#v", result.Response)
+	}
+	for _, secret := range []string{"upstream-secret", "management-secret"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("credential result leaked %q: %s", secret, encoded)
 		}

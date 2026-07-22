@@ -35,16 +35,22 @@ func (j *OperationJournal) Configure(config Config) {
 	}
 	dataDir := normalizeConfig(config).DataDir
 	store := operationStoreDirectory(dataDir)
-	j.storeMu.Lock()
-	defer j.storeMu.Unlock()
 	j.mu.RLock()
 	sameStore := j.configured && j.store == store
 	j.mu.RUnlock()
 	if sameStore {
+		if config.OperationSettings != nil {
+			if _, errUpdate := j.UpdateRetentionSettings(config.OperationSettings.ExtendedHistory); errUpdate != nil {
+				j.setStorageError("operation journal settings could not be persisted")
+			}
+		}
 		return
 	}
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
 	manifest, errLoad := loadOperationManifest(operationManifestPath(store))
 	migrated := false
+	configuredSettingsChanged := false
 	storageErr := ""
 	if errors.Is(errLoad, os.ErrNotExist) {
 		legacy, errLegacy := loadLegacyOperationState(legacyOperationStorePath(dataDir))
@@ -63,6 +69,13 @@ func (j *OperationJournal) Configure(config Config) {
 	} else if errLoad != nil {
 		storageErr = "operation journal could not be loaded"
 	}
+	if config.OperationSettings != nil && manifest.ExtendedHistory != config.OperationSettings.ExtendedHistory {
+		manifest.ExtendedHistory = config.OperationSettings.ExtendedHistory
+		if !manifest.ExtendedHistory {
+			manifest.Segments = nil
+		}
+		configuredSettingsChanged = true
+	}
 	j.mu.Lock()
 	j.store = store
 	j.operations = cloneOperationEntries(manifest.Operations)
@@ -75,9 +88,11 @@ func (j *OperationJournal) Configure(config Config) {
 	j.storageErr = storageErr
 	j.configured = true
 	j.mu.Unlock()
-	if storageErr == "" && migrated {
+	if storageErr == "" && (migrated || configuredSettingsChanged) {
 		if errPersist := j.persistLocked(); errPersist == nil {
-			_ = os.Remove(legacyOperationStorePath(dataDir))
+			if migrated {
+				_ = os.Remove(legacyOperationStorePath(dataDir))
+			}
 		}
 	}
 	if storageErr == "" {

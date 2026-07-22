@@ -126,6 +126,19 @@ export interface ModelTestResult {
   quota_window?: "five_hour" | "seven_day" | "multiple" | "five_hour_fallback";
   latency_ms: number;
   tested_at: string;
+  response?: ModelTestResponsePreview;
+}
+
+export interface ModelTestResponsePreview {
+  format: "json" | "text" | "empty";
+  body: string;
+  headers: ModelTestResponseHeader[];
+  truncated: boolean;
+}
+
+export interface ModelTestResponseHeader {
+  name: string;
+  value: string;
 }
 
 export interface AccountDeleteTarget {

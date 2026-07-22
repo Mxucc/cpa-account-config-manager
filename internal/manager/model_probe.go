@@ -36,16 +36,29 @@ type ModelTestRequest struct {
 }
 
 type ModelTestResult struct {
-	AccountID   string    `json:"account_id"`
-	Provider    string    `json:"provider"`
-	Model       string    `json:"model"`
-	Status      string    `json:"status"`
-	ProbeKind   string    `json:"probe_kind"`
-	ReasonCode  string    `json:"reason_code"`
-	StatusCode  int       `json:"status_code,omitempty"`
-	QuotaWindow string    `json:"quota_window,omitempty"`
-	LatencyMS   int64     `json:"latency_ms"`
-	TestedAt    time.Time `json:"tested_at"`
+	AccountID   string                    `json:"account_id"`
+	Provider    string                    `json:"provider"`
+	Model       string                    `json:"model"`
+	Status      string                    `json:"status"`
+	ProbeKind   string                    `json:"probe_kind"`
+	ReasonCode  string                    `json:"reason_code"`
+	StatusCode  int                       `json:"status_code,omitempty"`
+	QuotaWindow string                    `json:"quota_window,omitempty"`
+	LatencyMS   int64                     `json:"latency_ms"`
+	TestedAt    time.Time                 `json:"tested_at"`
+	Response    *ModelTestResponsePreview `json:"response,omitempty"`
+}
+
+type ModelTestResponsePreview struct {
+	Format    string                    `json:"format"`
+	Body      string                    `json:"body"`
+	Headers   []ModelTestResponseHeader `json:"headers"`
+	Truncated bool                      `json:"truncated"`
+}
+
+type ModelTestResponseHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type ModelTestService struct {
@@ -89,6 +102,12 @@ type managementAPICallResponse struct {
 }
 
 type managementAPICallBody string
+
+type modelProbeHTTPResponse struct {
+	StatusCode int
+	Header     map[string][]string
+	Body       []byte
+}
 
 func (r *managementAPICallResponse) UnmarshalJSON(raw []byte) error {
 	var envelope struct {
@@ -251,8 +270,9 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	// routing adapter rather than the physical auth file.
 	if provider == "codex" && (request.Inspection || !metadata.usesAPIKey()) {
 		credential := buildCodexCredentialProbe(metadata)
-		statusCode, body, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
+		credentialResponse, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
 		if errCredential == nil {
+			statusCode, body := credentialResponse.StatusCode, credentialResponse.Body
 			if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices && s.usage != nil {
 				s.usage.ObserveCredentialUsage(account.ID, codexUsageProbeSnapshot(body, s.currentTime()))
 			}
@@ -264,6 +284,9 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 				result.StatusCode = boundedHTTPStatus(statusCode)
 				result.QuotaWindow = quotaWindow
 				result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
+				if !request.Inspection {
+					result.Response = sanitizeModelTestResponsePreview(credentialResponse)
+				}
 				return result, nil
 			}
 		} else if errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
@@ -288,7 +311,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		return result, nil
 	}
 
-	upstreamStatus, upstreamBody, errCall := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, probe)
+	upstreamResponse, errCall := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, probe)
 	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
 	if errCall != nil {
 		result.Status = "review"
@@ -299,8 +322,11 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		}
 		return result, nil
 	}
-	result.Status, result.ReasonCode = classifyModelProbe(probe.kind, upstreamStatus, upstreamBody)
-	result.StatusCode = boundedHTTPStatus(upstreamStatus)
+	result.Status, result.ReasonCode = classifyModelProbe(probe.kind, upstreamResponse.StatusCode, upstreamResponse.Body)
+	result.StatusCode = boundedHTTPStatus(upstreamResponse.StatusCode)
+	if !request.Inspection {
+		result.Response = sanitizeModelTestResponsePreview(upstreamResponse)
+	}
 	return result, nil
 }
 
@@ -532,14 +558,14 @@ func bearerJSONHeaders(streaming bool) map[string]string {
 	}
 }
 
-func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBaseURL, managementKey, authIndex string, probe modelProbe) (int, []byte, error) {
+func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBaseURL, managementKey, authIndex string, probe modelProbe) (modelProbeHTTPResponse, error) {
 	baseURL, errBaseURL := validateManagementBaseURL(managementBaseURL)
 	if errBaseURL != nil {
-		return 0, nil, errBaseURL
+		return modelProbeHTTPResponse{}, errBaseURL
 	}
 	managementKey = strings.TrimSpace(managementKey)
 	if managementKey == "" {
-		return 0, nil, fmt.Errorf("management key is unavailable")
+		return modelProbeHTTPResponse{}, fmt.Errorf("management key is unavailable")
 	}
 	payload, errMarshal := json.Marshal(managementAPICallRequest{
 		AuthIndex: authIndex,
@@ -549,11 +575,11 @@ func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBase
 		Data:      probe.data,
 	})
 	if errMarshal != nil {
-		return 0, nil, fmt.Errorf("encode management model-test request: %w", errMarshal)
+		return modelProbeHTTPResponse{}, fmt.Errorf("encode management model-test request: %w", errMarshal)
 	}
 	request, errRequest := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v0/management/api-call", bytes.NewReader(payload))
 	if errRequest != nil {
-		return 0, nil, fmt.Errorf("create management model-test request: %w", errRequest)
+		return modelProbeHTTPResponse{}, fmt.Errorf("create management model-test request: %w", errRequest)
 	}
 	request.Header.Set("Authorization", "Bearer "+managementKey)
 	request.Header.Set("Accept", "application/json")
@@ -565,27 +591,31 @@ func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBase
 	}
 	response, errDo := doer.Do(request)
 	if errDo != nil {
-		return 0, nil, fmt.Errorf("management model-test request failed: %w", errDo)
+		return modelProbeHTTPResponse{}, fmt.Errorf("management model-test request failed: %w", errDo)
 	}
 	defer func() { _ = response.Body.Close() }()
 	outerBody, errRead := io.ReadAll(io.LimitReader(response.Body, maxModelTestResponseBytes+1))
 	if errRead != nil {
-		return 0, nil, fmt.Errorf("read management model-test response: %w", errRead)
+		return modelProbeHTTPResponse{}, fmt.Errorf("read management model-test response: %w", errRead)
 	}
 	if len(outerBody) > maxModelTestResponseBytes {
-		return 0, nil, fmt.Errorf("management model-test response exceeded the size limit")
+		return modelProbeHTTPResponse{}, fmt.Errorf("management model-test response exceeded the size limit")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return 0, nil, fmt.Errorf("management model-test request returned HTTP %d", response.StatusCode)
+		return modelProbeHTTPResponse{}, fmt.Errorf("management model-test request returned HTTP %d", response.StatusCode)
 	}
 	var decoded managementAPICallResponse
 	if errDecode := json.Unmarshal(outerBody, &decoded); errDecode != nil {
-		return 0, nil, fmt.Errorf("decode management model-test response: %w", errDecode)
+		return modelProbeHTTPResponse{}, fmt.Errorf("decode management model-test response: %w", errDecode)
 	}
 	if len(decoded.Body) > maxModelTestBodyBytes {
-		return 0, nil, fmt.Errorf("upstream model-test response exceeded the size limit")
+		return modelProbeHTTPResponse{}, fmt.Errorf("upstream model-test response exceeded the size limit")
 	}
-	return decoded.StatusCode, []byte(string(decoded.Body)), nil
+	return modelProbeHTTPResponse{
+		StatusCode: decoded.StatusCode,
+		Header:     decoded.Header,
+		Body:       []byte(string(decoded.Body)),
+	}, nil
 }
 
 func classifyCredentialProbe(statusCode int, body []byte) (string, string) {

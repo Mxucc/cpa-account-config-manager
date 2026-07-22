@@ -118,6 +118,7 @@ func (e *InspectionEngine) Configure(config Config) {
 	}
 	config = normalizeConfig(config)
 	storePath := inspectionStorePath(config.DataDir)
+	configuredPolicy, hasConfiguredPolicy, errConfiguredPolicy := inspectionPolicyFromConfig(config)
 
 	e.scanMu.Lock()
 	defer e.scanMu.Unlock()
@@ -127,7 +128,20 @@ func (e *InspectionEngine) Configure(config Config) {
 	if sameStore {
 		e.mu.Lock()
 		e.config = config
+		currentPolicy := e.policy
+		if hasConfiguredPolicy && errConfiguredPolicy != nil {
+			e.storageErr = "inspection state could not be loaded"
+		} else if hasConfiguredPolicy && e.storageErr == "inspection state could not be loaded" {
+			e.storageErr = ""
+		}
 		e.mu.Unlock()
+		if hasConfiguredPolicy && errConfiguredPolicy == nil && currentPolicy != configuredPolicy {
+			if _, errSave := e.SetPolicy(configuredPolicy); errSave != nil {
+				e.mu.Lock()
+				e.storageErr = "inspection state could not be persisted"
+				e.mu.Unlock()
+			}
+		}
 		return
 	}
 
@@ -142,6 +156,18 @@ func (e *InspectionEngine) Configure(config Config) {
 		state = loaded
 	} else if !errors.Is(errLoad, os.ErrNotExist) {
 		storageErr = "inspection state could not be loaded"
+	}
+	if hasConfiguredPolicy {
+		if errConfiguredPolicy != nil {
+			storageErr = "inspection state could not be loaded"
+		} else {
+			state.Policy = configuredPolicy
+			e.storeMu.Lock()
+			if errSave := saveInspectionState(storePath, state); errSave != nil {
+				storageErr = "inspection state could not be persisted"
+			}
+			e.storeMu.Unlock()
+		}
 	}
 
 	e.mu.Lock()
@@ -196,6 +222,17 @@ func (e *InspectionEngine) Configure(config Config) {
 		go e.persistLoop(ctx)
 	}
 	e.mu.Unlock()
+}
+
+func inspectionPolicyFromConfig(config Config) (InspectionPolicy, bool, error) {
+	if config.InspectionPolicy == nil {
+		return InspectionPolicy{}, false, nil
+	}
+	policy, errValidate := validateInspectionPolicy(*config.InspectionPolicy)
+	if errValidate != nil {
+		return InspectionPolicy{}, true, errValidate
+	}
+	return policy, true, nil
 }
 
 func (e *InspectionEngine) Snapshot() InspectionSnapshot {

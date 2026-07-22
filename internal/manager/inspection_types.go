@@ -103,38 +103,38 @@ const (
 )
 
 type InspectionPolicy struct {
-	Enabled                      bool             `json:"enabled"`
-	ScanIntervalMinutes          int              `json:"scan_interval_minutes"`
-	ModelProbeEnabled            bool             `json:"model_probe_enabled"`
-	ModelProbeFullSweep          bool             `json:"model_probe_full_sweep"`
-	ScanManuallyDisabled         bool             `json:"scan_manually_disabled"`
-	ModelProbeIntervalMinutes    int              `json:"model_probe_interval_minutes"`
-	ModelProbeBatchSize          int              `json:"model_probe_batch_size"`
-	ModelProbeModels             ModelProbeModels `json:"model_probe_models"`
-	FailureThreshold             int              `json:"failure_threshold"`
-	RecoveryThreshold            int              `json:"recovery_threshold"`
-	PassiveCircuitEnabled        bool             `json:"passive_circuit_enabled"`
-	PassiveFailureThreshold      int              `json:"passive_failure_threshold"`
-	PassiveFailureWindowMinutes  int              `json:"passive_failure_window_minutes"`
-	PassiveCircuitMinutes        int              `json:"passive_circuit_minutes"`
-	AutoDisable                  bool             `json:"auto_disable"`
-	AutoEnable                   bool             `json:"auto_enable"`
-	AutoDelete                   bool             `json:"auto_delete"`
-	AutoDeleteInvalidCredentials bool             `json:"auto_delete_invalid_credentials"`
-	DeleteGraceHours             int              `json:"delete_grace_hours"`
-	DeleteBatchSize              int              `json:"delete_batch_size"`
-	AnomalyTriggerEnabled        bool             `json:"anomaly_trigger_enabled"`
-	AnomalyThresholdPercent      int              `json:"anomaly_threshold_percent"`
-	AnomalyMinimumAccounts       int              `json:"anomaly_minimum_accounts"`
-	AnomalyCooldownMinutes       int              `json:"anomaly_cooldown_minutes"`
+	Enabled                      bool             `json:"enabled" yaml:"enabled"`
+	ScanIntervalMinutes          int              `json:"scan_interval_minutes" yaml:"scan_interval_minutes"`
+	ModelProbeEnabled            bool             `json:"model_probe_enabled" yaml:"model_probe_enabled"`
+	ModelProbeFullSweep          bool             `json:"model_probe_full_sweep" yaml:"model_probe_full_sweep"`
+	ScanManuallyDisabled         bool             `json:"scan_manually_disabled" yaml:"scan_manually_disabled"`
+	ModelProbeIntervalMinutes    int              `json:"model_probe_interval_minutes" yaml:"model_probe_interval_minutes"`
+	ModelProbeBatchSize          int              `json:"model_probe_batch_size" yaml:"model_probe_batch_size"`
+	ModelProbeModels             ModelProbeModels `json:"model_probe_models" yaml:"model_probe_models"`
+	FailureThreshold             int              `json:"failure_threshold" yaml:"failure_threshold"`
+	RecoveryThreshold            int              `json:"recovery_threshold" yaml:"recovery_threshold"`
+	PassiveCircuitEnabled        bool             `json:"passive_circuit_enabled" yaml:"passive_circuit_enabled"`
+	PassiveFailureThreshold      int              `json:"passive_failure_threshold" yaml:"passive_failure_threshold"`
+	PassiveFailureWindowMinutes  int              `json:"passive_failure_window_minutes" yaml:"passive_failure_window_minutes"`
+	PassiveCircuitMinutes        int              `json:"passive_circuit_minutes" yaml:"passive_circuit_minutes"`
+	AutoDisable                  bool             `json:"auto_disable" yaml:"auto_disable"`
+	AutoEnable                   bool             `json:"auto_enable" yaml:"auto_enable"`
+	AutoDelete                   bool             `json:"auto_delete" yaml:"auto_delete"`
+	AutoDeleteInvalidCredentials bool             `json:"auto_delete_invalid_credentials" yaml:"auto_delete_invalid_credentials"`
+	DeleteGraceHours             int              `json:"delete_grace_hours" yaml:"delete_grace_hours"`
+	DeleteBatchSize              int              `json:"delete_batch_size" yaml:"delete_batch_size"`
+	AnomalyTriggerEnabled        bool             `json:"anomaly_trigger_enabled" yaml:"anomaly_trigger_enabled"`
+	AnomalyThresholdPercent      int              `json:"anomaly_threshold_percent" yaml:"anomaly_threshold_percent"`
+	AnomalyMinimumAccounts       int              `json:"anomaly_minimum_accounts" yaml:"anomaly_minimum_accounts"`
+	AnomalyCooldownMinutes       int              `json:"anomaly_cooldown_minutes" yaml:"anomaly_cooldown_minutes"`
 }
 
 type ModelProbeModels struct {
-	Codex  string `json:"codex"`
-	OpenAI string `json:"openai"`
-	Claude string `json:"claude"`
-	Gemini string `json:"gemini"`
-	XAI    string `json:"xai"`
+	Codex  string `json:"codex" yaml:"codex"`
+	OpenAI string `json:"openai" yaml:"openai"`
+	Claude string `json:"claude" yaml:"claude"`
+	Gemini string `json:"gemini" yaml:"gemini"`
+	XAI    string `json:"xai" yaml:"xai"`
 }
 
 type InspectionPolicyUpdateRequest struct {

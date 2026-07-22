@@ -13,10 +13,17 @@ const (
 )
 
 type Config struct {
-	Workers           int            `yaml:"workers"`
-	DataDir           string         `yaml:"data_dir"`
-	ManagementBaseURL string         `yaml:"management_base_url"`
-	DefaultPolicy     *DefaultPolicy `yaml:"default_policy,omitempty"`
+	Workers           int                      `yaml:"workers"`
+	DataDir           string                   `yaml:"data_dir"`
+	ManagementBaseURL string                   `yaml:"management_base_url"`
+	DefaultPolicy     *DefaultPolicy           `yaml:"default_policy,omitempty"`
+	InspectionPolicy  *InspectionPolicy        `yaml:"inspection_policy,omitempty"`
+	UpdatePolicy      *UpdatePolicy            `yaml:"update_policy,omitempty"`
+	OperationSettings *OperationSettingsConfig `yaml:"operation_settings,omitempty"`
+}
+
+type OperationSettingsConfig struct {
+	ExtendedHistory bool `json:"extended_history" yaml:"extended_history"`
 }
 
 func ParseConfig(raw []byte) Config {
@@ -45,6 +52,18 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.DefaultPolicy != nil {
 		policy := cloneDefaultPolicy(*cfg.DefaultPolicy)
 		cfg.DefaultPolicy = &policy
+	}
+	if cfg.InspectionPolicy != nil {
+		policy := *cfg.InspectionPolicy
+		cfg.InspectionPolicy = &policy
+	}
+	if cfg.UpdatePolicy != nil {
+		policy := *cfg.UpdatePolicy
+		cfg.UpdatePolicy = &policy
+	}
+	if cfg.OperationSettings != nil {
+		settings := *cfg.OperationSettings
+		cfg.OperationSettings = &settings
 	}
 	return cfg
 }

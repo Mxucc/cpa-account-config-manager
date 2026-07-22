@@ -69,8 +69,10 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	inspection := NewInspectionEngine(accounts, host, mutations)
 	modelTests := NewModelTestService(accounts, usage)
 	deletions := NewAccountDeleteService(accounts, mutations)
+	operations := NewOperationJournal()
 	inspection.SetModelTestService(modelTests)
 	inspection.SetDeleteService(deletions)
+	inspection.SetOperationJournal(operations)
 	return &App{
 		config:     normalizeConfig(Config{}),
 		accounts:   accounts,
@@ -83,7 +85,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		force:      NewForceSyncEngine(accounts, host, policies, mutations),
 		imports:    NewImportService(host, mutations),
 		usage:      usage,
-		operations: NewOperationJournal(),
+		operations: operations,
 		modelTests: modelTests,
 		indexHTML:  append([]byte(nil), indexHTML...),
 	}

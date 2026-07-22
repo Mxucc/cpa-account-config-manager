@@ -130,6 +130,38 @@ describe("OperationLogWorkspace", () => {
     expect(screen.queryByText("自动删除")).not.toBeInTheDocument();
   });
 
+  it("shows external notification failures with HTTP status and attempt count", async () => {
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [{
+        ...operationResponse.operations[0],
+        id: "notification-failure-1",
+        category: "inspection",
+        action: "anomaly_notification",
+        status: "failed",
+        source: "inspection",
+        scope: "system",
+        target_id: undefined,
+        target_count: 188,
+        succeeded: 0,
+        failed: 1,
+        reason_code: "notification_failed",
+        http_status: 502,
+        attempts: 3,
+      }],
+      summary: { total: 1, running: 0, succeeded: 0, failed: 1, attention: 0, interrupted: 0 },
+    });
+    const user = userEvent.setup();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("外部 GET 通知")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看操作详情" }));
+    const details = screen.getByRole("dialog", { name: "操作详情" });
+    expect(within(details).getByText("外部通知发送失败")).toBeInTheDocument();
+    expect(within(details).getByText("502")).toBeInTheDocument();
+    expect(within(details).getByText("3")).toBeInTheDocument();
+  });
+
   it("exports the filtered journal and requires confirmation before clearing", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();

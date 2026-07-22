@@ -127,6 +127,8 @@ type InspectionPolicy struct {
 	AnomalyThresholdPercent      int              `json:"anomaly_threshold_percent" yaml:"anomaly_threshold_percent"`
 	AnomalyMinimumAccounts       int              `json:"anomaly_minimum_accounts" yaml:"anomaly_minimum_accounts"`
 	AnomalyCooldownMinutes       int              `json:"anomaly_cooldown_minutes" yaml:"anomaly_cooldown_minutes"`
+	AnomalyNotificationEnabled   bool             `json:"anomaly_notification_enabled" yaml:"anomaly_notification_enabled"`
+	AnomalyNotificationURL       string           `json:"anomaly_notification_url" yaml:"anomaly_notification_url"`
 }
 
 type ModelProbeModels struct {
@@ -391,6 +393,7 @@ func defaultModelProbeModels() ModelProbeModels {
 }
 
 func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
+	policy.AnomalyNotificationURL = strings.TrimSpace(policy.AnomalyNotificationURL)
 	if policy.ScanIntervalMinutes == 0 {
 		policy.ScanIntervalMinutes = defaultInspectionInterval
 	}
@@ -497,6 +500,18 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	}
 	if policy.AnomalyCooldownMinutes < minInspectionInterval || policy.AnomalyCooldownMinutes > maxInspectionInterval {
 		return InspectionPolicy{}, fmt.Errorf("anomaly_cooldown_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
+	}
+	if policy.AnomalyNotificationEnabled && !policy.AnomalyTriggerEnabled {
+		return InspectionPolicy{}, fmt.Errorf("anomaly_notification_enabled requires anomaly_trigger_enabled")
+	}
+	if policy.AnomalyNotificationEnabled {
+		if errTemplate := validateAnomalyNotificationTemplate(policy.AnomalyNotificationURL); errTemplate != nil {
+			return InspectionPolicy{}, errTemplate
+		}
+	} else if policy.AnomalyNotificationURL != "" {
+		if errTemplate := validateAnomalyNotificationTemplate(policy.AnomalyNotificationURL); errTemplate != nil {
+			return InspectionPolicy{}, errTemplate
+		}
 	}
 	if policy.AutoDelete && !policy.AutoDisable {
 		return InspectionPolicy{}, fmt.Errorf("auto_delete requires auto_disable")

@@ -16,63 +16,67 @@ import (
 const inspectionPersistDelay = 2 * time.Second
 
 type InspectionEngine struct {
-	mu                    sync.RWMutex
-	scanMu                sync.Mutex
-	storeMu               sync.Mutex
-	wait                  sync.WaitGroup
-	accounts              *AccountService
-	host                  AuthHost
-	mutations             *MutationCoordinator
-	modelTests            *ModelTestService
-	deletions             *AccountDeleteService
-	config                Config
-	store                 string
-	policy                InspectionPolicy
-	records               map[string]inspectionRecord
-	actions               []InspectionAction
-	runs                  []InspectionRunRecord
-	activeRunID           string
-	activeRunHealth       map[string]string
-	activeRunHealthID     string
-	lastRun               InspectionRunSummary
-	probeCursor           int
-	lastNativeRunAt       time.Time
-	lastProbeRunAt        time.Time
-	managementKey         string
-	probeSweepRemaining   int
-	probeSweepTotal       int
-	probeSweepCompleted   int
-	probeSweepSource      string
-	probeSweepStatus      string
-	probeSweepStartedAt   time.Time
-	probeSweepTargets     []string
-	anomalyTriggerPending bool
-	lastAnomalyTriggerAt  time.Time
-	anomalyEligible       int
-	anomalyCount          int
-	anomalyPercent        int
-	running               bool
-	pending               bool
-	pendingProbe          bool
-	pendingProbeSweep     bool
-	runMode               string
-	runHealth             []string
-	runSelected           []string
-	probePhase            string
-	retryTotal            int
-	retryCompleted        int
-	stopRequested         bool
-	activeCancel          context.CancelFunc
-	scanStarted           time.Time
-	storageErr            string
-	dirty                 bool
-	generation            uint64
-	scanWake              chan struct{}
-	persistWake           chan struct{}
-	cancel                context.CancelFunc
-	started               bool
-	closed                bool
-	now                   func() time.Time
+	mu                     sync.RWMutex
+	scanMu                 sync.Mutex
+	storeMu                sync.Mutex
+	wait                   sync.WaitGroup
+	accounts               *AccountService
+	host                   AuthHost
+	mutations              *MutationCoordinator
+	modelTests             *ModelTestService
+	deletions              *AccountDeleteService
+	operations             *OperationJournal
+	notificationDoer       HTTPDoer
+	notificationRetryDelay func(int) time.Duration
+	config                 Config
+	store                  string
+	policy                 InspectionPolicy
+	records                map[string]inspectionRecord
+	actions                []InspectionAction
+	runs                   []InspectionRunRecord
+	activeRunID            string
+	activeRunHealth        map[string]string
+	activeRunHealthID      string
+	lastRun                InspectionRunSummary
+	probeCursor            int
+	lastNativeRunAt        time.Time
+	lastProbeRunAt         time.Time
+	managementKey          string
+	probeSweepRemaining    int
+	probeSweepTotal        int
+	probeSweepCompleted    int
+	probeSweepSource       string
+	probeSweepStatus       string
+	probeSweepStartedAt    time.Time
+	probeSweepTargets      []string
+	anomalyTriggerPending  bool
+	lastAnomalyTriggerAt   time.Time
+	anomalyEligible        int
+	anomalyCount           int
+	anomalyPercent         int
+	running                bool
+	pending                bool
+	pendingProbe           bool
+	pendingProbeSweep      bool
+	runMode                string
+	runHealth              []string
+	runSelected            []string
+	probePhase             string
+	retryTotal             int
+	retryCompleted         int
+	stopRequested          bool
+	activeCancel           context.CancelFunc
+	scanStarted            time.Time
+	storageErr             string
+	dirty                  bool
+	generation             uint64
+	scanWake               chan struct{}
+	persistWake            chan struct{}
+	notificationWake       chan anomalyNotificationEvent
+	cancel                 context.CancelFunc
+	started                bool
+	closed                 bool
+	now                    func() time.Time
 }
 
 func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *MutationCoordinator) *InspectionEngine {
@@ -81,16 +85,17 @@ func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *Mut
 	}
 	config := normalizeConfig(Config{})
 	return &InspectionEngine{
-		accounts:    accounts,
-		host:        host,
-		mutations:   mutations,
-		config:      config,
-		store:       inspectionStorePath(config.DataDir),
-		policy:      defaultInspectionPolicy(),
-		records:     make(map[string]inspectionRecord),
-		scanWake:    make(chan struct{}, 1),
-		persistWake: make(chan struct{}, 1),
-		now:         time.Now,
+		accounts:         accounts,
+		host:             host,
+		mutations:        mutations,
+		config:           config,
+		store:            inspectionStorePath(config.DataDir),
+		policy:           defaultInspectionPolicy(),
+		records:          make(map[string]inspectionRecord),
+		scanWake:         make(chan struct{}, 1),
+		persistWake:      make(chan struct{}, 1),
+		notificationWake: make(chan anomalyNotificationEvent, 4),
+		now:              time.Now,
 	}
 }
 
@@ -109,6 +114,15 @@ func (e *InspectionEngine) SetDeleteService(service *AccountDeleteService) {
 	}
 	e.mu.Lock()
 	e.deletions = service
+	e.mu.Unlock()
+}
+
+func (e *InspectionEngine) SetOperationJournal(journal *OperationJournal) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.operations = journal
 	e.mu.Unlock()
 }
 
@@ -217,9 +231,10 @@ func (e *InspectionEngine) Configure(config Config) {
 		ctx, cancel := context.WithCancel(context.Background())
 		e.cancel = cancel
 		e.started = true
-		e.wait.Add(2)
+		e.wait.Add(3)
 		go e.scanLoop(ctx)
 		go e.persistLoop(ctx)
+		go e.notificationLoop(ctx)
 	}
 	e.mu.Unlock()
 }

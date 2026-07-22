@@ -405,6 +405,8 @@ export interface OperationEntry {
   version?: string;
   format?: string;
   model?: string;
+  http_status?: number;
+  attempts?: number;
 }
 
 export interface OperationSummary {
@@ -482,6 +484,8 @@ export interface InspectionPolicy {
   anomaly_threshold_percent: number;
   anomaly_minimum_accounts: number;
   anomaly_cooldown_minutes: number;
+  anomaly_notification_enabled: boolean;
+  anomaly_notification_url: string;
 }
 
 export interface InspectionRunSummary {

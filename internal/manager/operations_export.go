@@ -50,7 +50,7 @@ func renderOperationExport(format string, entries []OperationEntry, now time.Tim
 	case "csv":
 		var buffer bytes.Buffer
 		writer := csv.NewWriter(&buffer)
-		header := []string{"id", "category", "action", "status", "source", "scope", "target_id", "target_count", "succeeded", "failed", "skipped", "started_at", "finished_at", "reason_code", "related_job_id", "related_action_id", "version", "format", "model"}
+		header := []string{"id", "category", "action", "status", "source", "scope", "target_id", "target_count", "succeeded", "failed", "skipped", "started_at", "finished_at", "reason_code", "related_job_id", "related_action_id", "version", "format", "model", "http_status", "attempts"}
 		if errWrite := writer.Write(header); errWrite != nil {
 			return operationDownload{}, errWrite
 		}
@@ -63,7 +63,7 @@ func renderOperationExport(format string, entries []OperationEntry, now time.Tim
 				entry.ID, entry.Category, entry.Action, entry.Status, entry.Source, entry.Scope, entry.TargetID,
 				strconv.Itoa(entry.TargetCount), strconv.Itoa(entry.Succeeded), strconv.Itoa(entry.Failed), strconv.Itoa(entry.Skipped),
 				entry.StartedAt.UTC().Format(time.RFC3339Nano), finishedAt, entry.ReasonCode, entry.RelatedJobID,
-				entry.RelatedActionID, entry.Version, entry.Format, entry.Model,
+				entry.RelatedActionID, entry.Version, entry.Format, entry.Model, strconv.Itoa(entry.HTTPStatus), strconv.Itoa(entry.Attempts),
 			}
 			if errWrite := writer.Write(row); errWrite != nil {
 				return operationDownload{}, errWrite

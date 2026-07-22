@@ -924,6 +924,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .probe-model-field:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: none; }
 .probe-model-field input { width: 100%; height: 34px; min-width: 0; padding: 0 9px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; }
 .automation-setting-note { margin: 0; padding: 8px 12px; color: var(--text-tertiary); background: var(--bg-quinary); font-size: 8px; line-height: 1.5; }
+.notification-template-editor { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 0.34fr); border-top: 1px solid var(--border-color); }
+.notification-template-field, .notification-variable-field { min-width: 0; display: grid; align-content: center; gap: 5px; padding: 9px 12px; color: var(--text-secondary); font-size: 9px; }
+.notification-template-field { border-right: 1px solid var(--border-color); }
+.notification-template-field input, .notification-variable-field select { width: 100%; height: 34px; min-width: 0; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); font-size: 10px; }
+.notification-template-field input { padding: 0 9px; font-family: "SFMono-Regular", Consolas, monospace; }
+.notification-variable-field select { padding: 0 28px 0 9px; }
 .destructive-confirmation { min-height: 48px; display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 12px; color: var(--danger); background: var(--danger-soft); font-size: 9px; }
 .destructive-confirmation input { width: 16px; height: 16px; accent-color: var(--danger); }
 .update-confirmation { color: var(--blue); background: var(--blue-soft); }
@@ -1165,6 +1171,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .automation-setting-grid { grid-template-columns: 1fr; }
   .automation-setting { border-right: none; }
   .probe-model-grid { grid-template-columns: 1fr; }
+  .notification-template-editor { grid-template-columns: 1fr; }
+  .notification-template-field { border-right: none; border-bottom: 1px solid var(--border-color); }
   .probe-model-field, .probe-model-field:last-child:nth-child(odd) { grid-column: auto; border-right: none; }
   .action-history-row { grid-template-columns: 18px minmax(0, 1fr) 88px; padding-inline: 10px; }
   .filter-heading { align-items: flex-start; }

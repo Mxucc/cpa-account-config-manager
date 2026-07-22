@@ -102,6 +102,7 @@ const actionLabels: Record<string, UIMessageKey> = {
   inspection_policy_save: "ui.save_inspection_policy",
   inspection_scan: "ui.account_inspection",
   inspection_manual_delete: "ui.manual_inspection_bulk_delete",
+  anomaly_notification: "ui.external_get_notification",
   auto_disable: "ui.auto_disable",
   auto_enable: "ui.auto_enable",
   delete_candidate: "ui.add_deletion_candidate",
@@ -152,6 +153,10 @@ const reasonLabels: Record<string, UIMessageKey> = {
   upstream_unavailable: "ui.upstream_service_unavailable",
   invalid_response: "ui.could_not_validate_upstream_response",
   unsupported_provider: "ui.provider_unsupported",
+  notification_delivered: "ui.notification_delivered",
+  notification_failed: "ui.notification_failed",
+  notification_rejected: "ui.notification_rejected",
+  notification_queue_full: "ui.notification_queue_full",
 };
 
 const scopeLabels: Record<string, UIMessageKey> = {
@@ -422,6 +427,8 @@ function OperationDetailsDialog({ operation, canOpenJob, onClose, onOpenJob }: {
     [tx("ui.version"), operation.version ? `v${operation.version}` : undefined],
     [tx("ui.format"), operation.format?.toUpperCase()],
     [tx("ui.model"), operation.model],
+    [tx("ui.http_status"), operation.http_status],
+    [tx("ui.attempts"), operation.attempts],
     [tx("ui.started"), formatDateTime(operation.started_at)],
     [tx("ui.completed_3"), formatDateTime(operation.finished_at)],
   ];

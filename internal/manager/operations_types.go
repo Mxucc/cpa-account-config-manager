@@ -31,6 +31,7 @@ const (
 	OperationActionInspectionSave         = "inspection_policy_save"
 	OperationActionInspectionScan         = "inspection_scan"
 	OperationActionInspectionManualDelete = "inspection_manual_delete"
+	OperationActionAnomalyNotification    = "anomaly_notification"
 	OperationActionAutoDisable            = "auto_disable"
 	OperationActionAutoEnable             = "auto_enable"
 	OperationActionDeleteCandidate        = "delete_candidate"
@@ -87,6 +88,8 @@ type OperationEntry struct {
 	Version         string    `json:"version,omitempty"`
 	Format          string    `json:"format,omitempty"`
 	Model           string    `json:"model,omitempty"`
+	HTTPStatus      int       `json:"http_status,omitempty"`
+	Attempts        int       `json:"attempts,omitempty"`
 }
 
 type OperationSummary struct {
@@ -195,7 +198,7 @@ func normalizeOperationAction(value string) string {
 	case OperationActionDelete, OperationActionModelTest, OperationActionBatchEdit, OperationActionBatchRetry, OperationActionImport,
 		OperationActionExportAccounts, OperationActionExportResults, OperationActionPolicySave,
 		OperationActionPolicyScan, OperationActionForceSync, OperationActionInspectionSave,
-		OperationActionInspectionScan, OperationActionInspectionManualDelete, OperationActionAutoDisable, OperationActionAutoEnable,
+		OperationActionInspectionScan, OperationActionInspectionManualDelete, OperationActionAnomalyNotification, OperationActionAutoDisable, OperationActionAutoEnable,
 		OperationActionDeleteCandidate, OperationActionAutoDelete, OperationActionUpdateSave,
 		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
 		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear:

@@ -6,20 +6,48 @@ import (
 )
 
 func inspectionAnomalyCounts(accounts map[string]Account, records map[string]inspectionRecord) (eligible, abnormal int) {
+	metrics := inspectionAnomalyNotificationMetrics(accounts, records)
+	return metrics.EligibleAccounts, metrics.AbnormalAccounts
+}
+
+func inspectionAnomalyNotificationMetrics(accounts map[string]Account, records map[string]inspectionRecord) anomalyNotificationMetrics {
+	metrics := anomalyNotificationMetrics{TotalAccounts: len(accounts)}
 	for id, account := range accounts {
+		if account.Disabled {
+			metrics.DisabledAccounts++
+		}
 		record, exists := records[id]
 		if !exists || (account.Disabled && !record.Result.OwnedDisable) {
 			continue
 		}
 		switch record.Result.Health {
 		case InspectionHealthHealthy:
-			eligible++
-		case InspectionHealthQuotaLimited, InspectionHealthInvalidCredentials, InspectionHealthDeactivated, InspectionHealthUnavailable:
-			eligible++
-			abnormal++
+			metrics.EligibleAccounts++
+			if !account.Disabled && !account.Unavailable {
+				metrics.AvailableAccounts++
+			}
+		case InspectionHealthQuotaLimited:
+			metrics.EligibleAccounts++
+			metrics.AbnormalAccounts++
+			metrics.QuotaLimitedAccounts++
+		case InspectionHealthInvalidCredentials:
+			metrics.EligibleAccounts++
+			metrics.AbnormalAccounts++
+			metrics.InvalidCredentialAccounts++
+		case InspectionHealthDeactivated:
+			metrics.EligibleAccounts++
+			metrics.AbnormalAccounts++
+			metrics.DeactivatedAccounts++
+		case InspectionHealthUnavailable:
+			metrics.EligibleAccounts++
+			metrics.AbnormalAccounts++
+			metrics.UnavailableAccounts++
 		}
 	}
-	return eligible, abnormal
+	if metrics.EligibleAccounts > 0 {
+		metrics.AbnormalPercent = metrics.AbnormalAccounts * 100 / metrics.EligibleAccounts
+	}
+	return metrics
 }
 
 func inspectionAnomalyTriggered(eligible, abnormal, minimum, thresholdPercent int) bool {
@@ -89,6 +117,15 @@ func (e *InspectionEngine) evaluateAnomalyTrigger(
 	e.dirty = true
 	e.generation++
 	e.mu.Unlock()
+	if policy.AnomalyNotificationEnabled {
+		metrics := inspectionAnomalyNotificationMetrics(accounts, records)
+		metrics.ThresholdPercent = policy.AnomalyThresholdPercent
+		e.queueAnomalyNotification(anomalyNotificationEvent{
+			URLTemplate: policy.AnomalyNotificationURL,
+			Metrics:     metrics,
+			TriggeredAt: now.UTC(),
+		})
+	}
 
 	return true, inspectionProbeSweepSize(accounts, records, policy.ScanManuallyDisabled)
 }

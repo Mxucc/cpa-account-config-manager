@@ -13,6 +13,22 @@ interface AutomationSettingsDialogProps {
   onSave: (inspection: InspectionPolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean) => void;
 }
 
+const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
+  { name: "event", label: "ui.notification_parameter_event" },
+  { name: "total_accounts", label: "ui.notification_parameter_total_accounts" },
+  { name: "eligible_accounts", label: "ui.notification_parameter_eligible_accounts" },
+  { name: "available_accounts", label: "ui.notification_parameter_available_accounts" },
+  { name: "abnormal_accounts", label: "ui.notification_parameter_abnormal_accounts" },
+  { name: "abnormal_percent", label: "ui.notification_parameter_abnormal_percent" },
+  { name: "quota_limited_accounts", label: "ui.notification_parameter_quota_limited_accounts" },
+  { name: "invalid_credential_accounts", label: "ui.notification_parameter_invalid_credential_accounts" },
+  { name: "deactivated_accounts", label: "ui.notification_parameter_deactivated_accounts" },
+  { name: "unavailable_accounts", label: "ui.notification_parameter_unavailable_accounts" },
+  { name: "disabled_accounts", label: "ui.notification_parameter_disabled_accounts" },
+  { name: "threshold_percent", label: "ui.notification_parameter_threshold_percent" },
+  { name: "triggered_at", label: "ui.notification_parameter_triggered_at" },
+];
+
 export function AutomationSettingsDialog({ inspection, saving, error = "", onClose, onSave }: AutomationSettingsDialogProps) {
   const { tx } = useI18n();
   const [scheduleEnabled, setScheduleEnabled] = useState(inspection.enabled);
@@ -39,6 +55,8 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
   const [anomalyThreshold, setAnomalyThreshold] = useState(String(inspection.anomaly_threshold_percent));
   const [anomalyMinimum, setAnomalyMinimum] = useState(String(inspection.anomaly_minimum_accounts));
   const [anomalyCooldown, setAnomalyCooldown] = useState(String(inspection.anomaly_cooldown_minutes));
+  const [notificationEnabled, setNotificationEnabled] = useState(inspection.anomaly_notification_enabled ?? false);
+  const [notificationURL, setNotificationURL] = useState(inspection.anomaly_notification_url ?? "");
   const [confirmDelete, setConfirmDelete] = useState(inspection.auto_delete);
   const [confirmDeleteInvalid, setConfirmDeleteInvalid] = useState(inspection.auto_delete_invalid_credentials);
   const [formError, setFormError] = useState("");
@@ -72,6 +90,8 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
     if (!Number.isInteger(anomalyPct) || anomalyPct < 1 || anomalyPct > 100) return setFormError(tx("ui.anomaly_threshold_must_be_between_1_and_100_percent"));
     if (!Number.isInteger(anomalyMin) || anomalyMin < 1 || anomalyMin > 10000) return setFormError(tx("ui.anomaly_minimum_must_be_between_1_and_10000_accounts"));
     if (!Number.isInteger(anomalyCooldownMinutes) || anomalyCooldownMinutes < 5 || anomalyCooldownMinutes > 1440) return setFormError(tx("ui.anomaly_cooldown_must_be_between_5_and_1440_minutes"));
+    if (notificationEnabled && !notificationURL.trim()) return setFormError(tx("ui.notification_url_is_required"));
+    if (notificationURL.trim() && !notificationURL.trim().toLowerCase().startsWith("https://")) return setFormError(tx("ui.notification_url_must_use_https"));
     if (autoDelete && !autoDisable) return setFormError(tx("ui.auto_delete_requires_auto_disable"));
     if (passiveCircuit && (!autoDisable || !autoEnable)) return setFormError(tx("ui.passive_circuit_requires_auto_disable_and_auto_enable"));
     if (autoDelete && !inspection.auto_delete && !confirmDelete) return setFormError(tx("ui.confirm_the_risk_before_enabling_auto_delete"));
@@ -101,7 +121,15 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
       anomaly_threshold_percent: anomalyPct,
       anomaly_minimum_accounts: anomalyMin,
       anomaly_cooldown_minutes: anomalyCooldownMinutes,
+      anomaly_notification_enabled: notificationEnabled,
+      anomaly_notification_url: notificationURL.trim(),
     }, confirmDelete, confirmDeleteInvalid);
+  };
+
+  const insertNotificationVariable = (name: string) => {
+    if (!name || !notificationURL.trim()) return;
+    const separator = notificationURL.includes("?") ? (notificationURL.endsWith("?") || notificationURL.endsWith("&") ? "" : "&") : "?";
+    setNotificationURL(`${notificationURL}${separator}${name}=\${${name}}`);
   };
 
   return (
@@ -151,10 +179,41 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
         <section className="automation-settings-section">
           <header><AlertTriangle size={17} /><div><strong>{tx("ui.anomaly_trigger")}</strong><span>{tx("ui.anomaly_trigger_description")}</span></div></header>
           <div className="automation-setting-grid">
-            <SettingToggle label="ui.enable_anomaly_trigger" checked={anomalyEnabled} disabled={saving} onChange={(checked) => { setAnomalyEnabled(checked); if (checked) setScheduleEnabled(true); }} />
+            <SettingToggle label="ui.enable_anomaly_trigger" checked={anomalyEnabled} disabled={saving} onChange={(checked) => { setAnomalyEnabled(checked); if (checked) setScheduleEnabled(true); else setNotificationEnabled(false); }} />
             <SettingNumber label="ui.anomaly_threshold" suffix="ui.percent" value={anomalyThreshold} min={1} max={100} disabled={!anomalyEnabled || saving} onChange={setAnomalyThreshold} />
             <SettingNumber label="ui.minimum_sample" suffix="ui.accounts_2" value={anomalyMinimum} min={1} max={10000} disabled={!anomalyEnabled || saving} onChange={setAnomalyMinimum} />
             <SettingNumber label="ui.trigger_cooldown" suffix="ui.minutes" value={anomalyCooldown} min={5} max={1440} disabled={!anomalyEnabled || saving} onChange={setAnomalyCooldown} />
+            <SettingToggle label="ui.external_get_notification" checked={notificationEnabled} disabled={!anomalyEnabled || saving} onChange={(checked) => { setNotificationEnabled(checked); if (checked) { setAnomalyEnabled(true); setScheduleEnabled(true); } }} />
+          </div>
+          <div className="notification-template-editor">
+            <label className="notification-template-field">
+              <span>{tx("ui.notification_url_template")}</span>
+              <input
+                type="text"
+                maxLength={4096}
+                value={notificationURL}
+                disabled={!notificationEnabled || saving}
+                onChange={(event) => setNotificationURL(event.target.value)}
+                placeholder="https://notify.example/hook?available=${available_accounts}"
+                aria-label={tx("ui.notification_url_template")}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <label className="notification-variable-field">
+              <span>{tx("ui.insert_notification_parameter")}</span>
+              <select
+                value=""
+                disabled={!notificationEnabled || !notificationURL.trim() || saving}
+                onChange={(event) => insertNotificationVariable(event.target.value)}
+                aria-label={tx("ui.insert_notification_parameter")}
+              >
+                <option value="">{tx("ui.select_parameter")}</option>
+                {notificationVariables.map((variable) => (
+                  <option key={variable.name} value={variable.name}>{tx(variable.label)} · ${"{"}{variable.name}{"}"}</option>
+                ))}
+              </select>
+            </label>
           </div>
         </section>
 

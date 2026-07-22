@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -575,6 +576,8 @@ func normalizeOperationEntry(entry OperationEntry, now time.Time) (OperationEntr
 	entry.Version = safeOperationVersion(entry.Version)
 	entry.Format = safeOperationFormat(entry.Format)
 	entry.Model = safeModelIdentifier(entry.Model)
+	entry.HTTPStatus = boundedHTTPStatus(entry.HTTPStatus)
+	entry.Attempts = boundedCounter(entry.Attempts)
 	if entry.StartedAt.IsZero() {
 		entry.StartedAt = now
 	} else {
@@ -633,6 +636,8 @@ func safeOperationReason(value string) string {
 		"no_recent_evidence", "mutation_busy", "account_changed", "account_missing", "account_read_only",
 		"management_unavailable", "delete_failed":
 		return value
+	case "notification_delivered", "notification_failed", "notification_rejected", "notification_queue_full":
+		return value
 	case "model_response_ok", "model_not_found", "account_unavailable", "authentication_failed",
 		"quota_limited", "request_timeout", "upstream_unavailable", "invalid_response", "unsupported_provider":
 		return value
@@ -668,7 +673,7 @@ func operationMatchesSearch(entry OperationEntry, search string) bool {
 	haystack := strings.ToLower(strings.Join([]string{
 		entry.ID, entry.Category, entry.Action, entry.Status, entry.Source, entry.Scope,
 		entry.TargetID, entry.ReasonCode, entry.RelatedJobID, entry.RelatedActionID,
-		entry.Version, entry.Format, entry.Model,
+		entry.Version, entry.Format, entry.Model, strconv.Itoa(entry.HTTPStatus), strconv.Itoa(entry.Attempts),
 	}, "\n"))
 	return strings.Contains(haystack, search)
 }

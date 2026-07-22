@@ -41,6 +41,8 @@ inspection_policy:
   anomaly_threshold_percent: 60
   anomaly_minimum_accounts: 12
   anomaly_cooldown_minutes: 90
+  anomaly_notification_enabled: true
+  anomaly_notification_url: https://notify.example/hook?available=${available_accounts}
 update_policy:
   check_enabled: true
   check_interval_hours: 12
@@ -51,8 +53,11 @@ operation_settings:
 	config := ParseConfig(rawConfig)
 	config.DataDir = t.TempDir()
 
-	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.ModelProbeEnabled {
+	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.ModelProbeEnabled || !config.InspectionPolicy.AnomalyNotificationEnabled {
 		t.Fatalf("parsed inspection policy = %#v", config.InspectionPolicy)
+	}
+	if config.InspectionPolicy.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" {
+		t.Fatalf("parsed anomaly notification URL = %q", config.InspectionPolicy.AnomalyNotificationURL)
 	}
 	if config.UpdatePolicy == nil || !config.UpdatePolicy.AutoUpdate || config.UpdatePolicy.CheckIntervalHours != 12 {
 		t.Fatalf("parsed update policy = %#v", config.UpdatePolicy)
@@ -65,8 +70,11 @@ operation_settings:
 	inspection.Configure(config)
 	t.Cleanup(inspection.Shutdown)
 	gotInspection := inspection.Snapshot().Policy
-	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled {
+	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled || !gotInspection.AnomalyNotificationEnabled {
 		t.Fatalf("restored inspection policy = %#v", gotInspection)
+	}
+	if gotInspection.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" {
+		t.Fatalf("restored anomaly notification URL = %q", gotInspection.AnomalyNotificationURL)
 	}
 	if gotInspection.ScanIntervalMinutes != 15 || gotInspection.ModelProbeIntervalMinutes != 20 || gotInspection.ModelProbeBatchSize != 40 {
 		t.Fatalf("restored inspection intervals = %#v", gotInspection)

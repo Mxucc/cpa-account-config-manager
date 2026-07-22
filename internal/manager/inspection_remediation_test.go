@@ -105,6 +105,13 @@ func TestManualInspectionDeleteRequiresConfirmationAndHighConfidenceRecommendati
 	if errDelete != nil || run.Succeeded != 1 || run.Failed != 0 || run.Skipped != 0 || deleteCalls != 1 {
 		t.Fatalf("manual delete run=%#v error=%v calls=%d", run, errDelete, deleteCalls)
 	}
+	actions := engine.Actions(10)
+	if len(actions) != 1 || actions[0].Action != InspectionActionDelete || actions[0].Source != OperationSourceManual {
+		t.Fatalf("manual delete actions = %#v", actions)
+	}
+	if _, ok := operationFromInspectionAction(actions[0]); ok {
+		t.Fatalf("manual per-account delete action was reconciled into a duplicate operation: %#v", actions[0])
+	}
 	if len(engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results) != 0 {
 		t.Fatal("deleted inspection result remained in the active result set")
 	}

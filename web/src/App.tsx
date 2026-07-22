@@ -188,6 +188,7 @@ export default function App() {
   const [importStarting, setImportStarting] = useState(false);
   const [importError, setImportError] = useState("");
   const [importUsageCollectionActive, setImportUsageCollectionActive] = useState(false);
+  const [inspectionAccountSyncActive, setInspectionAccountSyncActive] = useState(false);
   const [exportTarget, setExportTarget] = useState<"accounts" | "results" | null>(null);
   const [accountExportScope, setAccountExportScope] = useState<TargetScope | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -268,6 +269,11 @@ export default function App() {
     }
   }, [apiFilters, authState, handleAPIError, page, pageSize]);
 
+  const requestInspectionAccountSync = useCallback(() => {
+    setInspectionAccountSyncActive(true);
+    void refreshAccounts(true);
+  }, [refreshAccounts]);
+
   useEffect(() => {
     if (activeView === "accounts") void refreshAccounts();
   }, [activeView, refreshAccounts]);
@@ -300,6 +306,35 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [authState, handleAPIError, importUsageCollectionActive, refreshAccounts]);
+
+  useEffect(() => {
+    if (!inspectionAccountSyncActive || authState !== "ready") return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const snapshot = await api.getInspection();
+        if (cancelled) return;
+        await refreshAccounts(true);
+        if (cancelled) return;
+        if (snapshot.running || snapshot.pending || snapshot.probe_sweep_status === "running") {
+          timer = window.setTimeout(poll, 1200);
+        } else {
+          setInspectionAccountSyncActive(false);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setInspectionAccountSyncActive(false);
+          handleAPIError(error);
+        }
+      }
+    };
+    timer = window.setTimeout(poll, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [authState, handleAPIError, inspectionAccountSyncActive, refreshAccounts]);
 
   useEffect(() => {
     if (authState !== "ready") return;
@@ -984,7 +1019,7 @@ export default function App() {
           </main>
         </section>
         ) : activeView === "inspection" ? (
-          <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
+          <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} onAccountsChanged={requestInspectionAccountSync} />
         ) : activeView === "operations" ? (
           <OperationLogWorkspace
             activeJobIDs={[job?.id, forceJob?.id].filter((id): id is string => Boolean(id))}

@@ -481,6 +481,7 @@ func (e *InspectionEngine) markManualDeleteAttempt(id, status, reason string, no
 		return
 	}
 	action := newInspectionAction(record.Result, InspectionActionDelete, record.Result.ReasonCode, now)
+	action.Source = OperationSourceManual
 	action.Status = status
 	if reason != "" {
 		action.ReasonCode = safeInspectionDeleteFailureReason(reason)
@@ -762,6 +763,7 @@ func newInspectionAction(result InspectionResult, action, reason string, now tim
 		Provider:   result.Provider,
 		Action:     action,
 		Status:     InspectionActionPending,
+		Source:     OperationSourceInspection,
 		ReasonCode: safeInspectionReason(reason),
 		CreatedAt:  now.UTC(),
 	}

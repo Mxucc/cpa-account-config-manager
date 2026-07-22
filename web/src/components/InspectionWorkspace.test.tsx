@@ -34,6 +34,7 @@ describe("InspectionWorkspace", () => {
   it("shows inspection evidence and starts a full active inspection", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
+    const onAccountsChanged = vi.fn();
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
@@ -46,7 +47,7 @@ describe("InspectionWorkspace", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={onNotice} onAccountsChanged={onAccountsChanged} />);
     expect(await screen.findByRole("region", { name: "巡检与自动化" })).toBeInTheDocument();
     expect(await screen.findByText("凭据无效或过期")).toBeInTheDocument();
     expect(screen.getByText("重新授权")).toBeInTheDocument();
@@ -59,6 +60,7 @@ describe("InspectionWorkspace", () => {
     const runRequest = requests.find(({ url }) => url.endsWith("/inspection/run"));
     expect(runRequest).toBeDefined();
     expect(JSON.parse(String(runRequest?.init.body))).toEqual({ mode: "full" });
+    expect(onAccountsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("does not request or render plugin update controls inside inspection", async () => {

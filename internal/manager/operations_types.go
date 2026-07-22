@@ -18,29 +18,30 @@ const (
 	OperationCategoryUpdate        = "update"
 	OperationCategoryJournal       = "journal"
 
-	OperationActionDelete          = "delete"
-	OperationActionModelTest       = "model_test"
-	OperationActionBatchEdit       = "batch_edit"
-	OperationActionBatchRetry      = "batch_retry"
-	OperationActionImport          = "import"
-	OperationActionExportAccounts  = "export_accounts"
-	OperationActionExportResults   = "export_results"
-	OperationActionPolicySave      = "policy_save"
-	OperationActionPolicyScan      = "policy_scan"
-	OperationActionForceSync       = "force_sync"
-	OperationActionInspectionSave  = "inspection_policy_save"
-	OperationActionInspectionScan  = "inspection_scan"
-	OperationActionAutoDisable     = "auto_disable"
-	OperationActionAutoEnable      = "auto_enable"
-	OperationActionDeleteCandidate = "delete_candidate"
-	OperationActionAutoDelete      = "auto_delete"
-	OperationActionReviewResolve   = "review_resolve"
-	OperationActionReviewIgnore    = "review_ignore"
-	OperationActionReviewReopen    = "review_reopen"
-	OperationActionUpdateSave      = "update_policy_save"
-	OperationActionUpdateCheck     = "update_check"
-	OperationActionUpdateInstall   = "update_install"
-	OperationActionJournalClear    = "journal_clear"
+	OperationActionDelete                 = "delete"
+	OperationActionModelTest              = "model_test"
+	OperationActionBatchEdit              = "batch_edit"
+	OperationActionBatchRetry             = "batch_retry"
+	OperationActionImport                 = "import"
+	OperationActionExportAccounts         = "export_accounts"
+	OperationActionExportResults          = "export_results"
+	OperationActionPolicySave             = "policy_save"
+	OperationActionPolicyScan             = "policy_scan"
+	OperationActionForceSync              = "force_sync"
+	OperationActionInspectionSave         = "inspection_policy_save"
+	OperationActionInspectionScan         = "inspection_scan"
+	OperationActionInspectionManualDelete = "inspection_manual_delete"
+	OperationActionAutoDisable            = "auto_disable"
+	OperationActionAutoEnable             = "auto_enable"
+	OperationActionDeleteCandidate        = "delete_candidate"
+	OperationActionAutoDelete             = "auto_delete"
+	OperationActionReviewResolve          = "review_resolve"
+	OperationActionReviewIgnore           = "review_ignore"
+	OperationActionReviewReopen           = "review_reopen"
+	OperationActionUpdateSave             = "update_policy_save"
+	OperationActionUpdateCheck            = "update_check"
+	OperationActionUpdateInstall          = "update_install"
+	OperationActionJournalClear           = "journal_clear"
 
 	OperationStatusRunning     = "running"
 	OperationStatusSucceeded   = "succeeded"
@@ -194,7 +195,7 @@ func normalizeOperationAction(value string) string {
 	case OperationActionDelete, OperationActionModelTest, OperationActionBatchEdit, OperationActionBatchRetry, OperationActionImport,
 		OperationActionExportAccounts, OperationActionExportResults, OperationActionPolicySave,
 		OperationActionPolicyScan, OperationActionForceSync, OperationActionInspectionSave,
-		OperationActionInspectionScan, OperationActionAutoDisable, OperationActionAutoEnable,
+		OperationActionInspectionScan, OperationActionInspectionManualDelete, OperationActionAutoDisable, OperationActionAutoEnable,
 		OperationActionDeleteCandidate, OperationActionAutoDelete, OperationActionUpdateSave,
 		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
 		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear:

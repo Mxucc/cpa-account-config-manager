@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -456,5 +457,112 @@ func TestReconcileOperationSourcesDeduplicatesJobsScansActionsAndUpdates(t *test
 	}
 	if seen[OperationActionUpdateCheck].Status != OperationStatusSucceeded || seen[OperationActionUpdateCheck].Source != OperationSourcePluginStore || seen[OperationActionUpdateCheck].ReasonCode != "check_completed" || seen[OperationActionUpdateCheck].Version != "" {
 		t.Fatalf("update operation = %#v", seen[OperationActionUpdateCheck])
+	}
+}
+
+func TestOperationFromInspectionActionPreservesAutomaticDeleteSource(t *testing.T) {
+	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
+	automatic := InspectionAction{
+		ID: "action-auto-delete", AccountID: "auth-1", Action: InspectionActionDelete,
+		Status: InspectionActionSucceeded, Source: OperationSourceInspection,
+		ReasonCode: "account_deactivated", CreatedAt: now,
+	}
+	entry, ok := operationFromInspectionAction(automatic)
+	if !ok || entry.Action != OperationActionAutoDelete || entry.Source != OperationSourceInspection ||
+		entry.Scope != OperationScopeSingle || entry.TargetID != "auth-1" || entry.Succeeded != 1 {
+		t.Fatalf("automatic delete operation = %#v ok=%t", entry, ok)
+	}
+
+	manual := automatic
+	manual.ID = "action-manual-delete"
+	manual.Source = OperationSourceManual
+	if entry, ok = operationFromInspectionAction(manual); ok {
+		t.Fatalf("manual delete produced duplicate operation = %#v", entry)
+	}
+
+	legacy := automatic
+	legacy.ID = "action-legacy-delete"
+	legacy.Source = ""
+	if entry, ok = operationFromInspectionAction(legacy); !ok || entry.Action != OperationActionAutoDelete || entry.Source != OperationSourceInspection {
+		t.Fatalf("legacy automatic delete operation = %#v ok=%t", entry, ok)
+	}
+}
+
+func TestManualInspectionDeleteRecordsOneTruthfulBatchOperation(t *testing.T) {
+	host := editableAccountDeleteHost()
+	deleteCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		deleteCalls++
+		if request.Method != http.MethodDelete || request.URL.Query().Get("name") != "operator.json" {
+			t.Errorf("delete request = %s %s", request.Method, request.URL.String())
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.deletions.doer = server.Client()
+	app.Configure([]byte(fmt.Sprintf("data_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), server.URL)))
+	defer app.Close()
+	app.inspection.mu.Lock()
+	app.inspection.records["auth-1"] = inspectionRecord{Result: InspectionResult{
+		ID: "auth-1", Name: "operator.json", Provider: "codex", Editable: true,
+		Health: InspectionHealthInvalidCredentials, ReasonCode: "invalid_credentials",
+		Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationReauth,
+		SignalSource: InspectionSignalNative,
+	}}
+	app.inspection.mu.Unlock()
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/inspection/delete",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    []byte(`{"account_ids":["auth-1"],"confirm":true}`),
+	})
+	if response.StatusCode != http.StatusOK || deleteCalls != 1 {
+		t.Fatalf("manual delete response = %d %s calls=%d", response.StatusCode, response.Body, deleteCalls)
+	}
+
+	app.reconcileOperationSources()
+	listed := app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize})
+	if listed.Total != 1 || len(listed.Operations) != 1 {
+		t.Fatalf("manual delete operations = %#v", listed.Operations)
+	}
+	entry := listed.Operations[0]
+	if entry.Action != OperationActionInspectionManualDelete || entry.Source != OperationSourceManual ||
+		entry.Scope != OperationScopeSelected || entry.TargetID != "" || entry.TargetCount != 1 ||
+		entry.Succeeded != 1 || entry.Failed != 0 || entry.Skipped != 0 || entry.Status != OperationStatusSucceeded {
+		t.Fatalf("manual delete operation = %#v", entry)
+	}
+	if entry.Action == OperationActionAutoDelete {
+		t.Fatalf("manual delete was mislabeled as automatic: %#v", entry)
+	}
+}
+
+func TestInspectionAutoDeleteRecordsScheduledInspectionOperation(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	app.Configure([]byte(fmt.Sprintf("data_dir: %q\n", t.TempDir())))
+	defer app.Close()
+	app.inspection.mu.Lock()
+	app.inspection.policy.AutoDelete = true
+	app.inspection.mu.Unlock()
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/inspection/auto-delete",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("auto-delete response = %d %s", response.StatusCode, response.Body)
+	}
+
+	listed := app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize})
+	if listed.Total != 1 || len(listed.Operations) != 1 {
+		t.Fatalf("auto-delete operations = %#v", listed.Operations)
+	}
+	entry := listed.Operations[0]
+	if entry.Action != OperationActionAutoDelete || entry.Source != OperationSourceInspection ||
+		entry.Scope != OperationScopeScheduled || entry.TargetCount != 0 || entry.Status != OperationStatusSucceeded {
+		t.Fatalf("auto-delete operation = %#v", entry)
 	}
 }

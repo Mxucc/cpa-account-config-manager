@@ -622,6 +622,7 @@ export interface InspectionAction {
   provider?: string;
   action: "disable" | "enable" | "delete" | "delete_candidate" | "review_resolve" | "review_ignore" | "review_reopen";
   status: "pending" | "succeeded" | "failed" | "skipped";
+  source?: OperationSource;
   reason_code: string;
   created_at: string;
 }

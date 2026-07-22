@@ -132,6 +132,10 @@ export function accountAutomationPresentation(
     return { badge: t("automation.manual_disabled"), detail: reason, reason, tone: "neutral" };
   }
 
+  if (automation.auto_action === "disable" && automation.auto_action_status === "failed") {
+    return { badge: t("automation.disable_failed"), detail: withReason(reason, t("automation.disable_retry")), reason, tone: "danger" };
+  }
+
   if (automation.auto_disable_eligible && automation.recommendation === "disable") {
     const badge = automation.auto_disable_enabled ? t("automation.waiting_disable") : t("automation.suggest_disable");
     const evidence = t("automation.disable_evidence", {

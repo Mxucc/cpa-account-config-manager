@@ -137,6 +137,11 @@ func operationFromInspectionScan(summary InspectionRunSummary) OperationEntry {
 
 func operationFromInspectionAction(action InspectionAction) (OperationEntry, bool) {
 	journalAction := ""
+	source := normalizeOperationSource(action.Source)
+	if source == "" {
+		// Actions persisted before source tracking were produced by inspection automation.
+		source = OperationSourceInspection
+	}
 	switch action.Action {
 	case InspectionActionDisable:
 		journalAction = OperationActionAutoDisable
@@ -145,6 +150,10 @@ func operationFromInspectionAction(action InspectionAction) (OperationEntry, boo
 	case InspectionActionDeleteCandidate:
 		journalAction = OperationActionDeleteCandidate
 	case InspectionActionDelete:
+		if source == OperationSourceManual {
+			// The manual endpoint records one aggregate operation with the real batch counts.
+			return OperationEntry{}, false
+		}
 		journalAction = OperationActionAutoDelete
 	case InspectionActionReviewResolve:
 		journalAction = OperationActionReviewResolve
@@ -180,7 +189,7 @@ func operationFromInspectionAction(action InspectionAction) (OperationEntry, boo
 		Category:        OperationCategoryInspection,
 		Action:          journalAction,
 		Status:          status,
-		Source:          OperationSourceInspection,
+		Source:          source,
 		Scope:           OperationScopeSingle,
 		TargetID:        action.AccountID,
 		TargetCount:     1,

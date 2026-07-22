@@ -101,6 +101,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.auto_enable_status": "Автовключение: {status}",
   "ui.auto_enable": "Автовключение",
   "ui.auto_delete": "Автоудаление",
+  "ui.manual_inspection_delete": "Удаление по ручной проверке",
+  "ui.manual_inspection_bulk_delete": "Пакетное удаление по ручной проверке",
   "ui.on": "Включено",
   "ui.off": "Выключено",
   "ui.no_automated_disposition": "Автоматических действий нет",

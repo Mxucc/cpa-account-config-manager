@@ -99,6 +99,8 @@ export const enUI = {
   "ui.auto_enable_status": "Auto-enable {status}",
   "ui.auto_enable": "Auto-enable",
   "ui.auto_delete": "Auto-delete",
+  "ui.manual_inspection_delete": "Manual inspection delete",
+  "ui.manual_inspection_bulk_delete": "Manual inspection bulk delete",
   "ui.on": "On",
   "ui.off": "Off",
   "ui.no_automated_disposition": "No automated disposition",

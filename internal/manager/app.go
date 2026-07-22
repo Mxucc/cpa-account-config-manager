@@ -965,7 +965,7 @@ func (a *App) handleInspectionManualDelete(ctx context.Context, req cpaapi.Manag
 	}
 	finishedAt := time.Now().UTC()
 	a.operations.Record(OperationEntry{
-		Category: OperationCategoryInspection, Action: OperationActionDelete, Status: status,
+		Category: OperationCategoryInspection, Action: OperationActionInspectionManualDelete, Status: status,
 		Source: OperationSourceManual, Scope: OperationScopeSelected, TargetCount: run.Attempted,
 		Succeeded: run.Succeeded, Failed: run.Failed, Skipped: run.Skipped,
 		StartedAt: startedAt, FinishedAt: finishedAt, ReasonCode: reason,
@@ -997,7 +997,7 @@ func (a *App) handleInspectionAutoDelete(ctx context.Context, req cpaapi.Managem
 	}
 	a.operations.Record(OperationEntry{
 		Category: OperationCategoryInspection, Action: OperationActionAutoDelete, Status: status,
-		Source: OperationSourceManual, Scope: OperationScopeSelected, TargetCount: run.Attempted,
+		Source: OperationSourceInspection, Scope: OperationScopeScheduled, TargetCount: run.Attempted,
 		Succeeded: run.Succeeded, Failed: run.Failed, Skipped: run.Skipped, StartedAt: now,
 		FinishedAt: now, ReasonCode: reason,
 	})

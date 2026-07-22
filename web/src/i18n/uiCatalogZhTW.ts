@@ -101,6 +101,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.auto_enable_status": "自動啟用 {status}",
   "ui.auto_enable": "自動啟用",
   "ui.auto_delete": "自動刪除",
+  "ui.manual_inspection_delete": "手動巡檢刪除",
+  "ui.manual_inspection_bulk_delete": "手動巡檢批次刪除",
   "ui.on": "已開啟",
   "ui.off": "未開啟",
   "ui.no_automated_disposition": "暫無自動處置",

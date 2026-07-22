@@ -101,6 +101,7 @@ const actionLabels: Record<string, UIMessageKey> = {
   force_sync: "ui.force_sync_policy",
   inspection_policy_save: "ui.save_inspection_policy",
   inspection_scan: "ui.account_inspection",
+  inspection_manual_delete: "ui.manual_inspection_bulk_delete",
   auto_disable: "ui.auto_disable",
   auto_enable: "ui.auto_enable",
   delete_candidate: "ui.add_deletion_candidate",

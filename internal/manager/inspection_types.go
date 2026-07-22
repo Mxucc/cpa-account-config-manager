@@ -296,6 +296,7 @@ type InspectionAction struct {
 	Provider   string    `json:"provider,omitempty"`
 	Action     string    `json:"action"`
 	Status     string    `json:"status"`
+	Source     string    `json:"source,omitempty"`
 	ReasonCode string    `json:"reason_code"`
 	CreatedAt  time.Time `json:"created_at"`
 }

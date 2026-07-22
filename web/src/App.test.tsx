@@ -133,6 +133,53 @@ describe("primary account batch flow", () => {
     await waitFor(() => expect(screen.queryByText("账号已禁用")).not.toBeInTheDocument());
   });
 
+  it("keeps synchronizing account state after the inspection workspace unmounts", async () => {
+    const user = userEvent.setup();
+    let inspectionStarted = false;
+    let disabled = false;
+    let accountRequests = 0;
+    const snapshot = {
+      policy: { enabled: true, scan_interval_minutes: 30, failure_threshold: 3, recovery_threshold: 2, auto_disable: true, auto_enable: true, auto_delete: false, delete_grace_hours: 168, delete_batch_size: 10 },
+      running: false, pending: false, total: 1, action_count: 0,
+      probe_sweep_remaining: 0, probe_sweep_total: 0, probe_sweep_completed: 0, probe_sweep_status: "completed",
+      last_run: { scanned: 1, healthy: 1, quota_limited: 0, invalid_credentials: 0, deactivated: 0, review: 0, unavailable: 0, disabled: 0, unknown: 0, auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [], total: 0, page: 1, page_size: 50, pages: 0 });
+      if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
+      if (url.endsWith("/inspection/run")) {
+        inspectionStarted = true;
+        return jsonResponse({ ...snapshot, pending: true, run_mode: "full", probe_phase: "listing" }, 202);
+      }
+      if (url.endsWith("/inspection")) {
+        if (inspectionStarted) disabled = true;
+        return jsonResponse(snapshot);
+      }
+      if (url.includes("/accounts")) {
+        accountRequests += 1;
+        return jsonResponse({ accounts: [{ ...account, disabled }], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      return jsonResponse({});
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "巡检与自动化" }));
+    await user.click(await screen.findByRole("button", { name: "开始巡检" }));
+    await user.click(screen.getByRole("button", { name: "账号" }));
+    const requestsBeforeCompletion = accountRequests;
+
+    await waitFor(() => expect(accountRequests).toBeGreaterThan(requestsBeforeCompletion), { timeout: 2500 });
+    expect(await screen.findByText("账号已禁用")).toBeInTheDocument();
+  });
+
   it("logs in, selects an account, previews an opted-in edit, and opens completed results", async () => {
     const user = userEvent.setup();
     const requests: Array<{ url: string; init: RequestInit }> = [];

@@ -106,6 +106,30 @@ describe("OperationLogWorkspace", () => {
     expect(within(details).queryByText("model_response_ok")).not.toBeInTheDocument();
   });
 
+  it("labels a manual inspection bulk deletion truthfully", async () => {
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [{
+        ...operationResponse.operations[0],
+        id: "manual-inspection-delete-1",
+        category: "inspection",
+        action: "inspection_manual_delete",
+        status: "partial",
+        source: "manual",
+        scope: "selected",
+        target_id: undefined,
+        target_count: 12,
+        succeeded: 10,
+        failed: 1,
+        skipped: 1,
+      }],
+    });
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("手动巡检批量删除")).toBeInTheDocument();
+    expect(screen.queryByText("自动删除")).not.toBeInTheDocument();
+  });
+
   it("exports the filtered journal and requires confirmation before clearing", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();

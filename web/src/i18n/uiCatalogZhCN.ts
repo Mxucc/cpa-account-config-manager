@@ -101,6 +101,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.auto_enable_status": "自动启用 {status}",
   "ui.auto_enable": "自动启用",
   "ui.auto_delete": "自动删除",
+  "ui.manual_inspection_delete": "手动巡检删除",
+  "ui.manual_inspection_bulk_delete": "手动巡检批量删除",
   "ui.on": "已开启",
   "ui.off": "未开启",
   "ui.no_automated_disposition": "暂无自动处置",

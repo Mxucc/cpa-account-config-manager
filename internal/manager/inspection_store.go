@@ -258,6 +258,10 @@ func sanitizeInspectionActions(actions []InspectionAction) []InspectionAction {
 		action.AccountID = strings.TrimSpace(action.AccountID)
 		action.Action = normalizeInspectionAction(action.Action)
 		action.Status = normalizeInspectionActionStatus(action.Status)
+		action.Source = normalizeOperationSource(action.Source)
+		if action.Source == "" {
+			action.Source = OperationSourceInspection
+		}
 		action.ReasonCode = safeInspectionReason(action.ReasonCode)
 		if action.ID == "" || action.AccountID == "" || action.Action == "" || action.Status == "" {
 			continue

@@ -177,6 +177,23 @@ describe("accountAutomationPresentation", () => {
     expect(waiting?.detail).toContain("2/3");
   });
 
+  it("shows failed automatic disable actions instead of an indefinite waiting state", () => {
+    const failed = accountAutomationPresentation(account(automation({
+      owned_disable: false,
+      health: "quota_limited",
+      reason_code: "quota_exhausted",
+      recommendation: "disable",
+      auto_action: "disable",
+      auto_action_status: "failed",
+      auto_disable_enabled: true,
+      failure_streak: 1,
+    }), false), "zh-CN", now);
+
+    expect(failed?.badge).toBe("自动禁用失败");
+    expect(failed?.detail).toContain("额度已耗尽");
+    expect(failed?.detail).toContain("下次巡检将重试");
+  });
+
   it("returns no disposition when no inspection summary exists", () => {
     expect(accountAutomationPresentation(account(undefined, false), "zh-CN", now)).toBeNull();
   });

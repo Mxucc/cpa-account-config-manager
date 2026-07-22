@@ -893,6 +893,7 @@ func (e *InspectionEngine) UpdateReview(request InspectionReviewRequest) (Inspec
 	}
 	e.records[accountID] = record
 	actionRecord := newInspectionAction(record.Result, inspectionAction, record.Result.ReasonCode, now)
+	actionRecord.Source = OperationSourceManual
 	actionRecord.Status = InspectionActionSucceeded
 	e.appendActionLocked(actionRecord)
 	e.dirty = true

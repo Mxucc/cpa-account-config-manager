@@ -56,6 +56,7 @@ import {
 interface InspectionWorkspaceProps {
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
+  onAccountsChanged?: () => void;
 }
 
 const emptyRemediationSummary: InspectionRemediationSummary = {
@@ -93,7 +94,7 @@ const healthOptions: Array<{ value: "" | InspectionHealth; label: UIMessageKey }
   { value: "healthy", label: "ui.healthy" },
 ];
 
-export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspaceProps) {
+export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = () => undefined }: InspectionWorkspaceProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [snapshot, setSnapshot] = useState<InspectionSnapshot | null>(null);
   const [results, setResults] = useState<InspectionResultList>(emptyResults);
@@ -249,6 +250,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     setError("");
     try {
       setSnapshot(await api.scanNativeInspection());
+      onAccountsChanged();
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -268,6 +270,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
           ? { mode: "scoped" as const, selected: [...selected.keys()] }
           : { mode: requestedMode };
       setSnapshot(await api.startInspectionRun(request));
+      onAccountsChanged();
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -280,6 +283,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     setError("");
     try {
       setSnapshot(await api.stopInspectionRun());
+      onAccountsChanged();
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -548,6 +552,7 @@ export function InspectionWorkspace({ onAPIError, onNotice }: InspectionWorkspac
     setSettingsError("");
     try {
       setSnapshot(await api.saveInspectionPolicy(inspection, confirmDelete, confirmDeleteInvalid));
+      onAccountsChanged();
       setSettingsOpen(false);
       onNotice(tx("ui.inspection_settings_saved"));
     } catch (caught) {
@@ -943,7 +948,7 @@ function ActionHistoryRow({ action }: { action: InspectionAction }) {
   return (
     <div className={`action-history-row action-${action.status}`}>
       <Icon size={14} />
-      <div><strong>{actionLabel(action.action, locale)}</strong><span>{action.name || action.account_id}</span></div>
+      <div><strong>{actionLabel(action.action, locale, action.source)}</strong><span>{action.name || action.account_id}</span></div>
       <time>{formatDateTime(action.created_at)}</time>
     </div>
   );
@@ -1035,9 +1040,10 @@ function recommendationLabel(value: InspectionResult["recommendation"], locale: 
   return translateUI(locale, ({ keep: "ui.keep", reauth: "ui.reauthorize", review: "ui.manual_review", disable: "ui.disable", enable: "ui.enable", delete: "ui.delete" } satisfies Record<InspectionResult["recommendation"], UIMessageKey>)[value]);
 }
 
-function actionLabel(value: string | undefined, locale: Locale): string {
-  const source = ({ disable: "ui.auto_disable", enable: "ui.auto_enable", delete: "ui.auto_delete", delete_candidate: "ui.pending_deletion_2", review_resolve: "ui.mark_resolved", review_ignore: "ui.ignore_result", review_reopen: "ui.reopen_review" } satisfies Record<string, UIMessageKey>)[value || ""] || "ui.not_run";
-  return translateUI(locale, source);
+function actionLabel(value: string | undefined, locale: Locale, source: InspectionAction["source"] = "inspection"): string {
+  if (value === "delete" && source === "manual") return translateUI(locale, "ui.manual_inspection_delete");
+  const label = ({ disable: "ui.auto_disable", enable: "ui.auto_enable", delete: "ui.auto_delete", delete_candidate: "ui.pending_deletion_2", review_resolve: "ui.mark_resolved", review_ignore: "ui.ignore_result", review_reopen: "ui.reopen_review" } satisfies Record<string, UIMessageKey>)[value || ""] || "ui.not_run";
+  return translateUI(locale, label);
 }
 
 function actionStatusLabel(value: string | undefined, owned: boolean, locale: Locale): string {

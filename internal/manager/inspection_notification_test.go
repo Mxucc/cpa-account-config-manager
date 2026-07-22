@@ -19,15 +19,19 @@ func (function anomalyNotificationDoerFunc) Do(request *http.Request) (*http.Res
 }
 
 func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
-	valid := "https://notify.example/events?available=${available_accounts}&abnormal=${abnormal_accounts}&at=${triggered_at}"
+	valid := "https://notify.example/events?event=${event}&available=${available_accounts}&available_percent=${available_percent}&count_threshold=${available_accounts_threshold}&percent_threshold=${availability_percent_threshold}&abnormal=${abnormal_accounts}&at=${triggered_at}"
 	if errValidate := validateAnomalyNotificationTemplate(valid); errValidate != nil {
 		t.Fatalf("valid template rejected: %v", errValidate)
 	}
 	event := anomalyNotificationEvent{
 		URLTemplate: valid,
+		Event:       "available_accounts_low,availability_percent_low",
 		Metrics: anomalyNotificationMetrics{
-			AvailableAccounts: 17,
-			AbnormalAccounts:  5,
+			AvailableAccounts:          17,
+			AvailablePercent:           42,
+			AvailableAccountsThreshold: 20,
+			AvailabilityThreshold:      50,
+			AbnormalAccounts:           5,
 		},
 		TriggeredAt: time.Date(2026, time.July, 22, 8, 9, 10, 0, time.FixedZone("UTC+8", 8*60*60)),
 	}
@@ -39,8 +43,24 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 	if errParse != nil {
 		t.Fatalf("parse expanded URL: %v", errParse)
 	}
-	if parsed.Query().Get("available") != "17" || parsed.Query().Get("abnormal") != "5" || parsed.Query().Get("at") != "2026-07-22T00:09:10Z" {
+	if parsed.Query().Get("event") != "available_accounts_low,availability_percent_low" || parsed.Query().Get("available") != "17" ||
+		parsed.Query().Get("available_percent") != "42" || parsed.Query().Get("count_threshold") != "20" ||
+		parsed.Query().Get("percent_threshold") != "50" || parsed.Query().Get("abnormal") != "5" || parsed.Query().Get("at") != "2026-07-22T00:09:10Z" {
 		t.Fatalf("expanded query = %#v", parsed.Query())
+	}
+	combined := event
+	combined.URLTemplate = "https://notify.example/events?message=event:${event},available:${available_accounts}/${total_accounts},rate:${available_percent}%25"
+	combined.Metrics.TotalAccounts = 40
+	combinedURL, errCombined := expandAnomalyNotificationURL(combined)
+	if errCombined != nil {
+		t.Fatalf("expand combined detail template: %v", errCombined)
+	}
+	combinedParsed, errParseCombined := url.Parse(combinedURL)
+	if errParseCombined != nil {
+		t.Fatalf("parse combined detail URL: %v", errParseCombined)
+	}
+	if got, want := combinedParsed.Query().Get("message"), "event:available_accounts_low,availability_percent_low,available:17/40,rate:42%"; got != want {
+		t.Fatalf("combined detail message = %q, want %q", got, want)
 	}
 
 	for name, template := range map[string]string{
@@ -108,6 +128,9 @@ func TestInspectionAnomalyNotificationSendsAggregateGETOnceAndLogsSanitizedOutco
 	if !triggered {
 		t.Fatal("exact anomaly threshold did not trigger")
 	}
+	if !engine.evaluateInspectionNotification(policy, accounts, records, now, true) {
+		t.Fatal("exact anomaly threshold did not queue a notification")
+	}
 
 	var requested string
 	select {
@@ -132,6 +155,9 @@ func TestInspectionAnomalyNotificationSendsAggregateGETOnceAndLogsSanitizedOutco
 	triggered, _ = engine.evaluateAnomalyTrigger(policy, accounts, records, now.Add(59*time.Minute), true, true)
 	if triggered {
 		t.Fatal("cooldown allowed a duplicate anomaly notification")
+	}
+	if engine.evaluateInspectionNotification(policy, accounts, records, now.Add(59*time.Minute), true) {
+		t.Fatal("notification cooldown allowed a duplicate notification")
 	}
 	select {
 	case duplicate := <-requestURLs:
@@ -159,6 +185,117 @@ func TestInspectionAnomalyNotificationSendsAggregateGETOnceAndLogsSanitizedOutco
 			t.Fatal("notification operation was not recorded")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestInspectionNotificationCombinesAvailabilityConditionsWithStrictBoundaries(t *testing.T) {
+	now := time.Date(2026, time.July, 22, 16, 30, 0, 0, time.UTC)
+	policy := defaultInspectionPolicy()
+	policy.AnomalyTriggerEnabled = true
+	policy.AnomalyNotificationEnabled = true
+	policy.AnomalyThresholdPercent = 50
+	policy.AnomalyMinimumAccounts = 4
+	policy.NotificationAvailableEnabled = true
+	policy.NotificationAvailableBelow = 3
+	policy.NotificationPercentEnabled = true
+	policy.NotificationPercentBelow = 60
+	policy.NotificationCooldownMinutes = 60
+	policy.AnomalyNotificationURL = "https://notify.example/hook?event=${event}&available=${available_accounts}&rate=${available_percent}"
+	accounts := map[string]Account{
+		"healthy-a": {ID: "healthy-a"}, "healthy-b": {ID: "healthy-b"},
+		"quota": {ID: "quota"}, "invalid": {ID: "invalid"},
+	}
+	records := map[string]inspectionRecord{
+		"healthy-a": {Result: InspectionResult{Health: InspectionHealthHealthy}},
+		"healthy-b": {Result: InspectionResult{Health: InspectionHealthHealthy}},
+		"quota":     {Result: InspectionResult{Health: InspectionHealthQuotaLimited}},
+		"invalid":   {Result: InspectionResult{Health: InspectionHealthInvalidCredentials}},
+	}
+	engine := NewInspectionEngine(nil, nil, nil)
+	if !engine.evaluateInspectionNotification(policy, accounts, records, now, true) {
+		t.Fatal("combined notification conditions did not trigger")
+	}
+	if queued := len(engine.notificationWake); queued != 1 {
+		t.Fatalf("queued notifications = %d, want 1", queued)
+	}
+	event := <-engine.notificationWake
+	if event.Event != "anomaly_threshold,available_accounts_low,availability_percent_low" {
+		t.Fatalf("notification event = %q", event.Event)
+	}
+	if event.Metrics.TotalAccounts != 4 || event.Metrics.AvailableAccounts != 2 || event.Metrics.AvailablePercent != 50 {
+		t.Fatalf("notification metrics = %#v", event.Metrics)
+	}
+	if engine.evaluateInspectionNotification(policy, accounts, records, now.Add(59*time.Minute), true) {
+		t.Fatal("notification cooldown allowed an early duplicate")
+	}
+
+	boundary := policy
+	boundary.AnomalyNotificationEnabled = false
+	boundary.NotificationAvailableBelow = 2
+	boundary.NotificationPercentBelow = 50
+	boundaryEngine := NewInspectionEngine(nil, nil, nil)
+	if boundaryEngine.evaluateInspectionNotification(boundary, accounts, records, now, true) {
+		t.Fatal("values equal to notification thresholds must not trigger")
+	}
+	if boundaryEngine.evaluateInspectionNotification(boundary, map[string]Account{}, map[string]inspectionRecord{}, now, true) {
+		t.Fatal("an empty account pool must not trigger")
+	}
+}
+
+func TestInspectionNotificationCooldownSurvivesRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.July, 22, 17, 0, 0, 0, time.UTC)
+	policy := defaultInspectionPolicy()
+	policy.NotificationAvailableEnabled = true
+	policy.NotificationAvailableBelow = 2
+	policy.NotificationCooldownMinutes = 60
+	policy.AnomalyNotificationURL = "https://notify.example/hook?available=${available_accounts}"
+	accounts := map[string]Account{"quota": {ID: "quota"}}
+	records := map[string]inspectionRecord{
+		"quota": {Result: InspectionResult{ID: "quota", Health: InspectionHealthQuotaLimited}},
+	}
+
+	first := NewInspectionEngine(nil, nil, nil)
+	first.notificationDoer = successfulNotificationDoer()
+	first.Configure(Config{DataDir: dataDir, InspectionPolicy: &policy})
+	if !first.evaluateInspectionNotification(policy, accounts, records, now, true) {
+		first.Shutdown()
+		t.Fatal("initial low-account notification did not trigger")
+	}
+	first.persist()
+	first.Shutdown()
+
+	loaded, errLoad := loadInspectionState(inspectionStorePath(dataDir))
+	if errLoad != nil {
+		t.Fatalf("load persisted notification state: %v", errLoad)
+	}
+	if !loaded.LastNotificationAt.Equal(now) {
+		t.Fatalf("persisted notification time = %s, want %s", loaded.LastNotificationAt, now)
+	}
+
+	restarted := NewInspectionEngine(nil, nil, nil)
+	restarted.notificationDoer = successfulNotificationDoer()
+	restarted.Configure(Config{DataDir: dataDir})
+	t.Cleanup(restarted.Shutdown)
+	if snapshot := restarted.Snapshot(); snapshot.LastNotificationAt == nil || !snapshot.LastNotificationAt.Equal(now) {
+		t.Fatalf("restarted notification time = %#v, want %s", snapshot.LastNotificationAt, now)
+	}
+	if restarted.evaluateInspectionNotification(policy, accounts, records, now.Add(59*time.Minute), true) {
+		t.Fatal("restarted notification ignored its persisted cooldown")
+	}
+	if !restarted.evaluateInspectionNotification(policy, accounts, records, now.Add(60*time.Minute), true) {
+		t.Fatal("notification did not trigger at the persisted cooldown boundary")
+	}
+}
+
+func successfulNotificationDoer() anomalyNotificationDoerFunc {
+	return func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+			Request:    request,
+		}, nil
 	}
 }
 

@@ -51,6 +51,7 @@ type InspectionEngine struct {
 	probeSweepTargets      []string
 	anomalyTriggerPending  bool
 	lastAnomalyTriggerAt   time.Time
+	lastNotificationAt     time.Time
 	anomalyEligible        int
 	anomalyCount           int
 	anomalyPercent         int
@@ -176,6 +177,9 @@ func (e *InspectionEngine) Configure(config Config) {
 			storageErr = "inspection state could not be loaded"
 		} else {
 			state.Policy = configuredPolicy
+			if configuredPolicy.AnomalyNotificationOnly {
+				stopPendingAnomalySweep(&state, true)
+			}
 			e.storeMu.Lock()
 			if errSave := saveInspectionState(storePath, state); errSave != nil {
 				storageErr = "inspection state could not be persisted"
@@ -215,6 +219,7 @@ func (e *InspectionEngine) Configure(config Config) {
 	}
 	e.anomalyTriggerPending = state.AnomalyTriggerPending
 	e.lastAnomalyTriggerAt = state.LastAnomalyTriggerAt
+	e.lastNotificationAt = state.LastNotificationAt
 	e.runMode = state.RunMode
 	e.runHealth = append([]string(nil), state.RunHealth...)
 	e.runSelected = append([]string(nil), state.RunSelected...)
@@ -280,6 +285,7 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 		AnomalyPercent:        e.anomalyPercent,
 		AnomalyTriggerPending: e.anomalyTriggerPending,
 		LastAnomalyTriggerAt:  timePointer(e.lastAnomalyTriggerAt),
+		LastNotificationAt:    timePointer(e.lastNotificationAt),
 		StorageError:          e.storageErr,
 		RunMode:               e.runMode,
 		ProbePhase:            e.probePhase,
@@ -483,6 +489,9 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 	if !normalized.AnomalyTriggerEnabled {
 		state.AnomalyTriggerPending = false
 	}
+	if normalized.AnomalyNotificationOnly {
+		stopPendingAnomalySweep(&state, false)
+	}
 	if !normalized.ModelProbeFullSweep && !normalized.AnomalyTriggerEnabled {
 		state.ProbeSweepRemaining = 0
 	}
@@ -501,6 +510,18 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 	if !normalized.ModelProbeFullSweep && !normalized.AnomalyTriggerEnabled {
 		e.probeSweepRemaining = 0
 		e.pendingProbeSweep = false
+	}
+	if normalized.AnomalyNotificationOnly {
+		e.anomalyTriggerPending = false
+		if normalizeInspectionSweepSource(e.probeSweepSource) == InspectionSweepSourceAnomaly &&
+			normalizeInspectionSweepStatus(e.probeSweepStatus) != InspectionSweepStatusRunning {
+			e.probeSweepTotal = 0
+			e.probeSweepCompleted = 0
+			e.probeSweepRemaining = 0
+			e.probeSweepStatus = InspectionSweepStatusStopped
+			e.probeSweepTargets = nil
+			e.pendingProbeSweep = false
+		}
 	}
 	e.storageErr = ""
 	e.generation++
@@ -1286,7 +1307,8 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	}
 	armed := strings.TrimSpace(managementKey) != "" && modelTests != nil
 	triggered, anomalySweepSize := e.evaluateAnomalyTrigger(policy, accountsByID, next, now, scheduled && runNative, armed)
-	if triggered {
+	e.evaluateInspectionNotification(policy, accountsByID, next, now, scheduled && runNative)
+	if triggered && !policy.AnomalyNotificationOnly {
 		probeSweep = true
 		probeSweepRemaining = anomalySweepSize
 		probeSweepTotal = anomalySweepSize
@@ -1541,6 +1563,7 @@ func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {
 		ProbeSweepTargets:     append([]string(nil), e.probeSweepTargets...),
 		AnomalyTriggerPending: e.anomalyTriggerPending,
 		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
+		LastNotificationAt:    e.lastNotificationAt,
 		RunMode:               e.runMode,
 		RunHealth:             append([]string(nil), e.runHealth...),
 		RunSelected:           append([]string(nil), e.runSelected...),

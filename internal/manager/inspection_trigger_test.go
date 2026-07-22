@@ -100,6 +100,9 @@ func TestInspectionAnomalyPolicyBoundariesAndDependencies(t *testing.T) {
 			policy.AnomalyTriggerEnabled = false
 			policy.AutoDeleteInvalidCredentials = true
 		}, "requires auto_delete and auto_disable"},
+		"notification only without notification": {func(policy *InspectionPolicy) {
+			policy.AnomalyNotificationOnly = true
+		}, "requires anomaly_notification_enabled"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			policy := valid
@@ -109,6 +112,77 @@ func TestInspectionAnomalyPolicyBoundariesAndDependencies(t *testing.T) {
 				t.Fatalf("validation error = %v, want %q", errValidate, test.want)
 			}
 		})
+	}
+}
+
+func TestInspectionAnomalyNotificationOnlySkipsImmediateAndDeferredProbeSweep(t *testing.T) {
+	now := time.Date(2026, time.July, 22, 16, 0, 0, 0, time.UTC)
+	policy := defaultInspectionPolicy()
+	policy.Enabled = true
+	policy.AnomalyTriggerEnabled = true
+	policy.AnomalyThresholdPercent = 50
+	policy.AnomalyMinimumAccounts = 2
+	policy.AnomalyCooldownMinutes = 60
+	policy.AnomalyNotificationEnabled = true
+	policy.AnomalyNotificationOnly = true
+	policy.AnomalyNotificationURL = "https://notify.example/hook?available=${available_accounts}"
+	accounts := map[string]Account{"healthy": {ID: "healthy"}, "invalid": {ID: "invalid"}}
+	records := map[string]inspectionRecord{
+		"healthy": {Result: InspectionResult{Health: InspectionHealthHealthy}},
+		"invalid": {Result: InspectionResult{Health: InspectionHealthInvalidCredentials}},
+	}
+	engine := NewInspectionEngine(nil, nil, nil)
+	triggered, sweepSize := engine.evaluateAnomalyTrigger(policy, accounts, records, now, true, false)
+	if !triggered || sweepSize != 0 || engine.anomalyTriggerPending {
+		t.Fatalf("notification-only trigger=%t size=%d pending=%t", triggered, sweepSize, engine.anomalyTriggerPending)
+	}
+	if !engine.evaluateInspectionNotification(policy, accounts, records, now, true) {
+		t.Fatal("notification-only trigger did not queue its notification")
+	}
+	if queued := len(engine.notificationWake); queued != 1 {
+		t.Fatalf("queued notifications = %d, want 1", queued)
+	}
+	engine.SetModelTestService(&ModelTestService{})
+	engine.ArmModelProbes("current-management-secret")
+	if engine.pendingProbe || engine.pendingProbeSweep || engine.anomalyTriggerPending {
+		t.Fatalf("notification-only trigger armed a deferred sweep: %#v", engine.Snapshot())
+	}
+}
+
+func TestInspectionNotificationOnlyPolicyClearsWaitingAnomalySweep(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: dataDir})
+	t.Cleanup(engine.Shutdown)
+	engine.mu.Lock()
+	engine.anomalyTriggerPending = true
+	engine.probeSweepTotal = 12
+	engine.probeSweepRemaining = 12
+	engine.probeSweepSource = InspectionSweepSourceAnomaly
+	engine.probeSweepStatus = InspectionSweepStatusWaitingForAuth
+	engine.probeSweepTargets = []string{"account-a", "account-b"}
+	engine.mu.Unlock()
+
+	policy := defaultInspectionPolicy()
+	policy.Enabled = true
+	policy.AnomalyTriggerEnabled = true
+	policy.AnomalyNotificationEnabled = true
+	policy.AnomalyNotificationOnly = true
+	policy.AnomalyNotificationURL = "https://notify.example/hook?available=${available_accounts}"
+	snapshot, errSet := engine.SetPolicy(policy)
+	if errSet != nil {
+		t.Fatalf("set notification-only policy: %v", errSet)
+	}
+	if snapshot.AnomalyTriggerPending || snapshot.ProbeSweepRemaining != 0 || snapshot.ProbeSweepTotal != 0 || snapshot.ProbeSweepStatus != InspectionSweepStatusStopped {
+		t.Fatalf("waiting anomaly sweep was not cleared: %#v", snapshot)
+	}
+
+	loaded, errLoad := loadInspectionState(inspectionStorePath(dataDir))
+	if errLoad != nil {
+		t.Fatalf("load notification-only policy: %v", errLoad)
+	}
+	if !loaded.Policy.AnomalyNotificationOnly || loaded.AnomalyTriggerPending || loaded.ProbeSweepRemaining != 0 || len(loaded.ProbeSweepTargets) != 0 {
+		t.Fatalf("persisted waiting anomaly sweep was not cleared: %#v", loaded)
 	}
 }
 

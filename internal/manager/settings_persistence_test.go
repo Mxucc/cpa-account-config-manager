@@ -42,7 +42,13 @@ inspection_policy:
   anomaly_minimum_accounts: 12
   anomaly_cooldown_minutes: 90
   anomaly_notification_enabled: true
+  anomaly_notification_only: true
   anomaly_notification_url: https://notify.example/hook?available=${available_accounts}
+  notification_available_accounts_enabled: true
+  notification_available_accounts_threshold: 8
+  notification_availability_percent_enabled: true
+  notification_availability_percent_threshold: 35
+  notification_cooldown_minutes: 45
 update_policy:
   check_enabled: true
   check_interval_hours: 12
@@ -53,11 +59,16 @@ operation_settings:
 	config := ParseConfig(rawConfig)
 	config.DataDir = t.TempDir()
 
-	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.ModelProbeEnabled || !config.InspectionPolicy.AnomalyNotificationEnabled {
+	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.ModelProbeEnabled || !config.InspectionPolicy.AnomalyNotificationEnabled || !config.InspectionPolicy.AnomalyNotificationOnly {
 		t.Fatalf("parsed inspection policy = %#v", config.InspectionPolicy)
 	}
 	if config.InspectionPolicy.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" {
 		t.Fatalf("parsed anomaly notification URL = %q", config.InspectionPolicy.AnomalyNotificationURL)
+	}
+	if !config.InspectionPolicy.NotificationAvailableEnabled || config.InspectionPolicy.NotificationAvailableBelow != 8 ||
+		!config.InspectionPolicy.NotificationPercentEnabled || config.InspectionPolicy.NotificationPercentBelow != 35 ||
+		config.InspectionPolicy.NotificationCooldownMinutes != 45 {
+		t.Fatalf("parsed availability notification policy = %#v", config.InspectionPolicy)
 	}
 	if config.UpdatePolicy == nil || !config.UpdatePolicy.AutoUpdate || config.UpdatePolicy.CheckIntervalHours != 12 {
 		t.Fatalf("parsed update policy = %#v", config.UpdatePolicy)
@@ -70,11 +81,16 @@ operation_settings:
 	inspection.Configure(config)
 	t.Cleanup(inspection.Shutdown)
 	gotInspection := inspection.Snapshot().Policy
-	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled || !gotInspection.AnomalyNotificationEnabled {
+	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled || !gotInspection.AnomalyNotificationEnabled || !gotInspection.AnomalyNotificationOnly {
 		t.Fatalf("restored inspection policy = %#v", gotInspection)
 	}
 	if gotInspection.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" {
 		t.Fatalf("restored anomaly notification URL = %q", gotInspection.AnomalyNotificationURL)
+	}
+	if !gotInspection.NotificationAvailableEnabled || gotInspection.NotificationAvailableBelow != 8 ||
+		!gotInspection.NotificationPercentEnabled || gotInspection.NotificationPercentBelow != 35 ||
+		gotInspection.NotificationCooldownMinutes != 45 {
+		t.Fatalf("restored availability notification policy = %#v", gotInspection)
 	}
 	if gotInspection.ScanIntervalMinutes != 15 || gotInspection.ModelProbeIntervalMinutes != 20 || gotInspection.ModelProbeBatchSize != 40 {
 		t.Fatalf("restored inspection intervals = %#v", gotInspection)

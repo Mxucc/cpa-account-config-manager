@@ -17,6 +17,9 @@ const (
 	defaultAnomalyThreshold     = 50
 	defaultAnomalyMinimum       = 10
 	defaultAnomalyCooldown      = 60
+	defaultNotificationCooldown = 60
+	defaultAvailableThreshold   = 10
+	defaultAvailabilityPercent  = 20
 	minInspectionInterval       = 5
 	maxInspectionInterval       = 24 * 60
 	maxModelProbeBatchSize      = 200
@@ -128,7 +131,13 @@ type InspectionPolicy struct {
 	AnomalyMinimumAccounts       int              `json:"anomaly_minimum_accounts" yaml:"anomaly_minimum_accounts"`
 	AnomalyCooldownMinutes       int              `json:"anomaly_cooldown_minutes" yaml:"anomaly_cooldown_minutes"`
 	AnomalyNotificationEnabled   bool             `json:"anomaly_notification_enabled" yaml:"anomaly_notification_enabled"`
+	AnomalyNotificationOnly      bool             `json:"anomaly_notification_only" yaml:"anomaly_notification_only"`
 	AnomalyNotificationURL       string           `json:"anomaly_notification_url" yaml:"anomaly_notification_url"`
+	NotificationAvailableEnabled bool             `json:"notification_available_accounts_enabled" yaml:"notification_available_accounts_enabled"`
+	NotificationAvailableBelow   int              `json:"notification_available_accounts_threshold" yaml:"notification_available_accounts_threshold"`
+	NotificationPercentEnabled   bool             `json:"notification_availability_percent_enabled" yaml:"notification_availability_percent_enabled"`
+	NotificationPercentBelow     int              `json:"notification_availability_percent_threshold" yaml:"notification_availability_percent_threshold"`
+	NotificationCooldownMinutes  int              `json:"notification_cooldown_minutes" yaml:"notification_cooldown_minutes"`
 }
 
 type ModelProbeModels struct {
@@ -202,6 +211,7 @@ type InspectionSnapshot struct {
 	AnomalyPercent        int                   `json:"anomaly_percent"`
 	AnomalyTriggerPending bool                  `json:"anomaly_trigger_pending"`
 	LastAnomalyTriggerAt  *time.Time            `json:"last_anomaly_trigger_at,omitempty"`
+	LastNotificationAt    *time.Time            `json:"last_notification_at,omitempty"`
 	StorageError          string                `json:"storage_error,omitempty"`
 	RunMode               string                `json:"run_mode,omitempty"`
 	ProbePhase            string                `json:"probe_phase,omitempty"`
@@ -379,6 +389,9 @@ func defaultInspectionPolicy() InspectionPolicy {
 		AnomalyThresholdPercent:     defaultAnomalyThreshold,
 		AnomalyMinimumAccounts:      defaultAnomalyMinimum,
 		AnomalyCooldownMinutes:      defaultAnomalyCooldown,
+		NotificationAvailableBelow:  defaultAvailableThreshold,
+		NotificationPercentBelow:    defaultAvailabilityPercent,
+		NotificationCooldownMinutes: defaultNotificationCooldown,
 	}
 }
 
@@ -449,6 +462,15 @@ func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 	if policy.AnomalyCooldownMinutes == 0 {
 		policy.AnomalyCooldownMinutes = defaultAnomalyCooldown
 	}
+	if policy.NotificationAvailableBelow == 0 {
+		policy.NotificationAvailableBelow = defaultAvailableThreshold
+	}
+	if policy.NotificationPercentBelow == 0 {
+		policy.NotificationPercentBelow = defaultAvailabilityPercent
+	}
+	if policy.NotificationCooldownMinutes == 0 {
+		policy.NotificationCooldownMinutes = defaultNotificationCooldown
+	}
 	return policy
 }
 
@@ -501,10 +523,23 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	if policy.AnomalyCooldownMinutes < minInspectionInterval || policy.AnomalyCooldownMinutes > maxInspectionInterval {
 		return InspectionPolicy{}, fmt.Errorf("anomaly_cooldown_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
 	}
+	if policy.NotificationAvailableBelow < 1 || policy.NotificationAvailableBelow > maxInspectionAccounts {
+		return InspectionPolicy{}, fmt.Errorf("notification_available_accounts_threshold must be between 1 and %d", maxInspectionAccounts)
+	}
+	if policy.NotificationPercentBelow < 1 || policy.NotificationPercentBelow > 100 {
+		return InspectionPolicy{}, fmt.Errorf("notification_availability_percent_threshold must be between 1 and 100")
+	}
+	if policy.NotificationCooldownMinutes < minInspectionInterval || policy.NotificationCooldownMinutes > maxInspectionInterval {
+		return InspectionPolicy{}, fmt.Errorf("notification_cooldown_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
+	}
 	if policy.AnomalyNotificationEnabled && !policy.AnomalyTriggerEnabled {
 		return InspectionPolicy{}, fmt.Errorf("anomaly_notification_enabled requires anomaly_trigger_enabled")
 	}
-	if policy.AnomalyNotificationEnabled {
+	if policy.AnomalyNotificationOnly && !policy.AnomalyNotificationEnabled {
+		return InspectionPolicy{}, fmt.Errorf("anomaly_notification_only requires anomaly_notification_enabled")
+	}
+	notificationEnabled := policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled
+	if notificationEnabled {
 		if errTemplate := validateAnomalyNotificationTemplate(policy.AnomalyNotificationURL); errTemplate != nil {
 			return InspectionPolicy{}, errTemplate
 		}

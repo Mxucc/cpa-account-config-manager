@@ -423,7 +423,9 @@ describe("management API client", () => {
         failure_threshold: 3, recovery_threshold: 2, auto_disable: true, auto_enable: true,
         auto_delete: true, auto_delete_invalid_credentials: true, delete_grace_hours: 168, delete_batch_size: 10,
         anomaly_trigger_enabled: true, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
-        anomaly_notification_enabled: true, anomaly_notification_url: "https://notify.example/hook?available=${available_accounts}",
+        anomaly_notification_enabled: true, anomaly_notification_only: true, anomaly_notification_url: "https://notify.example/hook?available=${available_accounts}",
+        notification_available_accounts_enabled: true, notification_available_accounts_threshold: 8,
+        notification_availability_percent_enabled: true, notification_availability_percent_threshold: 35, notification_cooldown_minutes: 45,
       },
       running: false, pending: false, last_run: {}, total: 0, action_count: 0,
     };
@@ -493,7 +495,9 @@ describe("management API client", () => {
 			passive_failure_window_minutes: 180, passive_circuit_minutes: 15, auto_disable: true, auto_enable: true,
 			auto_delete: false, auto_delete_invalid_credentials: false, delete_grace_hours: 168, delete_batch_size: 10,
 			anomaly_trigger_enabled: true, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
-			anomaly_notification_enabled: true, anomaly_notification_url: "https://notify.example/hook?available=${available_accounts}",
+			anomaly_notification_enabled: true, anomaly_notification_only: true, anomaly_notification_url: "https://notify.example/hook?available=${available_accounts}",
+			notification_available_accounts_enabled: true, notification_available_accounts_threshold: 8,
+			notification_availability_percent_enabled: true, notification_availability_percent_threshold: 35, notification_cooldown_minutes: 45,
 		};
 		const updatePolicy = { check_enabled: true, check_interval_hours: 12, auto_update: true };
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, _init: RequestInit = {}) => {

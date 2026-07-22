@@ -47,6 +47,9 @@ func inspectionAnomalyNotificationMetrics(accounts map[string]Account, records m
 	if metrics.EligibleAccounts > 0 {
 		metrics.AbnormalPercent = metrics.AbnormalAccounts * 100 / metrics.EligibleAccounts
 	}
+	if metrics.TotalAccounts > 0 {
+		metrics.AvailablePercent = metrics.AvailableAccounts * 100 / metrics.TotalAccounts
+	}
 	return metrics
 }
 
@@ -113,18 +116,12 @@ func (e *InspectionEngine) evaluateAnomalyTrigger(
 		return false, 0
 	}
 	e.lastAnomalyTriggerAt = now.UTC()
-	e.anomalyTriggerPending = !armed
+	e.anomalyTriggerPending = !armed && !policy.AnomalyNotificationOnly
 	e.dirty = true
 	e.generation++
 	e.mu.Unlock()
-	if policy.AnomalyNotificationEnabled {
-		metrics := inspectionAnomalyNotificationMetrics(accounts, records)
-		metrics.ThresholdPercent = policy.AnomalyThresholdPercent
-		e.queueAnomalyNotification(anomalyNotificationEvent{
-			URLTemplate: policy.AnomalyNotificationURL,
-			Metrics:     metrics,
-			TriggeredAt: now.UTC(),
-		})
+	if policy.AnomalyNotificationOnly {
+		return true, 0
 	}
 
 	return true, inspectionProbeSweepSize(accounts, records, policy.ScanManuallyDisabled)

@@ -39,27 +39,32 @@ var blockedAnomalyNotificationPrefixes = []netip.Prefix{
 
 var anomalyNotificationVariables = map[string]struct{}{
 	"event": {}, "total_accounts": {}, "eligible_accounts": {}, "available_accounts": {},
-	"abnormal_accounts": {}, "abnormal_percent": {}, "quota_limited_accounts": {},
+	"available_percent": {}, "abnormal_accounts": {}, "abnormal_percent": {}, "quota_limited_accounts": {},
 	"invalid_credential_accounts": {}, "deactivated_accounts": {}, "unavailable_accounts": {},
-	"disabled_accounts": {}, "threshold_percent": {}, "triggered_at": {},
+	"disabled_accounts": {}, "threshold_percent": {}, "available_accounts_threshold": {},
+	"availability_percent_threshold": {}, "triggered_at": {},
 }
 
 type anomalyNotificationMetrics struct {
-	TotalAccounts             int
-	EligibleAccounts          int
-	AvailableAccounts         int
-	AbnormalAccounts          int
-	AbnormalPercent           int
-	QuotaLimitedAccounts      int
-	InvalidCredentialAccounts int
-	DeactivatedAccounts       int
-	UnavailableAccounts       int
-	DisabledAccounts          int
-	ThresholdPercent          int
+	TotalAccounts              int
+	EligibleAccounts           int
+	AvailableAccounts          int
+	AvailablePercent           int
+	AbnormalAccounts           int
+	AbnormalPercent            int
+	QuotaLimitedAccounts       int
+	InvalidCredentialAccounts  int
+	DeactivatedAccounts        int
+	UnavailableAccounts        int
+	DisabledAccounts           int
+	ThresholdPercent           int
+	AvailableAccountsThreshold int
+	AvailabilityThreshold      int
 }
 
 type anomalyNotificationEvent struct {
 	URLTemplate string
+	Event       string
 	Metrics     anomalyNotificationMetrics
 	TriggeredAt time.Time
 }
@@ -133,19 +138,22 @@ func expandAnomalyNotificationURL(event anomalyNotificationEvent) (string, error
 		return "", errValidate
 	}
 	values := map[string]string{
-		"event":                       "anomaly_threshold",
-		"total_accounts":              strconv.Itoa(event.Metrics.TotalAccounts),
-		"eligible_accounts":           strconv.Itoa(event.Metrics.EligibleAccounts),
-		"available_accounts":          strconv.Itoa(event.Metrics.AvailableAccounts),
-		"abnormal_accounts":           strconv.Itoa(event.Metrics.AbnormalAccounts),
-		"abnormal_percent":            strconv.Itoa(event.Metrics.AbnormalPercent),
-		"quota_limited_accounts":      strconv.Itoa(event.Metrics.QuotaLimitedAccounts),
-		"invalid_credential_accounts": strconv.Itoa(event.Metrics.InvalidCredentialAccounts),
-		"deactivated_accounts":        strconv.Itoa(event.Metrics.DeactivatedAccounts),
-		"unavailable_accounts":        strconv.Itoa(event.Metrics.UnavailableAccounts),
-		"disabled_accounts":           strconv.Itoa(event.Metrics.DisabledAccounts),
-		"threshold_percent":           strconv.Itoa(event.Metrics.ThresholdPercent),
-		"triggered_at":                event.TriggeredAt.UTC().Format(time.RFC3339),
+		"event":                          event.Event,
+		"total_accounts":                 strconv.Itoa(event.Metrics.TotalAccounts),
+		"eligible_accounts":              strconv.Itoa(event.Metrics.EligibleAccounts),
+		"available_accounts":             strconv.Itoa(event.Metrics.AvailableAccounts),
+		"available_percent":              strconv.Itoa(event.Metrics.AvailablePercent),
+		"abnormal_accounts":              strconv.Itoa(event.Metrics.AbnormalAccounts),
+		"abnormal_percent":               strconv.Itoa(event.Metrics.AbnormalPercent),
+		"quota_limited_accounts":         strconv.Itoa(event.Metrics.QuotaLimitedAccounts),
+		"invalid_credential_accounts":    strconv.Itoa(event.Metrics.InvalidCredentialAccounts),
+		"deactivated_accounts":           strconv.Itoa(event.Metrics.DeactivatedAccounts),
+		"unavailable_accounts":           strconv.Itoa(event.Metrics.UnavailableAccounts),
+		"disabled_accounts":              strconv.Itoa(event.Metrics.DisabledAccounts),
+		"threshold_percent":              strconv.Itoa(event.Metrics.ThresholdPercent),
+		"available_accounts_threshold":   strconv.Itoa(event.Metrics.AvailableAccountsThreshold),
+		"availability_percent_threshold": strconv.Itoa(event.Metrics.AvailabilityThreshold),
+		"triggered_at":                   event.TriggeredAt.UTC().Format(time.RFC3339),
 	}
 	expanded := anomalyNotificationVariablePattern.ReplaceAllStringFunc(event.URLTemplate, func(variable string) string {
 		match := anomalyNotificationVariablePattern.FindStringSubmatch(variable)
@@ -162,6 +170,63 @@ func expandAnomalyNotificationURL(event anomalyNotificationEvent) (string, error
 		return "", errValidate
 	}
 	return parsed.String(), nil
+}
+
+func inspectionNotificationReasons(policy InspectionPolicy, metrics anomalyNotificationMetrics) []string {
+	if metrics.TotalAccounts <= 0 {
+		return nil
+	}
+	reasons := make([]string, 0, 3)
+	if policy.AnomalyNotificationEnabled && inspectionAnomalyTriggered(
+		metrics.EligibleAccounts, metrics.AbnormalAccounts, policy.AnomalyMinimumAccounts, policy.AnomalyThresholdPercent,
+	) {
+		reasons = append(reasons, "anomaly_threshold")
+	}
+	if policy.NotificationAvailableEnabled && metrics.AvailableAccounts < policy.NotificationAvailableBelow {
+		reasons = append(reasons, "available_accounts_low")
+	}
+	if policy.NotificationPercentEnabled && metrics.AvailableAccounts*100 < metrics.TotalAccounts*policy.NotificationPercentBelow {
+		reasons = append(reasons, "availability_percent_low")
+	}
+	return reasons
+}
+
+func (e *InspectionEngine) evaluateInspectionNotification(
+	policy InspectionPolicy,
+	accounts map[string]Account,
+	records map[string]inspectionRecord,
+	now time.Time,
+	evaluate bool,
+) bool {
+	if e == nil || !evaluate {
+		return false
+	}
+	metrics := inspectionAnomalyNotificationMetrics(accounts, records)
+	reasons := inspectionNotificationReasons(policy, metrics)
+	if len(reasons) == 0 {
+		return false
+	}
+	cooldown := time.Duration(policy.NotificationCooldownMinutes) * time.Minute
+	e.mu.Lock()
+	if !e.lastNotificationAt.IsZero() && now.Before(e.lastNotificationAt.Add(cooldown)) {
+		e.mu.Unlock()
+		return false
+	}
+	e.lastNotificationAt = now.UTC()
+	e.dirty = true
+	e.generation++
+	e.mu.Unlock()
+
+	metrics.ThresholdPercent = policy.AnomalyThresholdPercent
+	metrics.AvailableAccountsThreshold = policy.NotificationAvailableBelow
+	metrics.AvailabilityThreshold = policy.NotificationPercentBelow
+	e.queueAnomalyNotification(anomalyNotificationEvent{
+		URLTemplate: policy.AnomalyNotificationURL,
+		Event:       strings.Join(reasons, ","),
+		Metrics:     metrics,
+		TriggeredAt: now.UTC(),
+	})
+	return true
 }
 
 func (e *InspectionEngine) queueAnomalyNotification(event anomalyNotificationEvent) {

@@ -485,7 +485,13 @@ export interface InspectionPolicy {
   anomaly_minimum_accounts: number;
   anomaly_cooldown_minutes: number;
   anomaly_notification_enabled: boolean;
+  anomaly_notification_only: boolean;
   anomaly_notification_url: string;
+  notification_available_accounts_enabled: boolean;
+  notification_available_accounts_threshold: number;
+  notification_availability_percent_enabled: boolean;
+  notification_availability_percent_threshold: number;
+  notification_cooldown_minutes: number;
 }
 
 export interface InspectionRunSummary {
@@ -545,6 +551,7 @@ export interface InspectionSnapshot {
   anomaly_percent: number;
   anomaly_trigger_pending: boolean;
   last_anomaly_trigger_at?: string;
+  last_notification_at?: string;
   storage_error?: string;
   run_mode?: "native" | "full" | "incremental" | "scoped" | "retry";
   probe_phase?: "listing" | "primary" | "retry" | "stopped" | "completed";

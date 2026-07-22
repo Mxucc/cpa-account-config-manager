@@ -69,6 +69,7 @@ type persistedInspectionState struct {
 	ProbeSweepTargets     []string                    `json:"probe_sweep_targets,omitempty"`
 	AnomalyTriggerPending bool                        `json:"anomaly_trigger_pending,omitempty"`
 	LastAnomalyTriggerAt  time.Time                   `json:"last_anomaly_trigger_at,omitempty"`
+	LastNotificationAt    time.Time                   `json:"last_notification_at,omitempty"`
 	RunMode               string                      `json:"run_mode,omitempty"`
 	RunHealth             []string                    `json:"run_health,omitempty"`
 	RunSelected           []string                    `json:"run_selected,omitempty"`
@@ -78,6 +79,22 @@ type persistedInspectionState struct {
 	StopRequested         bool                        `json:"stop_requested,omitempty"`
 	Runs                  []InspectionRunRecord       `json:"runs,omitempty"`
 	ActiveRunID           string                      `json:"active_run_id,omitempty"`
+}
+
+func stopPendingAnomalySweep(state *persistedInspectionState, includeRunning bool) {
+	if state == nil {
+		return
+	}
+	state.AnomalyTriggerPending = false
+	if normalizeInspectionSweepSource(state.ProbeSweepSource) != InspectionSweepSourceAnomaly ||
+		(!includeRunning && normalizeInspectionSweepStatus(state.ProbeSweepStatus) == InspectionSweepStatusRunning) {
+		return
+	}
+	state.ProbeSweepTotal = 0
+	state.ProbeSweepCompleted = 0
+	state.ProbeSweepRemaining = 0
+	state.ProbeSweepStatus = InspectionSweepStatusStopped
+	state.ProbeSweepTargets = nil
 }
 
 func inspectionStorePath(dataDir string) string {
@@ -101,6 +118,9 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 		return persistedInspectionState{}, fmt.Errorf("validate inspection policy: %w", errPolicy)
 	}
 	state.Policy = policy
+	if state.LastNotificationAt.IsZero() && state.Policy.AnomalyNotificationEnabled {
+		state.LastNotificationAt = state.LastAnomalyTriggerAt
+	}
 	state.Records = sanitizeInspectionRecords(state.Records)
 	state.Actions = sanitizeInspectionActions(state.Actions)
 	state.LastRun.Error = safeInspectionError(state.LastRun.Error)

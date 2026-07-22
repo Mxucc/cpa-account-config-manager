@@ -38,26 +38,29 @@ type Registration struct {
 }
 
 type RegistrationCapabilities struct {
-	ManagementAPI bool `json:"management_api"`
-	UsagePlugin   bool `json:"usage_plugin"`
+	ManagementAPI      bool `json:"management_api"`
+	UsagePlugin        bool `json:"usage_plugin"`
+	RequestInterceptor bool `json:"request_interceptor"`
 }
 
 type App struct {
-	mu         sync.RWMutex
-	config     Config
-	accounts   *AccountService
-	deletions  *AccountDeleteService
-	previews   *PreviewService
-	jobs       *JobEngine
-	policies   *PolicyEngine
-	inspection *InspectionEngine
-	updates    *UpdateChecker
-	force      *ForceSyncEngine
-	imports    *ImportService
-	usage      *UsageTracker
-	operations *OperationJournal
-	modelTests *ModelTestService
-	indexHTML  []byte
+	mu           sync.RWMutex
+	config       Config
+	accounts     *AccountService
+	deletions    *AccountDeleteService
+	previews     *PreviewService
+	jobs         *JobEngine
+	policies     *PolicyEngine
+	inspection   *InspectionEngine
+	updates      *UpdateChecker
+	force        *ForceSyncEngine
+	imports      *ImportService
+	usage        *UsageTracker
+	operations   *OperationJournal
+	modelTests   *ModelTestService
+	requestHooks *RequestHook
+	experiments  *ExperimentalSettingsService
+	indexHTML    []byte
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -70,24 +73,31 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	modelTests := NewModelTestService(accounts, usage)
 	deletions := NewAccountDeleteService(accounts, mutations)
 	operations := NewOperationJournal()
+	experiments := NewExperimentalSettingsService()
+	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)
+	requestHooks := NewRequestHook(weeklyOverdraft)
+	modelTests.SetExperimentalTransformer(weeklyOverdraft)
+	inspection.RegisterAutomaticDisableGuard(weeklyOverdraft)
 	inspection.SetModelTestService(modelTests)
 	inspection.SetDeleteService(deletions)
 	inspection.SetOperationJournal(operations)
 	return &App{
-		config:     normalizeConfig(Config{}),
-		accounts:   accounts,
-		deletions:  deletions,
-		previews:   NewPreviewService(accounts),
-		jobs:       jobs,
-		policies:   policies,
-		inspection: inspection,
-		updates:    NewUpdateChecker(PluginVersion),
-		force:      NewForceSyncEngine(accounts, host, policies, mutations),
-		imports:    NewImportService(host, mutations),
-		usage:      usage,
-		operations: operations,
-		modelTests: modelTests,
-		indexHTML:  append([]byte(nil), indexHTML...),
+		config:       normalizeConfig(Config{}),
+		accounts:     accounts,
+		deletions:    deletions,
+		previews:     NewPreviewService(accounts),
+		jobs:         jobs,
+		policies:     policies,
+		inspection:   inspection,
+		updates:      NewUpdateChecker(PluginVersion),
+		force:        NewForceSyncEngine(accounts, host, policies, mutations),
+		imports:      NewImportService(host, mutations),
+		usage:        usage,
+		operations:   operations,
+		modelTests:   modelTests,
+		requestHooks: requestHooks,
+		experiments:  experiments,
+		indexHTML:    append([]byte(nil), indexHTML...),
 	}
 }
 
@@ -100,6 +110,7 @@ func (a *App) Configure(raw []byte) {
 	config := a.config
 	a.mu.Unlock()
 	a.operations.Configure(config)
+	a.experiments.Configure(config)
 	a.jobs.Configure(config)
 	a.policies.Configure(config)
 	a.inspection.Configure(config)
@@ -153,8 +164,22 @@ func (a *App) Registration() Registration {
 				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL; defaults to http://127.0.0.1:8317."},
 			},
 		},
-		Capabilities: RegistrationCapabilities{ManagementAPI: true, UsagePlugin: true},
+		Capabilities: RegistrationCapabilities{ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true},
 	}
+}
+
+func (a *App) HandleRequestBefore(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
+	if a == nil || a.requestHooks == nil {
+		return cpaapi.RequestInterceptResponse{}
+	}
+	return a.requestHooks.InterceptBefore(request)
+}
+
+func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
+	if a == nil || a.requestHooks == nil {
+		return cpaapi.RequestInterceptResponse{}
+	}
+	return a.requestHooks.InterceptAfter(request)
 }
 
 func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
@@ -195,6 +220,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/updates", Description: "Read plugin release and update-check status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/updates", Description: "Validate and save plugin update-check settings."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Record an immediate CPA plugin-store update check."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/experiments", Description: "Read removable experimental feature settings."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/experiments", Description: "Persist removable experimental feature settings."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations", Description: "List the persistent sanitized account-manager operation journal."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/export", Description: "Export the sanitized operation journal as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/settings", Description: "Read operation-journal retention settings."},
@@ -321,6 +348,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handlePutUpdatePolicy(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/updates/check":
 		return jsonResponse(http.StatusAccepted, a.updates.RequestCheck())
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/experiments":
+		return jsonResponse(http.StatusOK, a.experiments.Snapshot())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/experiments":
+		return a.handlePutExperimentalSettings(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations":
 		return a.handleListOperations(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations/export":
@@ -1024,6 +1055,18 @@ func (a *App) handlePutUpdatePolicy(req cpaapi.ManagementRequest) cpaapi.Managem
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
 	}
 	a.recordPolicyChange(OperationCategoryUpdate, OperationActionUpdateSave, OperationSourceManual, OperationStatusSucceeded)
+	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) handlePutExperimentalSettings(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var settings ExperimentalSettings
+	if errDecode := decodeJSONRequest(req.Body, &settings); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	snapshot, errSave := a.experiments.Set(settings)
+	if errSave != nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "experimental settings could not be persisted"})
+	}
 	return jsonResponse(http.StatusOK, snapshot)
 }
 

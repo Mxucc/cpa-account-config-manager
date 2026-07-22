@@ -13,15 +13,17 @@ const (
 )
 
 const (
-	MethodPluginRegister     = "plugin.register"
-	MethodPluginReconfigure  = "plugin.reconfigure"
-	MethodManagementRegister = "management.register"
-	MethodManagementHandle   = "management.handle"
-	MethodUsageHandle        = "usage.handle"
-	MethodHostAuthList       = "host.auth.list"
-	MethodHostAuthGet        = "host.auth.get"
-	MethodHostAuthGetRuntime = "host.auth.get_runtime"
-	MethodHostAuthSave       = "host.auth.save"
+	MethodPluginRegister         = "plugin.register"
+	MethodPluginReconfigure      = "plugin.reconfigure"
+	MethodManagementRegister     = "management.register"
+	MethodManagementHandle       = "management.handle"
+	MethodRequestInterceptBefore = "request.intercept_before"
+	MethodRequestInterceptAfter  = "request.intercept_after"
+	MethodUsageHandle            = "usage.handle"
+	MethodHostAuthList           = "host.auth.list"
+	MethodHostAuthGet            = "host.auth.get"
+	MethodHostAuthGetRuntime     = "host.auth.get_runtime"
+	MethodHostAuthSave           = "host.auth.save"
 )
 
 type Metadata struct {
@@ -77,6 +79,23 @@ type ManagementResponse struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+}
+
+type RequestInterceptRequest struct {
+	SourceFormat   string         `json:"SourceFormat"`
+	ToFormat       string         `json:"ToFormat"`
+	Model          string         `json:"Model"`
+	RequestedModel string         `json:"RequestedModel"`
+	Stream         bool           `json:"Stream"`
+	Headers        http.Header    `json:"Headers"`
+	Body           []byte         `json:"Body"`
+	Metadata       map[string]any `json:"Metadata"`
+}
+
+type RequestInterceptResponse struct {
+	Headers      http.Header `json:"Headers,omitempty"`
+	Body         []byte      `json:"Body,omitempty"`
+	ClearHeaders []string    `json:"ClearHeaders,omitempty"`
 }
 
 type UsageRecord struct {

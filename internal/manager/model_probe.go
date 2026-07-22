@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"cpa-account-config-manager/internal/cpaapi"
 )
 
 const (
@@ -30,9 +32,10 @@ var (
 )
 
 type ModelTestRequest struct {
-	AccountID  string `json:"account_id"`
-	Model      string `json:"model,omitempty"`
-	Inspection bool   `json:"-"`
+	AccountID                   string `json:"account_id"`
+	Model                       string `json:"model,omitempty"`
+	ExperimentalWeeklyOverdraft bool   `json:"experimental_weekly_overdraft,omitempty"`
+	Inspection                  bool   `json:"-"`
 }
 
 type ModelTestResult struct {
@@ -47,6 +50,13 @@ type ModelTestResult struct {
 	LatencyMS   int64                     `json:"latency_ms"`
 	TestedAt    time.Time                 `json:"tested_at"`
 	Response    *ModelTestResponsePreview `json:"response,omitempty"`
+	Experiment  *ModelTestExperiment      `json:"experiment,omitempty"`
+}
+
+type ModelTestExperiment struct {
+	Name    string `json:"name"`
+	Applied bool   `json:"applied"`
+	CallID  string `json:"call_id,omitempty"`
 }
 
 type ModelTestResponsePreview struct {
@@ -62,11 +72,12 @@ type ModelTestResponseHeader struct {
 }
 
 type ModelTestService struct {
-	accounts  *AccountService
-	usage     credentialUsageObserver
-	doer      HTTPDoer
-	semaphore chan struct{}
-	now       func() time.Time
+	accounts                *AccountService
+	usage                   credentialUsageObserver
+	doer                    HTTPDoer
+	semaphore               chan struct{}
+	now                     func() time.Time
+	experimentalTransformer RequestTransformer
 }
 
 type credentialUsageObserver interface {
@@ -224,6 +235,13 @@ func NewModelTestService(accounts *AccountService, usage ...credentialUsageObser
 	return service
 }
 
+func (s *ModelTestService) SetExperimentalTransformer(transformer RequestTransformer) {
+	if s == nil {
+		return
+	}
+	s.experimentalTransformer = transformer
+}
+
 func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string) (ModelTestResult, error) {
 	accountID := safeOperationIdentifier(request.AccountID, 256)
 	if accountID == "" {
@@ -263,12 +281,15 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		Model:     model,
 		TestedAt:  startedAt,
 	}
+	if request.ExperimentalWeeklyOverdraft && (provider != "codex" || metadata.usesAPIKey()) {
+		return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment requires a Codex OAuth account")
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
 	defer cancel()
 	// Inspection must use the Codex credential endpoint even when CPA runtime
 	// metadata says api_key. The runtime label can be stale or describe the
 	// routing adapter rather than the physical auth file.
-	if provider == "codex" && (request.Inspection || !metadata.usesAPIKey()) {
+	if provider == "codex" && !request.ExperimentalWeeklyOverdraft && (request.Inspection || !metadata.usesAPIKey()) {
 		credential := buildCodexCredentialProbe(metadata)
 		credentialResponse, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
 		if errCredential == nil {
@@ -309,6 +330,21 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		result.Status = "unsupported"
 		result.ReasonCode = "unsupported_provider"
 		return result, nil
+	}
+	if request.ExperimentalWeeklyOverdraft {
+		if s.experimentalTransformer == nil {
+			return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment is unavailable")
+		}
+		modification, changed := s.experimentalTransformer.InterceptRequest(cpaapi.RequestInterceptRequest{
+			ToFormat: "codex",
+			Body:     []byte(probe.data),
+		})
+		callID := experimentalToolCallID(modification.Body)
+		if !changed || len(modification.Body) == 0 || callID == "" {
+			return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment could not be applied")
+		}
+		probe.data = string(modification.Body)
+		result.Experiment = &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: callID}
 	}
 
 	upstreamResponse, errCall := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, probe)
@@ -534,7 +570,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 func openAIResponsesProbePayload(model string, streaming bool) map[string]any {
 	payload := map[string]any{
 		"model":        model,
-		"input":        []map[string]any{{"role": "user", "content": []map[string]string{{"type": "input_text", "text": "hi"}}}},
+		"input":        []map[string]any{{"type": "message", "role": "user", "content": []map[string]string{{"type": "input_text", "text": "hi"}}}},
 		"instructions": "Reply with OK only.",
 		"stream":       streaming,
 	}
@@ -544,6 +580,28 @@ func openAIResponsesProbePayload(model string, streaming bool) map[string]any {
 		payload["max_output_tokens"] = 16
 	}
 	return payload
+}
+
+func experimentalToolCallID(body []byte) string {
+	if len(body) == 0 || len(body) > defaultExperimentalRequestBodyLimit {
+		return ""
+	}
+	var document struct {
+		Input []struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+		} `json:"input"`
+	}
+	if errDecode := json.Unmarshal(body, &document); errDecode != nil || len(document.Input) < 2 {
+		return ""
+	}
+	call := document.Input[len(document.Input)-2]
+	output := document.Input[len(document.Input)-1]
+	callID := safeOperationIdentifier(call.CallID, 128)
+	if call.Type != "custom_tool_call" || output.Type != "custom_tool_call_output" || callID == "" || callID != output.CallID {
+		return ""
+	}
+	return callID
 }
 
 func bearerJSONHeaders(streaming bool) map[string]string {

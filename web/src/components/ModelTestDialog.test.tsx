@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Account, ModelTestResult } from "../types";
 import { ModelTestDialog } from "./ModelTestDialog";
@@ -75,5 +76,25 @@ describe("ModelTestDialog", () => {
     const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
     expect(within(dialog).getByText("EMPTY")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("响应正文")).toHaveTextContent("响应正文为空");
+  });
+
+  it("runs an enabled experimental probe and shows its fresh correlation ID", async () => {
+    const user = userEvent.setup();
+    const onTest = vi.fn();
+    render(<ModelTestDialog
+      account={account}
+      result={{ ...result, experiment: { name: "weekly_overdraft", applied: true, call_id: "call_cpa_overdraft_fresh123" } }}
+      error=""
+      testing={false}
+      experimentalAvailable
+      onClose={vi.fn()}
+      onTest={onTest}
+    />);
+
+    const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByText("已加载实验请求")).toBeInTheDocument();
+    expect(within(dialog).getByText("call_cpa_overdraft_fresh123")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "加载实验性功能" }));
+    expect(onTest).toHaveBeenCalledWith("gpt-5.4", true);
   });
 });

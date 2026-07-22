@@ -13,13 +13,14 @@ const (
 )
 
 type Config struct {
-	Workers           int                      `yaml:"workers"`
-	DataDir           string                   `yaml:"data_dir"`
-	ManagementBaseURL string                   `yaml:"management_base_url"`
-	DefaultPolicy     *DefaultPolicy           `yaml:"default_policy,omitempty"`
-	InspectionPolicy  *InspectionPolicy        `yaml:"inspection_policy,omitempty"`
-	UpdatePolicy      *UpdatePolicy            `yaml:"update_policy,omitempty"`
-	OperationSettings *OperationSettingsConfig `yaml:"operation_settings,omitempty"`
+	Workers              int                      `yaml:"workers"`
+	DataDir              string                   `yaml:"data_dir"`
+	ManagementBaseURL    string                   `yaml:"management_base_url"`
+	DefaultPolicy        *DefaultPolicy           `yaml:"default_policy,omitempty"`
+	InspectionPolicy     *InspectionPolicy        `yaml:"inspection_policy,omitempty"`
+	UpdatePolicy         *UpdatePolicy            `yaml:"update_policy,omitempty"`
+	OperationSettings    *OperationSettingsConfig `yaml:"operation_settings,omitempty"`
+	ExperimentalSettings *ExperimentalSettings    `yaml:"experimental_settings,omitempty"`
 }
 
 type OperationSettingsConfig struct {
@@ -64,6 +65,10 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.OperationSettings != nil {
 		settings := *cfg.OperationSettings
 		cfg.OperationSettings = &settings
+	}
+	if cfg.ExperimentalSettings != nil {
+		settings := *cfg.ExperimentalSettings
+		cfg.ExperimentalSettings = &settings
 	}
 	return cfg
 }

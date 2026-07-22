@@ -48,6 +48,17 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		pluginApp.HandleUsage(record)
 		return okEnvelope(struct{}{})
+	case cpaapi.MethodRequestInterceptBefore, cpaapi.MethodRequestInterceptAfter:
+		var interceptRequest cpaapi.RequestInterceptRequest
+		if len(request) > 0 {
+			if errUnmarshal := json.Unmarshal(request, &interceptRequest); errUnmarshal != nil {
+				return nil, fmt.Errorf("decode request interceptor input: %w", errUnmarshal)
+			}
+		}
+		if method == cpaapi.MethodRequestInterceptBefore {
+			return okEnvelope(pluginApp.HandleRequestBefore(interceptRequest))
+		}
+		return okEnvelope(pluginApp.HandleRequestAfter(interceptRequest))
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}

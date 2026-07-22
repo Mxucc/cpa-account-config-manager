@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, CheckCircle2, LoaderCircle, ShieldQuestion, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, FlaskConical, LoaderCircle, ShieldQuestion, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Account, ModelTestResult, ModelTestStatus } from "../types";
 import { technicalLabel } from "../format/accountDisplay";
@@ -11,8 +11,9 @@ interface ModelTestDialogProps {
   result: ModelTestResult | null;
   error: string;
   testing: boolean;
+  experimentalAvailable?: boolean;
   onClose: () => void;
-  onTest: (model: string) => void;
+  onTest: (model: string, experimentalWeeklyOverdraft?: boolean) => void;
 }
 
 const modelSuggestions: Record<string, string[]> = {
@@ -52,7 +53,7 @@ const quotaWindowLabels: Record<NonNullable<ModelTestResult["quota_window"]>, UI
   five_hour_fallback: "ui.quota_window_five_hour_fallback",
 };
 
-export function ModelTestDialog({ account, result, error, testing, onClose, onTest }: ModelTestDialogProps) {
+export function ModelTestDialog({ account, result, error, testing, experimentalAvailable = false, onClose, onTest }: ModelTestDialogProps) {
   const { locale, tx } = useI18n();
   const provider = (account.provider || account.type || "").trim().toLowerCase();
   const suggestions = useMemo(() => modelSuggestions[provider] || [], [provider]);
@@ -68,7 +69,13 @@ export function ModelTestDialog({ account, result, error, testing, onClose, onTe
         <>
           <span className="modal-scope">{tx("ui.single_account_minimal_upstream_usage")}</span>
           <button className="button" type="button" disabled={testing} onClick={onClose}>{tx("ui.close")}</button>
-          <button className="button button-primary" type="button" disabled={!valid || testing} onClick={() => onTest(model.trim())}>
+          {experimentalAvailable && provider === "codex" ? (
+            <button className="button experimental-model-test-button" type="button" disabled={!valid || testing} onClick={() => onTest(model.trim(), true)}>
+              {testing ? <LoaderCircle className="spin" size={15} /> : <FlaskConical size={15} />}
+              {tx("ui.load_experimental_feature")}
+            </button>
+          ) : null}
+          <button className="button button-primary" type="button" disabled={!valid || testing} onClick={() => onTest(model.trim(), false)}>
             {testing ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}
             {tx(testing ? "ui.testing" : result ? "ui.test_again" : "ui.start_test")}
           </button>
@@ -97,6 +104,10 @@ export function ModelTestDialog({ account, result, error, testing, onClose, onTe
           {suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
         </datalist>
 
+        {experimentalAvailable && provider === "codex" ? (
+          <div className="model-test-experimental-note" role="note"><FlaskConical size={17} /><span>{tx("ui.experimental_model_test_description")}</span></div>
+        ) : null}
+
         {testing ? <div className="model-test-running" role="status"><LoaderCircle className="spin" size={20} /><div><strong>{tx("ui.connecting_to_model")}</strong><span>{model.trim()}</span></div></div> : null}
         {error ? <div className="model-test-error" role="alert"><AlertTriangle size={18} /><span>{error}</span></div> : null}
         {result && !testing ? <ModelTestOutcome result={result} /> : null}
@@ -120,6 +131,12 @@ function ModelTestOutcome({ result }: { result: ModelTestResult }) {
         {result.quota_window ? <div><dt>{tx("ui.quota_window")}</dt><dd>{tx(quotaWindowLabels[result.quota_window])}</dd></div> : null}
         <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(result.tested_at)}</dd></div>
       </dl>
+      {result.experiment?.applied ? (
+        <div className="model-test-experiment-result">
+          <span><FlaskConical size={15} />{tx("ui.experimental_feature_loaded")}</span>
+          <div><strong>{tx("ui.correlation_call_id")}</strong><code>{result.experiment.call_id || "-"}</code></div>
+        </div>
+      ) : null}
       {result.response ? (
         <div className="model-test-response">
           <div className="model-test-response-heading">

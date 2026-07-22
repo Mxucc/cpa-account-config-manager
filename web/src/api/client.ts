@@ -9,6 +9,8 @@ import type {
   BatchPreview,
 	CPAServerVersionSnapshot,
 	DefaultPolicy,
+	ExperimentalSettings,
+	ExperimentalSettingsSnapshot,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
   ExportFormat,
@@ -246,10 +248,14 @@ export async function listAccounts(
   return { ...response, accounts: arrayOrEmpty(response.accounts) };
 }
 
-export async function testAccountModel(accountID: string, model: string): Promise<ModelTestResult> {
+export async function testAccountModel(accountID: string, model: string, experimentalWeeklyOverdraft = false): Promise<ModelTestResult> {
   return request<ModelTestResult>("/accounts/model-test", {
     method: "POST",
-    body: JSON.stringify({ account_id: accountID, model: model.trim() }),
+    body: JSON.stringify({
+      account_id: accountID,
+      model: model.trim(),
+      ...(experimentalWeeklyOverdraft ? { experimental_weekly_overdraft: true } : {}),
+    }),
   });
 }
 
@@ -300,6 +306,7 @@ interface PersistentPluginSettings {
 	inspection_policy?: InspectionPolicy;
 	update_policy?: UpdatePolicy;
 	operation_settings?: Pick<OperationRetentionSettings, "extended_history">;
+	experimental_settings?: ExperimentalSettings;
 }
 
 async function persistPluginSettings(settings: PersistentPluginSettings): Promise<void> {
@@ -444,6 +451,18 @@ export async function executeInspectionAutoDelete(): Promise<InspectionDeleteRun
 
 export async function getUpdateStatus(): Promise<UpdateSnapshot> {
   return request<UpdateSnapshot>("/updates");
+}
+
+export async function getExperimentalSettings(): Promise<ExperimentalSettingsSnapshot> {
+	return request<ExperimentalSettingsSnapshot>("/experiments");
+}
+
+export async function saveExperimentalSettings(settings: ExperimentalSettings): Promise<ExperimentalSettingsSnapshot> {
+	await persistPluginSettings({ experimental_settings: settings });
+	return request<ExperimentalSettingsSnapshot>("/experiments", {
+		method: "PUT",
+		body: JSON.stringify(settings),
+	});
 }
 
 export async function saveUpdatePolicy(policy: UpdatePolicy, confirmAutoUpdate = false): Promise<UpdateSnapshot> {
@@ -609,17 +628,19 @@ export async function getOperationRetentionSettings(): Promise<OperationRetentio
 }
 
 export async function persistCurrentSettings(): Promise<void> {
-	const [defaults, inspection, updates, operations] = await Promise.all([
+	const [defaults, inspection, updates, operations, experiments] = await Promise.all([
 		getDefaultPolicy(),
 		getInspection(),
 		getUpdateStatus(),
 		getOperationRetentionSettings(),
+		getExperimentalSettings(),
 	]);
 	await persistPluginSettings({
 		default_policy: defaults.policy,
 		inspection_policy: inspection.policy,
 		update_policy: updates.policy,
 		operation_settings: { extended_history: operations.extended_history === true },
+		experimental_settings: experiments.settings,
 	});
 }
 

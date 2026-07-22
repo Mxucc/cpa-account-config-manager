@@ -33,6 +33,7 @@ type InspectionEngine struct {
 	policy                 InspectionPolicy
 	records                map[string]inspectionRecord
 	actions                []InspectionAction
+	autoDisableGuards      []AutomaticDisableGuard
 	runs                   []InspectionRunRecord
 	activeRunID            string
 	activeRunHealth        map[string]string
@@ -655,7 +656,8 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 	inspection.Result.ID = authIndex
 	applyUsageRecordToInspection(&inspection, record, e.policy, now)
 	e.records[authIndex] = inspection
-	wake := e.started && passiveCircuitThresholdReached(e.policy, inspection)
+	wake := e.started && (passiveCircuitThresholdReached(e.policy, inspection) ||
+		usageObservationRequiresImmediateScan(e.policy, record, inspection, now) && e.usageAutoDisableAllowedLocked(record, now))
 	if wake {
 		e.pending = true
 	}
@@ -669,6 +671,19 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 		default:
 		}
 	}
+}
+
+func usageObservationRequiresImmediateScan(policy InspectionPolicy, usage cpaapi.UsageRecord, inspection inspectionRecord, now time.Time) bool {
+	policy = normalizeInspectionPolicy(policy)
+	if !policy.Enabled || !policy.AutoDisable {
+		return false
+	}
+	if codex := parseCodexUsageHeaders(usage.ResponseHeaders, now); codex != nil && codex.SevenDay != nil &&
+		codex.SevenDay.UsedPercent >= 100 && (codex.SevenDay.ResetAt == nil || codex.SevenDay.ResetAt.After(now)) {
+		return true
+	}
+	return usage.Failed && inspection.Signal.AutoDisableEligible &&
+		inspection.Signal.ConsecutiveFailures >= policy.FailureThreshold
 }
 
 func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionResultList {

@@ -35,6 +35,7 @@ describe("OtherSettingsWorkspace", () => {
       if (url.endsWith("/updates")) {
         return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.91", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z" });
       }
+      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false } });
       if (url === "/v0/management/plugin-store") {
         return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.91", update_available: true }] });
       }
@@ -72,5 +73,48 @@ describe("OtherSettingsWorkspace", () => {
       policy: { check_enabled: true, check_interval_hours: 24, auto_update: true },
       confirm_auto_update: true,
     });
+  });
+
+  it("persists the weekly-overdraft experiment from its own settings tab", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/v0/management/latest-version")) {
+        return jsonResponse({ "latest-version": "v7.2.93" }, 200, { "X-CPA-Version": "v7.2.93" });
+      }
+      if (url.endsWith("/updates")) {
+        return jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.2.991", update_available: false, checking: false, pending: false, checked_at: "2026-07-22T08:00:00Z" });
+      }
+      if (url === "/v0/management/plugin-store") {
+        return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.991", installed: true, installed_version: "0.2.991", update_available: false }] });
+      }
+      if (url.endsWith("/experiments") && init.method === "PUT") {
+        return jsonResponse({ settings: { weekly_overdraft_enabled: true } });
+      }
+      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false } });
+      if (url.endsWith("/config") && init.method === "PATCH") return jsonResponse({});
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+    const workspace = await screen.findByRole("region", { name: "其他配置" });
+    await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
+    const panel = within(workspace).getByRole("tabpanel", { name: "实验性功能" });
+    expect(within(panel).getByText("实验性行为")).toBeInTheDocument();
+    expect(within(panel).getByText("Codex 周额度透支续用")).toBeInTheDocument();
+
+    await user.click(within(panel).getByRole("checkbox", { name: "Codex 周额度透支续用" }));
+    await user.click(within(panel).getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));
+    const configRequest = requests.find(({ url, init }) => url.endsWith("/config") && init.method === "PATCH");
+    const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: { weekly_overdraft_enabled: true } });
+    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ weekly_overdraft_enabled: true });
+    expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
   });
 });

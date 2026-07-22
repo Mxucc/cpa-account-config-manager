@@ -157,6 +157,8 @@ export default function App() {
   const [modelTestResult, setModelTestResult] = useState<ModelTestResult | null>(null);
   const [modelTesting, setModelTesting] = useState(false);
   const [modelTestError, setModelTestError] = useState("");
+  const [modelTestExperimentalAvailable, setModelTestExperimentalAvailable] = useState(false);
+  const modelTestExperimentRequest = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
   const [deletePreview, setDeletePreview] = useState<AccountDeletePreview | null>(null);
   const [deletePreviewing, setDeletePreviewing] = useState(false);
@@ -520,25 +522,42 @@ export default function App() {
   };
 
   const openModelTest = (account: Account) => {
+    const requestID = modelTestExperimentRequest.current + 1;
+    modelTestExperimentRequest.current = requestID;
     setModelTestTarget(account);
     setModelTestResult(null);
     setModelTestError("");
+    setModelTestExperimentalAvailable(false);
+    void api.getExperimentalSettings().then((snapshot) => {
+      if (modelTestExperimentRequest.current !== requestID) return;
+      setModelTestExperimentalAvailable(snapshot.settings.weekly_overdraft_enabled === true);
+    }).catch((error) => {
+      if (modelTestExperimentRequest.current !== requestID) return;
+      if (error instanceof api.APIError && error.status === 401) {
+        setModelTestTarget(null);
+        handleAPIError(error);
+      } else {
+        setModelTestError(errorText(error, locale));
+      }
+    });
   };
 
   const closeModelTest = () => {
     if (modelTesting) return;
+    modelTestExperimentRequest.current += 1;
     setModelTestTarget(null);
     setModelTestResult(null);
     setModelTestError("");
+    setModelTestExperimentalAvailable(false);
   };
 
-  const runModelTest = async (model: string) => {
+  const runModelTest = async (model: string, experimentalWeeklyOverdraft = false) => {
     if (!modelTestTarget) return;
     setModelTesting(true);
     setModelTestError("");
     setModelTestResult(null);
     try {
-      setModelTestResult(await api.testAccountModel(modelTestTarget.id, model));
+      setModelTestResult(await api.testAccountModel(modelTestTarget.id, model, experimentalWeeklyOverdraft));
     } catch (error) {
       if (error instanceof api.APIError && error.status === 401) {
         setModelTestTarget(null);
@@ -1082,7 +1101,7 @@ export default function App() {
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
       {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
-      {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} onClose={closeModelTest} onTest={(model) => void runModelTest(model)} /> : null}
+      {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}

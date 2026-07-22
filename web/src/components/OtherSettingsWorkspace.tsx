@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ExternalLink,
+  FlaskConical,
   LoaderCircle,
   PackageCheck,
   RefreshCw,
@@ -13,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
-import type { CPAServerVersionSnapshot, UpdateSnapshot } from "../types";
+import type { CPAServerVersionSnapshot, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
 
 interface OtherSettingsWorkspaceProps {
   onAPIError: (error: unknown) => void;
@@ -24,15 +25,19 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   const { locale, tx, formatDateTime } = useI18n();
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
+  const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
+  const [activeSection, setActiveSection] = useState<"general" | "experimental">("general");
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingExperiment, setSavingExperiment] = useState(false);
   const [checkEnabled, setCheckEnabled] = useState(true);
   const [checkInterval, setCheckInterval] = useState("24");
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [confirmAutoUpdate, setConfirmAutoUpdate] = useState(false);
+  const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [error, setError] = useState("");
   const attemptedUpdate = useRef("");
 
@@ -56,11 +61,17 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     return next;
   }, []);
 
+  const refreshExperiments = useCallback(async () => {
+    const next = await api.getExperimentalSettings();
+    setExperiments(next);
+    return next;
+  }, []);
+
   const refreshAll = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [nextUpdates] = await Promise.all([refreshPlugin(), refreshServer()]);
+      const [nextUpdates] = await Promise.all([refreshPlugin(), refreshServer(), refreshExperiments()]);
       if (nextUpdates.policy.check_enabled && !nextUpdates.checked_at && !nextUpdates.checking && !nextUpdates.pending) {
         await refreshPlugin(true);
       }
@@ -69,7 +80,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     } finally {
       setLoading(false);
     }
-  }, [handleError, refreshPlugin, refreshServer]);
+  }, [handleError, refreshExperiments, refreshPlugin, refreshServer]);
 
   useEffect(() => { void refreshAll(); }, [refreshAll]);
 
@@ -80,6 +91,11 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     setAutoUpdate(updates.policy.auto_update);
     if (updates.policy.auto_update) setConfirmAutoUpdate(false);
   }, [updates?.policy.auto_update, updates?.policy.check_enabled, updates?.policy.check_interval_hours]);
+
+  useEffect(() => {
+    if (!experiments) return;
+    setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
+  }, [experiments]);
 
   useEffect(() => {
     if (!updates?.checking && !updates?.pending) return;
@@ -191,6 +207,19 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     }
   };
 
+  const saveExperimentalSettings = async () => {
+    setSavingExperiment(true);
+    setError("");
+    try {
+      setExperiments(await api.saveExperimentalSettings({ weekly_overdraft_enabled: weeklyOverdraftEnabled }));
+      onNotice(tx("ui.experimental_settings_saved"));
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setSavingExperiment(false);
+    }
+  };
+
   const pluginBusy = checkingPlugin || Boolean(updates?.checking || updates?.pending);
   return (
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
@@ -201,9 +230,18 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
         </button>
       </header>
 
+      <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
+        <button type="button" role="tab" aria-selected={activeSection === "general"} className={activeSection === "general" ? "active" : ""} onClick={() => setActiveSection("general")}>
+          <Server size={15} />{tx("ui.general_settings")}
+        </button>
+        <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
+          <FlaskConical size={15} />{tx("ui.experimental_features")}
+        </button>
+      </div>
+
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
-      <div className="other-settings-grid">
+      {activeSection === "general" ? <div className="other-settings-grid" role="tabpanel">
         <section className="settings-section server-version-section" aria-label={tx("ui.cpa_server_version")}>
           <header><Server size={18} /><div><strong>{tx("ui.cpa_server_version")}</strong><span>{tx("ui.cpa_server_version_description")}</span></div></header>
           <div className="settings-version-grid">
@@ -252,7 +290,44 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
             <button className="button button-primary" type="button" disabled={saving || !updates} onClick={() => void saveUpdateSettings()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}</button>
           </div>
         </section>
-      </div>
+      </div> : (
+        <section className="experimental-settings-section" role="tabpanel" aria-label={tx("ui.experimental_features")}>
+          <div className="experimental-warning" role="note">
+            <AlertTriangle size={20} />
+            <div><strong>{tx("ui.experimental_features_warning")}</strong><span>{tx("ui.experimental_features_may_change_or_stop_working")}</span></div>
+          </div>
+          {experiments?.storage_error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.experimental_settings_storage_error")}</span></div> : null}
+          <div className="experimental-feature-row">
+            <div className="experimental-feature-copy">
+              <span className="experimental-feature-icon"><FlaskConical size={18} /></span>
+              <div>
+                <strong>{tx("ui.codex_weekly_quota_overdraft")}</strong>
+                <span>{tx("ui.codex_weekly_quota_overdraft_description")}</span>
+              </div>
+            </div>
+            <label className="switch-control experimental-feature-switch">
+              <input
+                type="checkbox"
+                checked={weeklyOverdraftEnabled}
+                disabled={loading || savingExperiment || !experiments}
+                onChange={(event) => setWeeklyOverdraftEnabled(event.target.checked)}
+                aria-label={tx("ui.codex_weekly_quota_overdraft")}
+              />
+              <b>{tx(weeklyOverdraftEnabled ? "ui.on_2" : "ui.off_2")}</b>
+            </label>
+          </div>
+          <div className="experimental-behavior-list">
+            <div><strong>{tx("ui.request_behavior")}</strong><span>{tx("ui.weekly_overdraft_request_behavior")}</span></div>
+            <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
+            <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
+          </div>
+          <div className="settings-section-actions experimental-actions">
+            <button className="button button-primary" type="button" disabled={loading || savingExperiment || !experiments} onClick={() => void saveExperimentalSettings()}>
+              {savingExperiment ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}
+            </button>
+          </div>
+        </section>
+      )}
     </section>
   );
 }

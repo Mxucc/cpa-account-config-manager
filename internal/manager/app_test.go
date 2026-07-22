@@ -58,6 +58,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodGet + " /plugins/cpa-account-config-manager/updates":                  {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/updates":                  {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/updates/check":           {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/experiments":              {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/experiments":              {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/operations":               {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/operations/export":        {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/operations/settings":      {},
@@ -107,7 +109,7 @@ func TestRegistrationUsesInjectedReleaseMetadata(t *testing.T) {
 	if registration.Metadata.Version != "1.2.3" || registration.Metadata.GitHubRepository != PluginRepository {
 		t.Fatalf("metadata = %#v", registration.Metadata)
 	}
-	if !registration.Capabilities.ManagementAPI || !registration.Capabilities.UsagePlugin {
+	if !registration.Capabilities.ManagementAPI || !registration.Capabilities.UsagePlugin || !registration.Capabilities.RequestInterceptor {
 		t.Fatalf("capabilities = %#v", registration.Capabilities)
 	}
 }

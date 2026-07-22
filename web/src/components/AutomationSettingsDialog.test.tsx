@@ -158,4 +158,36 @@ describe("AutomationSettingsDialog", () => {
       notification_availability_percent_enabled: false,
     }), false, false);
   });
+
+  it("enables scheduled inspection when automatic account disposition is enabled", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <AutomationSettingsDialog
+        inspection={{
+          enabled: false, scan_interval_minutes: 30,
+          model_probe_enabled: false, model_probe_full_sweep: false, scan_manually_disabled: false, model_probe_interval_minutes: 60, model_probe_batch_size: 20,
+          model_probe_models: { codex: "gpt-5.4", openai: "gpt-5.4", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", xai: "grok-4" },
+          failure_threshold: 3, recovery_threshold: 2, auto_disable: false, auto_enable: false,
+          passive_circuit_enabled: false, passive_failure_threshold: 5, passive_failure_window_minutes: 180, passive_circuit_minutes: 15,
+          auto_delete: false, auto_delete_invalid_credentials: false, delete_grace_hours: 168, delete_batch_size: 10,
+          anomaly_trigger_enabled: false, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
+          anomaly_notification_enabled: false, anomaly_notification_only: false, anomaly_notification_url: "",
+          notification_available_accounts_enabled: false, notification_available_accounts_threshold: 10,
+          notification_availability_percent_enabled: false, notification_availability_percent_threshold: 20, notification_cooldown_minutes: 60,
+        }}
+        saving={false}
+        onClose={() => undefined}
+        onSave={onSave}
+      />,
+    );
+
+    await user.click(screen.getByLabelText("自动禁用"));
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: true,
+      auto_disable: true,
+    }), false, false);
+  });
 });

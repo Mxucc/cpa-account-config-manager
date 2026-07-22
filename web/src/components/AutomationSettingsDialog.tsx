@@ -263,14 +263,14 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
         <section className="automation-settings-section">
           <header><AlertTriangle size={17} /><div><strong>{tx("ui.account_disposition")}</strong><span>{tx("ui.only_accounts_disabled_by_inspection_can_be_restored")}</span></div></header>
           <div className="automation-setting-grid">
-            <SettingToggle label="ui.auto_disable" checked={autoDisable} disabled={saving} onChange={(checked) => { setAutoDisable(checked); if (!checked) { setAutoDelete(false); setPassiveCircuit(false); } }} />
-            <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={(checked) => { setAutoEnable(checked); if (!checked) setPassiveCircuit(false); }} />
-            <SettingToggle label="ui.passive_temporary_circuit" checked={passiveCircuit} disabled={saving} onChange={(checked) => { setPassiveCircuit(checked); if (checked) { setAutoDisable(true); setAutoEnable(true); } }} />
+            <SettingToggle label="ui.auto_disable" checked={autoDisable} disabled={saving} onChange={(checked) => { setAutoDisable(checked); if (checked) setScheduleEnabled(true); else { setAutoDelete(false); setPassiveCircuit(false); } }} />
+            <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={(checked) => { setAutoEnable(checked); if (checked) setScheduleEnabled(true); else setPassiveCircuit(false); }} />
+            <SettingToggle label="ui.passive_temporary_circuit" checked={passiveCircuit} disabled={saving} onChange={(checked) => { setPassiveCircuit(checked); if (checked) { setAutoDisable(true); setAutoEnable(true); setScheduleEnabled(true); } }} />
             <SettingNumber label="ui.passive_failure_threshold" suffix="ui.events" value={passiveThreshold} min={2} max={100} disabled={!passiveCircuit || saving} onChange={setPassiveThreshold} />
             <SettingNumber label="ui.passive_failure_window" suffix="ui.minutes" value={passiveWindow} min={1} max={1440} disabled={!passiveCircuit || saving} onChange={setPassiveWindow} />
             <SettingNumber label="ui.passive_circuit_duration" suffix="ui.minutes" value={passiveDuration} min={1} max={1440} disabled={!passiveCircuit || saving} onChange={setPassiveDuration} />
-            <SettingToggle label="ui.auto_delete" checked={autoDelete} disabled={saving} danger onChange={(checked) => { setAutoDelete(checked); if (checked) setAutoDisable(true); else setAutoDeleteInvalid(false); }} />
-            <SettingToggle label="ui.delete_persistent_invalid_credentials" checked={autoDeleteInvalid} disabled={saving} danger onChange={(checked) => { setAutoDeleteInvalid(checked); if (checked) { setAutoDelete(true); setAutoDisable(true); } }} />
+            <SettingToggle label="ui.auto_delete" checked={autoDelete} disabled={saving} danger onChange={(checked) => { setAutoDelete(checked); if (checked) { setAutoDisable(true); setScheduleEnabled(true); } else setAutoDeleteInvalid(false); }} />
+            <SettingToggle label="ui.delete_persistent_invalid_credentials" checked={autoDeleteInvalid} disabled={saving} danger onChange={(checked) => { setAutoDeleteInvalid(checked); if (checked) { setAutoDelete(true); setAutoDisable(true); setScheduleEnabled(true); } }} />
             <SettingNumber label="ui.deletion_grace" suffix="ui.hours" value={deleteGrace} min={24} max={8760} disabled={!autoDelete || saving} onChange={setDeleteGrace} />
             <SettingNumber label="ui.deletes_per_run" suffix="ui.accounts_2" value={deleteBatch} min={1} max={100} disabled={!autoDelete || saving} onChange={setDeleteBatch} />
           </div>

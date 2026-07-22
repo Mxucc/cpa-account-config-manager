@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
@@ -46,6 +47,16 @@ func passiveCircuitPolicy() InspectionPolicy {
 	policy.PassiveFailureWindowMinutes = 30
 	policy.PassiveCircuitMinutes = 15
 	return policy
+}
+
+func codexUsageObservationHeaders(now time.Time, fiveHour, sevenDay float64) http.Header {
+	return http.Header{
+		"X-Codex-Primary-Used-Percent":     []string{strconv.FormatFloat(fiveHour, 'f', -1, 64)},
+		"X-Codex-Primary-Window-Minutes":   []string{"300"},
+		"X-Codex-Secondary-Used-Percent":   []string{strconv.FormatFloat(sevenDay, 'f', -1, 64)},
+		"X-Codex-Secondary-Reset-At":       []string{strconv.FormatInt(now.Add(4*24*time.Hour).Unix(), 10)},
+		"X-Codex-Secondary-Window-Minutes": []string{"10080"},
+	}
 }
 
 func TestPassiveFailuresOpenOwnedCircuitAtExactThresholdAndRecoverAtBoundary(t *testing.T) {
@@ -194,6 +205,138 @@ func TestPassiveThresholdQueuesImmediateScanAndSchedulesRecovery(t *testing.T) {
 	strong := inspectionRecord{Signal: inspectionSignal{ReasonCode: "invalid_credentials", AutoDisableEligible: true, ConsecutiveFailures: engine.policy.PassiveFailureThreshold}}
 	if passiveCircuitThresholdReached(engine.policy, strong) {
 		t.Fatal("high-confidence credential failure entered the passive path")
+	}
+}
+
+func TestUsageObservationQueuesImmediateAutoDisableScan(t *testing.T) {
+	now := time.Date(2026, time.July, 22, 6, 0, 0, 0, time.UTC)
+	newEngine := func() *InspectionEngine {
+		engine := NewInspectionEngine(nil, nil, nil)
+		engine.started = true
+		engine.now = func() time.Time { return now }
+		engine.policy = defaultInspectionPolicy()
+		engine.policy.Enabled = true
+		engine.policy.AutoDisable = true
+		return engine
+	}
+
+	t.Run("seven day quota exhaustion", func(t *testing.T) {
+		engine := newEngine()
+		engine.Observe(cpaapi.UsageRecord{
+			Provider: "codex", AuthIndex: "weekly-exhausted", ResponseHeaders: codexUsageObservationHeaders(now, 15, 100),
+		})
+		if !engine.pending || len(engine.scanWake) != 1 {
+			t.Fatalf("weekly exhaustion did not queue scan: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+		}
+		engine.Observe(cpaapi.UsageRecord{
+			Provider: "codex", AuthIndex: "weekly-exhausted", ResponseHeaders: codexUsageObservationHeaders(now, 16, 100),
+		})
+		if len(engine.scanWake) != 1 {
+			t.Fatalf("repeated exhaustion queued unbounded scans: wake=%d", len(engine.scanWake))
+		}
+	})
+
+	t.Run("five hour quota exhaustion only", func(t *testing.T) {
+		engine := newEngine()
+		engine.Observe(cpaapi.UsageRecord{
+			Provider: "codex", AuthIndex: "short-window", ResponseHeaders: codexUsageObservationHeaders(now, 100, 30),
+		})
+		if engine.pending || len(engine.scanWake) != 0 {
+			t.Fatalf("short-window exhaustion queued disable scan: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+		}
+	})
+
+	t.Run("high confidence failure at threshold", func(t *testing.T) {
+		engine := newEngine()
+		failure := cpaapi.UsageRecord{
+			Provider: "codex", AuthIndex: "revoked", Failed: true,
+			Failure: cpaapi.UsageFailure{StatusCode: http.StatusUnauthorized, Body: `{"error":"token_revoked"}`},
+		}
+		for range engine.policy.FailureThreshold - 1 {
+			engine.Observe(failure)
+		}
+		if engine.pending || len(engine.scanWake) != 0 {
+			t.Fatalf("strong failure queued before threshold: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+		}
+		engine.Observe(failure)
+		if !engine.pending || len(engine.scanWake) != 1 {
+			t.Fatalf("strong failure threshold did not queue scan: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+		}
+	})
+
+	for name, mutate := range map[string]func(*InspectionPolicy){
+		"auto disable off": func(policy *InspectionPolicy) { policy.AutoDisable = false },
+		"schedule off":     func(policy *InspectionPolicy) { policy.Enabled = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			engine := newEngine()
+			mutate(&engine.policy)
+			engine.Observe(cpaapi.UsageRecord{
+				Provider: "codex", AuthIndex: "disabled-policy", ResponseHeaders: codexUsageObservationHeaders(now, 10, 100),
+			})
+			if engine.pending || len(engine.scanWake) != 0 {
+				t.Fatalf("disabled remediation queued scan: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+			}
+		})
+	}
+}
+
+func TestUsageObservationAutoDisableRetriesFailedMutation(t *testing.T) {
+	now := time.Date(2026, time.July, 22, 7, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	host.saveErrors = map[string]error{"inspection.json": errors.New("injected save failure")}
+	dataDir := t.TempDir()
+	usage := NewUsageTracker()
+	usage.Configure(Config{DataDir: dataDir})
+	defer usage.Close()
+	engine := NewInspectionEngine(NewAccountService(host, usage), host, NewMutationCoordinator())
+	policy := defaultInspectionPolicy()
+	policy.Enabled = true
+	policy.AutoDisable = true
+	engine.now = func() time.Time { return now }
+	engine.Configure(Config{DataDir: dataDir, InspectionPolicy: &policy})
+	defer engine.Shutdown()
+
+	record := cpaapi.UsageRecord{
+		Provider: "codex", AuthIndex: "inspection-account", ResponseHeaders: codexUsageObservationHeaders(now, 20, 100),
+	}
+	usage.Observe(record)
+	engine.Observe(record)
+	waitForInspectionResult(t, engine, func(result InspectionResult) bool {
+		return result.AutoAction == InspectionActionDisable && result.AutoActionStatus == InspectionActionFailed
+	})
+
+	host.mu.Lock()
+	delete(host.saveErrors, "inspection.json")
+	host.mu.Unlock()
+	usage.Observe(record)
+	engine.Observe(record)
+	result := waitForInspectionResult(t, engine, func(result InspectionResult) bool {
+		return result.Disabled && result.OwnedDisable && result.AutoAction == InspectionActionDisable &&
+			result.AutoActionStatus == InspectionActionSucceeded
+	})
+	if result.ReasonCode != "quota_exhausted" || result.QuotaWindow != InspectionQuotaWindowSevenDay {
+		t.Fatalf("automatic disable result = %#v", result)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.saves) != 1 || host.saveCalls["inspection.json"] != 2 {
+		t.Fatalf("automatic disable save attempts=%d successful saves=%d", host.saveCalls["inspection.json"], len(host.saves))
+	}
+}
+
+func waitForInspectionResult(t *testing.T, engine *InspectionEngine, condition func(InspectionResult) bool) InspectionResult {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		results := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results
+		if len(results) == 1 && condition(results[0]) {
+			return results[0]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("inspection result did not reach expected state: %#v", results)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

@@ -2,12 +2,15 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"cpa-account-config-manager/internal/cpaapi"
 )
 
 func TestInspectionRemediationSummarySeparatesCurrentStateAndRecommendations(t *testing.T) {
@@ -70,6 +73,29 @@ func TestAutomaticInspectionUsesCPAStatusAPIWhenManagementCredentialIsArmed(t *t
 	}
 	if len(host.saves) != 0 {
 		t.Fatalf("automatic action bypassed CPA status API with %d host saves", len(host.saves))
+	}
+}
+
+func TestAutomaticInspectionRepairsStaleCPARuntimeDisabledState(t *testing.T) {
+	host := inspectionEditableHost(false)
+	host.details["inspection-account"] = cpaapi.HostAuthGetResponse{
+		AuthIndex: "inspection-account",
+		Name:      "inspection.json",
+		Path:      "/auths/inspection.json",
+		JSON:      json.RawMessage(`{"type":"codex","email":"inspection@example.com","access_token":"account-secret","disabled":true}`),
+	}
+	accounts := NewAccountService(host)
+	listed, errList := accounts.baseAccounts(context.Background())
+	if errList != nil || len(listed) != 1 || listed[0].Disabled {
+		t.Fatalf("stale CPA account state = %#v error=%v", listed, errList)
+	}
+	engine := NewInspectionEngine(accounts, host, NewMutationCoordinator())
+	outcome, errDisable := engine.setInspectionDisabled(context.Background(), listed[0], inspectionRecord{}, true, nil)
+	if errDisable != nil {
+		t.Fatalf("repair stale CPA state: %v", errDisable)
+	}
+	if !outcome.Changed || host.saveCalls["inspection.json"] != 1 || len(host.saves) != 1 {
+		t.Fatalf("stale CPA state was not rewritten: outcome=%#v calls=%d saves=%d", outcome, host.saveCalls["inspection.json"], len(host.saves))
 	}
 }
 

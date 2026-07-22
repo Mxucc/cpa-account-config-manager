@@ -117,7 +117,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 		}
 
 		openCircuit, circuitReason, circuitFailures := shouldOpenPassiveCircuit(policy, account, record, now)
-		if shouldAutoDisableInspection(policy, account, record) || openCircuit {
+		if (shouldAutoDisableInspection(policy, account, record) || openCircuit) && e.inspectionAutoDisableAllowed(record.Result) {
 			disableReason := record.Result.ReasonCode
 			if openCircuit {
 				disableReason = "passive_circuit_open"
@@ -345,7 +345,7 @@ func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Ac
 			return inspectionMutationResult{}, fmt.Errorf("disabled field is invalid")
 		}
 	}
-	if current == disabled && (writer == nil || account.Disabled == disabled) {
+	if current == disabled && account.Disabled == disabled {
 		return inspectionMutationResult{Name: name, Path: path, Revision: revisionFor(raw)}, nil
 	}
 	encodedDisabled, _ := json.Marshal(disabled)

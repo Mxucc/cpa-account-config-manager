@@ -127,6 +127,13 @@ export interface ModelTestResult {
   latency_ms: number;
   tested_at: string;
   response?: ModelTestResponsePreview;
+  experiment?: ModelTestExperiment;
+}
+
+export interface ModelTestExperiment {
+  name: "weekly_overdraft";
+  applied: boolean;
+  call_id?: string;
 }
 
 export interface ModelTestResponsePreview {
@@ -707,4 +714,13 @@ export interface CPAServerVersionSnapshot {
   checked_at: string;
   release_url?: string;
   error?: "current_version_unavailable" | "latest_version_unavailable" | "version_comparison_unavailable";
+}
+
+export interface ExperimentalSettings {
+  weekly_overdraft_enabled: boolean;
+}
+
+export interface ExperimentalSettingsSnapshot {
+  settings: ExperimentalSettings;
+  storage_error?: string;
 }

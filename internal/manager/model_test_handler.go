@@ -14,6 +14,9 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
 	}
+	if request.ExperimentalWeeklyOverdraft && !a.experiments.WeeklyOverdraftEnabled() {
+		return jsonResponse(http.StatusConflict, map[string]any{"error": "weekly overdraft experiment is not enabled"})
+	}
 	managementKey := resolveManagementKey(req.Headers)
 	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})

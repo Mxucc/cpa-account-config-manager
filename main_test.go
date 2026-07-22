@@ -27,8 +27,48 @@ func TestHandleMethodRegistersManagementCapability(t *testing.T) {
 	if !registration.Capabilities.UsagePlugin {
 		t.Fatal("usage_plugin capability is false")
 	}
+	if !registration.Capabilities.RequestInterceptor {
+		t.Fatal("request_interceptor capability is false")
+	}
 	if registration.Metadata.Name != manager.PluginName {
 		t.Fatalf("metadata name = %q", registration.Metadata.Name)
+	}
+}
+
+func TestRequestInterceptorMethodsRemainAvailableWhenExperimentsDisabled(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.Configure([]byte("data_dir: " + t.TempDir()))
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	request := cpaapi.RequestInterceptRequest{
+		SourceFormat: "responses", ToFormat: "codex", Model: "gpt-5.4", RequestedModel: "gpt-5.4",
+		Body: []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"continue"}]}`),
+	}
+	rawRequest, errMarshal := json.Marshal(request)
+	if errMarshal != nil {
+		t.Fatalf("marshal interceptor request: %v", errMarshal)
+	}
+	for _, method := range []string{cpaapi.MethodRequestInterceptBefore, cpaapi.MethodRequestInterceptAfter} {
+		raw, errHandle := handleMethod(method, rawRequest)
+		if errHandle != nil {
+			t.Fatalf("handleMethod(%q) error = %v", method, errHandle)
+		}
+		result, errDecode := decodeEnvelopeResult(raw)
+		if errDecode != nil {
+			t.Fatalf("decode %q result: %v", method, errDecode)
+		}
+		var response cpaapi.RequestInterceptResponse
+		if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+			t.Fatalf("decode %q response: %v", method, errUnmarshal)
+		}
+		if len(response.Body) != 0 || len(response.Headers) != 0 || len(response.ClearHeaders) != 0 {
+			t.Fatalf("disabled experiment changed %q request: %#v", method, response)
+		}
 	}
 }
 

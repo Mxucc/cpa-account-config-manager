@@ -261,6 +261,25 @@ describe("management API client", () => {
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 
+  it("adds the weekly-overdraft flag only for an explicit experimental model test", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      account_id: "auth-1", provider: "codex", model: "gpt-5.4", status: "available",
+      reason_code: "model_response_ok", latency_ms: 286, tested_at: "2026-07-22T08:00:00Z",
+      experiment: { name: "weekly_overdraft", applied: true, call_id: "call_cpa_overdraft_test" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await testAccountModel("auth-1", "gpt-5.4", true);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      account_id: "auth-1",
+      model: "gpt-5.4",
+      experimental_weekly_overdraft: true,
+    });
+  });
+
 	it("preserves zero, false, and unmanaged null values in a default policy", async () => {
 		setSession("", "management-secret");
 		const responseBody = {
@@ -506,6 +525,7 @@ describe("management API client", () => {
 			if (url.endsWith("/inspection")) return jsonResponse({ policy: inspectionPolicy });
 			if (url.endsWith("/updates")) return jsonResponse({ policy: updatePolicy });
 			if (url.endsWith("/operations/settings")) return jsonResponse({ extended_history: true, page_size: 500, retained: 500, archived_segments: 0 });
+			if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: true } });
 			if (url.endsWith("/config")) return jsonResponse({ status: "ok" });
 			return jsonResponse({}, 404);
 		});
@@ -522,6 +542,7 @@ describe("management API client", () => {
 			inspection_policy: inspectionPolicy,
 			update_policy: updatePolicy,
 			operation_settings: { extended_history: true },
+			experimental_settings: { weekly_overdraft_enabled: true },
 		});
 		expect(String(configInit.body)).not.toContain("management-secret");
 	});

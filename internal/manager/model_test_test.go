@@ -105,6 +105,99 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 	}
 }
 
+func TestHandleAccountModelTestLoadsEnabledWeeklyOverdraftExperiment(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-1", Name: "experimental.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/experimental.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-1": {
+				AuthIndex: "auth-1", Name: "experimental.json", Path: "/auths/experimental.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-123"}`),
+			},
+		},
+	}
+	var received managementAPICallRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+			StatusCode: http.StatusOK,
+			Header:     map[string][]string{"Content-Type": {"text/event-stream"}},
+			Body:       "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-experimental\"}}\n\n",
+		})
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	transformer, ok := app.modelTests.experimentalTransformer.(*WeeklyOverdraftExperiment)
+	if !ok {
+		t.Fatal("model test is not wired to the removable weekly-overdraft transformer")
+	}
+	transformer.newCallID = func() (string, bool) { return "call_cpa_overdraft_account_test", true }
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\nexperimental_settings:\n  weekly_overdraft_enabled: true\n"))
+	defer app.Close()
+
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-1", Model: "gpt-5.4", ExperimentalWeeklyOverdraft: true})
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/accounts/model-test",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    body,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("experimental model test = %d %s", response.StatusCode, response.Body)
+	}
+	var result ModelTestResult
+	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	if result.Experiment == nil || !result.Experiment.Applied || result.Experiment.Name != "weekly_overdraft" || result.Experiment.CallID != "call_cpa_overdraft_account_test" {
+		t.Fatalf("experiment result = %#v", result.Experiment)
+	}
+	if received.URL != "https://chatgpt.com/backend-api/codex/responses" {
+		t.Fatalf("experimental probe URL = %q", received.URL)
+	}
+	var payload struct {
+		Input []struct {
+			Type   string `json:"type"`
+			Role   string `json:"role"`
+			CallID string `json:"call_id"`
+		} `json:"input"`
+	}
+	if errDecode := json.Unmarshal([]byte(received.Data), &payload); errDecode != nil {
+		t.Fatalf("decode experimental probe data: %v", errDecode)
+	}
+	if len(payload.Input) != 3 || payload.Input[0].Type != "message" || payload.Input[0].Role != "user" ||
+		payload.Input[1].Type != "custom_tool_call" || payload.Input[2].Type != "custom_tool_call_output" ||
+		payload.Input[1].CallID != result.Experiment.CallID || payload.Input[2].CallID != result.Experiment.CallID {
+		t.Fatalf("experimental input = %#v", payload.Input)
+	}
+	if strings.Contains(received.Data, "upstream-secret") || strings.Contains(string(response.Body), "upstream-secret") {
+		t.Fatal("experimental model test leaked an account credential")
+	}
+}
+
+func TestHandleAccountModelTestRejectsDisabledWeeklyOverdraftExperiment(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\n"))
+	defer app.Close()
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-1", Model: "gpt-5.4", ExperimentalWeeklyOverdraft: true})
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/accounts/model-test",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    body,
+	})
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), "not enabled") {
+		t.Fatalf("disabled experiment response = %d %s", response.StatusCode, response.Body)
+	}
+}
+
 func TestModelTestResponsePreviewAllowListsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
 		StatusCode: http.StatusTooManyRequests,

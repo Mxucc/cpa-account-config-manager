@@ -42,6 +42,79 @@ const result: ModelTestResult = {
 };
 
 describe("ModelTestDialog", () => {
+  it("shows the primary failure and successful gpt-5.5 fallback as one test flow", async () => {
+    const user = userEvent.setup();
+    const fallbackResult: ModelTestResult = {
+      account_id: account.id,
+      provider: "codex",
+      model: "gpt-5.5",
+      primary_model: "gpt-5.6-sol",
+      fallback_model: "gpt-5.5",
+      selected_model: "gpt-5.5",
+      fallback_used: true,
+      status: "available",
+      probe_kind: "model",
+      reason_code: "model_response_ok",
+      status_code: 200,
+      latency_ms: 1240,
+      tested_at: "2026-07-23T08:05:00Z",
+      attempts: [
+        {
+          model: "gpt-5.6-sol",
+          role: "primary",
+          status: "unavailable",
+          probe_kind: "model",
+          reason_code: "model_not_found",
+          status_code: 400,
+          latency_ms: 1005,
+          tested_at: "2026-07-23T08:05:00Z",
+          response: {
+            format: "json",
+            body: "{\n  \"detail\": \"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.\"\n}",
+            headers: [{ name: "cf-ray", value: "safe-ray-id" }],
+            truncated: false,
+          },
+        },
+        {
+          model: "gpt-5.5",
+          role: "fallback",
+          status: "available",
+          probe_kind: "model",
+          reason_code: "model_response_ok",
+          status_code: 200,
+          latency_ms: 235,
+          tested_at: "2026-07-23T08:05:01Z",
+          response: {
+            format: "text",
+            body: "data: {\"type\":\"response.completed\"}",
+            headers: [],
+            truncated: false,
+          },
+        },
+      ],
+    };
+    render(<ModelTestDialog account={account} result={fallbackResult} error="" testing={false} onClose={vi.fn()} onTest={vi.fn()} />);
+
+    const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByText("主模型不受支持，账号已通过 gpt-5.5 验证可用")).toBeInTheDocument();
+    expect(within(dialog).getByText("主模型")).toBeInTheDocument();
+    expect(within(dialog).getByText("回退模型")).toBeInTheDocument();
+    expect(within(dialog).getByText("可用模型")).toBeInTheDocument();
+    const attempts = within(dialog).getByRole("list", { name: "模型探测过程" });
+    const rows = within(attempts).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("主模型探测")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("gpt-5.6-sol")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("HTTP 400")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("回退模型探测")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("gpt-5.5")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("HTTP 200")).toBeInTheDocument();
+    await user.click(within(rows[0]).getByText("查看脱敏后的上游响应"));
+    await user.click(within(rows[1]).getByText("查看脱敏后的上游响应"));
+    expect(within(rows[0]).getByLabelText("响应正文")).toHaveTextContent("not supported");
+    expect(within(rows[1]).getByLabelText("响应正文")).toHaveTextContent("response.completed");
+  });
+
   it("shows the diagnostic upstream response instead of only a generic classification", () => {
     render(<ModelTestDialog account={account} result={result} error="" testing={false} onClose={vi.fn()} onTest={vi.fn()} />);
 

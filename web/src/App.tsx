@@ -527,6 +527,11 @@ function AccountManagerApp() {
     }
   };
 
+  const beginAccountStatePreview = (account: Account, disabled: boolean) => {
+    if (!account.editable || account.disabled === disabled) return;
+    void beginPreview({ disabled }, { mode: "selected", ids: [account.id] });
+  };
+
   const beginBatchDelete = async () => {
     setPreviewLoading(true);
     setPreviewError("");
@@ -1061,6 +1066,20 @@ function AccountManagerApp() {
                       <IconButton label={tx("ui.view_account", { account: identity })} onClick={() => setDetailAccount(account)}><Eye size={15} /></IconButton>
                       <IconButton label={tx("ui.test_model_for_account", { account: identity })} onClick={() => openModelTest(account)}><Activity size={15} /></IconButton>
                       <IconButton label={account.editable ? tx("ui.edit_account_2", { account: identity }) : readOnlyReason} disabled={!account.editable} onClick={() => openAccountEditor(account)}><Pencil size={15} /></IconButton>
+                      <IconButton
+                        className="row-enable-action"
+                        label={tx("ui.enable_account_2", { account: identity })}
+                        title={!account.editable ? readOnlyReason : undefined}
+                        disabled={previewLoading || !account.editable || !account.disabled}
+                        onClick={() => beginAccountStatePreview(account, false)}
+                      ><Power size={15} /></IconButton>
+                      <IconButton
+                        className="row-disable-action"
+                        label={tx("ui.disable_account_2", { account: identity })}
+                        title={!account.editable ? readOnlyReason : undefined}
+                        disabled={previewLoading || !account.editable || account.disabled}
+                        onClick={() => beginAccountStatePreview(account, true)}
+                      ><PowerOff size={15} /></IconButton>
                       <IconButton className="row-delete-action" label={account.editable ? tx("ui.delete_account_2", { account: identity }) : readOnlyReason} disabled={!account.editable} onClick={() => void openDelete(account)}><Trash2 size={15} /></IconButton>
                     </div>
                   </td>

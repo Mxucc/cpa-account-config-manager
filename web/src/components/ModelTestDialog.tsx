@@ -1,6 +1,6 @@
 import { Activity, AlertTriangle, CheckCircle2, FlaskConical, LoaderCircle, ShieldQuestion, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { Account, ModelTestResult, ModelTestStatus } from "../types";
+import type { Account, ModelTestAttempt, ModelTestResponsePreview, ModelTestResult, ModelTestStatus } from "../types";
 import { technicalLabel } from "../format/accountDisplay";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
@@ -19,8 +19,8 @@ interface ModelTestDialogProps {
 const defaultOpenAIProbeModel = "gpt-5.6-sol";
 
 const modelSuggestions: Record<string, string[]> = {
-  codex: [defaultOpenAIProbeModel, "gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"],
-  openai: [defaultOpenAIProbeModel, "gpt-5.4", "gpt-5.4-mini"],
+  codex: [defaultOpenAIProbeModel, "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"],
+  openai: [defaultOpenAIProbeModel, "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
   claude: ["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"],
   gemini: ["gemini-2.0-flash", "gemini-2.5-pro"],
   "gemini-cli": ["gemini-2.0-flash", "gemini-2.5-pro"],
@@ -122,12 +122,18 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
 function ModelTestOutcome({ result }: { result: ModelTestResult }) {
   const { formatDateTime, tx } = useI18n();
   const Icon = result.status === "available" ? CheckCircle2 : result.status === "unavailable" ? XCircle : ShieldQuestion;
-  const responseHeaders = Array.isArray(result.response?.headers) ? result.response.headers : [];
+  const attempts = Array.isArray(result.attempts) ? result.attempts.filter((attempt) => attempt && attempt.model) : [];
+  const showAttemptTimeline = attempts.length > 1;
+  const outcomeDescription = result.fallback_used && result.selected_model
+    ? tx("ui.model_fallback_succeeded", { model: result.selected_model })
+    : tx(reasonLabels[result.reason_code] || "ui.the_test_result_requires_manual_confirmation");
   return (
     <section className={`model-test-outcome outcome-${result.status}`} aria-label={tx("ui.model_test_result")}>
-      <div className="model-test-outcome-heading"><Icon size={21} /><div><strong>{tx(statusLabels[result.status])}</strong><span>{tx(reasonLabels[result.reason_code] || "ui.the_test_result_requires_manual_confirmation")}</span></div></div>
+      <div className="model-test-outcome-heading"><Icon size={21} /><div><strong>{tx(statusLabels[result.status])}</strong><span>{outcomeDescription}</span></div></div>
       <dl>
-        <div><dt>{tx("ui.model")}</dt><dd>{result.model}</dd></div>
+        {showAttemptTimeline ? <div><dt>{tx("ui.primary_model")}</dt><dd>{result.primary_model || attempts[0]?.model || result.model}</dd></div> : <div><dt>{tx("ui.model")}</dt><dd>{result.model}</dd></div>}
+        {showAttemptTimeline ? <div><dt>{tx("ui.fallback_model")}</dt><dd>{result.fallback_model || attempts.find((attempt) => attempt.role === "fallback")?.model || "-"}</dd></div> : null}
+        {showAttemptTimeline ? <div><dt>{tx("ui.final_model")}</dt><dd>{result.selected_model || tx("ui.no_available_model")}</dd></div> : null}
         <div><dt>{tx("ui.http_status")}</dt><dd>{result.status_code || "-"}</dd></div>
         <div><dt>{tx("ui.probe_type")}</dt><dd>{result.probe_kind === "credential" ? tx("ui.credential_probe") : result.probe_kind === "model" ? tx("ui.model_probe") : "-"}</dd></div>
         <div><dt>{tx("ui.latency")}</dt><dd>{result.latency_ms >= 0 ? `${result.latency_ms} ms` : "-"}</dd></div>
@@ -140,20 +146,60 @@ function ModelTestOutcome({ result }: { result: ModelTestResult }) {
           <div><strong>{tx("ui.correlation_call_id")}</strong><code>{result.experiment.call_id || "-"}</code></div>
         </div>
       ) : null}
-      {result.response ? (
-        <div className="model-test-response">
-          <div className="model-test-response-heading">
-            <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
-            <span>{result.response.format.toUpperCase()}{result.response.truncated ? ` · ${tx("ui.truncated")}` : ""}</span>
-          </div>
-          {responseHeaders.length > 0 ? (
-            <div className="model-test-response-headers" aria-label={tx("ui.response_headers")}>
-              {responseHeaders.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
-            </div>
-          ) : null}
-          <pre aria-label={tx("ui.response_body")}><code>{result.response.body || tx("ui.empty_response_body")}</code></pre>
+      {showAttemptTimeline ? <ModelTestAttempts attempts={attempts} /> : result.response ? <ModelTestResponse response={result.response} /> : null}
+    </section>
+  );
+}
+
+function ModelTestAttempts({ attempts }: { attempts: ModelTestAttempt[] }) {
+  const { tx } = useI18n();
+  return (
+    <div className="model-test-attempt-section">
+      <strong>{tx("ui.model_probe_attempts")}</strong>
+      <ol className="model-test-attempts" aria-label={tx("ui.model_probe_attempts")}>
+        {attempts.map((attempt, index) => {
+          const AttemptIcon = attempt.status === "available" ? CheckCircle2 : attempt.status === "unavailable" ? XCircle : ShieldQuestion;
+          return (
+            <li key={`${attempt.role}:${attempt.model}:${index}`}>
+              <div className="model-test-attempt-heading">
+                <span className={`attempt-status attempt-status-${attempt.status}`}><AttemptIcon size={15} />{tx(statusLabels[attempt.status])}</span>
+                <span>{tx(attempt.role === "fallback" ? "ui.fallback_attempt" : "ui.primary_attempt")}</span>
+                <code>{attempt.model}</code>
+              </div>
+              <div className="model-test-attempt-detail">
+                <span>{tx(reasonLabels[attempt.reason_code] || "ui.the_test_result_requires_manual_confirmation")}</span>
+                <span>HTTP {attempt.status_code || "-"}</span>
+                <span>{attempt.latency_ms >= 0 ? `${attempt.latency_ms} ms` : "-"}</span>
+              </div>
+              {attempt.response ? (
+                <details className="model-test-attempt-response">
+                  <summary>{tx("ui.view_sanitized_response")}</summary>
+                  <ModelTestResponse response={attempt.response} />
+                </details>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function ModelTestResponse({ response }: { response: ModelTestResponsePreview }) {
+  const { tx } = useI18n();
+  const responseHeaders = Array.isArray(response.headers) ? response.headers : [];
+  return (
+    <div className="model-test-response">
+      <div className="model-test-response-heading">
+        <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
+        <span>{response.format.toUpperCase()}{response.truncated ? ` · ${tx("ui.truncated")}` : ""}</span>
+      </div>
+      {responseHeaders.length > 0 ? (
+        <div className="model-test-response-headers" aria-label={tx("ui.response_headers")}>
+          {responseHeaders.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
         </div>
       ) : null}
-    </section>
+      <pre aria-label={tx("ui.response_body")}><code>{response.body || tx("ui.empty_response_body")}</code></pre>
+    </div>
   );
 }

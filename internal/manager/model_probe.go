@@ -24,6 +24,7 @@ const (
 	maxModelTestResponseBytes = 256 << 10
 	maxModelTestBodyBytes     = 128 << 10
 	maxModelIdentifierLength  = 128
+	defaultCodexFallbackModel = "gpt-5.5"
 )
 
 var (
@@ -39,9 +40,28 @@ type ModelTestRequest struct {
 }
 
 type ModelTestResult struct {
-	AccountID   string                    `json:"account_id"`
-	Provider    string                    `json:"provider"`
+	AccountID     string                    `json:"account_id"`
+	Provider      string                    `json:"provider"`
+	Model         string                    `json:"model"`
+	PrimaryModel  string                    `json:"primary_model,omitempty"`
+	FallbackModel string                    `json:"fallback_model,omitempty"`
+	SelectedModel string                    `json:"selected_model,omitempty"`
+	FallbackUsed  bool                      `json:"fallback_used,omitempty"`
+	Status        string                    `json:"status"`
+	ProbeKind     string                    `json:"probe_kind"`
+	ReasonCode    string                    `json:"reason_code"`
+	StatusCode    int                       `json:"status_code,omitempty"`
+	QuotaWindow   string                    `json:"quota_window,omitempty"`
+	LatencyMS     int64                     `json:"latency_ms"`
+	TestedAt      time.Time                 `json:"tested_at"`
+	Response      *ModelTestResponsePreview `json:"response,omitempty"`
+	Experiment    *ModelTestExperiment      `json:"experiment,omitempty"`
+	Attempts      []ModelTestAttempt        `json:"attempts,omitempty"`
+}
+
+type ModelTestAttempt struct {
 	Model       string                    `json:"model"`
+	Role        string                    `json:"role"`
 	Status      string                    `json:"status"`
 	ProbeKind   string                    `json:"probe_kind"`
 	ReasonCode  string                    `json:"reason_code"`
@@ -341,6 +361,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		return ModelTestResult{}, errProbe
 	}
 	result.Model = selectedModel
+	result.PrimaryModel = selectedModel
 	result.ProbeKind = InspectionProbeKindModel
 	if !supported {
 		result.Status = "unsupported"
@@ -363,23 +384,68 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		result.Experiment = &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: callID}
 	}
 
-	upstreamResponse, errCall := s.callAccountProbe(probeCtx, managementBaseURL, managementKey, callbackID, account, probe)
-	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
-	if errCall != nil {
-		result.Status = "review"
-		if errors.Is(probeCtx.Err(), context.DeadlineExceeded) || errors.Is(errCall, context.DeadlineExceeded) {
-			result.ReasonCode = "request_timeout"
-		} else {
-			result.ReasonCode = "upstream_unavailable"
+	runAttempt := func(role, attemptModel string, attemptProbe modelProbe, experiment *ModelTestExperiment) (ModelTestAttempt, modelProbeHTTPResponse, error) {
+		attemptStartedAt := s.currentTime()
+		upstreamResponse, errCall := s.callAccountProbe(probeCtx, managementBaseURL, managementKey, callbackID, account, attemptProbe)
+		attempt := ModelTestAttempt{
+			Model: attemptModel, Role: role, ProbeKind: InspectionProbeKindModel,
+			LatencyMS: maxInt64(0, s.currentTime().Sub(attemptStartedAt).Milliseconds()), TestedAt: attemptStartedAt,
+			Experiment: experiment,
 		}
+		if errCall != nil {
+			attempt.Status = "review"
+			if errors.Is(probeCtx.Err(), context.DeadlineExceeded) || errors.Is(errCall, context.DeadlineExceeded) {
+				attempt.ReasonCode = "request_timeout"
+			} else {
+				attempt.ReasonCode = "upstream_unavailable"
+			}
+			return attempt, upstreamResponse, errCall
+		}
+		attempt.Status, attempt.ReasonCode = classifyModelProbe(attemptProbe.kind, upstreamResponse.StatusCode, upstreamResponse.Body)
+		attempt.StatusCode = boundedHTTPStatus(upstreamResponse.StatusCode)
+		if !request.Inspection {
+			attempt.Response = sanitizeModelTestResponsePreview(upstreamResponse)
+		}
+		return attempt, upstreamResponse, nil
+	}
+	applyAttempt := func(attempt ModelTestAttempt) {
+		result.Model = attempt.Model
+		result.Status = attempt.Status
+		result.ProbeKind = attempt.ProbeKind
+		result.ReasonCode = attempt.ReasonCode
+		result.StatusCode = attempt.StatusCode
+		result.QuotaWindow = attempt.QuotaWindow
+		result.Response = attempt.Response
+		result.Experiment = attempt.Experiment
+		result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
+		result.Attempts = append(result.Attempts, attempt)
+		if attempt.Status == "available" {
+			result.SelectedModel = attempt.Model
+		}
+	}
+
+	primaryAttempt, primaryResponse, primaryErr := runAttempt("primary", selectedModel, probe, result.Experiment)
+	applyAttempt(primaryAttempt)
+	if primaryErr != nil || request.ExperimentalWeeklyOverdraft || !shouldFallbackCodexModel(probe, selectedModel, primaryResponse) {
 		return result, nil
 	}
-	result.Status, result.ReasonCode = classifyModelProbe(probe.kind, upstreamResponse.StatusCode, upstreamResponse.Body)
-	result.StatusCode = boundedHTTPStatus(upstreamResponse.StatusCode)
-	if !request.Inspection {
-		result.Response = sanitizeModelTestResponsePreview(upstreamResponse)
+	fallbackProbe, fallbackModel, fallbackSupported, errFallback := buildModelProbe(probeProvider, defaultCodexFallbackModel, metadata)
+	if errFallback != nil {
+		return ModelTestResult{}, errFallback
 	}
+	if !fallbackSupported {
+		return result, nil
+	}
+	result.FallbackModel = fallbackModel
+	fallbackAttempt, _, _ := runAttempt("fallback", fallbackModel, fallbackProbe, nil)
+	applyAttempt(fallbackAttempt)
+	result.FallbackUsed = fallbackAttempt.Status == "available"
 	return result, nil
+}
+
+func shouldFallbackCodexModel(probe modelProbe, model string, response modelProbeHTTPResponse) bool {
+	return probe.kind == "codex" && response.StatusCode == http.StatusBadRequest && model == defaultOpenAIProbeModel &&
+		unsupportedChatGPTAccountModel(response.Body) == model
 }
 
 func (s *ModelTestService) callAccountProbe(ctx context.Context, managementBaseURL, managementKey, callbackID string, account Account, probe modelProbe) (modelProbeHTTPResponse, error) {
@@ -955,7 +1021,7 @@ func classifyModelProbe(kind string, statusCode int, body []byte) (string, strin
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		return "review", "request_timeout"
 	case http.StatusBadRequest, http.StatusNotFound:
-		if bodyIndicatesMissingModel(body) {
+		if unsupportedChatGPTAccountModel(body) != "" || bodyIndicatesMissingModel(body) {
 			return "unavailable", "model_not_found"
 		}
 		return "review", "invalid_response"
@@ -965,6 +1031,29 @@ func classifyModelProbe(kind string, statusCode int, body []byte) (string, strin
 		}
 		return "review", "invalid_response"
 	}
+}
+
+func unsupportedChatGPTAccountModel(body []byte) string {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || len(trimmed) > maxModelTestBodyBytes {
+		return ""
+	}
+	var payload struct {
+		Detail string `json:"detail"`
+	}
+	if errDecode := json.Unmarshal(trimmed, &payload); errDecode != nil {
+		return ""
+	}
+	const prefix = "The '"
+	const suffix = "' model is not supported when using Codex with a ChatGPT account."
+	if !strings.HasPrefix(payload.Detail, prefix) || !strings.HasSuffix(payload.Detail, suffix) {
+		return ""
+	}
+	model := strings.TrimSuffix(strings.TrimPrefix(payload.Detail, prefix), suffix)
+	if safeModelIdentifier(model) == "" || payload.Detail != prefix+model+suffix {
+		return ""
+	}
+	return model
 }
 
 func validModelProbeBody(kind string, body []byte) bool {

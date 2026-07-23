@@ -107,6 +107,128 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 	}
 }
 
+func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedResponse(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-fallback", Name: "fallback.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/fallback.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-fallback": {
+				AuthIndex: "auth-fallback", Name: "fallback.json", Path: "/auths/fallback.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-fallback"}`),
+			},
+		},
+	}
+	models := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var received managementAPICallRequest
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		switch received.URL {
+		case "https://chatgpt.com/backend-api/wham/usage":
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"application/json"}},
+				Body:       `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":18,"limit_window_seconds":18000}}}`,
+			})
+		case "https://chatgpt.com/backend-api/codex/responses":
+			var payload map[string]any
+			if errDecode := json.Unmarshal([]byte(received.Data), &payload); errDecode != nil {
+				t.Errorf("decode model payload: %v", errDecode)
+			}
+			model := modelTestStringValue(payload, "model")
+			models = append(models, model)
+			if model == defaultOpenAIProbeModel {
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusBadRequest,
+					Header:     map[string][]string{"Content-Type": {"application/json"}},
+					Body:       `{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}`,
+				})
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"text/event-stream"}},
+				Body:       "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fallback-response\"}}\n\n",
+			})
+		default:
+			t.Errorf("unexpected probe URL %q", received.URL)
+		}
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-fallback", Model: defaultOpenAIProbeModel})
+	response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}}, Body: body,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("model test = %d %s", response.StatusCode, response.Body)
+	}
+	var result ModelTestResult
+	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	if len(models) != 2 || models[0] != defaultOpenAIProbeModel || models[1] != defaultCodexFallbackModel {
+		t.Fatalf("model attempt order = %#v", models)
+	}
+	if result.Status != "available" || result.ReasonCode != "model_response_ok" || result.Model != defaultCodexFallbackModel ||
+		result.PrimaryModel != defaultOpenAIProbeModel || result.FallbackModel != defaultCodexFallbackModel ||
+		result.SelectedModel != defaultCodexFallbackModel || !result.FallbackUsed {
+		t.Fatalf("fallback result = %#v", result)
+	}
+	if len(result.Attempts) != 2 || result.Attempts[0].Role != "primary" || result.Attempts[0].StatusCode != http.StatusBadRequest ||
+		result.Attempts[0].ReasonCode != "model_not_found" || result.Attempts[1].Role != "fallback" ||
+		result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].Status != "available" {
+		t.Fatalf("fallback attempts = %#v", result.Attempts)
+	}
+	if result.Attempts[0].Response == nil || !strings.Contains(result.Attempts[0].Response.Body, "not supported") ||
+		result.Response == nil || !strings.Contains(result.Response.Body, "fallback-response") {
+		t.Fatalf("fallback response evidence = top %#v attempts %#v", result.Response, result.Attempts)
+	}
+	operation := app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations[0]
+	if operation.Status != OperationStatusSucceeded || operation.Model != defaultCodexFallbackModel {
+		t.Fatalf("fallback operation = %#v", operation)
+	}
+}
+
+func TestCodexModelFallbackTriggerIsStrict(t *testing.T) {
+	exact := []byte(`{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}`)
+	if model := unsupportedChatGPTAccountModel(exact); model != defaultOpenAIProbeModel {
+		t.Fatalf("unsupported model = %q", model)
+	}
+	if !shouldFallbackCodexModel(modelProbe{kind: "codex"}, defaultOpenAIProbeModel, modelProbeHTTPResponse{StatusCode: http.StatusBadRequest, Body: exact}) {
+		t.Fatal("exact Codex ChatGPT unsupported response did not trigger fallback")
+	}
+	tests := []struct {
+		name     string
+		probe    modelProbe
+		model    string
+		response modelProbeHTTPResponse
+	}{
+		{name: "different model", probe: modelProbe{kind: "codex"}, model: "gpt-5.4", response: modelProbeHTTPResponse{StatusCode: 400, Body: exact}},
+		{name: "openai api key route", probe: modelProbe{kind: "openai"}, model: defaultOpenAIProbeModel, response: modelProbeHTTPResponse{StatusCode: 400, Body: exact}},
+		{name: "404", probe: modelProbe{kind: "codex"}, model: defaultOpenAIProbeModel, response: modelProbeHTTPResponse{StatusCode: 404, Body: exact}},
+		{name: "plain invalid request", probe: modelProbe{kind: "codex"}, model: defaultOpenAIProbeModel, response: modelProbeHTTPResponse{StatusCode: 400, Body: []byte(`{"detail":"invalid request"}`)}},
+		{name: "near match", probe: modelProbe{kind: "codex"}, model: defaultOpenAIProbeModel, response: modelProbeHTTPResponse{StatusCode: 400, Body: []byte(`{"detail":"The 'gpt-5.6-sol' model is currently not supported for this account."}`)}},
+		{name: "non json", probe: modelProbe{kind: "codex"}, model: defaultOpenAIProbeModel, response: modelProbeHTTPResponse{StatusCode: 400, Body: []byte(`model is not supported`)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if shouldFallbackCodexModel(test.probe, test.model, test.response) {
+				t.Fatal("unexpected fallback")
+			}
+		})
+	}
+}
+
 func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelProbes(t *testing.T) {
 	now := time.Date(2026, time.July, 23, 14, 39, 0, 0, time.UTC)
 	raw := testAgentIdentityCredential(t, testAgentIdentityRecord(t, "runtime-model-test", "task-model-test", "model-test@example.com"))

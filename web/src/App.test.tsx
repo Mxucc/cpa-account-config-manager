@@ -5,6 +5,7 @@ import App from "./App";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
 import { _resetSessionForTest } from "./store/session";
+import type { BatchPatch } from "./types";
 
 const account = {
   id: "auth-1",
@@ -604,6 +605,101 @@ describe("primary account batch flow", () => {
     expect(JSON.parse(String(deletePreviewRequest?.init.body))).toEqual({ id: "auth-1" });
     expect(JSON.parse(String(deleteStartRequest?.init.body))).toEqual({ preview_id: "delete-preview-1" });
     expect(new Headers(deleteStartRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret");
+  });
+
+  it("offers six state-aware row actions and previews only the clicked account", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const disabledAccount = {
+      ...account,
+      id: "auth-disabled",
+      name: "disabled.json",
+      label: "disabled@example.com",
+      email: "disabled@example.com",
+      disabled: true,
+    };
+    const readOnlyAccount = {
+      ...account,
+      id: "auth-readonly",
+      name: "readonly.json",
+      label: "readonly@example.com",
+      email: "readonly@example.com",
+      editable: false,
+      read_only_reason: "Runtime account",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      if (url.includes("/batch/preview")) {
+        const body = JSON.parse(String(init.body)) as { scope: { ids: string[] }; patch: BatchPatch };
+        const targetID = body.scope.ids[0];
+        const target = targetID === disabledAccount.id ? disabledAccount : account;
+        return jsonResponse({
+          id: `state-preview-${targetID}`,
+          created_at: "2026-07-23T10:00:00Z",
+          expires_at: "2026-07-23T10:05:00Z",
+          scope_mode: "selected",
+          total: 1,
+          eligible: 1,
+          read_only: 0,
+          missing: 0,
+          physical_files: 1,
+          providers: { codex: 1 },
+          patch: { fields: ["disabled"], proxy_mutation: false },
+          targets: [{ id: target.id, name: target.name, provider: target.provider, label: target.label, eligible: true }],
+        });
+      }
+      return jsonResponse({ accounts: [account, disabledAccount, readOnlyAccount], total: 3, page: 1, page_size: 50, pages: 1 });
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    const enabledRow = (await screen.findByText("operator@example.com")).closest("tr");
+    const disabledRow = screen.getByText("disabled@example.com").closest("tr");
+    const readOnlyRow = screen.getByText("readonly@example.com").closest("tr");
+    expect(enabledRow).not.toBeNull();
+    expect(disabledRow).not.toBeNull();
+    expect(readOnlyRow).not.toBeNull();
+    const enabledActions = within(enabledRow as HTMLTableRowElement);
+    const disabledActions = within(disabledRow as HTMLTableRowElement);
+    const readOnlyActions = within(readOnlyRow as HTMLTableRowElement);
+
+    expect(enabledActions.getAllByRole("button")).toHaveLength(6);
+    expect(disabledActions.getAllByRole("button")).toHaveLength(6);
+    expect(readOnlyActions.getAllByRole("button")).toHaveLength(6);
+    expect(enabledActions.getByRole("button", { name: "启用 operator@example.com" })).toBeDisabled();
+    expect(enabledActions.getByRole("button", { name: "禁用 operator@example.com" })).toBeEnabled();
+    expect(disabledActions.getByRole("button", { name: "启用 disabled@example.com" })).toBeEnabled();
+    expect(disabledActions.getByRole("button", { name: "禁用 disabled@example.com" })).toBeDisabled();
+    expect(readOnlyActions.getByRole("button", { name: "启用 readonly@example.com" })).toBeDisabled();
+    expect(readOnlyActions.getByRole("button", { name: "禁用 readonly@example.com" })).toBeDisabled();
+
+    await user.click(enabledActions.getByRole("button", { name: "禁用 operator@example.com" }));
+    let preview = await screen.findByRole("dialog", { name: "变更预览" });
+    expect(JSON.parse(String(requests.filter(({ url }) => url.includes("/batch/preview"))[0]?.init.body))).toEqual({
+      scope: { mode: "selected", ids: ["auth-1"] },
+      patch: { disabled: true },
+    });
+    expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
+    await user.click(within(preview).getByLabelText("关闭"));
+
+    await user.click(disabledActions.getByRole("button", { name: "启用 disabled@example.com" }));
+    preview = await screen.findByRole("dialog", { name: "变更预览" });
+    expect(JSON.parse(String(requests.filter(({ url }) => url.includes("/batch/preview"))[1]?.init.body))).toEqual({
+      scope: { mode: "selected", ids: ["auth-disabled"] },
+      patch: { disabled: false },
+    });
+    expect(screen.getByLabelText("选择 disabled@example.com")).not.toBeChecked();
+    await user.click(within(preview).getByLabelText("关闭"));
   });
 
   it("keeps the newest account result when an older filter request finishes later", async () => {

@@ -119,11 +119,30 @@ export interface ModelTestResult {
   account_id: string;
   provider: string;
   model: string;
+  primary_model?: string;
+  fallback_model?: string;
+  selected_model?: string;
+  fallback_used?: boolean;
   status: ModelTestStatus;
   probe_kind?: "model" | "credential";
   reason_code: string;
   status_code?: number;
   quota_window?: "five_hour" | "seven_day" | "multiple" | "five_hour_fallback";
+  latency_ms: number;
+  tested_at: string;
+  response?: ModelTestResponsePreview;
+  experiment?: ModelTestExperiment;
+  attempts?: ModelTestAttempt[];
+}
+
+export interface ModelTestAttempt {
+  model: string;
+  role: "primary" | "fallback";
+  status: ModelTestStatus;
+  probe_kind?: "model" | "credential";
+  reason_code: string;
+  status_code?: number;
+  quota_window?: ModelTestResult["quota_window"];
   latency_ms: number;
   tested_at: string;
   response?: ModelTestResponsePreview;

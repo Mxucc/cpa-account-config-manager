@@ -322,12 +322,21 @@ an upstream URL, headers, prompt, payload, credential, or proxy. The plugin
 builds requests only for fixed Codex/OpenAI, Claude, Gemini/AI Studio, and xAI
 HTTPS endpoints, applies a 20-second timeout and bounded response limits, and
 returns only normalized availability, a fixed reason code, model/provider IDs,
-latency, and timestamp. Raw model output and upstream response bodies are never
-returned, persisted, or logged. Unsupported providers produce a structured
-`unsupported` result without outbound traffic.
+latency, timestamp, and a bounded sanitized diagnostic preview for an explicit
+manual test. Raw model output, credentials, and sensitive response fields are
+never returned, persisted, or logged. Unsupported providers produce a
+structured `unsupported` result without outbound traffic.
+
+For Codex ChatGPT-account probes, `gpt-5.6-sol` has one explicit compatibility
+fallback to `gpt-5.5`. The fallback runs only when the first request returns the
+known HTTP 400 JSON message that `gpt-5.6-sol` is unsupported for a ChatGPT
+account. Authentication, quota, rate-limit, timeout, transport, generic 400,
+API-key, and experimental-probe failures never trigger it. The result keeps the
+primary model, final available model, total latency, and sanitized evidence for
+both attempts so the UI never reports 5.6 as available when only 5.5 succeeded.
 
 Each outcome enters the operation journal as `model_test` with the public
-account/model IDs and normalized reason. A failed, limited, or unauthorized
+account/final-model IDs and normalized reason. A failed, limited, or unauthorized
 probe is informational and never triggers automatic disable, enable, or delete.
 
 ## Account Import

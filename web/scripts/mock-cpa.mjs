@@ -65,6 +65,9 @@ let experimentalSettings = {
   weekly_overdraft_enabled: false,
   agent_identity_enabled: true,
 };
+let operationSettings = {
+  extended_history: false,
+};
 
 const operationLog = Array.from({ length: 18 }, (_, index) => {
   const variants = [
@@ -899,6 +902,26 @@ const server = http.createServer(async (request, response) => {
   }
   if (!authorized(request)) return json(response, 401, { error: "invalid management key" });
 
+  if (request.method === "GET" && url.pathname.endsWith("/operations/settings")) {
+    return json(response, 200, {
+      extended_history: operationSettings.extended_history,
+      page_size: 500,
+      retained: Math.min(500, operationLog.length),
+      archived_segments: 0,
+      retention_limit: 500,
+    });
+  }
+  if (request.method === "PUT" && url.pathname.endsWith("/operations/settings")) {
+    const body = await readJSON(request);
+    operationSettings = { extended_history: body.extended_history === true };
+    return json(response, 200, {
+      extended_history: operationSettings.extended_history,
+      page_size: 500,
+      retained: Math.min(500, operationLog.length),
+      archived_segments: 0,
+      retention_limit: 500,
+    });
+  }
   if (request.method === "GET" && url.pathname.endsWith("/operations/export")) {
     const format = url.searchParams.get("format") || "json";
     const operations = filteredMockOperations(url);
@@ -977,21 +1000,48 @@ const server = http.createServer(async (request, response) => {
     if (!account) return json(response, 404, { error: "account was not found" });
     const defaults = { codex: defaultOpenAIProbeModel, openai: defaultOpenAIProbeModel, claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", aistudio: "gemini-2.0-flash", xai: "grok-4" };
     const model = String(body.model || defaults[account.provider] || "").trim();
-    const supported = ["codex", "openai", "claude", "gemini", "gemini-cli", "gemini-interactions", "aistudio", "xai"].includes(account.provider);
+    const supported = ["codex", "codex-agent-identity", "openai", "claude", "gemini", "gemini-cli", "gemini-interactions", "aistudio", "xai"].includes(account.provider);
     const now = new Date().toISOString();
+    const usesFallback = supported && ["codex", "codex-agent-identity"].includes(account.provider) && model === defaultOpenAIProbeModel;
+    const selectedModel = usesFallback ? "gpt-5.5" : model;
     const result = {
       account_id: account.id,
       provider: account.provider,
-      model,
+      model: selectedModel,
+      primary_model: model,
+      ...(usesFallback ? { fallback_model: selectedModel, selected_model: selectedModel, fallback_used: true } : supported ? { selected_model: selectedModel } : {}),
       status: supported ? "available" : "unsupported",
+      probe_kind: supported ? "model" : undefined,
       reason_code: supported ? "model_response_ok" : "unsupported_provider",
-      latency_ms: supported ? 286 : 0,
+      status_code: supported ? 200 : undefined,
+      latency_ms: usesFallback ? 604 : supported ? 286 : 0,
       tested_at: now,
+      ...(usesFallback ? {
+        attempts: [
+          {
+            model, role: "primary", status: "unavailable", probe_kind: "model", reason_code: "model_not_found",
+            status_code: 400, latency_ms: 248, tested_at: now,
+            response: {
+              format: "json",
+              body: JSON.stringify({ detail: `The '${model}' model is not supported when using Codex with a ChatGPT account.` }, null, 2),
+              headers: [{ name: "content-type", value: "application/json" }], truncated: false,
+            },
+          },
+          {
+            model: selectedModel, role: "fallback", status: "available", probe_kind: "model", reason_code: "model_response_ok",
+            status_code: 200, latency_ms: 356, tested_at: now,
+            response: {
+              format: "text", body: "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"mock-fallback-response\"}}\n\n",
+              headers: [{ name: "content-type", value: "text/event-stream" }], truncated: false,
+            },
+          },
+        ],
+      } : {}),
     };
     upsertMockOperation(`model-test:${crypto.randomUUID()}`, {
       category: "account", action: "model_test", status: supported ? "succeeded" : "skipped", source: "manual", scope: "single",
       target_id: account.id, target_count: 1, succeeded: supported ? 1 : 0, failed: 0, skipped: supported ? 0 : 1,
-      started_at: now, finished_at: now, reason_code: result.reason_code, model,
+      started_at: now, finished_at: now, reason_code: result.reason_code, model: selectedModel,
     });
     return json(response, 200, result);
   }

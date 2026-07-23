@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"net/url"
 	"regexp"
@@ -15,7 +16,7 @@ import (
 const (
 	maxModelTestPreviewBytes       = 8 << 10
 	maxModelTestPreviewStringBytes = 1024
-	maxModelTestPreviewDepth       = 6
+	maxModelTestPreviewDepth       = 8
 	maxModelTestPreviewItems       = 50
 	maxModelTestPreviewHeaders     = 16
 	maxModelTestHeaderValueBytes   = 256
@@ -50,6 +51,9 @@ func sanitizeModelTestResponsePreview(response modelProbeHTTPResponse) *ModelTes
 	if len(trimmed) == 0 {
 		return preview
 	}
+	// CPA or an upstream proxy can HTML-encode response bodies. Decode before
+	// redaction so encoded credentials cannot bypass the safety filters.
+	trimmed = bytes.TrimSpace([]byte(html.UnescapeString(string(trimmed))))
 
 	var value any
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
@@ -64,10 +68,131 @@ func sanitizeModelTestResponsePreview(response modelProbeHTTPResponse) *ModelTes
 			return preview
 		}
 	}
+	if body, recognized, truncated := sanitizeModelResponseSSE(string(trimmed)); recognized {
+		preview.Format = "sse"
+		preview.Body, preview.Truncated = boundedModelResponseText(body, maxModelTestPreviewBytes)
+		preview.Truncated = preview.Truncated || truncated
+		return preview
+	}
 
 	preview.Format = "text"
 	preview.Body, preview.Truncated = boundedModelResponseText(redactModelResponseText(string(trimmed)), maxModelTestPreviewBytes)
 	return preview
+}
+
+type modelResponseSSEEvent struct {
+	name string
+	data []string
+}
+
+func sanitizeModelResponseSSE(value string) (string, bool, bool) {
+	events, recognized := parseModelResponseSSE(value)
+	if !recognized || len(events) == 0 {
+		return "", false, false
+	}
+	truncated := len(events) > maxModelTestPreviewItems
+	if truncated {
+		events = events[:maxModelTestPreviewItems]
+	}
+	blocks := make([]string, 0, len(events))
+	for _, event := range events {
+		data := strings.Join(event.data, "\n")
+		formatted, dataTruncated, inferredName := sanitizeModelResponseSSEData(data)
+		truncated = truncated || dataTruncated
+		name := safeModelResponseEventName(event.name)
+		if name == "" {
+			name = inferredName
+		}
+		var block strings.Builder
+		if name != "" {
+			block.WriteString("event: ")
+			block.WriteString(name)
+			block.WriteByte('\n')
+		}
+		block.WriteString("data:\n")
+		block.WriteString(formatted)
+		blocks = append(blocks, block.String())
+	}
+	if len(blocks) == 0 {
+		return "", false, truncated
+	}
+	return strings.Join(blocks, "\n\n"), true, truncated
+}
+
+func parseModelResponseSSE(value string) ([]modelResponseSSEEvent, bool) {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	events := make([]modelResponseSSEEvent, 0, 4)
+	current := modelResponseSSEEvent{}
+	recognized := false
+	flush := func() {
+		if len(current.data) > 0 {
+			events = append(events, current)
+		}
+		current = modelResponseSSEEvent{}
+	}
+	for _, line := range strings.Split(value, "\n") {
+		if line == "" {
+			flush()
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			recognized = true
+			continue
+		}
+		field, fieldValue, hasSeparator := strings.Cut(line, ":")
+		if hasSeparator && strings.HasPrefix(fieldValue, " ") {
+			fieldValue = strings.TrimPrefix(fieldValue, " ")
+		}
+		switch field {
+		case "event":
+			recognized = true
+			current.name = fieldValue
+		case "data":
+			recognized = true
+			current.data = append(current.data, fieldValue)
+		}
+	}
+	flush()
+	return events, recognized
+}
+
+func sanitizeModelResponseSSEData(data string) (string, bool, string) {
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "" {
+		return "", false, ""
+	}
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	if errDecode := decoder.Decode(&value); errDecode == nil && decoderOnlyWhitespace(decoder) {
+		name := ""
+		if object, ok := value.(map[string]any); ok {
+			name = safeModelResponseEventName(modelTestStringValue(object, "type"))
+		}
+		sanitized, truncated := sanitizeModelResponseJSON(value, 0)
+		encoded, errMarshal := json.MarshalIndent(sanitized, "", "  ")
+		if errMarshal == nil {
+			return string(encoded), truncated, name
+		}
+	}
+	bounded, truncated := boundedModelResponseText(redactModelResponseText(trimmed), maxModelTestPreviewStringBytes)
+	return bounded, truncated, ""
+}
+
+func safeModelResponseEventName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return ""
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("-._:", character) {
+			continue
+		}
+		return ""
+	}
+	return value
 }
 
 func decoderOnlyWhitespace(decoder *json.Decoder) bool {

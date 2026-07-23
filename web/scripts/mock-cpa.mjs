@@ -1031,7 +1031,8 @@ const server = http.createServer(async (request, response) => {
             model: selectedModel, role: "fallback", status: "available", probe_kind: "model", reason_code: "model_response_ok",
             status_code: 200, latency_ms: 356, tested_at: now,
             response: {
-              format: "text", body: "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"mock-fallback-response\"}}\n\n",
+              format: "sse",
+              body: "event: response.completed\ndata:\n{\n  \"type\": \"response.completed\",\n  \"response\": {\n    \"output\": [\n      {\n        \"content\": [\n          {\n            \"type\": \"output_text\",\n            \"text\": \"OK\"\n          }\n        ],\n        \"type\": \"message\"\n      }\n    ],\n    \"status\": \"completed\"\n  }\n}",
               headers: [{ name: "content-type", value: "text/event-stream" }], truncated: false,
             },
           },

@@ -156,7 +156,7 @@ export interface ModelTestExperiment {
 }
 
 export interface ModelTestResponsePreview {
-  format: "json" | "text" | "empty";
+  format: "json" | "sse" | "text" | "empty";
   body: string;
   headers: ModelTestResponseHeader[];
   truncated: boolean;

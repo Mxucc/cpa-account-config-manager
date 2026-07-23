@@ -75,7 +75,7 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 	if result.Status != "available" || result.ReasonCode != "model_response_ok" || result.Model != "gpt-5.4" {
 		t.Fatalf("result = %#v", result)
 	}
-	if result.Response == nil || result.Response.Format != "text" || !strings.Contains(result.Response.Body, "response.completed") {
+	if result.Response == nil || result.Response.Format != "sse" || !strings.Contains(result.Response.Body, "event: response.completed") {
 		t.Fatalf("response preview = %#v", result.Response)
 	}
 	if len(result.Response.Headers) != 2 || result.Response.Headers[0].Name != "content-type" || result.Response.Headers[1].Name != "x-request-id" {
@@ -190,7 +190,7 @@ func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedRespon
 		t.Fatalf("fallback attempts = %#v", result.Attempts)
 	}
 	if result.Attempts[0].Response == nil || !strings.Contains(result.Attempts[0].Response.Body, "not supported") ||
-		result.Response == nil || !strings.Contains(result.Response.Body, "fallback-response") {
+		result.Response == nil || result.Response.Format != "sse" || !strings.Contains(result.Response.Body, "event: response.completed") {
 		t.Fatalf("fallback response evidence = top %#v attempts %#v", result.Response, result.Attempts)
 	}
 	operation := app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations[0]
@@ -457,6 +457,46 @@ func TestModelTestResponsePreviewBoundsTextAndMarksTruncation(t *testing.T) {
 	}
 	if strings.Contains(preview.Body, "plain-secret") || !strings.Contains(preview.Body, "[truncated]") {
 		t.Fatalf("text preview was not safely truncated: %q", preview.Body)
+	}
+}
+
+func TestModelTestResponsePreviewDecodesAndFormatsSanitizedSSE(t *testing.T) {
+	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
+		Header: map[string][]string{"Content-Type": {"text/event-stream"}},
+		Body: []byte("data: {&#34;type&#34;:&#34;response.created&#34;,&#34;response&#34;:{&#34;model&#34;:&#34;gpt-5.6-sol&#34;,&#34;access_token&#34;:&#34;encoded-secret-token&#34;,&#34;output&#34;:[]},&#34;sequence_number&#34;:0}\n\n" +
+			"data: {&#34;type&#34;:&#34;response.completed&#34;,&#34;response&#34;:{&#34;status&#34;:&#34;completed&#34;,&#34;output&#34;:[{&#34;type&#34;:&#34;message&#34;,&#34;content&#34;:[{&#34;type&#34;:&#34;output_text&#34;,&#34;text&#34;:&#34;OK for private@example.com&#34;}]}]}}\n\n"),
+	})
+	if preview == nil || preview.Format != "sse" || preview.Truncated {
+		t.Fatalf("SSE preview = %#v", preview)
+	}
+	for _, expected := range []string{
+		"event: response.created", "event: response.completed", `"type": "response.created"`,
+		`"model": "gpt-5.6-sol"`, `"text": "OK for [redacted-email]"`, `"access_token": "[redacted]"`,
+	} {
+		if !strings.Contains(preview.Body, expected) {
+			t.Errorf("SSE preview missing %q: %s", expected, preview.Body)
+		}
+	}
+	for _, forbidden := range []string{"&#34;", "encoded-secret-token", "private@example.com", "sequence_number"} {
+		if strings.Contains(preview.Body, forbidden) {
+			t.Errorf("SSE preview leaked or retained %q: %s", forbidden, preview.Body)
+		}
+	}
+	if strings.Index(preview.Body, "response.created") > strings.Index(preview.Body, "response.completed") {
+		t.Fatalf("SSE event order changed: %s", preview.Body)
+	}
+}
+
+func TestModelTestResponsePreviewRedactsMalformedSSEDataAfterEntityDecode(t *testing.T) {
+	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
+		Body: []byte("event: diagnostic\ndata: api_key&#61;encoded-secret private&#64;example.com\n\n"),
+	})
+	if preview == nil || preview.Format != "sse" || !strings.Contains(preview.Body, "event: diagnostic") ||
+		!strings.Contains(preview.Body, "api_key=[redacted]") || !strings.Contains(preview.Body, "[redacted-email]") {
+		t.Fatalf("malformed SSE preview = %#v", preview)
+	}
+	if strings.Contains(preview.Body, "encoded-secret") || strings.Contains(preview.Body, "private@example.com") {
+		t.Fatalf("malformed SSE leaked encoded secrets: %s", preview.Body)
 	}
 }
 

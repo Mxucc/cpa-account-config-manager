@@ -85,8 +85,8 @@ describe("ModelTestDialog", () => {
           latency_ms: 235,
           tested_at: "2026-07-23T08:05:01Z",
           response: {
-            format: "text",
-            body: "data: {\"type\":\"response.completed\"}",
+            format: "sse",
+            body: "event: response.completed\ndata:\n{\n  \"type\": \"response.completed\",\n  \"response\": {\n    \"output\": [{\"content\": [{\"text\": \"OK\"}]}]\n  }\n}",
             headers: [],
             truncated: false,
           },
@@ -112,7 +112,9 @@ describe("ModelTestDialog", () => {
     await user.click(within(rows[0]).getByText("查看脱敏后的上游响应"));
     await user.click(within(rows[1]).getByText("查看脱敏后的上游响应"));
     expect(within(rows[0]).getByLabelText("响应正文")).toHaveTextContent("not supported");
-    expect(within(rows[1]).getByLabelText("响应正文")).toHaveTextContent("response.completed");
+    expect(within(rows[1]).getByText("SSE")).toBeInTheDocument();
+    expect(within(rows[1]).getByLabelText("响应正文")).toHaveTextContent('"type": "response.completed"');
+    expect(within(rows[1]).getByLabelText("响应正文")).toHaveTextContent('"text": "OK"');
   });
 
   it("shows the diagnostic upstream response instead of only a generic classification", () => {

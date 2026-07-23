@@ -20,6 +20,24 @@ const (
 	MethodRequestInterceptBefore = "request.intercept_before"
 	MethodRequestInterceptAfter  = "request.intercept_after"
 	MethodUsageHandle            = "usage.handle"
+	MethodAuthIdentifier         = "auth.identifier"
+	MethodAuthParse              = "auth.parse"
+	MethodAuthLoginStart         = "auth.login.start"
+	MethodAuthLoginPoll          = "auth.login.poll"
+	MethodAuthRefresh            = "auth.refresh"
+	MethodModelStatic            = "model.static"
+	MethodModelForAuth           = "model.for_auth"
+	MethodExecutorIdentifier     = "executor.identifier"
+	MethodExecutorExecute        = "executor.execute"
+	MethodExecutorExecuteStream  = "executor.execute_stream"
+	MethodExecutorCountTokens    = "executor.count_tokens"
+	MethodExecutorHTTPRequest    = "executor.http_request"
+	MethodHostHTTPDo             = "host.http.do"
+	MethodHostHTTPDoStream       = "host.http.do_stream"
+	MethodHostHTTPStreamRead     = "host.http.stream_read"
+	MethodHostHTTPStreamClose    = "host.http.stream_close"
+	MethodHostStreamEmit         = "host.stream.emit"
+	MethodHostStreamClose        = "host.stream.close"
 	MethodHostAuthList           = "host.auth.list"
 	MethodHostAuthGet            = "host.auth.get"
 	MethodHostAuthGetRuntime     = "host.auth.get_runtime"
@@ -96,6 +114,209 @@ type RequestInterceptResponse struct {
 	Headers      http.Header `json:"Headers,omitempty"`
 	Body         []byte      `json:"Body,omitempty"`
 	ClearHeaders []string    `json:"ClearHeaders,omitempty"`
+}
+
+type IdentifierResponse struct {
+	Identifier string `json:"identifier"`
+}
+
+type AuthParseRequest struct {
+	Provider string
+	Path     string
+	FileName string
+	RawJSON  []byte
+}
+
+type AuthData struct {
+	Provider         string
+	ID               string
+	FileName         string
+	Label            string
+	Prefix           string
+	ProxyURL         string
+	Disabled         bool
+	StorageJSON      []byte
+	Metadata         map[string]any
+	Attributes       map[string]string
+	NextRefreshAfter time.Time
+}
+
+type AuthParseResponse struct {
+	Handled bool
+	Auth    AuthData
+	Auths   []AuthData
+}
+
+type AuthLoginStartResponse struct {
+	Provider  string
+	URL       string
+	State     string
+	ExpiresAt time.Time
+}
+
+type AuthLoginPollResponse struct {
+	Status  string
+	Message string
+	Auth    AuthData
+	Auths   []AuthData
+}
+
+type AuthRefreshRequest struct {
+	AuthID       string
+	AuthProvider string
+	StorageJSON  []byte
+	Metadata     map[string]any
+	Attributes   map[string]string
+}
+
+type AuthRefreshResponse struct {
+	Auth             AuthData
+	NextRefreshAfter time.Time
+}
+
+type ThinkingSupport struct {
+	Min            int
+	Max            int
+	ZeroAllowed    bool
+	DynamicAllowed bool
+	Levels         []string
+}
+
+type ModelInfo struct {
+	ID                         string
+	Object                     string
+	Created                    int64
+	OwnedBy                    string
+	Type                       string
+	DisplayName                string
+	Name                       string
+	Version                    string
+	Description                string
+	InputTokenLimit            int64
+	OutputTokenLimit           int64
+	SupportedGenerationMethods []string
+	ContextLength              int64
+	MaxCompletionTokens        int64
+	SupportedParameters        []string
+	SupportedInputModalities   []string
+	SupportedOutputModalities  []string
+	Thinking                   *ThinkingSupport
+	UserDefined                bool
+}
+
+type AuthModelRequest struct {
+	AuthID         string
+	AuthProvider   string
+	StorageJSON    []byte
+	Metadata       map[string]any
+	Attributes     map[string]string
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+type ModelResponse struct {
+	Provider   string
+	Models     []ModelInfo
+	AuthUpdate AuthData
+}
+
+type ExecutorRequest struct {
+	AuthID          string
+	AuthProvider    string
+	Model           string
+	Format          string
+	Stream          bool
+	Alt             string
+	Headers         http.Header
+	Query           url.Values
+	OriginalRequest []byte
+	SourceFormat    string
+	Payload         []byte
+	Metadata        map[string]any
+	StorageJSON     []byte
+	AuthMetadata    map[string]any
+	AuthAttributes  map[string]string
+	StreamID        string `json:"stream_id,omitempty"`
+	HostCallbackID  string `json:"host_callback_id,omitempty"`
+}
+
+type ExecutorResponse struct {
+	Payload  []byte
+	Headers  http.Header
+	Metadata map[string]any
+}
+
+type ExecutorStreamResponse struct {
+	Headers http.Header           `json:"headers,omitempty"`
+	Chunks  []ExecutorStreamChunk `json:"chunks,omitempty"`
+}
+
+type ExecutorStreamChunk struct {
+	Payload []byte
+	Error   string `json:"Error,omitempty"`
+}
+
+type ExecutorHTTPRequest struct {
+	AuthID         string
+	AuthProvider   string
+	Method         string
+	URL            string
+	Headers        http.Header
+	Body           []byte
+	StorageJSON    []byte
+	Metadata       map[string]any
+	Attributes     map[string]string
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+type ExecutorHTTPResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+}
+
+type HostHTTPRequest struct {
+	HostCallbackID string      `json:"host_callback_id,omitempty"`
+	Method         string      `json:"method,omitempty"`
+	URL            string      `json:"url,omitempty"`
+	Headers        http.Header `json:"headers,omitempty"`
+	Body           []byte      `json:"body,omitempty"`
+}
+
+type HostHTTPResponse struct {
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers,omitempty"`
+	Body       []byte      `json:"body,omitempty"`
+}
+
+type HostHTTPStreamResponse struct {
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers,omitempty"`
+	StreamID   string      `json:"stream_id,omitempty"`
+}
+
+type HostHTTPStreamReadRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+type HostHTTPStreamReadResponse struct {
+	Payload []byte `json:"payload,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Done    bool   `json:"done,omitempty"`
+}
+
+type HostHTTPStreamCloseRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+type HostStreamEmitRequest struct {
+	StreamID string `json:"stream_id"`
+	Payload  []byte `json:"payload,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+type HostStreamCloseRequest struct {
+	StreamID string `json:"stream_id"`
+	Error    string `json:"error,omitempty"`
 }
 
 type UsageRecord struct {

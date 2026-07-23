@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -101,6 +102,81 @@ func TestImportConvertReferenceFormats(t *testing.T) {
 	}
 	if second["plan_type"] != "team" || second["chatgpt_plan_type"] != "team" {
 		t.Fatalf("second candidate plan type = %#v", second)
+	}
+}
+
+func TestImportConvertSub2APIAgentIdentityAccounts(t *testing.T) {
+	now := time.Date(2026, time.July, 23, 9, 0, 0, 0, time.UTC)
+	firstIdentity := testAgentIdentityRecord(t, "agent-1", "task-1", "first@example.com")
+	secondIdentity := testAgentIdentityRecord(t, "agent-2", "task-2", "second@example.com")
+	firstCredentials := cloneStringAnyMap(firstIdentity)
+	firstCredentials["auth_mode"] = agentIdentityAuthMode
+	firstCredentials["access_token"] = "oauth-access-must-not-be-imported"
+	firstCredentials["refresh_token"] = "oauth-refresh-must-not-be-imported"
+	firstCredentials["id_token"] = "oauth-id-must-not-be-imported"
+	firstCredentials["live_identity"] = map[string]any{"client_id": "must-not-be-imported"}
+	firstCredentials["model_mapping"] = map[string]any{"gpt-5.4": "gpt-5.4"}
+	secondCredentials := cloneStringAnyMap(secondIdentity)
+	secondCredentials["auth_mode"] = agentIdentityAuthMode
+	payload := map[string]any{
+		"type": "sub2api", "version": 1, "exported_at": now.Format(time.RFC3339),
+		"accounts": []any{
+			map[string]any{
+				"name": "First Agent", "type": "oauth", "platform": "openai", "priority": 9,
+				"credentials": firstCredentials,
+				"extra":       map[string]any{"source": "sub2api", "credential_family": "agent_identity"},
+			},
+			map[string]any{
+				"name": "Second Agent", "type": "oauth", "platform": "openai",
+				"credentials": secondCredentials,
+			},
+			map[string]any{
+				"name": "Ordinary OAuth", "credentials": map[string]any{
+					"access_token": "ordinary-access", "email": "oauth@example.com", "account_id": "oauth-account",
+				},
+			},
+		},
+	}
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+
+	result, errParse := parseImportUpload(importUpload{Name: "sub2api-selected-accounts.json", Data: raw}, defaultImportLimits(), now)
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if len(result.Candidates) != 3 {
+		t.Fatalf("candidates = %d, want 3", len(result.Candidates))
+	}
+	for index, candidate := range result.Candidates[:2] {
+		if !candidate.AgentIdentity || candidate.SourcePath != fmt.Sprintf("$.accounts[%d]", index) {
+			t.Fatalf("Agent Identity candidate %d = %#v", index, candidate)
+		}
+		document := decodeImportCandidate(t, candidate)
+		if document["type"] != agentIdentityProvider || document["auth_mode"] != agentIdentityAuthMode {
+			t.Fatalf("Agent Identity document %d metadata = %#v", index, document)
+		}
+		identity, ok := document["agent_identity"].(map[string]any)
+		if !ok || len(identity) != 8 {
+			t.Fatalf("Agent Identity document %d identity = %#v", index, identity)
+		}
+		for _, forbidden := range []string{"access_token", "refresh_token", "id_token", "live_identity", "model_mapping", "auth_mode"} {
+			if _, exists := identity[forbidden]; exists {
+				t.Fatalf("Agent Identity document %d retained %s", index, forbidden)
+			}
+		}
+		for _, forbiddenValue := range []string{"oauth-access-must-not-be-imported", "oauth-refresh-must-not-be-imported", "oauth-id-must-not-be-imported", "must-not-be-imported"} {
+			if bytes.Contains(candidate.AuthJSON, []byte(forbiddenValue)) {
+				t.Fatalf("Agent Identity document %d retained unrelated credential material", index)
+			}
+		}
+	}
+	if result.Candidates[0].Name != "First Agent" || result.Candidates[0].Email != "first@example.com" {
+		t.Fatalf("first Agent Identity candidate = %#v", result.Candidates[0])
+	}
+	if ordinary := decodeImportCandidate(t, result.Candidates[2]); ordinary["type"] != "codex" || ordinary["email"] != "oauth@example.com" {
+		t.Fatalf("ordinary OAuth regression = %#v", ordinary)
 	}
 }
 

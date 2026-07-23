@@ -14,7 +14,10 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
-const maxPublicImportSkips = 100
+const (
+	maxPublicImportSkips             = 100
+	agentIdentityImportVerifyWorkers = 8
+)
 
 var (
 	ErrImportPreviewNotFound = errors.New("import preview not found")
@@ -43,6 +46,7 @@ type ImportPreviewItem struct {
 	Label            string   `json:"label"`
 	SyntheticIDToken bool     `json:"synthetic_id_token"`
 	Warnings         []string `json:"warnings,omitempty"`
+	CredentialType   string   `json:"credential_type,omitempty"`
 }
 
 type ImportPreview struct {
@@ -102,12 +106,20 @@ type importPreviewStore struct {
 }
 
 type ImportService struct {
-	operationMu sync.Mutex
-	host        AuthHost
-	mutations   *MutationCoordinator
-	store       *importPreviewStore
-	limits      importLimits
-	now         func() time.Time
+	operationMu   sync.Mutex
+	host          AuthHost
+	mutations     *MutationCoordinator
+	store         *importPreviewStore
+	limits        importLimits
+	now           func() time.Time
+	agentIdentity *AgentIdentityExperiment
+}
+
+func (s *ImportService) SetAgentIdentityExperiment(experiment *AgentIdentityExperiment) {
+	if s == nil {
+		return
+	}
+	s.agentIdentity = experiment
 }
 
 func NewImportService(host AuthHost, mutations *MutationCoordinator) *ImportService {
@@ -151,6 +163,22 @@ func (s *ImportService) PreviewMany(ctx context.Context, uploads []importUpload)
 
 func (s *ImportService) previewParsed(ctx context.Context, parsed importParseResult, inputType string) (ImportPreview, error) {
 	defer clearImportCandidates(parsed.Candidates)
+	verificationErrors := verifyAgentIdentityImportCandidates(ctx, parsed.Candidates, s.agentIdentity)
+	verified := parsed.Candidates[:0]
+	for index, candidate := range parsed.Candidates {
+		if !candidate.AgentIdentity {
+			verified = append(verified, candidate)
+			continue
+		}
+		if errVerify := verificationErrors[index]; errVerify != nil {
+			parsed.Skipped = append(parsed.Skipped, importSkipped{SourceName: candidate.SourceName, SourcePath: candidate.SourcePath, Reason: errVerify.Error()})
+			clear(parsed.Candidates[index].AuthJSON)
+			parsed.Candidates[index].AuthJSON = nil
+			continue
+		}
+		verified = append(verified, candidate)
+	}
+	parsed.Candidates = verified
 	if len(parsed.Candidates) == 0 {
 		return ImportPreview{}, ErrImportNoAccounts
 	}
@@ -185,6 +213,9 @@ func (s *ImportService) previewParsed(ctx context.Context, parsed importParseRes
 			SyntheticIDToken: candidate.SyntheticIDToken,
 			Warnings:         warnings,
 		}
+		if candidate.AgentIdentity {
+			public.CredentialType = "agent_identity"
+		}
 		publicItems = append(publicItems, public)
 		items = append(items, storedImportItem{Public: public, AuthJSON: append(json.RawMessage(nil), candidate.AuthJSON...)})
 	}
@@ -206,6 +237,43 @@ func (s *ImportService) previewParsed(ctx context.Context, parsed importParseRes
 	}
 	s.store.put(storedImportPreview{Public: public, Items: items})
 	return cloneImportPreview(public), nil
+}
+
+func verifyAgentIdentityImportCandidates(ctx context.Context, candidates []importCandidate, experiment *AgentIdentityExperiment) []error {
+	results := make([]error, len(candidates))
+	identityCount := 0
+	for index := range candidates {
+		if !candidates[index].AgentIdentity {
+			continue
+		}
+		identityCount++
+		if experiment == nil {
+			results[index] = fmt.Errorf("Agent Identity import is unavailable")
+		}
+	}
+	if identityCount == 0 || experiment == nil {
+		return results
+	}
+	workerCount := min(identityCount, agentIdentityImportVerifyWorkers)
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				results[index] = experiment.VerifyImport(ctx, candidates[index].AuthJSON)
+			}
+		}()
+	}
+	for index := range candidates {
+		if candidates[index].AgentIdentity {
+			jobs <- index
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	return results
 }
 
 func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResult, error) {

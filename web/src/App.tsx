@@ -1120,12 +1120,15 @@ export default function App() {
 }
 
 function AccountTypeCell({ account }: { account: Account }) {
+	const { tx } = useI18n();
   const primary = account.plan_type || account.account_type || account.type || "-";
   const secondary = account.plan_type ? account.account_type || account.type : "";
+	const primaryLabel = primary === "agent_identity" ? tx("ui.agent_identity") : primary;
+	const secondaryLabel = secondary === "agent_identity" ? tx("ui.agent_identity") : secondary;
   return (
-    <div className="type-cell" title={secondary ? `${primary} / ${secondary}` : primary}>
-      <strong className="account-plan-type">{primary}</strong>
-      {secondary && secondary !== primary ? <span>{secondary}</span> : null}
+    <div className="type-cell" title={secondaryLabel ? `${primaryLabel} / ${secondaryLabel}` : primaryLabel}>
+      <strong className="account-plan-type">{primaryLabel}</strong>
+      {secondaryLabel && secondaryLabel !== primaryLabel ? <span>{secondaryLabel}</span> : null}
     </div>
   );
 }

@@ -16,34 +16,37 @@ func TestExperimentalSettingsDefaultDisabledAndPersistAcrossRestart(t *testing.T
 	dataDir := t.TempDir()
 	first := NewExperimentalSettingsService()
 	first.Configure(Config{DataDir: dataDir})
-	if snapshot := first.Snapshot(); snapshot.Settings.WeeklyOverdraftEnabled || snapshot.StorageError != "" {
+	if snapshot := first.Snapshot(); snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || snapshot.StorageError != "" {
 		t.Fatalf("default snapshot = %#v", snapshot)
 	}
-	if _, errSet := first.Set(ExperimentalSettings{WeeklyOverdraftEnabled: true}); errSet != nil {
+	if _, errSet := first.Set(ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true}); errSet != nil {
 		t.Fatalf("Set() error = %v", errSet)
 	}
 
 	restarted := NewExperimentalSettingsService()
 	restarted.Configure(Config{DataDir: dataDir})
-	if snapshot := restarted.Snapshot(); !snapshot.Settings.WeeklyOverdraftEnabled || snapshot.StorageError != "" {
+	if snapshot := restarted.Snapshot(); !snapshot.Settings.WeeklyOverdraftEnabled || !snapshot.Settings.AgentIdentityEnabled || snapshot.StorageError != "" {
 		t.Fatalf("restarted snapshot = %#v", snapshot)
 	}
 }
 
 func TestExperimentalSettingsConfigOverridePersists(t *testing.T) {
 	dataDir := t.TempDir()
-	settings := ExperimentalSettings{WeeklyOverdraftEnabled: true}
+	settings := ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true}
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir, ExperimentalSettings: &settings})
 	if !service.WeeklyOverdraftEnabled() {
 		t.Fatal("config override did not enable weekly overdraft")
+	}
+	if !service.AgentIdentityEnabled() {
+		t.Fatal("config override did not enable Agent Identity")
 	}
 
 	reloaded, errLoad := loadExperimentalSettings(experimentalSettingsStorePath(dataDir))
 	if errLoad != nil {
 		t.Fatalf("loadExperimentalSettings() error = %v", errLoad)
 	}
-	if !reloaded.WeeklyOverdraftEnabled {
+	if !reloaded.WeeklyOverdraftEnabled || !reloaded.AgentIdentityEnabled {
 		t.Fatalf("persisted settings = %#v", reloaded)
 	}
 }
@@ -60,7 +63,7 @@ func TestExperimentalSettingsCorruptStateFailsClosed(t *testing.T) {
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir})
 	snapshot := service.Snapshot()
-	if snapshot.Settings.WeeklyOverdraftEnabled {
+	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled {
 		t.Fatal("corrupt state enabled the experiment")
 	}
 	if snapshot.StorageError != "experimental settings could not be loaded" {
@@ -83,20 +86,23 @@ func TestExperimentalSettingsManagementRoutesPersistAndValidate(t *testing.T) {
 	if errDecode := json.Unmarshal(response.Body, &initial); errDecode != nil {
 		t.Fatalf("decode GET response: %v", errDecode)
 	}
-	if initial.Settings.WeeklyOverdraftEnabled {
+	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled {
 		t.Fatal("GET returned an enabled experiment by default")
 	}
 
 	response = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPut,
 		Path:   path,
-		Body:   []byte(`{"weekly_overdraft_enabled":true}`),
+		Body:   []byte(`{"weekly_overdraft_enabled":true,"agent_identity_enabled":true}`),
 	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("PUT status = %d body=%s", response.StatusCode, response.Body)
 	}
 	if !app.experiments.WeeklyOverdraftEnabled() {
 		t.Fatal("PUT did not enable the experiment")
+	}
+	if !app.experiments.AgentIdentityEnabled() {
+		t.Fatal("PUT did not enable Agent Identity")
 	}
 
 	for name, body := range map[string][]byte{

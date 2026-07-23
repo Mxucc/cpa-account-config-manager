@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ExternalLink,
   FlaskConical,
+	KeyRound,
   LoaderCircle,
   PackageCheck,
   RefreshCw,
@@ -38,6 +39,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [confirmAutoUpdate, setConfirmAutoUpdate] = useState(false);
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
+  const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
   const [error, setError] = useState("");
   const attemptedUpdate = useRef("");
 
@@ -95,6 +97,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   useEffect(() => {
     if (!experiments) return;
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
+    setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
   }, [experiments]);
 
   useEffect(() => {
@@ -211,7 +214,10 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     setSavingExperiment(true);
     setError("");
     try {
-      setExperiments(await api.saveExperimentalSettings({ weekly_overdraft_enabled: weeklyOverdraftEnabled }));
+      setExperiments(await api.saveExperimentalSettings({
+        weekly_overdraft_enabled: weeklyOverdraftEnabled,
+        agent_identity_enabled: agentIdentityEnabled,
+      }));
       onNotice(tx("ui.experimental_settings_saved"));
     } catch (caught) {
       handleError(caught);
@@ -297,29 +303,57 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
             <div><strong>{tx("ui.experimental_features_warning")}</strong><span>{tx("ui.experimental_features_may_change_or_stop_working")}</span></div>
           </div>
           {experiments?.storage_error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.experimental_settings_storage_error")}</span></div> : null}
-          <div className="experimental-feature-row">
-            <div className="experimental-feature-copy">
-              <span className="experimental-feature-icon"><FlaskConical size={18} /></span>
-              <div>
-                <strong>{tx("ui.codex_weekly_quota_overdraft")}</strong>
-                <span>{tx("ui.codex_weekly_quota_overdraft_description")}</span>
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><FlaskConical size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_weekly_quota_overdraft")}</strong>
+                  <span>{tx("ui.codex_weekly_quota_overdraft_description")}</span>
+                </div>
               </div>
+              <label className="switch-control experimental-feature-switch">
+                <input
+                  type="checkbox"
+                  checked={weeklyOverdraftEnabled}
+                  disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setWeeklyOverdraftEnabled(event.target.checked)}
+                  aria-label={tx("ui.codex_weekly_quota_overdraft")}
+                />
+                <b>{tx(weeklyOverdraftEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
             </div>
-            <label className="switch-control experimental-feature-switch">
-              <input
-                type="checkbox"
-                checked={weeklyOverdraftEnabled}
-                disabled={loading || savingExperiment || !experiments}
-                onChange={(event) => setWeeklyOverdraftEnabled(event.target.checked)}
-                aria-label={tx("ui.codex_weekly_quota_overdraft")}
-              />
-              <b>{tx(weeklyOverdraftEnabled ? "ui.on_2" : "ui.off_2")}</b>
-            </label>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.request_behavior")}</strong><span>{tx("ui.weekly_overdraft_request_behavior")}</span></div>
+              <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
+              <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
+            </div>
           </div>
-          <div className="experimental-behavior-list">
-            <div><strong>{tx("ui.request_behavior")}</strong><span>{tx("ui.weekly_overdraft_request_behavior")}</span></div>
-            <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
-            <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><KeyRound size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_agent_identity")}</strong>
+                  <span>{tx("ui.codex_agent_identity_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input
+                  type="checkbox"
+                  checked={agentIdentityEnabled}
+                  disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setAgentIdentityEnabled(event.target.checked)}
+                  aria-label={tx("ui.codex_agent_identity")}
+                />
+                <b>{tx(agentIdentityEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.authentication_path")}</strong><span>{tx("ui.agent_identity_authentication_behavior")}</span></div>
+              <div><strong>{tx("ui.supported_imports")}</strong><span>{tx("ui.agent_identity_import_formats")}</span></div>
+              <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.agent_identity_security_notice")}</span></div>
+            </div>
           </div>
           <div className="settings-section-actions experimental-actions">
             <button className="button button-primary" type="button" disabled={loading || savingExperiment || !experiments} onClick={() => void saveExperimentalSettings()}>

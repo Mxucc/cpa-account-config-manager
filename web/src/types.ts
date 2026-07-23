@@ -339,6 +339,7 @@ export interface ImportPreviewItem {
   label: string;
   synthetic_id_token: boolean;
   warnings?: string[];
+  credential_type?: "agent_identity";
 }
 
 export interface ImportPreview {
@@ -718,6 +719,7 @@ export interface CPAServerVersionSnapshot {
 
 export interface ExperimentalSettings {
   weekly_overdraft_enabled: boolean;
+  agent_identity_enabled: boolean;
 }
 
 export interface ExperimentalSettingsSnapshot {

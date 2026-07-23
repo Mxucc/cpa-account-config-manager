@@ -48,7 +48,7 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
           <DetailItem label="Auth ID" value={account.auth_id} mono />
           <DetailItem label={tx("ui.provider")} value={account.provider} />
           <DetailItem label={tx("ui.type")} value={account.type} />
-          <DetailItem label={tx("ui.account_type")} value={account.account_type} />
+          <DetailItem label={tx("ui.account_type")} value={account.account_type === "agent_identity" ? tx("ui.agent_identity") : account.account_type} />
           <DetailItem label={tx("ui.plan_type")} value={account.plan_type} />
           <DetailItem label={tx("ui.source")} value={sourceLabel(account.source, locale)} />
           <DetailItem label={tx("ui.status")} value={accountStateLabel(account, locale)} />

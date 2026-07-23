@@ -12,8 +12,24 @@ type envelope struct {
 }
 
 type envelopeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	Retryable  bool   `json:"retryable,omitempty"`
+	HTTPStatus int    `json:"http_status,omitempty"`
+}
+
+func errorEnvelopeFor(err error) []byte {
+	if err == nil {
+		return errorEnvelope("plugin_error", "plugin error")
+	}
+	status := 0
+	if statusError, ok := err.(interface{ HTTPStatus() int }); ok {
+		status = statusError.HTTPStatus()
+	}
+	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{
+		Code: "plugin_error", Message: err.Error(), HTTPStatus: status,
+	}})
+	return raw
 }
 
 func okEnvelope(value any) ([]byte, error) {

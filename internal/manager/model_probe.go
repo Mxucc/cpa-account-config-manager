@@ -270,6 +270,10 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	}
 	account := resolved.Accounts[0]
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)))
+	probeProvider := provider
+	if provider == agentIdentityProvider {
+		probeProvider = "codex"
+	}
 	metadata := s.authMetadata(ctx, account.ID)
 	if !metadata.hasAccessToken && accountTypeUsesAPIKey(account.AccountType) {
 		metadata.hasAPIKey = true
@@ -281,7 +285,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		Model:     model,
 		TestedAt:  startedAt,
 	}
-	if request.ExperimentalWeeklyOverdraft && (provider != "codex" || metadata.usesAPIKey()) {
+	if request.ExperimentalWeeklyOverdraft && (probeProvider != "codex" || metadata.usesAPIKey()) {
 		return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment requires a Codex OAuth account")
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
@@ -289,7 +293,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	// Inspection must use the Codex credential endpoint even when CPA runtime
 	// metadata says api_key. The runtime label can be stale or describe the
 	// routing adapter rather than the physical auth file.
-	if provider == "codex" && !request.ExperimentalWeeklyOverdraft && (request.Inspection || !metadata.usesAPIKey()) {
+	if probeProvider == "codex" && !request.ExperimentalWeeklyOverdraft && (request.Inspection || !metadata.usesAPIKey()) {
 		credential := buildCodexCredentialProbe(metadata)
 		credentialResponse, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
 		if errCredential == nil {
@@ -320,7 +324,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 			return ModelTestResult{}, probeCtx.Err()
 		}
 	}
-	probe, selectedModel, supported, errProbe := buildModelProbe(provider, model, metadata)
+	probe, selectedModel, supported, errProbe := buildModelProbe(probeProvider, model, metadata)
 	if errProbe != nil {
 		return ModelTestResult{}, errProbe
 	}

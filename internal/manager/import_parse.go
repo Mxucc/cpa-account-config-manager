@@ -63,6 +63,7 @@ type importCandidate struct {
 	SyntheticIDToken bool
 	Warnings         []string
 	AuthJSON         json.RawMessage
+	AgentIdentity    bool
 	fingerprint      string
 }
 
@@ -436,6 +437,18 @@ func (c *importCollector) visit(value any, sourceName, sourcePath string, depth 
 }
 
 func convertImportRecord(record map[string]any, sourceName, sourcePath string, now time.Time) (importCandidate, error) {
+	if agentIdentity := importValueAt(record, "agent_identity"); agentIdentity != nil {
+		return convertAgentIdentityImportRecord(record, sourceName, sourcePath, now, agentIdentity)
+	}
+	if agentIdentity := importValueAt(record, "agentIdentity"); agentIdentity != nil {
+		return convertAgentIdentityImportRecord(record, sourceName, sourcePath, now, agentIdentity)
+	}
+	if credentials := importObjectAt(record, "credentials"); isDirectAgentIdentityRecord(credentials) {
+		return convertAgentIdentityImportRecord(record, sourceName, sourcePath, now, credentials)
+	}
+	if isDirectAgentIdentityRecord(record) {
+		return convertAgentIdentityImportRecord(record, sourceName, sourcePath, now, record)
+	}
 	accessToken := firstImportString(record,
 		[]string{"accessToken"}, []string{"access_token"},
 		[]string{"tokens", "accessToken"}, []string{"tokens", "access_token"},
@@ -582,6 +595,89 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 		AuthJSON:         authJSON,
 		fingerprint:      base64.RawURLEncoding.EncodeToString(fingerprintSum[:]),
 	}, nil
+}
+
+func convertAgentIdentityImportRecord(record map[string]any, sourceName, sourcePath string, now time.Time, identity any) (importCandidate, error) {
+	authMode := firstImportString(record, []string{"auth_mode"}, []string{"authMode"})
+	if authMode == "" {
+		if identityRecord, ok := identity.(map[string]any); ok {
+			authMode = firstImportString(identityRecord, []string{"auth_mode"}, []string{"authMode"})
+		}
+	}
+	if authMode == "" {
+		authMode = agentIdentityAuthMode
+	}
+	identity = sanitizeAgentIdentityImportValue(identity)
+	document := map[string]any{
+		"type": agentIdentityProvider, "auth_mode": authMode, "agent_identity": identity,
+	}
+	copyImportConfiguration(record, document)
+	raw, errMarshal := json.Marshal(document)
+	if errMarshal != nil {
+		return importCandidate{}, fmt.Errorf("encode converted Agent Identity auth JSON: %w", errMarshal)
+	}
+	parsed, errParse := parseAgentIdentityCredential(raw, now)
+	if errParse != nil {
+		return importCandidate{}, errParse
+	}
+	name := firstNonEmptyImportString(
+		firstImportString(record, []string{"name"}, []string{"label"}),
+		parsed.claims.Email,
+		strings.TrimSuffix(filepath.Base(sourceName), filepath.Ext(sourceName)),
+		"Imported Agent Identity account",
+	)
+	document["name"] = name
+	document["email"] = parsed.claims.Email
+	document["account_id"] = parsed.claims.AccountID
+	document["chatgpt_account_id"] = parsed.claims.AccountID
+	document["plan_type"] = parsed.claims.PlanType
+	document["chatgpt_plan_type"] = parsed.claims.PlanType
+	raw, errMarshal = json.Marshal(document)
+	if errMarshal != nil {
+		return importCandidate{}, fmt.Errorf("encode converted Agent Identity auth JSON: %w", errMarshal)
+	}
+	return importCandidate{
+		SourceName: sourceName, SourcePath: sourcePath,
+		Email: parsed.claims.Email, AccountID: parsed.claims.AccountID, Name: name,
+		Warnings: []string{"Agent Identity authentication is experimental"},
+		AuthJSON: raw, AgentIdentity: true, fingerprint: parsed.fingerprint,
+	}, nil
+}
+
+func isDirectAgentIdentityRecord(record map[string]any) bool {
+	if len(record) == 0 || firstImportString(record, []string{"auth_mode"}, []string{"authMode"}) != agentIdentityAuthMode {
+		return false
+	}
+	return firstImportString(record, []string{"agent_runtime_id"}) != "" &&
+		firstImportString(record, []string{"agent_private_key"}) != "" &&
+		firstImportString(record, []string{"task_id"}) != ""
+}
+
+func sanitizeAgentIdentityImportValue(identity any) any {
+	record, ok := identity.(map[string]any)
+	if !ok {
+		return identity
+	}
+	result := make(map[string]any, 8)
+	fields := []struct {
+		target string
+		paths  [][]string
+	}{
+		{target: "agent_runtime_id", paths: [][]string{{"agent_runtime_id"}}},
+		{target: "agent_private_key", paths: [][]string{{"agent_private_key"}}},
+		{target: "account_id", paths: [][]string{{"account_id"}, {"chatgpt_account_id"}}},
+		{target: "chatgpt_user_id", paths: [][]string{{"chatgpt_user_id"}, {"chatgpt_account_user_id"}}},
+		{target: "email", paths: [][]string{{"email"}, {"outlook_email"}}},
+		{target: "plan_type", paths: [][]string{{"plan_type"}, {"chatgpt_plan_type"}}},
+		{target: "task_id", paths: [][]string{{"task_id"}}},
+	}
+	for _, field := range fields {
+		setImportString(result, field.target, firstImportString(record, field.paths...))
+	}
+	if fedramp, exists := importBoolAt(record, "chatgpt_account_is_fedramp"); exists {
+		result["chatgpt_account_is_fedramp"] = fedramp
+	}
+	return result
 }
 
 func copyImportConfiguration(source, destination map[string]any) {

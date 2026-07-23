@@ -58,3 +58,8 @@ it("shows only the safe account detail model and opens single-account editing", 
   await user.click(screen.getByRole("button", { name: "编辑账号" }));
   expect(onEdit).toHaveBeenCalledTimes(1);
 });
+
+it("localizes the Agent Identity account type", () => {
+  render(<AccountDetailsDialog account={{ ...account, provider: "codex-agent-identity", account_type: "agent_identity" }} onClose={() => undefined} onEdit={() => undefined} />);
+  expect(screen.getByText("Agent Identity")).toBeInTheDocument();
+});

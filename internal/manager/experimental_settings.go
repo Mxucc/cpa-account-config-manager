@@ -10,6 +10,17 @@ import (
 
 type ExperimentalSettings struct {
 	WeeklyOverdraftEnabled bool `json:"weekly_overdraft_enabled" yaml:"weekly_overdraft_enabled"`
+	AgentIdentityEnabled   bool `json:"agent_identity_enabled" yaml:"agent_identity_enabled"`
+}
+
+func (s *ExperimentalSettingsService) AgentIdentityEnabled() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	enabled := s.settings.AgentIdentityEnabled
+	s.mu.RUnlock()
+	return enabled
 }
 
 type ExperimentalSettingsSnapshot struct {

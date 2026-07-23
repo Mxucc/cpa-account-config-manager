@@ -213,7 +213,7 @@ function ImportPreviewView({ preview }: { preview: ImportPreview }) {
         <div className="import-record-list">
           {visibleItems.map((item) => (
             <div className="import-record" key={`${item.index}:${item.target_name}`}>
-              <div className="import-record-identity"><strong>{item.label}</strong><span>{item.account_id || item.email || `#${item.index}`}</span></div>
+              <div className="import-record-identity"><strong>{item.label}</strong><span>{item.account_id || item.email || `#${item.index}`}</span>{item.credential_type === "agent_identity" ? <b className="credential-type-tag">{tx("ui.agent_identity")}</b> : null}</div>
               <div className="import-record-source"><strong>{item.source_name}</strong><span>{item.source_path || "$"}</span></div>
               <code>{item.target_name}</code>
               <span className={item.warnings?.length ? "import-record-state warning" : "import-record-state success"}>{item.warnings?.length ? tx("ui.count_warnings", { count: item.warnings.length }) : tx("ui.ready")}</span>

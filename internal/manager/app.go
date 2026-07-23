@@ -38,29 +38,36 @@ type Registration struct {
 }
 
 type RegistrationCapabilities struct {
-	ManagementAPI      bool `json:"management_api"`
-	UsagePlugin        bool `json:"usage_plugin"`
-	RequestInterceptor bool `json:"request_interceptor"`
+	ManagementAPI         bool     `json:"management_api"`
+	UsagePlugin           bool     `json:"usage_plugin"`
+	RequestInterceptor    bool     `json:"request_interceptor"`
+	AuthProvider          bool     `json:"auth_provider"`
+	ModelProvider         bool     `json:"model_provider"`
+	Executor              bool     `json:"executor"`
+	ExecutorModelScope    string   `json:"executor_model_scope,omitempty"`
+	ExecutorInputFormats  []string `json:"executor_input_formats,omitempty"`
+	ExecutorOutputFormats []string `json:"executor_output_formats,omitempty"`
 }
 
 type App struct {
-	mu           sync.RWMutex
-	config       Config
-	accounts     *AccountService
-	deletions    *AccountDeleteService
-	previews     *PreviewService
-	jobs         *JobEngine
-	policies     *PolicyEngine
-	inspection   *InspectionEngine
-	updates      *UpdateChecker
-	force        *ForceSyncEngine
-	imports      *ImportService
-	usage        *UsageTracker
-	operations   *OperationJournal
-	modelTests   *ModelTestService
-	requestHooks *RequestHook
-	experiments  *ExperimentalSettingsService
-	indexHTML    []byte
+	mu            sync.RWMutex
+	config        Config
+	accounts      *AccountService
+	deletions     *AccountDeleteService
+	previews      *PreviewService
+	jobs          *JobEngine
+	policies      *PolicyEngine
+	inspection    *InspectionEngine
+	updates       *UpdateChecker
+	force         *ForceSyncEngine
+	imports       *ImportService
+	usage         *UsageTracker
+	operations    *OperationJournal
+	modelTests    *ModelTestService
+	requestHooks  *RequestHook
+	experiments   *ExperimentalSettingsService
+	agentIdentity *AgentIdentityExperiment
+	indexHTML     []byte
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -74,6 +81,13 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	deletions := NewAccountDeleteService(accounts, mutations)
 	operations := NewOperationJournal()
 	experiments := NewExperimentalSettingsService()
+	var identityTransport AgentIdentityTransport
+	if transport, ok := host.(AgentIdentityTransport); ok {
+		identityTransport = transport
+	}
+	agentIdentity := NewAgentIdentityExperiment(experiments.AgentIdentityEnabled, identityTransport)
+	imports := NewImportService(host, mutations)
+	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)
 	requestHooks := NewRequestHook(weeklyOverdraft)
 	modelTests.SetExperimentalTransformer(weeklyOverdraft)
@@ -82,22 +96,23 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	inspection.SetDeleteService(deletions)
 	inspection.SetOperationJournal(operations)
 	return &App{
-		config:       normalizeConfig(Config{}),
-		accounts:     accounts,
-		deletions:    deletions,
-		previews:     NewPreviewService(accounts),
-		jobs:         jobs,
-		policies:     policies,
-		inspection:   inspection,
-		updates:      NewUpdateChecker(PluginVersion),
-		force:        NewForceSyncEngine(accounts, host, policies, mutations),
-		imports:      NewImportService(host, mutations),
-		usage:        usage,
-		operations:   operations,
-		modelTests:   modelTests,
-		requestHooks: requestHooks,
-		experiments:  experiments,
-		indexHTML:    append([]byte(nil), indexHTML...),
+		config:        normalizeConfig(Config{}),
+		accounts:      accounts,
+		deletions:     deletions,
+		previews:      NewPreviewService(accounts),
+		jobs:          jobs,
+		policies:      policies,
+		inspection:    inspection,
+		updates:       NewUpdateChecker(PluginVersion),
+		force:         NewForceSyncEngine(accounts, host, policies, mutations),
+		imports:       imports,
+		usage:         usage,
+		operations:    operations,
+		modelTests:    modelTests,
+		requestHooks:  requestHooks,
+		experiments:   experiments,
+		agentIdentity: agentIdentity,
+		indexHTML:     append([]byte(nil), indexHTML...),
 	}
 }
 
@@ -146,6 +161,7 @@ func (a *App) Close() {
 	a.deletions.Clear()
 	a.previews.Clear()
 	a.imports.Clear()
+	a.agentIdentity.Clear()
 	a.usage.Close()
 	a.reconcileOperationSources()
 }
@@ -164,7 +180,13 @@ func (a *App) Registration() Registration {
 				{Name: "management_base_url", Type: cpaapi.ConfigFieldTypeString, Description: "Optional loopback CLIProxyAPI Management API base URL; defaults to http://127.0.0.1:8317."},
 			},
 		},
-		Capabilities: RegistrationCapabilities{ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true},
+		Capabilities: RegistrationCapabilities{
+			ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true,
+			AuthProvider: true, ModelProvider: true, Executor: true,
+			ExecutorModelScope:    "oauth",
+			ExecutorInputFormats:  []string{"codex"},
+			ExecutorOutputFormats: []string{"codex"},
+		},
 	}
 }
 
@@ -180,6 +202,48 @@ func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.
 		return cpaapi.RequestInterceptResponse{}
 	}
 	return a.requestHooks.InterceptAfter(request)
+}
+
+func (a *App) HandleAgentIdentityAuthParse(request cpaapi.AuthParseRequest) (cpaapi.AuthParseResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.AuthParseResponse{}, nil
+	}
+	return a.agentIdentity.ParseAuth(request.RawJSON)
+}
+
+func (a *App) HandleAgentIdentityAuthRefresh(request cpaapi.AuthRefreshRequest) (cpaapi.AuthRefreshResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.AuthRefreshResponse{}, fmt.Errorf("Agent Identity experiment is unavailable")
+	}
+	return a.agentIdentity.RefreshAuth(request)
+}
+
+func (a *App) HandleAgentIdentityModels(request cpaapi.AuthModelRequest) (cpaapi.ModelResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.ModelResponse{Provider: agentIdentityProvider}, nil
+	}
+	return a.agentIdentity.ModelsForAuth(request)
+}
+
+func (a *App) HandleAgentIdentityExecute(ctx context.Context, request cpaapi.ExecutorRequest) (cpaapi.ExecutorResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.ExecutorResponse{}, fmt.Errorf("Agent Identity experiment is unavailable")
+	}
+	return a.agentIdentity.Execute(ctx, request)
+}
+
+func (a *App) HandleAgentIdentityExecuteStream(ctx context.Context, request cpaapi.ExecutorRequest) (cpaapi.ExecutorStreamResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.ExecutorStreamResponse{}, fmt.Errorf("Agent Identity experiment is unavailable")
+	}
+	return a.agentIdentity.ExecuteStream(ctx, request)
+}
+
+func (a *App) HandleAgentIdentityHTTPRequest(ctx context.Context, request cpaapi.ExecutorHTTPRequest) (cpaapi.ExecutorHTTPResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.ExecutorHTTPResponse{}, fmt.Errorf("Agent Identity experiment is unavailable")
+	}
+	return a.agentIdentity.HTTPRequest(ctx, request)
 }
 
 func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {

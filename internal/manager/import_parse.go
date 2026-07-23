@@ -64,6 +64,7 @@ type importCandidate struct {
 	Warnings         []string
 	AuthJSON         json.RawMessage
 	AgentIdentity    bool
+	CodexPAT         bool
 	fingerprint      string
 }
 
@@ -449,6 +450,9 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 	if isDirectAgentIdentityRecord(record) {
 		return convertAgentIdentityImportRecord(record, sourceName, sourcePath, now, record)
 	}
+	if isCodexPATImportRecord(record) {
+		return convertCodexPATImportRecord(record, sourceName, sourcePath)
+	}
 	accessToken := firstImportString(record,
 		[]string{"accessToken"}, []string{"access_token"},
 		[]string{"tokens", "accessToken"}, []string{"tokens", "access_token"},
@@ -594,6 +598,86 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 		Warnings:         warnings,
 		AuthJSON:         authJSON,
 		fingerprint:      base64.RawURLEncoding.EncodeToString(fingerprintSum[:]),
+	}, nil
+}
+
+func isCodexPATImportRecord(record map[string]any) bool {
+	accessToken := firstImportString(record,
+		[]string{"accessToken"}, []string{"access_token"},
+		[]string{"credentials", "accessToken"}, []string{"credentials", "access_token"},
+		[]string{"credential", "accessToken"}, []string{"credential", "access_token"},
+	)
+	if !strings.HasPrefix(strings.TrimSpace(accessToken), "at-") {
+		return false
+	}
+	mode := firstImportString(record,
+		[]string{"auth_mode"}, []string{"authMode"}, []string{"openai_auth_mode"},
+		[]string{"credentials", "auth_mode"}, []string{"credentials", "openai_auth_mode"},
+	)
+	return mode == "" || isCodexPATAuthMode(mode)
+}
+
+func convertCodexPATImportRecord(record map[string]any, sourceName, sourcePath string) (importCandidate, error) {
+	accessToken := firstImportString(record,
+		[]string{"accessToken"}, []string{"access_token"},
+		[]string{"credentials", "accessToken"}, []string{"credentials", "access_token"},
+		[]string{"credential", "accessToken"}, []string{"credential", "access_token"},
+	)
+	idTokenInput := firstImportString(record,
+		[]string{"idToken"}, []string{"id_token"},
+		[]string{"credentials", "idToken"}, []string{"credentials", "id_token"},
+		[]string{"credential", "idToken"}, []string{"credential", "id_token"},
+	)
+	idPayload := parseImportIdentityPayload(idTokenInput)
+	email := firstImportString(record, []string{"email"}, []string{"credentials", "email"}, []string{"credential", "email"})
+	if email == "" {
+		email = firstStringFromMaps([]map[string]any{idPayload}, "email")
+	}
+	accountID := firstImportString(record,
+		[]string{"account_id"}, []string{"chatgpt_account_id"},
+		[]string{"credentials", "account_id"}, []string{"credentials", "chatgpt_account_id"},
+	)
+	if accountID == "" {
+		accountID = firstStringFromMaps([]map[string]any{idPayload}, "chatgpt_account_id", "account_id")
+	}
+	userID := firstImportString(record,
+		[]string{"chatgpt_user_id"}, []string{"user_id"},
+		[]string{"credentials", "chatgpt_user_id"}, []string{"credentials", "user_id"},
+	)
+	if userID == "" {
+		userID = firstStringFromMaps([]map[string]any{idPayload}, "chatgpt_user_id", "user_id", "chatgpt_account_user_id")
+	}
+	planType := firstImportString(record,
+		[]string{"plan_type"}, []string{"chatgpt_plan_type"},
+		[]string{"credentials", "plan_type"}, []string{"credentials", "chatgpt_plan_type"},
+	)
+	if planType == "" {
+		planType = firstStringFromMaps([]map[string]any{idPayload}, "chatgpt_plan_type", "plan_type")
+	}
+	name := firstNonEmptyImportString(
+		firstImportString(record, []string{"name"}, []string{"label"}), email, accountID,
+		strings.TrimSuffix(filepath.Base(sourceName), filepath.Ext(sourceName)), "Imported Codex PAT",
+	)
+	document := map[string]any{
+		"type": agentIdentityProvider, "auth_mode": codexPATAuthMode,
+		"openai_auth_mode": codexPATLegacyAuthMode, "access_token": accessToken,
+		"name": name, "email": email, "account_id": accountID, "chatgpt_account_id": accountID,
+		"chatgpt_user_id": userID, "plan_type": planType, "chatgpt_plan_type": planType,
+	}
+	copyImportConfiguration(record, document)
+	raw, errMarshal := json.Marshal(document)
+	if errMarshal != nil {
+		return importCandidate{}, fmt.Errorf("encode converted Codex personal access token: %w", errMarshal)
+	}
+	parsed, errParse := parseCodexPATCredential(raw)
+	if errParse != nil {
+		return importCandidate{}, errParse
+	}
+	fingerprint := sha256.Sum256([]byte(parsed.accessToken + "\x00" + parsed.accountID))
+	return importCandidate{
+		SourceName: sourceName, SourcePath: sourcePath, Email: email, AccountID: accountID, Name: name,
+		Warnings: []string{"Codex personal access token authentication is experimental"},
+		AuthJSON: raw, CodexPAT: true, fingerprint: base64.RawURLEncoding.EncodeToString(fingerprint[:]),
 	}, nil
 }
 
@@ -775,6 +859,26 @@ func parseImportJWTPayload(token string) map[string]any {
 	decoder := json.NewDecoder(bytes.NewReader(decoded))
 	decoder.UseNumber()
 	if errJSON := decoder.Decode(&payload); errJSON != nil {
+		return nil
+	}
+	return payload
+}
+
+func parseImportIdentityPayload(value string) map[string]any {
+	if payload := parseImportJWTPayload(value); payload != nil {
+		return payload
+	}
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) < 2 || len(trimmed) > 64<<10 || trimmed[0] != '{' {
+		return nil
+	}
+	var payload map[string]any
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	if errDecode := decoder.Decode(&payload); errDecode != nil {
+		return nil
+	}
+	if errTrailing := decoder.Decode(&struct{}{}); !errors.Is(errTrailing, io.EOF) {
 		return nil
 	}
 	return payload

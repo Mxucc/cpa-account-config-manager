@@ -106,10 +106,10 @@ describe("OtherSettingsWorkspace", () => {
     const panel = within(workspace).getByRole("tabpanel", { name: "实验性功能" });
     expect(within(panel).getByText("实验性行为")).toBeInTheDocument();
     expect(within(panel).getByText("Codex 周额度透支续用")).toBeInTheDocument();
-    expect(within(panel).getByText("Codex Agent Identity")).toBeInTheDocument();
+    expect(within(panel).getByText("Codex Agent Identity / PAT")).toBeInTheDocument();
 
     await user.click(within(panel).getByRole("checkbox", { name: "Codex 周额度透支续用" }));
-    await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity" }));
+    await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity / PAT" }));
     await user.click(within(panel).getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));

@@ -55,7 +55,7 @@ describe("ImportDialog", () => {
         account_id: `account-${index + 1}`,
         label: `user-${index + 1}@example.com`,
         synthetic_id_token: false,
-		credential_type: index === 0 ? "agent_identity" as const : undefined,
+		credential_type: index === 0 ? "agent_identity" as const : index === 1 ? "personal_access_token" as const : undefined,
       })),
     };
     render(
@@ -72,6 +72,7 @@ describe("ImportDialog", () => {
     );
     expect(screen.getByText("user-250@example.com")).toBeInTheDocument();
     expect(screen.getByText("Agent Identity")).toBeInTheDocument();
+    expect(screen.getByText("Codex PAT")).toBeInTheDocument();
     expect(screen.queryByText("user-251@example.com")).not.toBeInTheDocument();
     expect(screen.getByText("另有 1 个账号未展开")).toBeInTheDocument();
   });

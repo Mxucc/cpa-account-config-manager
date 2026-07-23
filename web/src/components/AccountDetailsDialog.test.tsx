@@ -63,3 +63,8 @@ it("localizes the Agent Identity account type", () => {
   render(<AccountDetailsDialog account={{ ...account, provider: "codex-agent-identity", account_type: "agent_identity" }} onClose={() => undefined} onEdit={() => undefined} />);
   expect(screen.getByText("Agent Identity")).toBeInTheDocument();
 });
+
+it("localizes the Codex PAT account type", () => {
+  render(<AccountDetailsDialog account={{ ...account, provider: "codex-agent-identity", account_type: "personal_access_token" }} onClose={() => undefined} onEdit={() => undefined} />);
+  expect(screen.getByText("Codex PAT")).toBeInTheDocument();
+});

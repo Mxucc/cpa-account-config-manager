@@ -85,7 +85,7 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
       <div className="model-test-dialog">
         <div className="model-test-account">
           <span className="model-test-account-icon"><Activity size={18} /></span>
-          <div><strong>{identity}</strong><span>{technicalLabel(account.provider || account.type, locale)} · {account.plan_type || account.account_type || tx("ui.unknown_type")}</span></div>
+          <div><strong>{identity}</strong><span>{technicalLabel(account.provider || account.type, locale)} · {account.plan_type || (account.account_type === "personal_access_token" ? tx("ui.codex_personal_access_token") : account.account_type) || tx("ui.unknown_type")}</span></div>
         </div>
 
         <label className="model-test-field">

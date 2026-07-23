@@ -180,6 +180,85 @@ func TestImportConvertSub2APIAgentIdentityAccounts(t *testing.T) {
 	}
 }
 
+func TestImportConvertSub2APICodexPersonalAccessToken(t *testing.T) {
+	now := time.Date(2026, time.July, 23, 9, 15, 0, 0, time.UTC)
+	payload := map[string]any{
+		"type": "sub2api-data", "version": 1, "exported_at": now.Format(time.RFC3339),
+		"accounts": []any{map[string]any{
+			"name": "Codex PAT", "platform": "openai", "type": "oauth", "priority": 7,
+			"credentials": map[string]any{
+				"access_token": "at-test-personal-access-token", "refresh_token": "", "id_token": "",
+				"expires_at": "2027-07-23T00:00:00Z", "email": "pat@example.com",
+				"chatgpt_account_id": "pat-account", "chatgpt_user_id": "pat-user",
+				"plan_type": "plus", "chatgpt_plan_type": "plus",
+				"model_mapping": map[string]any{"gpt-5.4": "gpt-5.4"},
+			},
+		}},
+	}
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+
+	result, errParse := parseImportUpload(importUpload{Name: "sub2api-selected-accounts.json", Data: raw}, defaultImportLimits(), now)
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if len(result.Candidates) != 1 || !result.Candidates[0].CodexPAT || result.Candidates[0].AgentIdentity {
+		t.Fatalf("PAT candidate = %#v", result.Candidates)
+	}
+	document := decodeImportCandidate(t, result.Candidates[0])
+	if document["type"] != agentIdentityProvider || document["auth_mode"] != codexPATAuthMode || document["access_token"] != "at-test-personal-access-token" {
+		t.Fatalf("PAT document metadata = %#v", document)
+	}
+	if document["account_id"] != "pat-account" || document["plan_type"] != "plus" || document["priority"] != float64(7) {
+		t.Fatalf("PAT document identity = %#v", document)
+	}
+	for _, forbidden := range []string{"refresh_token", "id_token", "expired", "expires_at", "model_mapping"} {
+		if _, exists := document[forbidden]; exists {
+			t.Fatalf("PAT document retained OAuth-only field %q", forbidden)
+		}
+	}
+}
+
+func TestImportConvertStandaloneCodexPATWithJSONIdentityMetadata(t *testing.T) {
+	payload := map[string]any{
+		"access_token":  "at-test-standalone-personal-access-token",
+		"account_id":    "standalone-account",
+		"disabled":      false,
+		"email":         "standalone@example.com",
+		"expired":       false,
+		"id_token":      `{"chatgpt_account_id":"standalone-account","chatgpt_account_user_id":"account-user","chatgpt_plan_type":"team","chatgpt_user_id":"standalone-user"}`,
+		"last_refresh":  "",
+		"refresh_token": "",
+		"type":          "codex",
+	}
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+
+	result, errParse := parseImportUpload(importUpload{Name: "standalone.json", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if len(result.Candidates) != 1 || !result.Candidates[0].CodexPAT {
+		t.Fatalf("PAT candidate = %#v", result.Candidates)
+	}
+	document := decodeImportCandidate(t, result.Candidates[0])
+	if document["type"] != agentIdentityProvider || document["auth_mode"] != codexPATAuthMode {
+		t.Fatalf("PAT document auth dispatch = %#v", document)
+	}
+	if document["account_id"] != "standalone-account" || document["chatgpt_user_id"] != "standalone-user" || document["plan_type"] != "team" {
+		t.Fatalf("PAT document identity metadata = %#v", document)
+	}
+	for _, forbidden := range []string{"refresh_token", "id_token", "expired", "last_refresh"} {
+		if _, exists := document[forbidden]; exists {
+			t.Fatalf("PAT document retained OAuth-only field %q", forbidden)
+		}
+	}
+}
+
 func TestImportParseArbitraryNestedJSON(t *testing.T) {
 	accessToken := importTestJWT(map[string]any{
 		"email":                       "nested@example.com",

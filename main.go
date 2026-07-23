@@ -104,7 +104,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		return okEnvelope(response)
 	case cpaapi.MethodExecutorCountTokens:
-		return nil, fmt.Errorf("Agent Identity token counting is not supported")
+		return nil, fmt.Errorf("experimental Codex token counting is not supported")
 	case cpaapi.MethodExecutorHTTPRequest:
 		var httpRequest cpaapi.ExecutorHTTPRequest
 		if errUnmarshal := json.Unmarshal(request, &httpRequest); errUnmarshal != nil {

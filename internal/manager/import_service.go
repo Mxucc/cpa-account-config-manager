@@ -163,10 +163,10 @@ func (s *ImportService) PreviewMany(ctx context.Context, uploads []importUpload)
 
 func (s *ImportService) previewParsed(ctx context.Context, parsed importParseResult, inputType string) (ImportPreview, error) {
 	defer clearImportCandidates(parsed.Candidates)
-	verificationErrors := verifyAgentIdentityImportCandidates(ctx, parsed.Candidates, s.agentIdentity)
+	verificationErrors := verifyExperimentalCodexImportCandidates(ctx, parsed.Candidates, s.agentIdentity)
 	verified := parsed.Candidates[:0]
 	for index, candidate := range parsed.Candidates {
-		if !candidate.AgentIdentity {
+		if !candidate.AgentIdentity && !candidate.CodexPAT {
 			verified = append(verified, candidate)
 			continue
 		}
@@ -215,6 +215,8 @@ func (s *ImportService) previewParsed(ctx context.Context, parsed importParseRes
 		}
 		if candidate.AgentIdentity {
 			public.CredentialType = "agent_identity"
+		} else if candidate.CodexPAT {
+			public.CredentialType = codexPATAccountType
 		}
 		publicItems = append(publicItems, public)
 		items = append(items, storedImportItem{Public: public, AuthJSON: append(json.RawMessage(nil), candidate.AuthJSON...)})
@@ -239,22 +241,22 @@ func (s *ImportService) previewParsed(ctx context.Context, parsed importParseRes
 	return cloneImportPreview(public), nil
 }
 
-func verifyAgentIdentityImportCandidates(ctx context.Context, candidates []importCandidate, experiment *AgentIdentityExperiment) []error {
+func verifyExperimentalCodexImportCandidates(ctx context.Context, candidates []importCandidate, experiment *AgentIdentityExperiment) []error {
 	results := make([]error, len(candidates))
-	identityCount := 0
+	credentialCount := 0
 	for index := range candidates {
-		if !candidates[index].AgentIdentity {
+		if !candidates[index].AgentIdentity && !candidates[index].CodexPAT {
 			continue
 		}
-		identityCount++
+		credentialCount++
 		if experiment == nil {
-			results[index] = fmt.Errorf("Agent Identity import is unavailable")
+			results[index] = fmt.Errorf("experimental Codex credential import is unavailable")
 		}
 	}
-	if identityCount == 0 || experiment == nil {
+	if credentialCount == 0 || experiment == nil {
 		return results
 	}
-	workerCount := min(identityCount, agentIdentityImportVerifyWorkers)
+	workerCount := min(credentialCount, agentIdentityImportVerifyWorkers)
 	jobs := make(chan int)
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
@@ -267,7 +269,7 @@ func verifyAgentIdentityImportCandidates(ctx context.Context, candidates []impor
 		}()
 	}
 	for index := range candidates {
-		if candidates[index].AgentIdentity {
+		if candidates[index].AgentIdentity || candidates[index].CodexPAT {
 			jobs <- index
 		}
 	}

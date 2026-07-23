@@ -1123,8 +1123,8 @@ function AccountTypeCell({ account }: { account: Account }) {
 	const { tx } = useI18n();
   const primary = account.plan_type || account.account_type || account.type || "-";
   const secondary = account.plan_type ? account.account_type || account.type : "";
-	const primaryLabel = primary === "agent_identity" ? tx("ui.agent_identity") : primary;
-	const secondaryLabel = secondary === "agent_identity" ? tx("ui.agent_identity") : secondary;
+	const primaryLabel = primary === "agent_identity" ? tx("ui.agent_identity") : primary === "personal_access_token" ? tx("ui.codex_personal_access_token") : primary;
+	const secondaryLabel = secondary === "agent_identity" ? tx("ui.agent_identity") : secondary === "personal_access_token" ? tx("ui.codex_personal_access_token") : secondary;
   return (
     <div className="type-cell" title={secondaryLabel ? `${primaryLabel} / ${secondaryLabel}` : primaryLabel}>
       <strong className="account-plan-type">{primaryLabel}</strong>

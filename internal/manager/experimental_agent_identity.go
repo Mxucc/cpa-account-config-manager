@@ -161,6 +161,18 @@ func (e *AgentIdentityExperiment) ParseAuth(raw []byte) (cpaapi.AuthParseRespons
 	if len(raw) == 0 || len(raw) > agentIdentityMaxCredential {
 		return cpaapi.AuthParseResponse{}, nil
 	}
+	if isCodexPATCredential(raw) {
+		parsed, errParse := parseCodexPATCredential(raw)
+		if errParse != nil {
+			return cpaapi.AuthParseResponse{}, errParse
+		}
+		auth := codexPATAuthData(raw, parsed)
+		if e == nil || e.enabled == nil || !e.enabled() {
+			auth.Disabled = true
+			auth.Metadata["codex_pat_experiment_disabled"] = true
+		}
+		return cpaapi.AuthParseResponse{Handled: true, Auth: auth}, nil
+	}
 	var marker struct {
 		AgentIdentity json.RawMessage `json:"agent_identity"`
 	}
@@ -181,7 +193,14 @@ func (e *AgentIdentityExperiment) ParseAuth(raw []byte) (cpaapi.AuthParseRespons
 
 func (e *AgentIdentityExperiment) RefreshAuth(request cpaapi.AuthRefreshRequest) (cpaapi.AuthRefreshResponse, error) {
 	if e == nil || e.enabled == nil || !e.enabled() {
-		return cpaapi.AuthRefreshResponse{}, fmt.Errorf("Agent Identity support is disabled in experimental settings")
+		return cpaapi.AuthRefreshResponse{}, fmt.Errorf("experimental Codex credential support is disabled in settings")
+	}
+	if isCodexPATCredential(request.StorageJSON) {
+		parsed, errParse := parseCodexPATCredential(request.StorageJSON)
+		if errParse != nil {
+			return cpaapi.AuthRefreshResponse{}, errParse
+		}
+		return cpaapi.AuthRefreshResponse{Auth: codexPATAuthData(request.StorageJSON, parsed)}, nil
 	}
 	parsed, errParse := parseAgentIdentityCredential(request.StorageJSON, e.currentTime())
 	if errParse != nil {
@@ -194,6 +213,12 @@ func (e *AgentIdentityExperiment) ModelsForAuth(request cpaapi.AuthModelRequest)
 	if e == nil || e.enabled == nil || !e.enabled() || !strings.EqualFold(request.AuthProvider, agentIdentityProvider) {
 		return cpaapi.ModelResponse{Provider: agentIdentityProvider}, nil
 	}
+	if isCodexPATCredential(request.StorageJSON) {
+		if _, errParse := parseCodexPATCredential(request.StorageJSON); errParse != nil {
+			return cpaapi.ModelResponse{}, errParse
+		}
+		return cpaapi.ModelResponse{Provider: agentIdentityProvider, Models: agentIdentityModels()}, nil
+	}
 	if _, errParse := parseAgentIdentityCredential(request.StorageJSON, e.currentTime()); errParse != nil {
 		return cpaapi.ModelResponse{}, errParse
 	}
@@ -202,7 +227,14 @@ func (e *AgentIdentityExperiment) ModelsForAuth(request cpaapi.AuthModelRequest)
 
 func (e *AgentIdentityExperiment) VerifyImport(ctx context.Context, raw []byte) error {
 	if e == nil || e.enabled == nil || !e.enabled() {
-		return fmt.Errorf("Agent Identity support is disabled in experimental settings")
+		return fmt.Errorf("experimental Codex credential support is disabled in settings")
+	}
+	if isCodexPATCredential(raw) {
+		parsed, errParse := parseCodexPATCredential(raw)
+		if errParse != nil {
+			return errParse
+		}
+		return e.verifyCodexPATImport(ctx, parsed)
 	}
 	parsed, errParse := parseAgentIdentityCredential(raw, e.currentTime())
 	if errParse != nil {
@@ -508,6 +540,13 @@ func (e *AgentIdentityExperiment) loadJWKS(ctx context.Context) (agentIdentityJW
 }
 
 func (e *AgentIdentityExperiment) Execute(ctx context.Context, request cpaapi.ExecutorRequest) (cpaapi.ExecutorResponse, error) {
+	if isCodexPATCredential(request.StorageJSON) {
+		response, errExecute := e.executeCodexPATHTTP(ctx, request.HostCallbackID, request.StorageJSON, http.MethodPost, agentIdentityResponsesURL, request.Payload, request.Model, request.Stream)
+		if errExecute != nil {
+			return cpaapi.ExecutorResponse{}, errExecute
+		}
+		return cpaapi.ExecutorResponse{Payload: response.Body, Headers: response.Headers}, nil
+	}
 	response, errExecute := e.executeHTTP(ctx, request.HostCallbackID, request.StorageJSON, http.MethodPost, agentIdentityResponsesURL, request.Payload, request.Model, request.Stream, true)
 	if errExecute != nil {
 		return cpaapi.ExecutorResponse{}, errExecute
@@ -517,7 +556,14 @@ func (e *AgentIdentityExperiment) Execute(ctx context.Context, request cpaapi.Ex
 
 func (e *AgentIdentityExperiment) HTTPRequest(ctx context.Context, request cpaapi.ExecutorHTTPRequest) (cpaapi.ExecutorHTTPResponse, error) {
 	if !allowedAgentIdentityURL(request.URL) {
-		return cpaapi.ExecutorHTTPResponse{}, fmt.Errorf("Agent Identity executor URL is not allowed")
+		return cpaapi.ExecutorHTTPResponse{}, fmt.Errorf("experimental Codex executor URL is not allowed")
+	}
+	if isCodexPATCredential(request.StorageJSON) {
+		response, errExecute := e.executeCodexPATHTTP(ctx, request.HostCallbackID, request.StorageJSON, firstNonEmpty(request.Method, http.MethodPost), request.URL, request.Body, "", false)
+		if errExecute != nil {
+			return cpaapi.ExecutorHTTPResponse{}, errExecute
+		}
+		return cpaapi.ExecutorHTTPResponse{StatusCode: response.StatusCode, Headers: response.Headers, Body: response.Body}, nil
 	}
 	response, errExecute := e.executeHTTP(ctx, request.HostCallbackID, request.StorageJSON, firstNonEmpty(request.Method, http.MethodPost), request.URL, request.Body, "", false, true)
 	if errExecute != nil {
@@ -528,7 +574,19 @@ func (e *AgentIdentityExperiment) HTTPRequest(ctx context.Context, request cpaap
 
 func (e *AgentIdentityExperiment) ExecuteStream(ctx context.Context, request cpaapi.ExecutorRequest) (cpaapi.ExecutorStreamResponse, error) {
 	if strings.TrimSpace(request.StreamID) == "" {
-		return cpaapi.ExecutorStreamResponse{}, fmt.Errorf("Agent Identity executor stream id is required")
+		return cpaapi.ExecutorStreamResponse{}, fmt.Errorf("experimental Codex executor stream id is required")
+	}
+	if isCodexPATCredential(request.StorageJSON) {
+		body, errBody := agentIdentityRequestBody(request.Payload, request.Model, true)
+		if errBody != nil {
+			return cpaapi.ExecutorStreamResponse{}, errBody
+		}
+		upstream, errStart := e.startCodexPATStream(ctx, request.HostCallbackID, request.StorageJSON, body)
+		if errStart != nil {
+			return cpaapi.ExecutorStreamResponse{}, errStart
+		}
+		go e.forwardStream(request.StreamID, upstream.StreamID, "Codex personal access token")
+		return cpaapi.ExecutorStreamResponse{Headers: upstream.Headers}, nil
 	}
 	parsed, errParse := e.executionCredential(request.StorageJSON)
 	if errParse != nil {
@@ -542,7 +600,7 @@ func (e *AgentIdentityExperiment) ExecuteStream(ctx context.Context, request cpa
 	if errStart != nil {
 		return cpaapi.ExecutorStreamResponse{}, errStart
 	}
-	go e.forwardStream(request.StreamID, upstream.StreamID)
+	go e.forwardStream(request.StreamID, upstream.StreamID, "Agent Identity")
 	return cpaapi.ExecutorStreamResponse{Headers: upstream.Headers}, nil
 }
 
@@ -628,23 +686,24 @@ func (e *AgentIdentityExperiment) startAuthenticatedStream(ctx context.Context, 
 	return response, nil
 }
 
-func (e *AgentIdentityExperiment) forwardStream(pluginStreamID, upstreamStreamID string) {
+func (e *AgentIdentityExperiment) forwardStream(pluginStreamID, upstreamStreamID, credentialLabel string) {
 	ctx := context.Background()
+	credentialLabel = firstNonEmpty(credentialLabel, "Codex credential")
 	defer func() { _ = e.transport.AgentIdentityCloseHTTPStream(ctx, upstreamStreamID) }()
 	for {
 		chunk, errRead := e.transport.AgentIdentityReadStream(ctx, upstreamStreamID)
 		if errRead != nil {
-			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: "Agent Identity upstream stream failed"})
+			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " upstream stream failed"})
 			return
 		}
 		if len(chunk.Payload) > 0 {
 			if errEmit := e.transport.AgentIdentityEmitStream(ctx, cpaapi.HostStreamEmitRequest{StreamID: pluginStreamID, Payload: chunk.Payload}); errEmit != nil {
-				_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: "Agent Identity downstream stream closed"})
+				_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " downstream stream closed"})
 				return
 			}
 		}
 		if chunk.Error != "" {
-			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: "Agent Identity upstream stream failed"})
+			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " upstream stream failed"})
 			return
 		}
 		if chunk.Done {

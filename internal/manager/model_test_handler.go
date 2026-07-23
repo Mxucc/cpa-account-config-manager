@@ -22,7 +22,7 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	config := a.configSnapshot()
-	result, errTest := a.modelTests.Run(ctx, request, config.ManagementBaseURL, managementKey)
+	result, errTest := a.modelTests.Run(ctx, request, config.ManagementBaseURL, managementKey, req.HostCallbackID)
 	managementKey = ""
 	if errTest != nil {
 		switch {

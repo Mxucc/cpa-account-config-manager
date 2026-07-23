@@ -581,6 +581,29 @@ func (e *AgentIdentityExperiment) HTTPRequest(ctx context.Context, request cpaap
 	return cpaapi.ExecutorHTTPResponse{StatusCode: response.StatusCode, Headers: response.Headers, Body: response.Body}, nil
 }
 
+func (e *AgentIdentityExperiment) probeHTTP(ctx context.Context, callbackID string, rawCredential []byte, probe modelProbe) (modelProbeHTTPResponse, error) {
+	parsed, errParse := e.executionCredential(rawCredential)
+	if errParse != nil {
+		return modelProbeHTTPResponse{}, errParse
+	}
+	response, errRequest := e.doAuthenticated(ctx, callbackID, parsed, firstNonEmpty(probe.method, http.MethodPost), probe.url, []byte(probe.data), probe.kind == "codex")
+	if errRequest != nil {
+		return modelProbeHTTPResponse{}, errRequest
+	}
+	if isAgentIdentityTaskInvalidHTTPResponse(response.StatusCode, response.Body) {
+		e.invalidateTask(parsed.fingerprint)
+		parsed.taskID = ""
+		response, errRequest = e.doAuthenticated(ctx, callbackID, parsed, firstNonEmpty(probe.method, http.MethodPost), probe.url, []byte(probe.data), probe.kind == "codex")
+		if errRequest != nil {
+			return modelProbeHTTPResponse{}, errRequest
+		}
+	}
+	if len(response.Body) > maxModelTestBodyBytes {
+		return modelProbeHTTPResponse{}, fmt.Errorf("Agent Identity model-test response exceeded the size limit")
+	}
+	return modelProbeHTTPResponse{StatusCode: response.StatusCode, Header: response.Headers, Body: response.Body}, nil
+}
+
 func (e *AgentIdentityExperiment) ExecuteStream(ctx context.Context, request cpaapi.ExecutorRequest) (cpaapi.ExecutorStreamResponse, error) {
 	if strings.TrimSpace(request.StreamID) == "" {
 		return cpaapi.ExecutorStreamResponse{}, fmt.Errorf("experimental Codex executor stream id is required")
@@ -730,13 +753,14 @@ func (e *AgentIdentityExperiment) executionCredential(raw []byte) (agentIdentity
 }
 
 func (e *AgentIdentityExperiment) registeredTask(ctx context.Context, callbackID string, parsed agentIdentityParsed) (agentIdentityTask, error) {
-	if parsed.taskID != "" {
-		return agentIdentityTask{fingerprint: parsed.fingerprint, taskID: parsed.taskID}, nil
-	}
 	e.mu.Lock()
 	if task, exists := e.tasks[parsed.fingerprint]; exists && task.taskID != "" {
 		e.mu.Unlock()
 		return task, nil
+	}
+	if parsed.taskID != "" {
+		e.mu.Unlock()
+		return agentIdentityTask{fingerprint: parsed.fingerprint, taskID: parsed.taskID}, nil
 	}
 	if call, exists := e.inflight[parsed.fingerprint]; exists {
 		e.mu.Unlock()
@@ -765,6 +789,33 @@ func (e *AgentIdentityExperiment) registeredTask(ctx context.Context, callbackID
 	close(call.done)
 	e.mu.Unlock()
 	return call.task, call.err
+}
+
+func isAgentIdentityTaskInvalidHTTPResponse(statusCode int, body []byte) bool {
+	if statusCode != http.StatusUnauthorized {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	compact := strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(lower)
+	for _, marker := range []string{
+		`"code":"invalid_task_id"`,
+		`"code":"task_not_found"`,
+		`"code":"task_expired"`,
+		`"error":"invalid_task_id"`,
+	} {
+		if strings.Contains(compact, marker) {
+			return true
+		}
+	}
+	for _, marker := range []string{
+		"invalid task_id", "invalid task id", "task_id is invalid", "task id is invalid",
+		"task not found", "task expired", "unknown task_id", "unknown task id",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *AgentIdentityExperiment) registerTask(ctx context.Context, callbackID string, parsed agentIdentityParsed) (string, error) {

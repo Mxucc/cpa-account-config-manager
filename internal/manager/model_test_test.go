@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -106,7 +108,13 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 }
 
 func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelProbes(t *testing.T) {
-	host := &fakeAuthHost{
+	now := time.Date(2026, time.July, 23, 14, 39, 0, 0, time.UTC)
+	raw := testAgentIdentityCredential(t, testAgentIdentityRecord(t, "runtime-model-test", "task-model-test", "model-test@example.com"))
+	parsed, errParse := parseAgentIdentityCredential(raw, now)
+	if errParse != nil {
+		t.Fatalf("parseAgentIdentityCredential() error = %v", errParse)
+	}
+	authHost := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{
 			AuthIndex: "agent-auth", Name: "agent.json", Provider: agentIdentityProvider, Type: agentIdentityProvider,
 			AccountType: "agent_identity", Source: "file", Path: "/auths/agent.json",
@@ -114,36 +122,53 @@ func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelPro
 		details: map[string]cpaapi.HostAuthGetResponse{
 			"agent-auth": {
 				AuthIndex: "agent-auth", Name: "agent.json", Path: "/auths/agent.json",
-				JSON: json.RawMessage(`{"type":"codex-agent-identity","auth_mode":"agentIdentity","account_id":"agent-account"}`),
+				JSON: raw,
 			},
 		},
 	}
-	received := make([]managementAPICallRequest, 0, 2)
+	transport := &fakeAgentIdentityTransport{}
+	transport.do = func(callbackID string, request cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error) {
+		if callbackID != "model-test-callback" {
+			t.Fatalf("host callback id = %q", callbackID)
+		}
+		verifyAgentIdentityAssertionHeader(t, request.Headers.Get("Authorization"), parsed, "task-model-test", now)
+		switch request.URL {
+		case agentIdentityUsageURL:
+			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"rate_limit":{"allowed":true}}`)}, nil
+		case agentIdentityResponsesURL:
+			if !strings.Contains(string(request.Body), `"model":"gpt-5.6-sol"`) {
+				t.Fatalf("Agent Identity model-test body does not contain the selected model")
+			}
+			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"text/event-stream"}}, Body: []byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"agent-response\"}}\n\n")}, nil
+		default:
+			return cpaapi.HostHTTPResponse{}, fmt.Errorf("unexpected Agent Identity model-test URL")
+		}
+	}
+	type agentIdentityModelTestHost struct {
+		*fakeAuthHost
+		*fakeAgentIdentityTransport
+	}
+	host := &agentIdentityModelTestHost{fakeAuthHost: authHost, fakeAgentIdentityTransport: transport}
+	var managementCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var call managementAPICallRequest
-		if errDecode := json.NewDecoder(request.Body).Decode(&call); errDecode != nil {
-			t.Errorf("decode management request: %v", errDecode)
-		}
-		received = append(received, call)
-		response := managementAPICallResponse{StatusCode: http.StatusOK, Header: map[string][]string{"Content-Type": {"application/json"}}}
-		if strings.HasSuffix(call.URL, "/wham/usage") {
-			response.Body = `{"rate_limit":{"allowed":true}}`
-		} else {
-			response.Header = map[string][]string{"Content-Type": {"text/event-stream"}}
-			response.Body = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"agent-response\"}}\n\n"
-		}
-		_ = json.NewEncoder(writer).Encode(response)
+		managementCalls++
+		http.Error(writer, "Agent Identity must not use Management api-call", http.StatusBadGateway)
 	}))
 	defer server.Close()
 
 	app := NewApp(host, []byte("index"))
+	app.agentIdentity.now = func() time.Time { return now }
 	app.modelTests.doer = server.Client()
 	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	if _, errSet := app.experiments.Set(ExperimentalSettings{AgentIdentityEnabled: true}); errSet != nil {
+		t.Fatalf("enable Agent Identity experiment: %v", errSet)
+	}
 	defer app.Close()
-	body, _ := json.Marshal(ModelTestRequest{AccountID: "agent-auth", Model: "gpt-5.4"})
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "agent-auth", Model: "gpt-5.6-sol"})
 	response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
 		Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test",
 		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}}, Body: body,
+		HostCallbackID: "model-test-callback",
 	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Agent Identity model test = %d %s", response.StatusCode, response.Body)
@@ -152,12 +177,16 @@ func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelPro
 	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
 		t.Fatalf("decode result: %v", errDecode)
 	}
-	if result.Provider != agentIdentityProvider || result.Status != "available" || result.Model != "gpt-5.4" {
+	if result.Provider != agentIdentityProvider || result.Status != "available" || result.Model != "gpt-5.6-sol" || result.StatusCode != http.StatusOK {
 		t.Fatalf("Agent Identity model result = %#v", result)
 	}
-	if len(received) != 2 || received[0].AuthIndex != "agent-auth" || received[1].AuthIndex != "agent-auth" ||
-		!strings.HasSuffix(received[0].URL, "/wham/usage") || !strings.HasSuffix(received[1].URL, "/codex/responses") {
-		t.Fatalf("Agent Identity probes = %#v", received)
+	if managementCalls != 0 {
+		t.Fatalf("Management api-call count = %d, want 0", managementCalls)
+	}
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	if len(transport.requests) != 2 || transport.requests[0].URL != agentIdentityUsageURL || transport.requests[1].URL != agentIdentityResponsesURL {
+		t.Fatalf("Agent Identity host probe count/URLs = %d", len(transport.requests))
 	}
 }
 

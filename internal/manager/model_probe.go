@@ -74,6 +74,7 @@ type ModelTestResponseHeader struct {
 type ModelTestService struct {
 	accounts                *AccountService
 	usage                   credentialUsageObserver
+	agentIdentity           *AgentIdentityExperiment
 	doer                    HTTPDoer
 	semaphore               chan struct{}
 	now                     func() time.Time
@@ -242,7 +243,14 @@ func (s *ModelTestService) SetExperimentalTransformer(transformer RequestTransfo
 	s.experimentalTransformer = transformer
 }
 
-func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string) (ModelTestResult, error) {
+func (s *ModelTestService) SetAgentIdentityExperiment(experiment *AgentIdentityExperiment) {
+	if s == nil {
+		return
+	}
+	s.agentIdentity = experiment
+}
+
+func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string, hostCallbackID ...string) (ModelTestResult, error) {
 	accountID := safeOperationIdentifier(request.AccountID, 256)
 	if accountID == "" {
 		return ModelTestResult{}, fmt.Errorf("account_id is required and must be at most 256 characters")
@@ -290,12 +298,16 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
 	defer cancel()
+	callbackID := ""
+	if len(hostCallbackID) > 0 {
+		callbackID = strings.TrimSpace(hostCallbackID[0])
+	}
 	// Inspection must use the Codex credential endpoint even when CPA runtime
 	// metadata says api_key. The runtime label can be stale or describe the
 	// routing adapter rather than the physical auth file.
 	if probeProvider == "codex" && !request.ExperimentalWeeklyOverdraft && (request.Inspection || !metadata.usesAPIKey()) {
 		credential := buildCodexCredentialProbe(metadata)
-		credentialResponse, errCredential := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, credential)
+		credentialResponse, errCredential := s.callAccountProbe(probeCtx, managementBaseURL, managementKey, callbackID, account, credential)
 		if errCredential == nil {
 			statusCode, body := credentialResponse.StatusCode, credentialResponse.Body
 			if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices && s.usage != nil {
@@ -351,7 +363,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		result.Experiment = &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: callID}
 	}
 
-	upstreamResponse, errCall := s.callManagementAPI(probeCtx, managementBaseURL, managementKey, account.ID, probe)
+	upstreamResponse, errCall := s.callAccountProbe(probeCtx, managementBaseURL, managementKey, callbackID, account, probe)
 	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
 	if errCall != nil {
 		result.Status = "review"
@@ -368,6 +380,24 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		result.Response = sanitizeModelTestResponsePreview(upstreamResponse)
 	}
 	return result, nil
+}
+
+func (s *ModelTestService) callAccountProbe(ctx context.Context, managementBaseURL, managementKey, callbackID string, account Account, probe modelProbe) (modelProbeHTTPResponse, error) {
+	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)))
+	if provider != agentIdentityProvider {
+		return s.callManagementAPI(ctx, managementBaseURL, managementKey, account.ID, probe)
+	}
+	if s == nil || s.agentIdentity == nil || s.accounts == nil || s.accounts.host == nil {
+		return modelProbeHTTPResponse{}, fmt.Errorf("Agent Identity model-test executor is unavailable")
+	}
+	detail, errGet := s.accounts.host.GetAuth(ctx, account.ID)
+	if errGet != nil {
+		return modelProbeHTTPResponse{}, fmt.Errorf("load Agent Identity model-test credential: %w", errGet)
+	}
+	if len(detail.JSON) == 0 || len(detail.JSON) > agentIdentityMaxCredential {
+		return modelProbeHTTPResponse{}, fmt.Errorf("Agent Identity model-test credential size is invalid")
+	}
+	return s.agentIdentity.probeHTTP(ctx, callbackID, detail.JSON, probe)
 }
 
 func buildCodexCredentialProbe(metadata modelTestAuthMetadata) modelProbe {

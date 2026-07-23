@@ -86,6 +86,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		identityTransport = transport
 	}
 	agentIdentity := NewAgentIdentityExperiment(experiments.AgentIdentityEnabled, identityTransport)
+	modelTests.SetAgentIdentityExperiment(agentIdentity)
 	imports := NewImportService(host, mutations)
 	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)

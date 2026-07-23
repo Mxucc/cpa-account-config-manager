@@ -42,16 +42,30 @@ func saveJobSnapshot(path string, snapshot JobSnapshot) error {
 }
 
 func savePrivateJSON(path string, payload any) error {
-	if errMkdir := os.MkdirAll(filepath.Dir(path), 0o700); errMkdir != nil {
+	directory := filepath.Dir(path)
+	if errMkdir := os.MkdirAll(directory, 0o700); errMkdir != nil {
 		return fmt.Errorf("create private data directory: %w", errMkdir)
 	}
 	raw, errEncode := json.Marshal(payload)
 	if errEncode != nil {
 		return fmt.Errorf("encode private data: %w", errEncode)
 	}
-	temporaryPath := path + ".tmp"
-	if errWrite := os.WriteFile(temporaryPath, raw, 0o600); errWrite != nil {
+	temporary, errCreate := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	if errCreate != nil {
+		return fmt.Errorf("create private temporary file: %w", errCreate)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if errChmod := temporary.Chmod(0o600); errChmod != nil && !errors.Is(errChmod, os.ErrPermission) {
+		_ = temporary.Close()
+		return fmt.Errorf("protect private temporary file: %w", errChmod)
+	}
+	if _, errWrite := temporary.Write(raw); errWrite != nil {
+		_ = temporary.Close()
 		return fmt.Errorf("write private data: %w", errWrite)
+	}
+	if errClose := temporary.Close(); errClose != nil {
+		return fmt.Errorf("close private data: %w", errClose)
 	}
 	if errRename := os.Rename(temporaryPath, path); errRename != nil {
 		if _, errStat := os.Stat(path); errStat == nil {
@@ -61,7 +75,6 @@ func savePrivateJSON(path string, payload any) error {
 				}
 			}
 		}
-		_ = os.Remove(temporaryPath)
 		return fmt.Errorf("replace private data: %w", errRename)
 	}
 	if errChmod := os.Chmod(path, 0o600); errChmod != nil && !errors.Is(errChmod, os.ErrPermission) {

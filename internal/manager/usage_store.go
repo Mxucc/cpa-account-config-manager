@@ -2,14 +2,21 @@ package manager
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
-const usageStoreVersion = 1
+const (
+	usageStoreVersion     = 1
+	usageStoreLockTimeout = 2 * time.Second
+	usageStoreLockStale   = 30 * time.Second
+	usageStoreLockRetry   = 10 * time.Millisecond
+)
 
 type persistedUsageState struct {
 	Version  int                       `json:"version"`
@@ -18,6 +25,14 @@ type persistedUsageState struct {
 
 func usageStorePath(dataDir string) string {
 	return filepath.Join(dataDir, "usage-snapshots.json")
+}
+
+func usageStoreBackupPath(path string) string {
+	return path + ".bak"
+}
+
+func usageStoreLockPath(path string) string {
+	return path + ".lock"
 }
 
 func loadUsageState(path string) (map[string]usageAggregate, error) {
@@ -32,12 +47,31 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 	if persisted.Version != usageStoreVersion {
 		return nil, fmt.Errorf("unsupported usage store version %d", persisted.Version)
 	}
+	return normalizeUsageAccounts(persisted.Accounts), nil
+}
+
+func loadUsageStateWithBackup(path string) (map[string]usageAggregate, bool, error) {
+	accounts, errPrimary := loadUsageState(path)
+	if errPrimary == nil {
+		return accounts, false, nil
+	}
+	backup, errBackup := loadUsageState(usageStoreBackupPath(path))
+	if errBackup == nil {
+		return backup, true, nil
+	}
+	if errors.Is(errPrimary, os.ErrNotExist) && !errors.Is(errBackup, os.ErrNotExist) {
+		return nil, false, errBackup
+	}
+	return nil, false, errPrimary
+}
+
+func normalizeUsageAccounts(values map[string]usageAggregate) map[string]usageAggregate {
 	type entry struct {
 		authIndex string
 		aggregate usageAggregate
 	}
-	entries := make([]entry, 0, len(persisted.Accounts))
-	for authIndex, aggregate := range persisted.Accounts {
+	entries := make([]entry, 0, len(values))
+	for authIndex, aggregate := range values {
 		authIndex = strings.TrimSpace(authIndex)
 		if authIndex == "" {
 			continue
@@ -60,14 +94,115 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 	for _, item := range entries {
 		accounts[item.authIndex] = item.aggregate
 	}
-	return accounts, nil
+	return accounts
 }
 
 func saveUsageState(path string, accounts map[string]usageAggregate) error {
-	return savePrivateJSON(path, persistedUsageState{
+	state := persistedUsageState{
 		Version:  usageStoreVersion,
-		Accounts: cloneUsageAggregates(accounts),
-	})
+		Accounts: normalizeUsageAccounts(accounts),
+	}
+	if errSave := savePrivateJSON(path, state); errSave != nil {
+		return errSave
+	}
+	if errBackup := savePrivateJSON(usageStoreBackupPath(path), state); errBackup != nil {
+		return fmt.Errorf("save usage backup: %w", errBackup)
+	}
+	return nil
+}
+
+func persistUsageState(path string, accounts map[string]usageAggregate) (map[string]usageAggregate, error) {
+	release, errLock := acquireUsageStoreLock(path)
+	if errLock != nil {
+		return nil, errLock
+	}
+	defer release()
+	merged := normalizeUsageAccounts(accounts)
+	stored, _, errLoad := loadUsageStateWithBackup(path)
+	if errLoad == nil {
+		merged = mergeUsageAggregates(merged, stored)
+	} else if !errors.Is(errLoad, os.ErrNotExist) {
+		return nil, errLoad
+	}
+	if errSave := saveUsageState(path, merged); errSave != nil {
+		return nil, errSave
+	}
+	return merged, nil
+}
+
+func acquireUsageStoreLock(path string) (func(), error) {
+	if errMkdir := os.MkdirAll(filepath.Dir(path), 0o700); errMkdir != nil {
+		return nil, fmt.Errorf("create usage data directory: %w", errMkdir)
+	}
+	lockPath := usageStoreLockPath(path)
+	deadline := time.Now().Add(usageStoreLockTimeout)
+	for {
+		file, errOpen := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errOpen == nil {
+			if errClose := file.Close(); errClose != nil {
+				_ = os.Remove(lockPath)
+				return nil, fmt.Errorf("close usage storage lock: %w", errClose)
+			}
+			return func() { _ = os.Remove(lockPath) }, nil
+		}
+		if !errors.Is(errOpen, os.ErrExist) {
+			return nil, fmt.Errorf("acquire usage storage lock: %w", errOpen)
+		}
+		if info, errStat := os.Stat(lockPath); errStat == nil && time.Since(info.ModTime()) > usageStoreLockStale {
+			_ = os.Remove(lockPath)
+			continue
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("acquire usage storage lock: timed out")
+		}
+		time.Sleep(usageStoreLockRetry)
+	}
+}
+
+func mergeUsageAggregates(current, stored map[string]usageAggregate) map[string]usageAggregate {
+	merged := cloneUsageAggregates(stored)
+	for authIndex, aggregate := range current {
+		merged[authIndex] = mergeUsageAggregate(aggregate, merged[authIndex])
+	}
+	return normalizeUsageAccounts(merged)
+}
+
+func mergeUsageAggregate(current, stored usageAggregate) usageAggregate {
+	current.InputTokens = maxInt64(current.InputTokens, stored.InputTokens)
+	current.OutputTokens = maxInt64(current.OutputTokens, stored.OutputTokens)
+	current.ReasoningTokens = maxInt64(current.ReasoningTokens, stored.ReasoningTokens)
+	current.CachedTokens = maxInt64(current.CachedTokens, stored.CachedTokens)
+	current.CacheReadTokens = maxInt64(current.CacheReadTokens, stored.CacheReadTokens)
+	current.CacheCreationTokens = maxInt64(current.CacheCreationTokens, stored.CacheCreationTokens)
+	current.TotalTokens = maxInt64(current.TotalTokens, stored.TotalTokens)
+	if stored.LastRequestAt.After(current.LastRequestAt) {
+		current.LastRequestAt = stored.LastRequestAt
+	}
+	if stored.UpdatedAt.After(current.UpdatedAt) {
+		current.UpdatedAt = stored.UpdatedAt
+	}
+	current.Codex = mergeCodexUsage(current.Codex, stored.Codex)
+	return sanitizeUsageAggregate(current)
+}
+
+func mergeCodexUsage(current, stored *CodexUsageSnapshot) *CodexUsageSnapshot {
+	if current == nil {
+		return cloneCodexUsage(stored)
+	}
+	if stored == nil {
+		return cloneCodexUsage(current)
+	}
+	if stored.ObservedAt.After(current.ObservedAt) {
+		return cloneCodexUsage(stored)
+	}
+	merged := cloneCodexUsage(current)
+	if merged.FiveHour == nil {
+		merged.FiveHour = cloneUsageWindow(stored.FiveHour)
+	}
+	if merged.SevenDay == nil {
+		merged.SevenDay = cloneUsageWindow(stored.SevenDay)
+	}
+	return merged
 }
 
 func sanitizeUsageAggregate(aggregate usageAggregate) usageAggregate {

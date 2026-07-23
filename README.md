@@ -247,13 +247,17 @@ The CLIProxyAPI process needs:
   additionally has a durable copy in CPA config.
 
 The plugin creates `data_dir` with mode `0700` where supported and writes its
-JSON state through temporary files with mode `0600`. Inspection and update
-state contain only allow-listed identities, reason codes, counters, policies,
-versions, and timestamps. Usage state contains only cumulative Token counters
-and normalized Codex window percentages/reset times. None of these files stores
-raw Auth JSON, API keys, failure bodies, cookies, raw response headers, or a
-Management Key. Run CLIProxyAPI and the plugin under the same non-root service
-account where practical.
+JSON state through unique temporary files with mode `0600`. Inspection and
+update state contain only allow-listed identities, reason codes, counters,
+policies, versions, and timestamps. Usage state is written to
+`usage-snapshots.json` and a last-known-good `usage-snapshots.json.bak`; both
+contain only cumulative Token counters and normalized Codex window
+percentages/reset times. Usage writes are serialized across overlapping plugin
+instances and merge monotonically before replacement, so a plugin upgrade
+cannot roll a newer snapshot back to an older in-memory copy. None of these
+files stores raw Auth JSON, API keys, failure bodies, cookies, raw response
+headers, or a Management Key. Run CLIProxyAPI and the plugin under the same
+non-root service account where practical.
 
 `operation-log.json` retains at most 2,000 entries. It contains only fixed
 category/action/status/source/scope enums, public relation IDs, bounded counts,
@@ -735,7 +739,9 @@ services:
 Use the actual image paths for your deployment. Because the plugin and
 CLIProxyAPI run in the same container, `http://127.0.0.1:8317` normally remains
 the correct internal Management URL. Restart the container after installing or
-upgrading the native library.
+upgrading the native library. The `plugin-data` mount is required when the
+container itself is replaced; no plugin can retain local snapshots from an
+unmounted container filesystem after that filesystem is discarded.
 
 ## Management Routes
 

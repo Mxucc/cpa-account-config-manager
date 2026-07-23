@@ -59,6 +59,7 @@ type usageAggregate struct {
 
 type UsageTracker struct {
 	mu           sync.RWMutex
+	storeMu      sync.Mutex
 	accounts     map[string]usageAggregate
 	now          func() time.Time
 	store        string
@@ -92,23 +93,32 @@ func (t *UsageTracker) Configure(config Config) {
 	config = normalizeConfig(config)
 	storePath := usageStorePath(config.DataDir)
 
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.loaded && t.store == storePath {
+		t.mu.Unlock()
 		return
 	}
 	if t.loaded && t.dirty && t.store != "" {
-		_ = saveUsageState(t.store, t.accounts)
+		if persisted, errSave := persistUsageState(t.store, t.accounts); errSave == nil {
+			t.accounts = mergeUsageAggregates(t.accounts, persisted)
+			t.dirty = false
+		}
 	}
-	accounts, errLoad := loadUsageState(storePath)
+	accounts, recovered, errLoad := loadUsageStateWithBackup(storePath)
 	if errLoad != nil {
 		accounts = make(map[string]usageAggregate)
 	}
 	t.accounts = accounts
 	t.store = storePath
 	t.loaded = true
-	t.dirty = false
+	t.dirty = recovered
 	t.generation++
+	t.mu.Unlock()
+	if recovered {
+		t.requestPersist()
+	}
 }
 
 func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
@@ -291,6 +301,8 @@ func (t *UsageTracker) persist() {
 	if t == nil {
 		return
 	}
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
 	t.mu.RLock()
 	if !t.dirty || t.store == "" {
 		t.mu.RUnlock()
@@ -300,10 +312,14 @@ func (t *UsageTracker) persist() {
 	generation := t.generation
 	accounts := cloneUsageAggregates(t.accounts)
 	t.mu.RUnlock()
-	if errSave := saveUsageState(storePath, accounts); errSave != nil {
+	persisted, errSave := persistUsageState(storePath, accounts)
+	if errSave != nil {
 		return
 	}
 	t.mu.Lock()
+	if t.store == storePath {
+		t.accounts = mergeUsageAggregates(t.accounts, persisted)
+	}
 	if t.generation == generation && t.store == storePath {
 		t.dirty = false
 	}

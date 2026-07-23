@@ -163,6 +163,76 @@ func TestHandleManagementListsRedactedAccounts(t *testing.T) {
 	}
 }
 
+func TestAppReplacementRestoresPersistedUsageIntoAccountList(t *testing.T) {
+	dataDir := t.TempDir()
+	config := []byte(fmt.Sprintf("data_dir: %q\n", dataDir))
+	newHost := func() *fakeAuthHost {
+		return &fakeAuthHost{
+			entries: []cpaapi.HostAuthFileEntry{{
+				ID: "runtime-instance-id", AuthIndex: "stable-auth-index", Name: "persisted.json",
+				Provider: "codex", Type: "oauth", Source: "file", Path: "/auths/persisted.json",
+			}},
+			details: map[string]cpaapi.HostAuthGetResponse{
+				"stable-auth-index": {
+					AuthIndex: "stable-auth-index", Name: "persisted.json", Path: "/auths/persisted.json",
+					JSON: json.RawMessage(`{"type":"codex","access_token":"must-not-be-persisted"}`),
+				},
+			},
+		}
+	}
+
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	beforeUpdate := NewApp(newHost(), []byte("old-index"))
+	beforeUpdate.Configure(config)
+	beforeUpdate.HandleUsage(cpaapi.UsageRecord{
+		AuthIndex: "stable-auth-index", AuthID: "must-not-be-persisted", APIKey: "sk-must-not-be-persisted",
+		RequestedAt: observedAt,
+		Detail:      cpaapi.UsageDetail{InputTokens: 80, OutputTokens: 20, TotalTokens: 100},
+		ResponseHeaders: http.Header{
+			"Authorization":                         []string{"Bearer must-not-be-persisted"},
+			"X-Codex-Primary-Used-Percent":          []string{"64"},
+			"X-Codex-Primary-Reset-After-Seconds":   []string{"604800"},
+			"X-Codex-Primary-Window-Minutes":        []string{"10080"},
+			"X-Codex-Secondary-Used-Percent":        []string{"18"},
+			"X-Codex-Secondary-Reset-After-Seconds": []string{"18000"},
+			"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+		},
+	})
+	beforeUpdate.Close()
+
+	afterUpdate := NewApp(newHost(), []byte("replacement-index"))
+	afterUpdate.Configure(config)
+	defer afterUpdate.Close()
+	response := afterUpdate.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/accounts",
+		Query:  url.Values{"page_size": []string{"20"}},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("replacement account list status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var listed ListResponse
+	if errDecode := json.Unmarshal(response.Body, &listed); errDecode != nil {
+		t.Fatalf("decode replacement account list: %v", errDecode)
+	}
+	if len(listed.Accounts) != 1 {
+		t.Fatalf("replacement account count = %d, want 1", len(listed.Accounts))
+	}
+	usage := listed.Accounts[0].Usage
+	if usage == nil || usage.TotalTokens != 100 || usage.InputTokens != 80 || usage.OutputTokens != 20 {
+		t.Fatalf("replacement account usage = %#v", usage)
+	}
+	if usage.Codex == nil || usage.Codex.FiveHour == nil || usage.Codex.SevenDay == nil ||
+		usage.Codex.FiveHour.UsedPercent != 18 || usage.Codex.SevenDay.UsedPercent != 64 {
+		t.Fatalf("replacement account quota = %#v", usage.Codex)
+	}
+	for _, secret := range []string{"must-not-be-persisted", "sk-must-not-be-persisted", "Authorization", "Bearer"} {
+		if bytes.Contains(response.Body, []byte(secret)) {
+			t.Fatalf("replacement response leaked %q: %s", secret, response.Body)
+		}
+	}
+}
+
 func TestHandleManagementMergesSanitizedAutomationSummary(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 18, 0, 0, 0, time.UTC)
 	recoverAfter := now.Add(2 * time.Hour)

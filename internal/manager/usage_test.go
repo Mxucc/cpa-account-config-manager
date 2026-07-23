@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -73,13 +74,15 @@ func TestUsageTrackerAggregatesSanitizedUsageAndCodexWindows(t *testing.T) {
 	}
 
 	tracker.Close()
-	raw, errRead := os.ReadFile(usageStorePath(dataDir))
-	if errRead != nil {
-		t.Fatalf("read usage state: %v", errRead)
-	}
-	for _, secret := range []string{"sk-client-secret", "runtime-secret-id", "upstream-secret", "header-secret", "session=secret", "Authorization", "Set-Cookie"} {
-		if bytes.Contains(raw, []byte(secret)) {
-			t.Fatalf("persisted usage leaked %q: %s", secret, raw)
+	for _, path := range []string{usageStorePath(dataDir), usageStoreBackupPath(usageStorePath(dataDir))} {
+		raw, errRead := os.ReadFile(path)
+		if errRead != nil {
+			t.Fatalf("read usage state %q: %v", filepath.Base(path), errRead)
+		}
+		for _, secret := range []string{"sk-client-secret", "runtime-secret-id", "upstream-secret", "header-secret", "session=secret", "Authorization", "Set-Cookie"} {
+			if bytes.Contains(raw, []byte(secret)) {
+				t.Fatalf("persisted usage %q leaked %q: %s", filepath.Base(path), secret, raw)
+			}
 		}
 	}
 }
@@ -117,6 +120,61 @@ func TestUsageTrackerLoadsPersistedSnapshotAndExpiresQuotaWindows(t *testing.T) 
 	}
 	if expired.Codex != nil {
 		t.Fatalf("expired codex window = %#v, want nil", expired.Codex)
+	}
+}
+
+func TestUsagePersistenceMergesOverlappingPluginInstances(t *testing.T) {
+	dataDir := t.TempDir()
+	seed := NewUsageTracker()
+	seed.persistDelay = time.Hour
+	seed.Configure(Config{DataDir: dataDir})
+	seed.Observe(cpaapi.UsageRecord{AuthIndex: "shared", Detail: cpaapi.UsageDetail{TotalTokens: 10}})
+	seed.Close()
+
+	oldInstance := NewUsageTracker()
+	oldInstance.persistDelay = time.Hour
+	oldInstance.Configure(Config{DataDir: dataDir})
+	replacement := NewUsageTracker()
+	replacement.persistDelay = time.Hour
+	replacement.Configure(Config{DataDir: dataDir})
+
+	oldInstance.Observe(cpaapi.UsageRecord{AuthIndex: "shared", Detail: cpaapi.UsageDetail{TotalTokens: 5}})
+	replacement.Observe(cpaapi.UsageRecord{AuthIndex: "replacement-only", Detail: cpaapi.UsageDetail{TotalTokens: 7}})
+	oldInstance.Close()
+	replacement.Close()
+
+	restored := NewUsageTracker()
+	defer restored.Close()
+	restored.Configure(Config{DataDir: dataDir})
+	shared := restored.Snapshot("shared")
+	replacementOnly := restored.Snapshot("replacement-only")
+	if shared == nil || shared.TotalTokens != 15 {
+		t.Fatalf("shared usage after overlapping replacement = %#v, want 15 tokens", shared)
+	}
+	if replacementOnly == nil || replacementOnly.TotalTokens != 7 {
+		t.Fatalf("replacement usage after overlapping replacement = %#v, want 7 tokens", replacementOnly)
+	}
+}
+
+func TestUsagePersistenceRecoversLastGoodBackup(t *testing.T) {
+	dataDir := t.TempDir()
+	first := NewUsageTracker()
+	first.persistDelay = time.Hour
+	first.Configure(Config{DataDir: dataDir})
+	first.Observe(cpaapi.UsageRecord{AuthIndex: "recoverable", Detail: cpaapi.UsageDetail{TotalTokens: 42}})
+	first.Close()
+
+	storePath := usageStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte(`{"version":1,"accounts":`), 0o600); errWrite != nil {
+		t.Fatalf("corrupt primary usage state: %v", errWrite)
+	}
+
+	restored := NewUsageTracker()
+	defer restored.Close()
+	restored.Configure(Config{DataDir: dataDir})
+	snapshot := restored.Snapshot("recoverable")
+	if snapshot == nil || snapshot.TotalTokens != 42 {
+		t.Fatalf("backup-restored usage = %#v, want 42 tokens", snapshot)
 	}
 }
 

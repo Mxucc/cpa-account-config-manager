@@ -33,6 +33,9 @@ const (
 	agentIdentityRegistrationBase = "https://auth.openai.com/api/accounts"
 	agentIdentityResponsesURL     = "https://chatgpt.com/backend-api/codex/responses"
 	agentIdentityUsageURL         = "https://chatgpt.com/backend-api/wham/usage"
+	codexRateLimitCreditsURL      = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+	codexRateLimitConsumeURL      = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
+	managementHTTPDelegate        = "management_http_delegate"
 	agentIdentityMaxCredential    = 2 << 20
 	agentIdentityMaxResponse      = 8 << 20
 	agentIdentityJWKSMaxResponse  = 1 << 20
@@ -263,7 +266,7 @@ func (e *AgentIdentityExperiment) verifyRecordImport(ctx context.Context, parsed
 	}
 	response, errRequest := e.transport.AgentIdentityDo(ctx, "", cpaapi.HostHTTPRequest{
 		Method: http.MethodGet, URL: agentIdentityUsageURL,
-		Headers: agentIdentityHeaders(parsed, authorization, false),
+		Headers: agentIdentityHeadersForURL(parsed, authorization, agentIdentityUsageURL, false),
 	})
 	if errRequest != nil {
 		return fmt.Errorf("verify Agent Identity record: %w", errRequest)
@@ -285,7 +288,7 @@ func agentIdentityAuthData(raw []byte, parsed agentIdentityParsed) cpaapi.AuthDa
 		"plan_type": parsed.claims.PlanType, "chatgpt_plan_type": parsed.claims.PlanType,
 		"priority": parsed.credential.Priority, "note": parsed.credential.Note,
 	}
-	attributes := map[string]string{"plan_type": parsed.claims.PlanType}
+	attributes := map[string]string{"plan_type": parsed.claims.PlanType, managementHTTPDelegate: "true"}
 	return cpaapi.AuthData{
 		Provider: agentIdentityProvider, Label: parsed.claims.Email,
 		Prefix: parsed.credential.Prefix, ProxyURL: parsed.credential.ProxyURL,
@@ -648,7 +651,7 @@ func (e *AgentIdentityExperiment) doAuthenticated(ctx context.Context, callbackI
 	if errAuthorization != nil {
 		return cpaapi.HostHTTPResponse{}, errAuthorization
 	}
-	request := cpaapi.HostHTTPRequest{Method: method, URL: target, Headers: agentIdentityHeaders(parsed, authorization, stream), Body: body}
+	request := cpaapi.HostHTTPRequest{Method: method, URL: target, Headers: agentIdentityHeadersForURL(parsed, authorization, target, stream), Body: body}
 	return e.transport.AgentIdentityDo(ctx, callbackID, request)
 }
 
@@ -861,15 +864,49 @@ func agentIdentityHeaders(parsed agentIdentityParsed, authorization string, stre
 	if stream {
 		accept = "text/event-stream"
 	}
-	headers := http.Header{
-		"Authorization": []string{authorization}, "ChatGPT-Account-ID": []string{parsed.claims.AccountID},
-		"Content-Type": []string{"application/json"}, "Accept": []string{accept},
-		"Originator": []string{"codex_cli_rs"}, "User-Agent": []string{"codex_cli_rs/cpa-account-config-manager"},
-	}
+	headers := make(http.Header)
+	headers.Set("Authorization", authorization)
+	headers.Set("ChatGPT-Account-ID", parsed.claims.AccountID)
+	headers.Set("Content-Type", "application/json")
+	headers.Set("Accept", accept)
+	headers.Set("Originator", "codex_cli_rs")
+	headers.Set("User-Agent", "codex_cli_rs/cpa-account-config-manager")
 	if parsed.claims.ChatGPTAccountIsFedRAMP {
 		headers.Set("X-OpenAI-Fedramp", "true")
 	}
 	return headers
+}
+
+func agentIdentityHeadersForURL(parsed agentIdentityParsed, authorization, target string, stream bool) http.Header {
+	headers := agentIdentityHeaders(parsed, authorization, stream)
+	if isCodexQuotaURL(target) {
+		applyCodexQuotaHeaders(headers)
+	}
+	return headers
+}
+
+func isCodexQuotaURL(target string) bool {
+	parsed, errParse := url.Parse(strings.TrimSpace(target))
+	if errParse != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "chatgpt.com") || parsed.User != nil || (parsed.Port() != "" && parsed.Port() != "443") {
+		return false
+	}
+	switch parsed.EscapedPath() {
+	case "/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits", "/backend-api/wham/rate-limit-reset-credits/consume":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyCodexQuotaHeaders(headers http.Header) {
+	headers.Set("Accept", "application/json")
+	headers.Set("OpenAI-Beta", "codex-1")
+	headers.Set("Originator", "Codex Desktop")
+	headers.Set("OAI-Language", "zh-CN")
+	headers.Set("Sec-Fetch-Site", "none")
+	headers.Set("Sec-Fetch-Mode", "no-cors")
+	headers.Set("Sec-Fetch-Dest", "empty")
+	headers.Set("Priority", "u=4, i")
 }
 
 func agentIdentityRequestBody(raw []byte, model string, stream bool) ([]byte, error) {
@@ -894,7 +931,10 @@ func allowedAgentIdentityURL(rawURL string) bool {
 		return false
 	}
 	requestPath := parsed.EscapedPath()
-	return strings.HasPrefix(requestPath, "/backend-api/codex/") || requestPath == "/backend-api/wham/usage"
+	return strings.HasPrefix(requestPath, "/backend-api/codex/") ||
+		requestPath == "/backend-api/wham/usage" ||
+		requestPath == "/backend-api/wham/rate-limit-reset-credits" ||
+		requestPath == "/backend-api/wham/rate-limit-reset-credits/consume"
 }
 
 func agentIdentityTimestamp(now time.Time) string {

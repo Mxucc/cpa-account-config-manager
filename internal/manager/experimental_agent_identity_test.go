@@ -68,6 +68,9 @@ func TestAgentIdentityRecordParseDisabledAndModels(t *testing.T) {
 	if !response.Handled || !response.Auth.Disabled || response.Auth.Provider != agentIdentityProvider {
 		t.Fatalf("disabled ParseAuth() response = %#v", response)
 	}
+	if response.Auth.Attributes[managementHTTPDelegate] != "true" {
+		t.Fatal("Agent Identity auth did not opt in to delegated management HTTP")
+	}
 	if response.Auth.Metadata["agent_identity_experiment_disabled"] != true || response.Auth.Metadata["account_type"] != "agent_identity" {
 		t.Fatalf("disabled ParseAuth() metadata = %#v", response.Auth.Metadata)
 	}
@@ -104,7 +107,16 @@ func TestAgentIdentityRecordVerificationAndExecution(t *testing.T) {
 				t.Fatalf("usage method = %q", request.Method)
 			}
 			verifyAgentIdentityAssertionHeader(t, request.Headers.Get("Authorization"), parsed, "task-record", now)
+			verifyAgentIdentityQuotaHeaders(t, request.Headers, "account-runtime-record")
 			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Body: []byte(`{"ok":true}`)}, nil
+		}
+		if request.URL == codexRateLimitCreditsURL {
+			if callbackID != "callback-record" || request.Method != http.MethodGet {
+				t.Fatalf("quota callback/method = %q/%q", callbackID, request.Method)
+			}
+			verifyAgentIdentityAssertionHeader(t, request.Headers.Get("Authorization"), parsed, "task-record", now)
+			verifyAgentIdentityQuotaHeaders(t, request.Headers, "account-runtime-record")
+			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Body: []byte(`{"credits":[]}`)}, nil
 		}
 		if request.URL == agentIdentityResponsesURL {
 			if callbackID != "callback-record" {
@@ -131,10 +143,26 @@ func TestAgentIdentityRecordVerificationAndExecution(t *testing.T) {
 	if errExecute != nil || string(response.Payload) != `{"id":"response"}` {
 		t.Fatalf("Execute() = %s, %v", response.Payload, errExecute)
 	}
+	quota, errQuota := experiment.HTTPRequest(t.Context(), cpaapi.ExecutorHTTPRequest{
+		HostCallbackID: "callback-record", StorageJSON: raw, Method: http.MethodGet, URL: codexRateLimitCreditsURL,
+	})
+	if errQuota != nil || quota.StatusCode != http.StatusOK || string(quota.Body) != `{"credits":[]}` {
+		t.Fatalf("HTTPRequest() = %#v, %v", quota, errQuota)
+	}
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
-	if len(transport.requests) != 2 {
-		t.Fatalf("record request count = %d, want 2 without task registration", len(transport.requests))
+	if len(transport.requests) != 3 {
+		t.Fatalf("record request count = %d, want 3 without task registration", len(transport.requests))
+	}
+}
+
+func verifyAgentIdentityQuotaHeaders(t *testing.T, headers http.Header, accountID string) {
+	t.Helper()
+	if headers.Get("ChatGPT-Account-ID") != accountID || headers.Get("Originator") != "Codex Desktop" || headers.Get("OpenAI-Beta") != "codex-1" || headers.Get("OAI-Language") != "zh-CN" {
+		t.Fatalf("Agent Identity quota compatibility headers = account:%q originator:%q beta:%q language:%q", headers.Get("ChatGPT-Account-ID"), headers.Get("Originator"), headers.Get("OpenAI-Beta"), headers.Get("OAI-Language"))
+	}
+	if headers.Get("Sec-Fetch-Site") != "none" || headers.Get("Sec-Fetch-Mode") != "no-cors" || headers.Get("Sec-Fetch-Dest") != "empty" || headers.Get("Priority") != "u=4, i" {
+		t.Fatalf("Agent Identity quota fetch headers = site:%q mode:%q dest:%q priority:%q", headers.Get("Sec-Fetch-Site"), headers.Get("Sec-Fetch-Mode"), headers.Get("Sec-Fetch-Dest"), headers.Get("Priority"))
 	}
 }
 

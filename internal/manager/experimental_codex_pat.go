@@ -122,8 +122,14 @@ func codexPATAuthData(raw []byte, parsed codexPATParsed) cpaapi.AuthData {
 		"account_id": parsed.accountID, "chatgpt_account_id": parsed.accountID,
 		"plan_type": parsed.planType, "chatgpt_plan_type": parsed.planType,
 		"priority": parsed.credential.Priority, "note": parsed.credential.Note,
+		// CPA's authenticated management /api-call substitutes $TOKEN$ only from
+		// runtime Auth metadata. Auth-file list responses explicitly allow-list
+		// their fields, so this value remains internal to the host.
+		"access_token": parsed.accessToken, "token_type": "Bearer", "auth_kind": "oauth",
 	}
-	attributes := map[string]string{"plan_type": parsed.planType, "auth_mode": codexPATAuthMode}
+	attributes := map[string]string{
+		"plan_type": parsed.planType, "auth_mode": codexPATAuthMode, managementHTTPDelegate: "true",
+	}
 	return cpaapi.AuthData{
 		Provider: agentIdentityProvider, Label: parsed.credential.Email,
 		Prefix: parsed.credential.Prefix, ProxyURL: parsed.credential.ProxyURL,
@@ -181,7 +187,7 @@ func (e *AgentIdentityExperiment) executeCodexPATHTTP(ctx context.Context, callb
 		}
 	}
 	response, errRequest := e.transport.AgentIdentityDo(ctx, callbackID, cpaapi.HostHTTPRequest{
-		Method: method, URL: target, Headers: codexPATHeaders(parsed, stream, true), Body: body,
+		Method: method, URL: target, Headers: codexPATHeadersForURL(parsed, target, stream, true), Body: body,
 	})
 	if errRequest != nil {
 		return cpaapi.HostHTTPResponse{}, errRequest
@@ -208,7 +214,7 @@ func (e *AgentIdentityExperiment) startCodexPATStream(ctx context.Context, callb
 	}
 	response, errStart := e.transport.AgentIdentityDoStream(ctx, callbackID, cpaapi.HostHTTPRequest{
 		Method: http.MethodPost, URL: agentIdentityResponsesURL,
-		Headers: codexPATHeaders(parsed, true, true), Body: body,
+		Headers: codexPATHeadersForURL(parsed, agentIdentityResponsesURL, true, true), Body: body,
 	})
 	if errStart != nil {
 		return cpaapi.HostHTTPStreamResponse{}, errStart
@@ -236,6 +242,17 @@ func codexPATHeaders(parsed codexPATParsed, stream, includeAccount bool) http.He
 	if includeAccount {
 		headers.Set("ChatGPT-Account-ID", parsed.accountID)
 		headers.Set("Content-Type", "application/json")
+	}
+	return headers
+}
+
+func codexPATHeadersForURL(parsed codexPATParsed, target string, stream, includeAccount bool) http.Header {
+	headers := codexPATHeaders(parsed, stream, includeAccount)
+	if isCodexQuotaURL(target) {
+		applyCodexQuotaHeaders(headers)
+		return headers
+	}
+	if includeAccount {
 		headers.Set("OpenAI-Beta", "responses=experimental")
 	}
 	return headers

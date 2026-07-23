@@ -44,7 +44,7 @@ func TestCodexPATParseVerifyRefreshAndExecute(t *testing.T) {
 			if callbackID != "callback-usage" || request.Method != http.MethodGet {
 				t.Fatalf("usage callback/method = %q/%q", callbackID, request.Method)
 			}
-			verifyCodexPATBearerHeaders(t, request.Headers, token, "pat-account")
+			verifyCodexPATQuotaHeaders(t, request.Headers, token, "pat-account")
 			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Body: []byte(`{"plan_type":"plus"}`)}, nil
 		default:
 			return cpaapi.HostHTTPResponse{}, fmt.Errorf("unexpected URL")
@@ -57,8 +57,11 @@ func TestCodexPATParseVerifyRefreshAndExecute(t *testing.T) {
 	if errParse != nil || !parsed.Handled || parsed.Auth.Provider != agentIdentityProvider || parsed.Auth.Metadata["account_type"] != codexPATAccountType {
 		t.Fatalf("ParseAuth() = %#v, %v", parsed, errParse)
 	}
-	if _, exists := parsed.Auth.Metadata["access_token"]; exists {
-		t.Fatal("PAT access token was exposed through public auth metadata")
+	if parsed.Auth.Metadata["access_token"] != token || parsed.Auth.Metadata["auth_kind"] != "oauth" {
+		t.Fatal("PAT was not exposed to CPA's internal management API token substitution")
+	}
+	if parsed.Auth.Attributes[managementHTTPDelegate] != "true" {
+		t.Fatal("PAT auth did not opt in to delegated management HTTP")
 	}
 	legacyRaw, errLegacy := json.Marshal(map[string]any{
 		"type": "codex", "access_token": token, "refresh_token": "",
@@ -170,6 +173,49 @@ func TestCodexPATExplicitModeRejectsMissingTokenAndUnavailableTransport(t *testi
 	}
 }
 
+func TestCodexPATQuotaCompatibilityExposesHostTokenAndAllowsExactEndpoints(t *testing.T) {
+	const token = "at-test-quota-personal-access-token"
+	raw := []byte(`{"type":"codex-agent-identity","auth_mode":"personalAccessToken","access_token":"` + token + `","account_id":"quota-account"}`)
+	transport := &fakeAgentIdentityTransport{do: func(_ string, request cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error) {
+		verifyCodexPATQuotaHeaders(t, request.Headers, token, "quota-account")
+		return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Body: []byte(`{"ok":true}`)}, nil
+	}}
+	experiment := NewAgentIdentityExperiment(func() bool { return true }, transport)
+	parsed, errParse := experiment.ParseAuth(raw)
+	if errParse != nil || !parsed.Handled {
+		t.Fatalf("ParseAuth() = %#v, %v", parsed, errParse)
+	}
+	if parsed.Auth.Metadata["access_token"] != token {
+		t.Fatal("PAT was not exposed to CPA's internal management API token substitution")
+	}
+	for _, request := range []struct {
+		method string
+		target string
+	}{
+		{method: http.MethodGet, target: agentIdentityUsageURL},
+		{method: http.MethodGet, target: codexRateLimitCreditsURL},
+		{method: http.MethodPost, target: codexRateLimitConsumeURL},
+	} {
+		if !allowedAgentIdentityURL(request.target) {
+			t.Fatalf("quota URL was rejected: %s", request.target)
+		}
+		response, errRequest := experiment.HTTPRequest(t.Context(), cpaapi.ExecutorHTTPRequest{
+			StorageJSON: raw, Method: request.method, URL: request.target, Body: []byte(`{"redeem_request_id":"test"}`),
+		})
+		if errRequest != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("HTTPRequest(%s) = %#v, %v", request.target, response, errRequest)
+		}
+	}
+	for _, target := range []string{
+		"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/extra",
+		"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits-evil",
+	} {
+		if allowedAgentIdentityURL(target) {
+			t.Fatalf("unexpected quota URL was allowed: %s", target)
+		}
+	}
+}
+
 func verifyCodexPATBearerHeaders(t *testing.T, headers http.Header, token, accountID string) {
 	t.Helper()
 	if headers.Get("Authorization") != "Bearer "+token || headers.Get("Originator") != "codex_cli_rs" {
@@ -177,5 +223,18 @@ func verifyCodexPATBearerHeaders(t *testing.T, headers http.Header, token, accou
 	}
 	if headers.Get("ChatGPT-Account-ID") != accountID {
 		t.Fatalf("PAT account header = %q, want %q", headers.Get("ChatGPT-Account-ID"), accountID)
+	}
+}
+
+func verifyCodexPATQuotaHeaders(t *testing.T, headers http.Header, token, accountID string) {
+	t.Helper()
+	if headers.Get("Authorization") != "Bearer "+token || headers.Get("ChatGPT-Account-ID") != accountID {
+		t.Fatal("PAT quota authentication headers are invalid")
+	}
+	if headers.Get("Originator") != "Codex Desktop" || headers.Get("OpenAI-Beta") != "codex-1" || headers.Get("OAI-Language") != "zh-CN" {
+		t.Fatal("PAT quota compatibility headers are invalid")
+	}
+	if headers.Get("Sec-Fetch-Site") != "none" || headers.Get("Sec-Fetch-Mode") != "no-cors" || headers.Get("Sec-Fetch-Dest") != "empty" || headers.Get("Priority") != "u=4, i" {
+		t.Fatal("PAT quota fetch headers are invalid")
 	}
 }

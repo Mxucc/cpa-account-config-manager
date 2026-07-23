@@ -57,7 +57,8 @@ const quotaWindowLabels: Record<NonNullable<ModelTestResult["quota_window"]>, UI
 
 export function ModelTestDialog({ account, result, error, testing, experimentalAvailable = false, onClose, onTest }: ModelTestDialogProps) {
   const { locale, tx } = useI18n();
-  const provider = (account.provider || account.type || "").trim().toLowerCase();
+  const accountProvider = (account.provider || account.type || "").trim().toLowerCase();
+  const provider = accountProvider === "codex-agent-identity" ? "codex" : accountProvider;
   const suggestions = useMemo(() => modelSuggestions[provider] || [], [provider]);
   const [model, setModel] = useState(suggestions[0] || "");
   const identity = account.label || account.email || account.name || account.id;

@@ -408,6 +408,7 @@ export const enUI = {
   "ui.last_request_time": "Last request {time}",
   "ui.no_recent_cpa_request_windows": "No recent CPA request windows",
   "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "Codex quota appears after CPA captures the relevant upstream response headers",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA does not currently provide Agent Identity quota",
   "ui.quota": "Quota",
   "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label} {percent}% used, resets {reset}, {minutes}-minute window",
   "ui.label_percent_percent_used_resets_reset": "{label} {percent}% used, resets {reset}",

@@ -310,47 +310,50 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 	if activeInspectionSignal(record.Signal, now) {
 		return decisionFromSignal(record.Signal)
 	}
+	nativeStatusSupported := !isAgentIdentityProvider(account.Provider)
 	status := strings.ToLower(strings.TrimSpace(account.StatusMessage))
 	if status == "" {
 		status = strings.ToLower(strings.TrimSpace(account.Status))
 	}
-	switch status {
-	case "invalid_grant":
-		return inspectionDecision{
-			Health:              InspectionHealthInvalidCredentials,
-			ReasonCode:          "invalid_credentials",
-			Confidence:          InspectionConfidenceHigh,
-			Recommendation:      InspectionRecommendationReauth,
-			AutoDisableEligible: true,
-			SignalSource:        InspectionSignalNative,
-		}
-	case "unauthorized":
-		return inspectionDecision{
-			Health:         InspectionHealthReview,
-			ReasonCode:     "authentication_review",
-			Confidence:     InspectionConfidenceMedium,
-			Recommendation: InspectionRecommendationReview,
-			SignalSource:   InspectionSignalNative,
-		}
-	case "payment_required":
-		return inspectionDecision{
-			Health:         InspectionHealthReview,
-			ReasonCode:     "billing_review",
-			Confidence:     InspectionConfidenceMedium,
-			Recommendation: InspectionRecommendationReview,
-			SignalSource:   InspectionSignalNative,
-		}
-	case "quota exhausted":
-		return inspectionDecision{
-			Health:              InspectionHealthQuotaLimited,
-			ReasonCode:          "quota_exhausted",
-			Confidence:          InspectionConfidenceHigh,
-			Recommendation:      InspectionRecommendationDisable,
-			AutoDisableEligible: true,
-			SignalSource:        InspectionSignalNative,
+	if nativeStatusSupported {
+		switch status {
+		case "invalid_grant":
+			return inspectionDecision{
+				Health:              InspectionHealthInvalidCredentials,
+				ReasonCode:          "invalid_credentials",
+				Confidence:          InspectionConfidenceHigh,
+				Recommendation:      InspectionRecommendationReauth,
+				AutoDisableEligible: true,
+				SignalSource:        InspectionSignalNative,
+			}
+		case "unauthorized":
+			return inspectionDecision{
+				Health:         InspectionHealthReview,
+				ReasonCode:     "authentication_review",
+				Confidence:     InspectionConfidenceMedium,
+				Recommendation: InspectionRecommendationReview,
+				SignalSource:   InspectionSignalNative,
+			}
+		case "payment_required":
+			return inspectionDecision{
+				Health:         InspectionHealthReview,
+				ReasonCode:     "billing_review",
+				Confidence:     InspectionConfidenceMedium,
+				Recommendation: InspectionRecommendationReview,
+				SignalSource:   InspectionSignalNative,
+			}
+		case "quota exhausted":
+			return inspectionDecision{
+				Health:              InspectionHealthQuotaLimited,
+				ReasonCode:          "quota_exhausted",
+				Confidence:          InspectionConfidenceHigh,
+				Recommendation:      InspectionRecommendationDisable,
+				AutoDisableEligible: true,
+				SignalSource:        InspectionSignalNative,
+			}
 		}
 	}
-	if account.Unavailable || status == "transient upstream error" || status == "upstream temporarily unavailable" || status == "cloudflare challenge" {
+	if nativeStatusSupported && (account.Unavailable || status == "transient upstream error" || status == "upstream temporarily unavailable" || status == "cloudflare challenge") {
 		return inspectionDecision{
 			Health:              InspectionHealthUnavailable,
 			ReasonCode:          "native_unavailable",
@@ -370,7 +373,7 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			SignalSource:   InspectionSignalPassive,
 		}
 	}
-	if recentAccountSuccess(account) || strings.EqualFold(strings.TrimSpace(account.Status), "ready") || strings.EqualFold(strings.TrimSpace(account.Status), "active") {
+	if recentAccountSuccess(account) || (!nativeStatusSupported && observedAccountSuccess(account)) || strings.EqualFold(strings.TrimSpace(account.Status), "ready") || strings.EqualFold(strings.TrimSpace(account.Status), "active") {
 		return inspectionDecision{
 			Health:         InspectionHealthHealthy,
 			ReasonCode:     "healthy_recent_success",
@@ -497,7 +500,7 @@ func accountQuotaLimited(account Account, now time.Time) (bool, time.Time, strin
 	var recoverAfter time.Time
 	limited := false
 	quotaWindow := ""
-	if account.NextRetryAfter != nil && account.NextRetryAfter.After(now) {
+	if !isAgentIdentityProvider(account.Provider) && account.NextRetryAfter != nil && account.NextRetryAfter.After(now) {
 		limited = true
 		recoverAfter = account.NextRetryAfter.UTC()
 	}

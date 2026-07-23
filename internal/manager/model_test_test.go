@@ -134,7 +134,7 @@ func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelPro
 		verifyAgentIdentityAssertionHeader(t, request.Headers.Get("Authorization"), parsed, "task-model-test", now)
 		switch request.URL {
 		case agentIdentityUsageURL:
-			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"rate_limit":{"allowed":true}}`)}, nil
+			return cpaapi.HostHTTPResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"rate_limit":{"allowed":true,"primary_window":{"used_percent":18,"limit_window_seconds":18000,"reset_after_seconds":3600},"secondary_window":{"used_percent":64,"limit_window_seconds":604800,"reset_after_seconds":7200}}}`)}, nil
 		case agentIdentityResponsesURL:
 			if !strings.Contains(string(request.Body), `"model":"gpt-5.6-sol"`) {
 				t.Fatalf("Agent Identity model-test body does not contain the selected model")
@@ -182,6 +182,11 @@ func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelPro
 	}
 	if managementCalls != 0 {
 		t.Fatalf("Management api-call count = %d, want 0", managementCalls)
+	}
+	usage := app.usage.Snapshot("agent-auth")
+	if usage == nil || usage.Codex == nil || usage.Codex.FiveHour == nil || usage.Codex.SevenDay == nil ||
+		usage.Codex.FiveHour.UsedPercent != 18 || usage.Codex.SevenDay.UsedPercent != 64 {
+		t.Fatalf("Agent Identity signed quota snapshot = %#v", usage)
 	}
 	transport.mu.Lock()
 	defer transport.mu.Unlock()

@@ -5,11 +5,12 @@ import { localeFormats, useI18n, type Locale } from "../i18n";
 export function AccountUsageCell({ account }: { account: Account }) {
   const { locale, tx, formatDateTime, formatNumber } = useI18n();
   const usage = account.usage;
+  const agentIdentity = String(account.provider || account.type).trim().toLowerCase() === "codex-agent-identity";
   const recentTotal = (account.recent_requests ?? []).reduce(
     (total, bucket) => total + safeCount(bucket.success) + safeCount(bucket.failed),
     0,
   );
-  const tokenValue = formatCompactNumber(usage?.total_tokens ?? 0, locale);
+  const tokenValue = usage ? formatCompactNumber(usage.total_tokens, locale) : agentIdentity ? tx("ui.unknown") : formatCompactNumber(0, locale);
   const tokenTitle = usage
     ? tx("ui.total_tokens_count", { count: formatNumber(usage.total_tokens) })
     : tx("ui.no_cpa_usage_data_received");
@@ -26,9 +27,11 @@ export function AccountUsageCell({ account }: { account: Account }) {
   const fiveHourExhausted = safePercent(codex?.five_hour?.used_percent ?? 0) >= 100;
   const longWindowExhausted = safePercent(codex?.seven_day?.used_percent ?? 0) >= 100;
   const quotaExhausted = fiveHourExhausted || longWindowExhausted;
-  const quotaPlaceholderTitle = String(account.provider || account.type).toLowerCase() === "codex"
-    ? tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")
-    : tx("ui.no_cpa_usage_data_received");
+  const quotaPlaceholderTitle = agentIdentity
+    ? tx("ui.cpa_does_not_currently_provide_agent_identity_quota")
+    : String(account.provider || account.type).toLowerCase() === "codex"
+      ? tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")
+      : tx("ui.no_cpa_usage_data_received");
   const exhaustedAction = longWindowExhausted && !account.disabled
     ? tx("ui.suggested_disable")
     : tx("ui.waiting_for_quota_recovery");
@@ -57,7 +60,7 @@ export function AccountUsageCell({ account }: { account: Account }) {
         </div>
       ) : (
         <div className="usage-quota-empty" title={quotaPlaceholderTitle}>
-          <Activity size={10} aria-hidden="true" /><b>{tx("ui.awaiting_usage_collection")}</b>
+          <Activity size={10} aria-hidden="true" /><b>{agentIdentity ? tx("ui.cpa_does_not_currently_provide_agent_identity_quota") : tx("ui.awaiting_usage_collection")}</b>
         </div>
       )}
     </div>

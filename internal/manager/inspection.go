@@ -873,6 +873,7 @@ func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[st
 		if !exists || record.Result.LastCheckedAt.IsZero() {
 			continue
 		}
+		record = refreshUnsupportedAgentIdentityNativeResult(account, record, e.currentTime())
 		ownedDisable := record.Result.OwnedDisable && account.Disabled
 		summary := AccountAutomationSummary{
 			Health:                  normalizeInspectionHealth(record.Result.Health),
@@ -911,6 +912,26 @@ func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[st
 		summaries[account.ID] = summary
 	}
 	return summaries
+}
+
+func refreshUnsupportedAgentIdentityNativeResult(account Account, record inspectionRecord, now time.Time) inspectionRecord {
+	if account.Disabled || !isAgentIdentityProvider(account.Provider) ||
+		record.Result.ReasonCode != "native_unavailable" ||
+		(record.Result.SignalSource != "" && record.Result.SignalSource != InspectionSignalNative) {
+		return record
+	}
+	lastCheckedAt := record.Result.LastCheckedAt
+	decision := decideInspection(account, record, now)
+	if decision.ReasonCode == "native_unavailable" {
+		return record
+	}
+	updateInspectionRecord(&record, account, decision, lastCheckedAt)
+	record.Result.LastCheckedAt = lastCheckedAt
+	if record.Result.AutoAction == InspectionActionDisable {
+		record.Result.AutoAction = ""
+		record.Result.AutoActionStatus = ""
+	}
+	return record
 }
 
 func (e *InspectionEngine) Actions(limit int) []InspectionAction {

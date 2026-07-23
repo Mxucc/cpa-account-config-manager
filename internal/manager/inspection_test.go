@@ -1008,6 +1008,72 @@ func TestAccountAutomationSummaryIncludesPendingDeleteRetry(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityUnsupportedNativeFailureDoesNotRecommendDisable(t *testing.T) {
+	now := time.Date(2026, time.July, 23, 7, 0, 0, 0, time.UTC)
+	agentIdentity := Account{
+		ID: "agent-identity", Provider: agentIdentityProvider, Status: "error",
+		StatusMessage: "provider reported an account error", Unavailable: true, Success: 32, Failed: 5,
+	}
+	decision := decideInspection(agentIdentity, inspectionRecord{}, now)
+	if decision.Health != InspectionHealthHealthy || decision.Recommendation != InspectionRecommendationKeep || decision.AutoDisableEligible {
+		t.Fatalf("Agent Identity native decision = %#v, want healthy keep", decision)
+	}
+	withoutSuccess := agentIdentity
+	withoutSuccess.Success = 0
+	withoutSuccess.Failed = 0
+	decision = decideInspection(withoutSuccess, inspectionRecord{}, now)
+	if decision.Health != InspectionHealthUnknown || decision.Recommendation != InspectionRecommendationReview || decision.AutoDisableEligible {
+		t.Fatalf("Agent Identity decision without evidence = %#v, want unknown review", decision)
+	}
+
+	ordinary := agentIdentity
+	ordinary.ID = "ordinary-codex"
+	ordinary.Provider = "codex"
+	decision = decideInspection(ordinary, inspectionRecord{}, now)
+	if decision.Health != InspectionHealthUnavailable || decision.Recommendation != InspectionRecommendationDisable || !decision.AutoDisableEligible {
+		t.Fatalf("ordinary Codex native decision = %#v, want unavailable disable", decision)
+	}
+
+	activeProbe := inspectionRecord{Probe: inspectionProbeSignal{
+		Kind: InspectionProbeKindModel, Status: "unavailable", ReasonCode: "upstream_unavailable",
+		TestedAt: now, ConsecutiveFailures: 1,
+	}}
+	decision = decideInspection(agentIdentity, activeProbe, now)
+	if decision.SignalSource != InspectionSignalActiveProbe || decision.Recommendation != InspectionRecommendationDisable || !decision.AutoDisableEligible {
+		t.Fatalf("Agent Identity active-probe decision = %#v, want authoritative disable", decision)
+	}
+	passiveSignal := inspectionRecord{Signal: inspectionSignal{
+		ReasonCode: "quota_exhausted", Confidence: InspectionConfidenceHigh,
+		AutoDisableEligible: true, LastFailureAt: now, ConsecutiveFailures: 1,
+	}}
+	decision = decideInspection(agentIdentity, passiveSignal, now)
+	if decision.SignalSource != InspectionSignalPassive || decision.Recommendation != InspectionRecommendationDisable || !decision.AutoDisableEligible {
+		t.Fatalf("Agent Identity passive decision = %#v, want authoritative disable", decision)
+	}
+}
+
+func TestAccountAutomationSummariesRefreshStaleAgentIdentityNativeFailure(t *testing.T) {
+	now := time.Date(2026, time.July, 23, 7, 5, 0, 0, time.UTC)
+	engine := &InspectionEngine{
+		now:    func() time.Time { return now },
+		policy: InspectionPolicy{Enabled: true, AutoDisable: true, FailureThreshold: 3},
+		records: map[string]inspectionRecord{
+			"agent-identity": {Result: InspectionResult{
+				ID: "agent-identity", Health: InspectionHealthUnavailable, ReasonCode: "native_unavailable",
+				Recommendation: InspectionRecommendationDisable, AutoDisableEligible: true,
+				SignalSource: InspectionSignalNative, FailureStreak: 1, LastCheckedAt: now.Add(-time.Hour),
+			}},
+		},
+	}
+
+	summary := engine.AccountAutomationSummaries([]Account{{
+		ID: "agent-identity", Provider: agentIdentityProvider, Status: "active", Success: 32, Failed: 5,
+	}})["agent-identity"]
+	if summary.Health != InspectionHealthHealthy || summary.Recommendation != InspectionRecommendationKeep || summary.AutoDisableEligible || summary.FailureStreak != 0 {
+		t.Fatalf("refreshed Agent Identity summary = %#v, want healthy keep", summary)
+	}
+}
+
 func inspectionEditableHost(disabled bool) *fakeAuthHost {
 	raw := json.RawMessage(`{"type":"codex","email":"inspection@example.com","access_token":"account-secret","disabled":false}`)
 	if disabled {

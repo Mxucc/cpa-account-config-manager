@@ -410,6 +410,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.last_request_time": "Последний запрос {time}",
   "ui.no_recent_cpa_request_windows": "Нет недавних интервалов запросов CPA",
   "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "Квота Codex появится после получения CPA соответствующих заголовков ответа",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA пока не предоставляет данные о квоте Agent Identity",
   "ui.quota": "Квота",
   "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label}: использовано {percent}%, сброс {reset}, окно {minutes} мин.",
   "ui.label_percent_percent_used_resets_reset": "{label}: использовано {percent}%, сброс {reset}",

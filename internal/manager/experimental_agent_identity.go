@@ -41,6 +41,10 @@ const (
 	agentIdentityJWKSMaxResponse  = 1 << 20
 )
 
+func isAgentIdentityProvider(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), agentIdentityProvider)
+}
+
 type AgentIdentityTransport interface {
 	AgentIdentityDo(context.Context, string, cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error)
 	AgentIdentityDoStream(context.Context, string, cpaapi.HostHTTPRequest) (cpaapi.HostHTTPStreamResponse, error)

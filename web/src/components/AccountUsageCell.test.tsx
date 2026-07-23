@@ -75,6 +75,23 @@ describe("AccountUsageCell", () => {
     expect(screen.getByText("等待用量采集")).toBeInTheDocument();
   });
 
+  it("distinguishes unsupported Agent Identity quota from zero usage", () => {
+    render(<AccountUsageCell account={{
+      ...baseAccount,
+      provider: "codex-agent-identity",
+      plan_type: "k12",
+      success: 32,
+      failed: 5,
+      recent_requests: [{ time: "2026-07-23T07:09:00Z", success: 32, failed: 5 }],
+    }} />);
+
+    expect(screen.getByText("未知", { selector: ".usage-token-total strong" })).toBeInTheDocument();
+    expect(screen.getByTitle("累计请求：成功 32，失败 5")).toHaveTextContent("32/5");
+    expect(screen.getByTitle(/CPA 近期请求：37/)).toHaveTextContent("37");
+    expect(screen.getByText("CPA 暂未提供 Agent Identity 配额")).toBeInTheDocument();
+    expect(screen.queryByText("等待用量采集")).not.toBeInTheDocument();
+  });
+
   it("makes exhausted quota and the next action visible", () => {
     const { rerender } = render(<AccountUsageCell account={{
       ...baseAccount,

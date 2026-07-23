@@ -97,4 +97,28 @@ describe("ModelTestDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "加载实验性功能" }));
     expect(onTest).toHaveBeenCalledWith("gpt-5.6-sol", true);
   });
+
+  it("uses Codex defaults and experimental controls for Agent Identity accounts", async () => {
+    const user = userEvent.setup();
+    const onTest = vi.fn();
+    render(<ModelTestDialog
+      account={{ ...account, provider: "codex-agent-identity", account_type: "agent_identity", plan_type: "k12" }}
+      result={null}
+      error=""
+      testing={false}
+      experimentalAvailable
+      onClose={vi.fn()}
+      onTest={onTest}
+    />);
+
+    const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByLabelText("测试模型")).toHaveValue("gpt-5.6-sol");
+    expect(within(dialog).getByText("codex-agent-identity", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).getByText("实验测试会使用新的关联工具调用编号发起真实 Codex 模型探测，并显示脱敏后的上游响应。")).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+    expect(onTest).toHaveBeenCalledWith("gpt-5.6-sol", false);
+    await user.click(within(dialog).getByRole("button", { name: "加载实验性功能" }));
+    expect(onTest).toHaveBeenCalledWith("gpt-5.6-sol", true);
+  });
 });

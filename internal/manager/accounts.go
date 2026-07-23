@@ -285,6 +285,7 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 			})
 		}
 	}
+	normalizeAgentIdentityNativeState(&account)
 	if !entry.NextRetryAfter.IsZero() {
 		nextRetryAfter := entry.NextRetryAfter.UTC()
 		account.NextRetryAfter = &nextRetryAfter
@@ -332,6 +333,36 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 		account.Editable = true
 	}
 	return account
+}
+
+func normalizeAgentIdentityNativeState(account *Account) {
+	if account == nil || !isAgentIdentityProvider(account.Provider) {
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(account.Status))
+	unsupported := account.Unavailable || status == "error" || status == "unavailable" || account.StatusMessage == "provider reported an account error"
+	if !unsupported {
+		return
+	}
+	account.Unavailable = false
+	account.StatusMessage = ""
+	if observedAccountSuccess(*account) {
+		account.Status = "active"
+	} else if status == "error" || status == "unavailable" {
+		account.Status = ""
+	}
+}
+
+func observedAccountSuccess(account Account) bool {
+	if account.Success > 0 {
+		return true
+	}
+	for _, item := range account.RecentRequests {
+		if item.Success > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func enrichAccount(account *Account, detail cpaapi.HostAuthGetResponse) error {

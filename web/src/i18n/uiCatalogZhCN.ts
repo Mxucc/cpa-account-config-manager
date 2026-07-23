@@ -410,6 +410,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.last_request_time": "最近请求 {time}",
   "ui.no_recent_cpa_request_windows": "CPA 暂无近期请求时段",
   "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "Codex 配额会在 CPA 捕获到对应上游响应头后显示",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA 暂未提供 Agent Identity 配额",
   "ui.quota": "配额",
   "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label} 已用 {percent}%，重置 {reset}，窗口 {minutes} 分钟",
   "ui.label_percent_percent_used_resets_reset": "{label} 已用 {percent}%，重置 {reset}",

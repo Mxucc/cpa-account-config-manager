@@ -163,6 +163,44 @@ func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 	}
 }
 
+func TestAccountServiceListDoesNotExposeUnsupportedAgentIdentityNativeFailure(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{
+				AuthIndex: "agent-identity", Name: "agent-identity.json", Provider: agentIdentityProvider,
+				Type: "codex", Status: "error", StatusMessage: "unsupported provider detail",
+				Unavailable: true, Success: 32, Failed: 5, Source: "file", Path: "/auths/agent-identity.json",
+			},
+			{
+				AuthIndex: "ordinary-codex", Name: "ordinary-codex.json", Provider: "codex",
+				Type: "codex", Status: "error", StatusMessage: "unsupported provider detail",
+				Unavailable: true, Success: 32, Failed: 5, Source: "file", Path: "/auths/ordinary-codex.json",
+			},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"agent-identity": {AuthIndex: "agent-identity", Path: "/auths/agent-identity.json", JSON: json.RawMessage(`{"type":"codex-agent-identity","plan_type":"k12"}`)},
+			"ordinary-codex": {AuthIndex: "ordinary-codex", Path: "/auths/ordinary-codex.json", JSON: json.RawMessage(`{"type":"codex"}`)},
+		},
+	}
+
+	response, errList := NewAccountService(host).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	accounts := make(map[string]Account, len(response.Accounts))
+	for _, account := range response.Accounts {
+		accounts[account.ID] = account
+	}
+	agentIdentity := accounts["agent-identity"]
+	if agentIdentity.Unavailable || agentIdentity.Status != "active" || agentIdentity.StatusMessage != "" {
+		t.Fatalf("Agent Identity native state = %#v, want active without an unsupported CPA error", agentIdentity)
+	}
+	ordinary := accounts["ordinary-codex"]
+	if !ordinary.Unavailable || ordinary.Status != "error" || ordinary.StatusMessage != "provider reported an account error" {
+		t.Fatalf("ordinary Codex native state changed = %#v", ordinary)
+	}
+}
+
 func TestAccountServicePlanTypeProjectionAndFilteringStayConsistent(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{

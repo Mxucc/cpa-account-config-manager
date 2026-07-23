@@ -448,6 +448,27 @@ func TestModelTestResponsePreviewAllowListsDiagnosticsAndRedactsSecrets(t *testi
 	}
 }
 
+func TestModelTestResponsePreviewDecodesReportedUsageLimitJSON(t *testing.T) {
+	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     map[string][]string{"Content-Type": {"application/json"}},
+		Body:       []byte(`{&#34;error&#34;:{&#34;message&#34;:&#34;The usage limit has been reached&#34;,&#34;type&#34;:&#34;usage_limit_reached&#34;,&#34;account_id&#34;:&#34;private-account&#34;}}`),
+	})
+	if preview == nil || preview.Format != "json" || preview.Truncated {
+		t.Fatalf("usage-limit preview = %#v", preview)
+	}
+	for _, expected := range []string{`"error": {`, `"message": "The usage limit has been reached"`, `"type": "usage_limit_reached"`, `"account_id": "[redacted]"`} {
+		if !strings.Contains(preview.Body, expected) {
+			t.Errorf("usage-limit preview missing %q: %s", expected, preview.Body)
+		}
+	}
+	for _, forbidden := range []string{"&#34;", "private-account"} {
+		if strings.Contains(preview.Body, forbidden) {
+			t.Errorf("usage-limit preview retained %q: %s", forbidden, preview.Body)
+		}
+	}
+}
+
 func TestModelTestResponsePreviewBoundsTextAndMarksTruncation(t *testing.T) {
 	preview := sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
 		Body: []byte("api_key=plain-secret upstream diagnostic " + strings.Repeat("x", maxModelTestPreviewBytes*2)),

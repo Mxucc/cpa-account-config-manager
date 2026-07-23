@@ -2,6 +2,7 @@ import { Activity, AlertTriangle, CheckCircle2, FlaskConical, LoaderCircle, Shie
 import { useMemo, useState } from "react";
 import type { Account, ModelTestAttempt, ModelTestResponsePreview, ModelTestResult, ModelTestStatus } from "../types";
 import { technicalLabel } from "../format/accountDisplay";
+import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
@@ -188,6 +189,7 @@ function ModelTestAttempts({ attempts }: { attempts: ModelTestAttempt[] }) {
 function ModelTestResponse({ response }: { response: ModelTestResponsePreview }) {
   const { tx } = useI18n();
   const responseHeaders = Array.isArray(response.headers) ? response.headers : [];
+  const responseBody = response.body ? decodeHTMLCharacterReferences(response.body) : tx("ui.empty_response_body");
   return (
     <div className="model-test-response">
       <div className="model-test-response-heading">
@@ -199,7 +201,7 @@ function ModelTestResponse({ response }: { response: ModelTestResponsePreview })
           {responseHeaders.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
         </div>
       ) : null}
-      <pre aria-label={tx("ui.response_body")}><code>{response.body || tx("ui.empty_response_body")}</code></pre>
+      <pre aria-label={tx("ui.response_body")}><code>{responseBody}</code></pre>
     </div>
   );
 }

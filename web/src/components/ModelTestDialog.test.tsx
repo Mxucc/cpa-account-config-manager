@@ -138,6 +138,39 @@ describe("ModelTestDialog", () => {
     expect(responseBody).toHaveTextContent("rate_limit_exceeded");
   });
 
+  it("decodes CPA-host character references as inert response text", () => {
+    render(<ModelTestDialog
+      account={{ ...account, provider: "codex-agent-identity", plan_type: "k12" }}
+      result={{
+        ...result,
+        model: "gpt-5.6-sol",
+        probe_kind: "model",
+        experiment: { name: "weekly_overdraft", applied: true, call_id: "call_cpa_overdraft_2f026e0867cc9a9400c58a07" },
+        response: {
+          format: "json",
+          body: "{\n  &#34;error&#34;: {\n    &#34;_omitted_fields&#34;: 4,\n    &#34;message&#34;: &#34;The usage limit has been reached &lt;img src=x onerror=alert(1)&gt;&#34;,\n    &#34;type&#34;: &#34;usage_limit_reached&#34;\n  }\n}",
+          headers: [
+            { name: "cf-ray", value: "a1f9ebf56c42e3c4-IAD" },
+            { name: "content-type", value: "application/json" },
+          ],
+          truncated: false,
+        },
+      }}
+      error=""
+      testing={false}
+      experimentalAvailable
+      onClose={vi.fn()}
+      onTest={vi.fn()}
+    />);
+
+    const responseBody = within(screen.getByRole("dialog", { name: "模型可用性测试" })).getByLabelText("响应正文");
+    expect(responseBody).toHaveTextContent('"error":');
+    expect(responseBody).toHaveTextContent('"message": "The usage limit has been reached <img src=x onerror=alert(1)>"');
+    expect(responseBody).toHaveTextContent('"type": "usage_limit_reached"');
+    expect(responseBody).not.toHaveTextContent("&#34;");
+    expect(responseBody.querySelector("img")).toBeNull();
+  });
+
   it("makes an empty upstream response explicit", () => {
     render(<ModelTestDialog
       account={account}

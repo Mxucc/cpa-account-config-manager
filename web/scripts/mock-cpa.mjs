@@ -1002,9 +1002,31 @@ const server = http.createServer(async (request, response) => {
     const model = String(body.model || defaults[account.provider] || "").trim();
     const supported = ["codex", "codex-agent-identity", "openai", "claude", "gemini", "gemini-cli", "gemini-interactions", "aistudio", "xai"].includes(account.provider);
     const now = new Date().toISOString();
-    const usesFallback = supported && ["codex", "codex-agent-identity"].includes(account.provider) && model === defaultOpenAIProbeModel;
+    const experimentalOverdraft = Boolean(body.experimental_weekly_overdraft) && ["codex", "codex-agent-identity"].includes(account.provider);
+    const usesFallback = !experimentalOverdraft && supported && ["codex", "codex-agent-identity"].includes(account.provider) && model === defaultOpenAIProbeModel;
     const selectedModel = usesFallback ? "gpt-5.5" : model;
-    const result = {
+    const result = experimentalOverdraft ? {
+      account_id: account.id,
+      provider: account.provider,
+      model,
+      primary_model: model,
+      status: "review",
+      probe_kind: "model",
+      reason_code: "quota_limited",
+      status_code: 429,
+      latency_ms: 466,
+      tested_at: now,
+      experiment: { name: "weekly_overdraft", applied: true, call_id: "call_cpa_overdraft_mock429" },
+      response: {
+        format: "json",
+        body: "{\n  &#34;error&#34;: {\n    &#34;_omitted_fields&#34;: 4,\n    &#34;message&#34;: &#34;The usage limit has been reached&#34;,\n    &#34;type&#34;: &#34;usage_limit_reached&#34;\n  }\n}",
+        headers: [
+          { name: "cf-ray", value: "a1f9ebf56c42e3c4-IAD" },
+          { name: "content-type", value: "application/json" },
+        ],
+        truncated: false,
+      },
+    } : {
       account_id: account.id,
       provider: account.provider,
       model: selectedModel,

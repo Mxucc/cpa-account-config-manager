@@ -7,19 +7,20 @@ import type { Locale } from "../i18n";
 import { translateUI, type UIMessageKey } from "../i18n/uiText";
 
 interface JobPanelProps {
-	job: ResultJobSnapshot;
-	title?: UIMessageKey;
-	ariaLabel?: UIMessageKey;
-	retrying?: boolean;
-	fields?: string[];
+  job: ResultJobSnapshot;
+  title?: UIMessageKey;
+  ariaLabel?: UIMessageKey;
+  retrying?: boolean;
+  fields?: string[];
   onClose: () => void;
-	onRetry?: () => void;
-	onExport?: () => void;
+  onRetry?: () => void;
+  onExport?: () => void;
   onRefresh: () => void;
 }
 
 interface ResultJobSnapshot {
 	id?: string;
+	operation?: "patch" | "delete";
 	state: JobState;
 	running: boolean;
 	total: number;
@@ -53,10 +54,6 @@ export function JobPanel({ job, title = "ui.batch_job", ariaLabel = "ui.batch_jo
           <h2>{tx(title)}</h2>
           <code>{job.id?.slice(0, 12) || "-"}</code>
         </div>
-        <div className="job-header-actions">
-          <IconButton label={tx("ui.refresh_job")} onClick={onRefresh}><RefreshCw size={16} /></IconButton>
-          <IconButton label={tx("ui.close_job_panel")} onClick={onClose}><X size={17} /></IconButton>
-        </div>
       </header>
       <div className="job-progress" aria-label={tx("ui.job_progress_progress_percent", { progress })}>
         <div style={{ width: `${progress}%` }} />
@@ -68,14 +65,20 @@ export function JobPanel({ job, title = "ui.batch_job", ariaLabel = "ui.batch_jo
         <Count label={tx("ui.conflict")} value={job.conflicts} tone={job.conflicts ? "warning" : ""} />
         <Count label={tx("ui.skipped")} value={job.skipped} />
       </div>
-      {onExport || onRetry ? (
-        <div className="job-toolbar">
-          {onExport ? <button className="button button-quiet" type="button" onClick={onExport}><Download size={15} />{tx("ui.export_results")}</button> : null}
-          {onRetry ? <button className="button button-primary" type="button" onClick={onRetry} disabled={!job.retry_available || job.running || retrying}><RotateCcw size={15} />{tx(retrying ? "ui.retrying" : "ui.retry_failed_items_only")}</button> : null}
+      <div className={`job-toolbar${onExport || onRetry ? "" : " force-job-toolbar"}`}>
+        {onExport || onRetry ? (
+          <>
+            {onExport ? <button className="button button-quiet" type="button" onClick={onExport}><Download size={15} />{tx("ui.export_results")}</button> : null}
+            {onRetry ? <button className="button button-primary" type="button" onClick={onRetry} disabled={!job.retry_available || job.running || retrying}><RotateCcw size={15} />{tx(retrying ? "ui.retrying" : "ui.retry_failed_items_only")}</button> : null}
+          </>
+        ) : (
+          <><span>{tx("ui.managed_fields")}</span>{fields.map((field) => <code key={field}>{field}</code>)}</>
+        )}
+        <div className="job-toolbar-controls">
+          <IconButton label={tx("ui.refresh_job")} onClick={onRefresh}><RefreshCw size={16} /></IconButton>
+          <IconButton label={tx("ui.close_job_panel")} onClick={onClose}><X size={17} /></IconButton>
         </div>
-      ) : (
-        <div className="job-toolbar force-job-toolbar"><span>{tx("ui.managed_fields")}</span>{fields.map((field) => <code key={field}>{field}</code>)}</div>
-      )}
+      </div>
       <div className="job-results">
         {(job.results ?? []).map((result) => (
           <div className="job-result" key={result.id}>
@@ -85,7 +88,7 @@ export function JobPanel({ job, title = "ui.batch_job", ariaLabel = "ui.batch_jo
               <span>{result.provider || tx("ui.unknown")}</span>
               {result.error ? <small>{operatorMessage(result.error, locale)}</small> : null}
             </div>
-            <span className="job-result-fields">{result.applied_fields?.join(", ") || "-"}</span>
+            <span className="job-result-fields">{job.operation === "delete" && result.status === "succeeded" ? tx("ui.deleted") : result.applied_fields?.join(", ") || "-"}</span>
           </div>
         ))}
         {!job.results?.length ? <div className="empty-state compact">{tx("ui.no_item_results_yet")}</div> : null}

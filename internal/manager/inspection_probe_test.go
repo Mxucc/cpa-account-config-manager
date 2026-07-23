@@ -36,6 +36,13 @@ func TestInspectionPolicySeparatesNativeAndActiveSchedules(t *testing.T) {
 	}
 }
 
+func TestDefaultInspectionProbeModelsUseCurrentOpenAIModel(t *testing.T) {
+	models := defaultModelProbeModels()
+	if models.Codex != "gpt-5.6-sol" || models.OpenAI != "gpt-5.6-sol" {
+		t.Fatalf("default OpenAI-family probe models = %#v", models)
+	}
+}
+
 func TestInspectionProbeEligibilityRespectsManualDisablePolicyAndOwnership(t *testing.T) {
 	accounts := []Account{
 		{ID: "active"},

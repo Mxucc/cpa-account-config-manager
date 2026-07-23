@@ -509,7 +509,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 	switch provider {
 	case "codex":
 		if model == "" {
-			model = "gpt-5.4"
+			model = defaultOpenAIProbeModel
 		}
 		if metadata.usesAPIKey() {
 			data, errMarshal := marshal(openAIResponsesProbePayload(model, false))
@@ -526,7 +526,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		return modelProbe{kind: "codex", url: "https://chatgpt.com/backend-api/codex/responses", headers: headers, data: data}, model, true, errMarshal
 	case "openai":
 		if model == "" {
-			model = "gpt-5.4"
+			model = defaultOpenAIProbeModel
 		}
 		data, errMarshal := marshal(openAIResponsesProbePayload(model, false))
 		return modelProbe{kind: "openai", url: "https://api.openai.com/v1/responses", headers: bearerJSONHeaders(false), data: data}, model, true, errMarshal

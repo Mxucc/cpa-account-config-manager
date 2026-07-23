@@ -53,6 +53,7 @@ type JobResult struct {
 type JobSnapshot struct {
 	ID             string       `json:"id,omitempty"`
 	ParentJobID    string       `json:"parent_job_id,omitempty"`
+	Operation      string       `json:"operation"`
 	State          string       `json:"state"`
 	Running        bool         `json:"running"`
 	Total          int          `json:"total"`
@@ -73,15 +74,17 @@ type JobSnapshot struct {
 
 type retryIntent struct {
 	parentJobID string
+	operation   string
 	patch       BatchPatch
 	ids         []string
 }
 
 type jobRun struct {
-	jobID   string
-	patch   BatchPatch
-	targets []Account
-	writer  ManagementWriter
+	jobID     string
+	operation string
+	patch     BatchPatch
+	targets   []Account
+	writer    ManagementWriter
 }
 
 type JobEngine struct {
@@ -140,6 +143,9 @@ func (e *JobEngine) Configure(config Config) {
 	snapshot, errLoad := loadJobSnapshot(storePath)
 	if errLoad == nil {
 		e.snapshot = snapshot
+		if e.snapshot.ID != "" && e.snapshot.Operation == "" {
+			e.snapshot.Operation = BatchOperationPatch
+		}
 		e.snapshot.RetryAvailable = false
 		e.retry = nil
 		if e.snapshot.State == JobStateRunning || e.snapshot.Running {
@@ -159,6 +165,13 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 	}
 	if len(preview.Targets) == 0 {
 		return JobSnapshot{}, ErrNoEligibleJob
+	}
+	operation := preview.Operation
+	if operation == "" {
+		operation = BatchOperationPatch
+	}
+	if operation != BatchOperationPatch && operation != BatchOperationDelete {
+		return JobSnapshot{}, fmt.Errorf("unsupported batch operation")
 	}
 	config := e.configSnapshot()
 	writerFactory := e.newWriter
@@ -225,6 +238,7 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 	e.snapshot = JobSnapshot{
 		ID:          jobID,
 		ParentJobID: strings.TrimSpace(parentJobID),
+		Operation:   operation,
 		State:       JobStateRunning,
 		Running:     true,
 		Total:       len(results),
@@ -248,10 +262,11 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 		return JobSnapshot{}, ErrJobStorageUnavailable
 	}
 	run := jobRun{
-		jobID:   jobID,
-		patch:   cloneBatchPatch(preview.Patch),
-		targets: append([]Account(nil), preview.Targets...),
-		writer:  writer,
+		jobID:     jobID,
+		operation: operation,
+		patch:     cloneBatchPatch(preview.Patch),
+		targets:   append([]Account(nil), preview.Targets...),
+		writer:    writer,
 	}
 	snapshot := cloneJobSnapshot(e.snapshot, true)
 	e.wait.Add(1)
@@ -271,20 +286,20 @@ func (e *JobEngine) Snapshot(includeResults bool) JobSnapshot {
 	return cloneJobSnapshot(e.snapshot, includeResults)
 }
 
-func (e *JobEngine) RetryIntent() (TargetScope, BatchPatch, string, error) {
+func (e *JobEngine) RetryIntent() (TargetScope, BatchPatch, string, string, error) {
 	if e == nil {
-		return TargetScope{}, BatchPatch{}, "", ErrRetryMissing
+		return TargetScope{}, BatchPatch{}, "", "", ErrRetryMissing
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.running {
-		return TargetScope{}, BatchPatch{}, "", ErrJobBusy
+		return TargetScope{}, BatchPatch{}, "", "", ErrJobBusy
 	}
-	if e.retry == nil || len(e.retry.ids) == 0 || e.retry.patch.Empty() {
-		return TargetScope{}, BatchPatch{}, "", ErrRetryMissing
+	if e.retry == nil || len(e.retry.ids) == 0 || e.retry.operation != BatchOperationDelete && e.retry.patch.Empty() {
+		return TargetScope{}, BatchPatch{}, "", "", ErrRetryMissing
 	}
 	return TargetScope{Mode: "selected", IDs: append([]string(nil), e.retry.ids...)},
-		cloneBatchPatch(e.retry.patch), e.retry.parentJobID, nil
+		cloneBatchPatch(e.retry.patch), e.retry.operation, e.retry.parentJobID, nil
 }
 
 func (e *JobEngine) Shutdown() {
@@ -333,7 +348,7 @@ func (e *JobEngine) run(ctx context.Context, run jobRun, workers int) {
 					continue
 				}
 				e.setResultRunning(run.jobID, account.ID)
-				result := e.applyAccountSafely(ctx, account, run.patch, run.writer)
+				result := e.applyAccountSafely(ctx, account, run.operation, run.patch, run.writer)
 				e.completeResult(run.jobID, account.ID, result)
 			}
 		}()
@@ -352,7 +367,7 @@ func clearManagementWriterSecrets(writer ManagementWriter) {
 	}
 }
 
-func (e *JobEngine) applyAccountSafely(ctx context.Context, account Account, patch BatchPatch, writer ManagementWriter) (result JobResult) {
+func (e *JobEngine) applyAccountSafely(ctx context.Context, account Account, operation string, patch BatchPatch, writer ManagementWriter) (result JobResult) {
 	defer func() {
 		if recover() != nil {
 			result = JobResult{
@@ -362,10 +377,10 @@ func (e *JobEngine) applyAccountSafely(ctx context.Context, account Account, pat
 			}
 		}
 	}()
-	return e.applyAccount(ctx, account, patch, writer)
+	return e.applyAccount(ctx, account, operation, patch, writer)
 }
 
-func (e *JobEngine) applyAccount(ctx context.Context, account Account, patch BatchPatch, writer ManagementWriter) JobResult {
+func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation string, patch BatchPatch, writer ManagementWriter) JobResult {
 	if ctx.Err() != nil {
 		return JobResult{Status: ResultInterrupted, Error: "job was interrupted before this target was updated", Retryable: true}
 	}
@@ -375,6 +390,15 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, patch Bat
 	}
 	if revision != account.revision {
 		return JobResult{Status: ResultConflict, Error: "physical auth file changed after preview", Retryable: true}
+	}
+	if operation == BatchOperationDelete {
+		if errDelete := writer.DeleteAuthFile(ctx, account.Name); errDelete != nil {
+			if ctx.Err() != nil {
+				return JobResult{Status: ResultInterrupted, Error: "job was interrupted during account deletion", Retryable: true}
+			}
+			return JobResult{Status: ResultFailed, Error: "account deletion failed", Retryable: true}
+		}
+		return JobResult{Status: ResultSucceeded}
 	}
 
 	applied := make([]string, 0, len(patch.Summary().Fields))
@@ -482,6 +506,7 @@ func (e *JobEngine) finish(run jobRun, interrupted bool) {
 	if len(retryIDs) > 0 {
 		e.retry = &retryIntent{
 			parentJobID: run.jobID,
+			operation:   run.operation,
 			patch:       cloneBatchPatch(run.patch),
 			ids:         retryIDs,
 		}

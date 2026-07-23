@@ -2,6 +2,7 @@ import http from "node:http";
 
 const port = Number(process.env.MOCK_CPA_PORT || 8318);
 const managementKey = process.env.MOCK_CPA_KEY || "demo-key";
+const defaultOpenAIProbeModel = "gpt-5.6-sol";
 const previews = new Map();
 const deletePreviews = new Map();
 let activeJob = null;
@@ -32,8 +33,8 @@ let inspectionPolicy = {
   model_probe_interval_minutes: 60,
   model_probe_batch_size: 20,
   model_probe_models: {
-    codex: "gpt-5.4",
-    openai: "gpt-5.4",
+    codex: defaultOpenAIProbeModel,
+    openai: defaultOpenAIProbeModel,
     claude: "claude-sonnet-4-5-20250929",
     gemini: "gemini-2.0-flash",
     xai: "grok-4",
@@ -59,6 +60,10 @@ let updatePolicy = {
   check_enabled: true,
   check_interval_hours: 24,
   auto_update: false,
+};
+let experimentalSettings = {
+  weekly_overdraft_enabled: false,
+  agent_identity_enabled: true,
 };
 
 const operationLog = Array.from({ length: 18 }, (_, index) => {
@@ -282,7 +287,7 @@ function mockInspectionResults() {
       probe_status: index < 5 ? "unavailable" : "available",
       probe_kind: index < 2 ? "credential" : "model",
       probe_reason_code: index < 2 ? "authentication_failed" : index === 2 ? "quota_limited" : index < 5 ? "upstream_unavailable" : "model_response_ok",
-      probe_model: account.provider === "gemini" ? "gemini-2.0-flash" : "gpt-5.4",
+      probe_model: account.provider === "gemini" ? "gemini-2.0-flash" : defaultOpenAIProbeModel,
       probe_tested_at: checkedAt,
       probe_latency_ms: 180 + index * 17,
       signal_source: index < 5 ? "active_probe" : "native",
@@ -719,17 +724,25 @@ function snapshotJob(includeResults = true) {
   const elapsed = Date.now() - activeJob.started;
   const done = Math.min(activeJob.targets.length, Math.floor(elapsed / 260));
   const running = done < activeJob.targets.length;
+  if (!running && activeJob.operation === "delete" && !activeJob.applied) {
+    const deletedIDs = new Set(activeJob.targets.map((target) => target.id));
+    for (let index = accounts.length - 1; index >= 0; index -= 1) {
+      if (deletedIDs.has(accounts[index].id)) accounts.splice(index, 1);
+    }
+    activeJob.applied = true;
+  }
   const results = activeJob.targets.map((target, index) => ({
     id: target.id,
     name: target.name,
     provider: target.provider,
     label: target.label,
     status: index < done ? "succeeded" : index === done && running ? "running" : "pending",
-    applied_fields: index < done ? activeJob.fields : [],
+    applied_fields: index < done && activeJob.operation !== "delete" ? activeJob.fields : [],
     retryable: false,
   }));
   return {
     id: activeJob.id,
+    operation: activeJob.operation || "patch",
     state: running ? "running" : "completed",
     running,
     total: activeJob.targets.length,
@@ -841,7 +854,8 @@ function mockJobOperation(snapshot, action, category = "batch") {
 }
 
 function filteredMockOperations(url) {
-  mockJobOperation(snapshotJob(false), "batch_edit");
+  const job = snapshotJob(false);
+  mockJobOperation(job, job.operation === "delete" ? "batch_delete" : "batch_edit");
   mockJobOperation(snapshotForceJob(false), "force_sync", "default_policy");
   const category = url.searchParams.get("category") || "";
   const status = url.searchParams.get("status") || "";
@@ -931,11 +945,37 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname.endsWith("/plugins/cpa-account-config-manager/accounts")) {
     return json(response, 200, listFromURL(url));
   }
+  if (request.method === "POST" && url.pathname.endsWith("/experiments/agent-identity/session-login")) {
+    const body = await readJSON(request);
+    const state = typeof body.state === "string" ? body.state.trim() : "";
+    const sessionJSON = typeof body.session_json === "string" ? body.session_json.trim() : "";
+    if (!/^[A-Za-z0-9._-]{1,256}$/.test(state) || sessionJSON === "") return json(response, 400, { error: "invalid_session" });
+    try {
+      JSON.parse(sessionJSON);
+    } catch {
+      return json(response, 400, { error: "invalid_session" });
+    }
+    return json(response, 200, {
+      status: "completed",
+      account: { email: "agent@example.com", plan_type: "team", provider: "codex-agent-identity", login_state: state },
+    });
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/experiments")) {
+    return json(response, 200, { settings: experimentalSettings });
+  }
+  if (request.method === "PUT" && url.pathname.endsWith("/experiments")) {
+    const body = await readJSON(request);
+    experimentalSettings = {
+      weekly_overdraft_enabled: Boolean(body.weekly_overdraft_enabled),
+      agent_identity_enabled: Boolean(body.agent_identity_enabled),
+    };
+    return json(response, 200, { settings: experimentalSettings });
+  }
   if (request.method === "POST" && url.pathname.endsWith("/accounts/model-test")) {
     const body = await readJSON(request);
     const account = accounts.find((candidate) => candidate.id === body.account_id);
     if (!account) return json(response, 404, { error: "account was not found" });
-    const defaults = { codex: "gpt-5.4", openai: "gpt-5.4", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", aistudio: "gemini-2.0-flash", xai: "grok-4" };
+    const defaults = { codex: defaultOpenAIProbeModel, openai: defaultOpenAIProbeModel, claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", aistudio: "gemini-2.0-flash", xai: "grok-4" };
     const model = String(body.model || defaults[account.provider] || "").trim();
     const supported = ["codex", "openai", "claude", "gemini", "gemini-cli", "gemini-interactions", "aistudio", "xai"].includes(account.provider);
     const now = new Date().toISOString();
@@ -998,12 +1038,45 @@ const server = http.createServer(async (request, response) => {
       account: stored.preview.account,
     });
   }
+  if (request.method === "POST" && url.pathname.endsWith("/batch/delete/preview")) {
+    const body = await readJSON(request);
+    const targets = resolveScope(body.scope || {});
+    const editable = targets.filter((target) => target.editable);
+    const previewID = crypto.randomUUID();
+    const preview = {
+      operation: "delete",
+      id: previewID,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+      scope_mode: body.scope?.mode || "filtered",
+      total: targets.length,
+      eligible: editable.length,
+      read_only: targets.length - editable.length,
+      missing: 0,
+      physical_files: editable.length,
+      providers: Object.fromEntries(providers.map((provider) => [provider, targets.filter((target) => target.provider === provider).length]).filter(([, count]) => count > 0)),
+      patch: { fields: [], proxy_mutation: false },
+      warnings: targets.some((target) => !target.editable) ? [`${targets.length - editable.length} target(s) are read-only and will be skipped`] : [],
+      targets: targets.map((target) => ({ id: target.id, name: target.name, provider: target.provider, label: target.label, eligible: target.editable, read_only_reason: target.read_only_reason })),
+    };
+    previews.set(previewID, { preview, targets: editable, fields: [], operation: "delete" });
+    return json(response, 200, preview);
+  }
+  if (request.method === "POST" && url.pathname.endsWith("/batch/delete/start")) {
+    const body = await readJSON(request);
+    if (body.confirm !== true) return json(response, 400, { error: "batch deletion requires explicit confirmation" });
+    const stored = previews.get(body.preview_id);
+    if (!stored || stored.operation !== "delete") return json(response, 404, { error: "delete preview not found" });
+    activeJob = { id: crypto.randomUUID(), started: Date.now(), targets: stored.targets, fields: [], operation: "delete", applied: false };
+    return json(response, 202, snapshotJob(true));
+  }
   if (request.method === "POST" && url.pathname.endsWith("/batch/preview")) {
     const body = await readJSON(request);
     const targets = resolveScope(body.scope || {});
     const fields = Object.keys(body.patch || {});
     const previewID = crypto.randomUUID();
     const preview = {
+      operation: "patch",
       id: previewID,
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 300_000).toISOString(),
@@ -1023,14 +1096,14 @@ const server = http.createServer(async (request, response) => {
       warnings: targets.some((target) => !target.editable) ? [`${targets.filter((target) => !target.editable).length} target(s) are read-only and will be skipped`] : [],
       targets: targets.map((target) => ({ id: target.id, name: target.name, provider: target.provider, label: target.label, eligible: target.editable, read_only_reason: target.read_only_reason })),
     };
-    previews.set(previewID, { preview, targets: targets.filter((target) => target.editable), fields });
+    previews.set(previewID, { preview, targets: targets.filter((target) => target.editable), fields, operation: "patch" });
     return json(response, 200, preview);
   }
   if (request.method === "POST" && url.pathname.endsWith("/batch/start")) {
     const body = await readJSON(request);
     const stored = previews.get(body.preview_id);
     if (!stored) return json(response, 404, { error: "preview not found" });
-    activeJob = { id: crypto.randomUUID(), started: Date.now(), targets: stored.targets, fields: stored.fields };
+    activeJob = { id: crypto.randomUUID(), started: Date.now(), targets: stored.targets, fields: stored.fields, operation: "patch" };
     return json(response, 202, snapshotJob(true));
   }
   if (request.method === "GET" && url.pathname.endsWith("/batch/status")) {
@@ -1351,8 +1424,8 @@ const server = http.createServer(async (request, response) => {
       model_probe_interval_minutes: Math.min(1440, Math.max(5, Number(body.model_probe_interval_minutes) || 60)),
       model_probe_batch_size: Math.min(200, Math.max(1, Number(body.model_probe_batch_size) || 20)),
       model_probe_models: {
-        codex: String(body.model_probe_models?.codex || "gpt-5.4"),
-        openai: String(body.model_probe_models?.openai || "gpt-5.4"),
+        codex: String(body.model_probe_models?.codex || defaultOpenAIProbeModel),
+        openai: String(body.model_probe_models?.openai || defaultOpenAIProbeModel),
         claude: String(body.model_probe_models?.claude || "claude-sonnet-4-5-20250929"),
         gemini: String(body.model_probe_models?.gemini || "gemini-2.0-flash"),
         xai: String(body.model_probe_models?.xai || "grok-4"),

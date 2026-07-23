@@ -86,12 +86,12 @@ func TestJobEngineContinuesAfterFailurePersistsRedactedStateAndRetriesFailedOnly
 		}
 	}
 
-	scope, retryPatch, parentJobID, errIntent := engine.RetryIntent()
+	scope, retryPatch, operation, parentJobID, errIntent := engine.RetryIntent()
 	if errIntent != nil {
 		t.Fatalf("RetryIntent() error = %v", errIntent)
 	}
-	if parentJobID != first.ID || len(scope.IDs) != 1 || scope.IDs[0] != "b" {
-		t.Fatalf("retry intent = parent %q scope %#v", parentJobID, scope)
+	if operation != BatchOperationPatch || parentJobID != first.ID || len(scope.IDs) != 1 || scope.IDs[0] != "b" {
+		t.Fatalf("retry intent = operation %q parent %q scope %#v", operation, parentJobID, scope)
 	}
 	failB.Store(false)
 	retryPreview, errRetryPreview := previews.BuildTransient(context.Background(), scope, retryPatch)
@@ -219,7 +219,7 @@ func TestJobEngineConvertsWorkerPanicToSanitizedFailure(t *testing.T) {
 	account := Account{ID: "a", Name: "a.json", path: "/auths/a.json", revision: revisionFor([]byte(`{"type":"codex"}`))}
 	note := "value"
 	result := NewJobEngine(NewAccountService(host)).applyAccountSafely(
-		context.Background(), account, BatchPatch{Note: &note}, panicWriter{},
+		context.Background(), account, BatchOperationPatch, BatchPatch{Note: &note}, panicWriter{},
 	)
 	if result.Status != ResultFailed || result.Error != "unexpected worker failure" || !result.Retryable {
 		t.Fatalf("result = %#v", result)
@@ -337,6 +337,10 @@ func (panicWriter) PatchDisabled(context.Context, string, bool) error {
 	panic("secret panic detail")
 }
 
+func (panicWriter) DeleteAuthFile(context.Context, string) error {
+	panic("secret panic detail")
+}
+
 type trackingWriter struct {
 	key string
 }
@@ -346,6 +350,10 @@ func (w *trackingWriter) PatchFields(context.Context, string, BatchPatch) error 
 }
 
 func (w *trackingWriter) PatchDisabled(context.Context, string, bool) error {
+	return nil
+}
+
+func (w *trackingWriter) DeleteAuthFile(context.Context, string) error {
 	return nil
 }
 

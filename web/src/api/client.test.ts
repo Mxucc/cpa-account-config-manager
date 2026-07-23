@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAccountDeletePreview,
+  createBatchDeletePreview,
   createImportPreview,
   createPreview,
   compareCPAServerVersions,
+  completeAgentIdentitySessionLogin,
   deleteAccount,
   downloadExport,
   executeInspectionAutoDelete,
@@ -16,6 +18,7 @@ import {
   listOperations,
 	persistCurrentSettings,
   reconcileUpdateStatus,
+  retryBatch,
   saveDefaultPolicy,
   saveInspectionPolicy,
   saveOperationRetentionSettings,
@@ -23,6 +26,7 @@ import {
   scanFullInspection,
   scanNativeInspection,
   startImport,
+  startBatchDelete,
   testAccountModel,
 } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
@@ -49,6 +53,25 @@ describe("management API client", () => {
     expect(url).toContain("type=k12");
     expect(url).toContain("disabled=false");
     expect(url).toContain("page=2");
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("submits Session JSON only to the authenticated Agent Identity login route", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const response = {
+      status: "completed",
+      account: { email: "agent@example.com", plan_type: "team", provider: "codex-agent-identity", login_state: "login-state" },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(completeAgentIdentitySessionLogin("login-state", "{\"accessToken\":\"secret\"}")).resolves.toEqual(response);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/experiments/agent-identity/session-login");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ state: "login-state", session_json: "{\"accessToken\":\"secret\"}" });
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
@@ -242,6 +265,60 @@ describe("management API client", () => {
     expect(startURL).toContain("/accounts/delete/start");
     expect(JSON.parse(String(startInit.body))).toEqual({ preview_id: "delete-preview-1" });
     expect(new Headers(startInit.headers).get("Authorization")).toBe("Bearer management-secret");
+  });
+
+  it("creates selected and filtered batch-delete previews and starts only with explicit confirmation", async () => {
+    setSession("", "management-secret");
+    const response = {
+      operation: "delete",
+      id: "batch-delete-preview-1",
+      created_at: "2026-07-23T00:00:00Z",
+      expires_at: "2026-07-23T00:05:00Z",
+      scope_mode: "selected",
+      total: 2,
+      eligible: 2,
+      read_only: 0,
+      missing: 0,
+      physical_files: 2,
+      providers: { codex: 2 },
+      patch: { fields: [], proxy_mutation: false },
+      targets: [],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(response))
+      .mockResolvedValueOnce(jsonResponse({ ...response, id: "batch-delete-preview-2", scope_mode: "filtered" }))
+      .mockResolvedValueOnce(jsonResponse({
+        id: "delete-job-1", operation: "delete", state: "running", running: true,
+        total: 2, eligible: 2, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0,
+        workers: 2, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+      }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createBatchDeletePreview({ mode: "selected", ids: ["auth-1", "auth-2"] });
+    await createBatchDeletePreview({ mode: "filtered", filters: { provider: "codex", disabled: true } });
+    await startBatchDelete("batch-delete-preview-1");
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/batch/delete/preview");
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({ scope: { mode: "selected", ids: ["auth-1", "auth-2"] } });
+    expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({ scope: { mode: "filtered", filters: { provider: "codex", disabled: true } } });
+    expect(String(fetchMock.mock.calls[2][0])).toContain("/batch/delete/start");
+    expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({ preview_id: "batch-delete-preview-1", confirm: true });
+  });
+
+  it("retries failed batch-delete items through the shared batch retry route", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      id: "delete-retry-job-1", parent_job_id: "delete-job-1", operation: "delete",
+      state: "running", running: true, total: 1, eligible: 1, done: 0, succeeded: 0,
+      failed: 0, conflicts: 0, skipped: 0, workers: 1,
+      patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+    }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await retryBatch();
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/batch/retry");
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
   });
 
   it("submits only the account ID and model for a model availability test", async () => {

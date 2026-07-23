@@ -211,6 +211,7 @@ export interface PreviewTarget {
 }
 
 export interface BatchPreview {
+  operation: "patch" | "delete";
   id: string;
   created_at: string;
   expires_at: string;
@@ -240,6 +241,7 @@ export interface JobResult {
 }
 
 export interface JobSnapshot {
+  operation?: "patch" | "delete";
   id?: string;
   parent_job_id?: string;
   state: JobState;
@@ -725,4 +727,14 @@ export interface ExperimentalSettings {
 export interface ExperimentalSettingsSnapshot {
   settings: ExperimentalSettings;
   storage_error?: string;
+}
+
+export interface AgentIdentitySessionLoginResponse {
+  status: "completed";
+  account: {
+    email?: string;
+    plan_type: string;
+    provider: string;
+    login_state: string;
+  };
 }

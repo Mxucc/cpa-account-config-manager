@@ -40,6 +40,13 @@ describe("official panel auth recovery", () => {
     expect(readPanelAuth()).toBeNull();
   });
 
+  it("reads same-origin credentials in an explicitly authorized standalone OAuth window", () => {
+    setEmbedded(false);
+    localStorage.setItem(storageKey, encodePanelState("http://127.0.0.1:8317", "test-key"));
+    expect(readPanelAuth({ allowStandalone: true })).toEqual({ apiBase: "http://127.0.0.1:8317", managementKey: "test-key" });
+    expect(readPanelAuth()).toBeNull();
+  });
+
   it("recovers the official panel session only in a same-origin iframe", () => {
     setEmbedded(true);
     localStorage.setItem(storageKey, encodePanelState("http://127.0.0.1:8317", "test-key"));

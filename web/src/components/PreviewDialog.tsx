@@ -27,17 +27,18 @@ const fieldLabels: Record<string, UIMessageKey> = {
 export function PreviewDialog({ preview, starting, error = "", onClose, onConfirm }: PreviewDialogProps) {
   const { locale, tx } = useI18n();
   const warnings = previewWarnings(preview, locale);
+  const deleting = preview.operation === "delete";
   return (
     <Modal
-      title={tx("ui.change_preview")}
+      title={tx(deleting ? "ui.batch_delete_preview" : "ui.change_preview")}
       wide
       onClose={onClose}
       footer={(
         <>
           <span className="modal-scope">{tx("ui.snapshot_id", { id: preview.id.slice(0, 8) })}</span>
           <button className="button" type="button" onClick={onClose}>{tx("ui.cancel")}</button>
-          <button className="button button-primary" type="button" disabled={starting || preview.eligible === 0} onClick={onConfirm}>
-            {starting ? tx("ui.starting") : error ? tx("ui.restart_count_accounts", { count: preview.eligible }) : tx("ui.apply_to_count_accounts", { count: preview.eligible })}
+          <button className={`button ${deleting ? "button-danger" : "button-primary"}`} type="button" disabled={starting || preview.eligible === 0} onClick={onConfirm}>
+            {starting ? tx("ui.starting") : deleting ? tx("ui.delete_count_accounts", { count: preview.eligible }) : error ? tx("ui.restart_count_accounts", { count: preview.eligible }) : tx("ui.apply_to_count_accounts", { count: preview.eligible })}
           </button>
         </>
       )}
@@ -49,9 +50,13 @@ export function PreviewDialog({ preview, starting, error = "", onClose, onConfir
         <Metric label={tx("ui.missing")} value={preview.missing} tone={preview.missing > 0 ? "danger" : ""} />
         <Metric label={tx("ui.physical_files")} value={preview.physical_files} />
       </div>
-      <div className="preview-fields" aria-label={tx("ui.changed_fields")}>
-        {preview.patch.fields.map((field) => <span className="field-chip" key={field}>{tx(fieldLabels[field] ?? "ui.unknown")}</span>)}
-      </div>
+      {deleting ? (
+        <div className="batch-delete-warning"><AlertTriangle size={18} /><span>{tx("ui.batch_delete_warning")}</span></div>
+      ) : (
+        <div className="preview-fields" aria-label={tx("ui.changed_fields")}>
+          {preview.patch.fields.map((field) => <span className="field-chip" key={field}>{tx(fieldLabels[field] ?? "ui.unknown")}</span>)}
+        </div>
+      )}
       {error ? (
         <div className="preview-start-error" role="alert">
           <AlertCircle size={18} />

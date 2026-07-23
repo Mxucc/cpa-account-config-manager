@@ -64,6 +64,23 @@ describe("OperationLogWorkspace", () => {
     expect(onOpenRelatedJob).toHaveBeenCalledWith(operationResponse.operations[0]);
   });
 
+  it("labels batch deletion and its retry truthfully", async () => {
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [
+        { ...operationResponse.operations[0], id: "delete-1", action: "batch_delete", status: "succeeded" },
+        { ...operationResponse.operations[0], id: "delete-retry-1", action: "batch_delete_retry", status: "succeeded" },
+      ],
+      total: 2,
+      retained: 2,
+    });
+
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("批量删除")).toBeInTheDocument();
+    expect(screen.getByText("重试批量删除")).toBeInTheDocument();
+  });
+
   it("uses fixed 500-entry pages and persists extended history", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();

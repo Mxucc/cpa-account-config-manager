@@ -137,6 +137,7 @@ type AgentIdentityExperiment struct {
 	inflight map[string]*agentIdentityTaskCall
 	jwks     agentIdentityJWKS
 	jwksAt   time.Time
+	logins   map[string]*agentIdentityLoginFlow
 }
 
 func NewAgentIdentityExperiment(enabled func() bool, transport AgentIdentityTransport) *AgentIdentityExperiment {
@@ -146,6 +147,7 @@ func NewAgentIdentityExperiment(enabled func() bool, transport AgentIdentityTran
 	return &AgentIdentityExperiment{
 		enabled: enabled, transport: transport, now: time.Now,
 		tasks: make(map[string]agentIdentityTask), inflight: make(map[string]*agentIdentityTaskCall),
+		logins: make(map[string]*agentIdentityLoginFlow),
 	}
 }
 
@@ -155,6 +157,10 @@ func (e *AgentIdentityExperiment) Clear() {
 	}
 	e.mu.Lock()
 	clear(e.tasks)
+	for state, flow := range e.logins {
+		clearAgentIdentityLoginFlow(flow)
+		delete(e.logins, state)
+	}
 	e.jwks = agentIdentityJWKS{}
 	e.jwksAt = time.Time{}
 	e.mu.Unlock()

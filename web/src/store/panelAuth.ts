@@ -41,8 +41,8 @@ function extractPanelAuth(value: unknown): PanelAuth | null {
   return { apiBase, managementKey };
 }
 
-export function readPanelAuth(): PanelAuth | null {
-  if (!isEmbedded()) return null;
+export function readPanelAuth(options: { allowStandalone?: boolean } = {}): PanelAuth | null {
+  if (!isEmbedded() && options.allowStandalone !== true) return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;

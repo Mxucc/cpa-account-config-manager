@@ -15,6 +15,9 @@ import (
 const (
 	defaultPreviewTTL = 5 * time.Minute
 	maxPreviewEntries = 32
+
+	BatchOperationPatch  = "patch"
+	BatchOperationDelete = "delete"
 )
 
 var (
@@ -25,6 +28,15 @@ var (
 type PreviewRequest struct {
 	Scope TargetScope `json:"scope"`
 	Patch BatchPatch  `json:"patch"`
+}
+
+type BatchDeletePreviewRequest struct {
+	Scope TargetScope `json:"scope"`
+}
+
+type BatchDeleteStartRequest struct {
+	PreviewID string `json:"preview_id"`
+	Confirm   bool   `json:"confirm"`
 }
 
 type PreviewTarget struct {
@@ -38,6 +50,7 @@ type PreviewTarget struct {
 
 type BatchPreview struct {
 	ID            string          `json:"id,omitempty"`
+	Operation     string          `json:"operation"`
 	CreatedAt     time.Time       `json:"created_at"`
 	ExpiresAt     time.Time       `json:"expires_at,omitempty"`
 	ScopeMode     string          `json:"scope_mode"`
@@ -53,10 +66,11 @@ type BatchPreview struct {
 }
 
 type previewSnapshot struct {
-	Public  BatchPreview
-	Scope   TargetScope
-	Patch   BatchPatch
-	Targets []Account
+	Public    BatchPreview
+	Operation string
+	Scope     TargetScope
+	Patch     BatchPatch
+	Targets   []Account
 }
 
 type previewStore struct {
@@ -99,8 +113,29 @@ func (s *PreviewService) Create(ctx context.Context, request PreviewRequest) (Ba
 	return snapshot.Public, nil
 }
 
+func (s *PreviewService) CreateDelete(ctx context.Context, request BatchDeletePreviewRequest) (BatchPreview, error) {
+	snapshot, errBuild := s.buildDelete(ctx, request.Scope)
+	if errBuild != nil {
+		return BatchPreview{}, errBuild
+	}
+	now := s.now().UTC()
+	id, errID := randomIdentifier()
+	if errID != nil {
+		return BatchPreview{}, fmt.Errorf("create batch delete preview id: %w", errID)
+	}
+	snapshot.Public.ID = id
+	snapshot.Public.CreatedAt = now
+	snapshot.Public.ExpiresAt = now.Add(s.store.ttl)
+	s.store.put(snapshot)
+	return snapshot.Public, nil
+}
+
 func (s *PreviewService) BuildTransient(ctx context.Context, scope TargetScope, patch BatchPatch) (previewSnapshot, error) {
 	return s.build(ctx, scope, patch)
+}
+
+func (s *PreviewService) BuildDeleteTransient(ctx context.Context, scope TargetScope) (previewSnapshot, error) {
+	return s.buildDelete(ctx, scope)
 }
 
 func (s *PreviewService) Get(id string) (previewSnapshot, error) {
@@ -182,6 +217,7 @@ func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPat
 	}
 	return previewSnapshot{
 		Public: BatchPreview{
+			Operation:     BatchOperationPatch,
 			CreatedAt:     s.now().UTC(),
 			ScopeMode:     scope.Mode,
 			Total:         len(targets),
@@ -194,9 +230,87 @@ func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPat
 			Warnings:      warnings,
 			Targets:       targets,
 		},
-		Scope:   scope,
-		Patch:   cloneBatchPatch(patch),
-		Targets: append([]Account(nil), eligibleTargets...),
+		Operation: BatchOperationPatch,
+		Scope:     scope,
+		Patch:     cloneBatchPatch(patch),
+		Targets:   append([]Account(nil), eligibleTargets...),
+	}, nil
+}
+
+func (s *PreviewService) buildDelete(ctx context.Context, rawScope TargetScope) (previewSnapshot, error) {
+	if s == nil || s.accounts == nil {
+		return previewSnapshot{}, fmt.Errorf("account service is unavailable")
+	}
+	scope, errScope := rawScope.Validate()
+	if errScope != nil {
+		return previewSnapshot{}, errScope
+	}
+	resolved, errResolve := s.accounts.ResolveTargets(ctx, scope)
+	if errResolve != nil {
+		return previewSnapshot{}, fmt.Errorf("resolve target accounts: %w", errResolve)
+	}
+	if len(resolved.Accounts)+len(resolved.MissingIDs) == 0 {
+		return previewSnapshot{}, fmt.Errorf("scope matched no accounts")
+	}
+
+	providers := make(map[string]int)
+	targets := make([]PreviewTarget, 0, len(resolved.Accounts)+len(resolved.MissingIDs))
+	eligibleTargets := make([]Account, 0, len(resolved.Accounts))
+	readOnly := 0
+	for _, account := range resolved.Accounts {
+		provider := strings.TrimSpace(account.Provider)
+		if provider == "" {
+			provider = "unknown"
+		}
+		providers[provider]++
+		eligible := account.Editable && account.path != "" && account.revision != "" && safeAuthJSONName(account.Name)
+		readOnlyReason := account.ReadOnlyReason
+		if !eligible && strings.TrimSpace(readOnlyReason) == "" {
+			readOnlyReason = "account has no deletable physical auth file"
+		}
+		targets = append(targets, PreviewTarget{
+			ID:             account.ID,
+			Name:           account.Name,
+			Provider:       account.Provider,
+			Label:          firstNonEmpty(account.Label, account.Email),
+			Eligible:       eligible,
+			ReadOnlyReason: readOnlyReason,
+		})
+		if eligible {
+			eligibleTargets = append(eligibleTargets, cloneDeleteAccount(account))
+		} else {
+			readOnly++
+		}
+	}
+	for _, id := range resolved.MissingIDs {
+		targets = append(targets, PreviewTarget{ID: id, ReadOnlyReason: "account no longer exists"})
+	}
+
+	warnings := make([]string, 0, 2)
+	if readOnly > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d target(s) are read-only and will be skipped", readOnly))
+	}
+	if len(resolved.MissingIDs) > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d selected target(s) are missing and will be skipped", len(resolved.MissingIDs)))
+	}
+	return previewSnapshot{
+		Public: BatchPreview{
+			Operation:     BatchOperationDelete,
+			CreatedAt:     s.now().UTC(),
+			ScopeMode:     scope.Mode,
+			Total:         len(targets),
+			Eligible:      len(eligibleTargets),
+			ReadOnly:      readOnly,
+			Missing:       len(resolved.MissingIDs),
+			PhysicalFiles: resolved.PhysicalFiles,
+			Providers:     providers,
+			Patch:         PatchSummary{Fields: []string{}},
+			Warnings:      warnings,
+			Targets:       targets,
+		},
+		Operation: BatchOperationDelete,
+		Scope:     scope,
+		Targets:   eligibleTargets,
 	}, nil
 }
 

@@ -391,7 +391,7 @@ func TestBuildModelProbeUsesAPIKeyEndpointForRuntimeAccountMetadata(t *testing.T
 	if errProbe != nil || !supported {
 		t.Fatalf("buildModelProbe() supported=%v error=%v", supported, errProbe)
 	}
-	if model != "gpt-5.4" || probe.url != "https://api.openai.com/v1/responses" || probe.kind != "openai" {
+	if model != defaultOpenAIProbeModel || probe.url != "https://api.openai.com/v1/responses" || probe.kind != "openai" {
 		t.Fatalf("API-key probe = %#v model=%q", probe, model)
 	}
 }

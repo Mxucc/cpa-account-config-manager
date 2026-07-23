@@ -28,6 +28,7 @@ import * as api from "./api/client";
 import { AccountDetailsDialog } from "./components/AccountDetailsDialog";
 import { BatchEditor } from "./components/BatchEditor";
 import { AccountUsageCell } from "./components/AccountUsageCell";
+import { AgentIdentitySessionLogin } from "./components/AgentIdentitySessionLogin";
 import { ExportDialog } from "./components/ExportDialog";
 import { ForceSyncPreviewDialog } from "./components/ForceSyncPreviewDialog";
 import { IconButton } from "./components/IconButton";
@@ -137,7 +138,22 @@ interface EditorContext {
   scope?: TargetScope;
 }
 
+const agentIdentityLoginStatePattern = /^[A-Za-z0-9._-]{1,256}$/;
+
+function queryAgentIdentityLoginState(): string | null | undefined {
+  const parameters = new URLSearchParams(window.location.search);
+  if (!parameters.has("agent_identity_login")) return undefined;
+  const state = parameters.get("agent_identity_login")?.trim() ?? "";
+  return agentIdentityLoginStatePattern.test(state) ? state : null;
+}
+
 export default function App() {
+  const agentIdentityLoginState = queryAgentIdentityLoginState();
+  if (agentIdentityLoginState !== undefined) return <AgentIdentitySessionLogin loginState={agentIdentityLoginState} />;
+  return <AccountManagerApp />;
+}
+
+function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
   const [activeView, setActiveView] = useState<"accounts" | "inspection" | "operations" | "settings">("accounts");
@@ -511,6 +527,18 @@ export default function App() {
     }
   };
 
+  const beginBatchDelete = async () => {
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      setPreview(await api.createBatchDeletePreview(targetScope()));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const openAccountEditor = (account: Account) => {
     if (!account.editable) return;
     setDetailAccount(null);
@@ -635,8 +663,15 @@ export default function App() {
     setStarting(true);
     setPreviewError("");
     try {
-      const snapshot = await api.startBatch(preview.id);
+      const deletingBatch = preview.operation === "delete";
+      const snapshot = deletingBatch
+        ? await api.startBatchDelete(preview.id)
+        : await api.startBatch(preview.id);
       setPreview(null);
+      if (deletingBatch) {
+        setSelected(new Set());
+        setScopeMode("filtered");
+      }
       setJob(snapshot);
       setForceJobOpen(false);
       setJobOpen(true);
@@ -1093,6 +1128,9 @@ export default function App() {
             <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorContext({ title: "ui.batch_edit", scopeLabel })}>
               {previewLoading ? <LoaderCircle className="spin" size={16} /> : <SlidersHorizontal size={16} />}{tx("ui.batch_edit")}
             </button>
+            <button className="button button-danger" type="button" disabled={previewLoading} onClick={() => void beginBatchDelete()}>
+              <Trash2 size={16} />{tx("ui.batch_delete")}
+            </button>
           </div>
         </footer>
       ) : null}
@@ -1104,7 +1142,7 @@ export default function App() {
       {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
-      {jobOpen && job ? <JobPanel job={job} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
+      {jobOpen && job ? <JobPanel job={job} title={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} ariaLabel={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
       {exportTarget ? <ExportDialog kind={exportTarget} count={exportCount} scopeLabel={exportScopeLabel} exporting={exporting} error={exportError} onClose={closeExport} onExport={(format) => void confirmExport(format)} /> : null}
       {policyOpen && policySnapshot ? <PolicyDialog key={`${policySnapshot.policy.enabled}:${policySnapshot.policy.priority}:${policySnapshot.policy.websockets}:${policySnapshot.policy.scan_interval_seconds}`} snapshot={policySnapshot} saving={policySaving} scanning={policyScanning} forceLoading={forcePreviewLoading} error={policyError} onClose={() => setPolicyOpen(false)} onSave={(policy) => void savePolicy(policy)} onScan={() => void scanPolicy()} onForcePreview={() => void previewForceSync()} /> : null}

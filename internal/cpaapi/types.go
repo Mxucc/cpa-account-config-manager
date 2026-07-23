@@ -86,11 +86,12 @@ type ResourceRoute struct {
 }
 
 type ManagementRequest struct {
-	Method  string
-	Path    string
-	Headers http.Header
-	Query   url.Values
-	Body    []byte
+	Method         string
+	Path           string
+	Headers        http.Header
+	Query          url.Values
+	Body           []byte
+	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
 type ManagementResponse struct {
@@ -147,11 +148,26 @@ type AuthParseResponse struct {
 	Auths   []AuthData
 }
 
+type AuthLoginStartRequest struct {
+	Provider       string
+	BaseURL        string
+	Metadata       map[string]any
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
 type AuthLoginStartResponse struct {
 	Provider  string
 	URL       string
 	State     string
 	ExpiresAt time.Time
+	Metadata  map[string]any
+}
+
+type AuthLoginPollRequest struct {
+	Provider       string
+	State          string
+	Metadata       map[string]any
+	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
 type AuthLoginPollResponse struct {

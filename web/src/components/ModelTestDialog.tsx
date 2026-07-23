@@ -16,9 +16,11 @@ interface ModelTestDialogProps {
   onTest: (model: string, experimentalWeeklyOverdraft?: boolean) => void;
 }
 
+const defaultOpenAIProbeModel = "gpt-5.6-sol";
+
 const modelSuggestions: Record<string, string[]> = {
-  codex: ["gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"],
-  openai: ["gpt-5.4", "gpt-5.4-mini"],
+  codex: [defaultOpenAIProbeModel, "gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"],
+  openai: [defaultOpenAIProbeModel, "gpt-5.4", "gpt-5.4-mini"],
   claude: ["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"],
   gemini: ["gemini-2.0-flash", "gemini-2.5-pro"],
   "gemini-cli": ["gemini-2.0-flash", "gemini-2.5-pro"],

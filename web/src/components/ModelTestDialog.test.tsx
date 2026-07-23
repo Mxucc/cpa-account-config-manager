@@ -95,6 +95,6 @@ describe("ModelTestDialog", () => {
     expect(within(dialog).getByText("已加载实验请求")).toBeInTheDocument();
     expect(within(dialog).getByText("call_cpa_overdraft_fresh123")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "加载实验性功能" }));
-    expect(onTest).toHaveBeenCalledWith("gpt-5.4", true);
+    expect(onTest).toHaveBeenCalledWith("gpt-5.6-sol", true);
   });
 });

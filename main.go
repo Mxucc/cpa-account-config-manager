@@ -61,9 +61,25 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		return okEnvelope(response)
 	case cpaapi.MethodAuthLoginStart:
-		return okEnvelope(cpaapi.AuthLoginStartResponse{Provider: "codex-agent-identity"})
+		var loginRequest cpaapi.AuthLoginStartRequest
+		if errUnmarshal := json.Unmarshal(request, &loginRequest); errUnmarshal != nil {
+			return nil, fmt.Errorf("decode Agent Identity login start input: %w", errUnmarshal)
+		}
+		response, errStart := pluginApp.HandleAgentIdentityLoginStart(loginRequest)
+		if errStart != nil {
+			return nil, errStart
+		}
+		return okEnvelope(response)
 	case cpaapi.MethodAuthLoginPoll:
-		return okEnvelope(cpaapi.AuthLoginPollResponse{Status: "error", Message: "Agent Identity supports file import only"})
+		var pollRequest cpaapi.AuthLoginPollRequest
+		if errUnmarshal := json.Unmarshal(request, &pollRequest); errUnmarshal != nil {
+			return nil, fmt.Errorf("decode Agent Identity login poll input: %w", errUnmarshal)
+		}
+		response, errPoll := pluginApp.HandleAgentIdentityLoginPoll(pollRequest)
+		if errPoll != nil {
+			return nil, errPoll
+		}
+		return okEnvelope(response)
 	case cpaapi.MethodAuthRefresh:
 		var refreshRequest cpaapi.AuthRefreshRequest
 		if errUnmarshal := json.Unmarshal(request, &refreshRequest); errUnmarshal != nil {

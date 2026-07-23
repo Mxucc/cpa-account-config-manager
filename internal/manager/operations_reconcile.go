@@ -40,7 +40,12 @@ func (a *App) reconcileOperationSources() {
 
 func operationFromJob(snapshot JobSnapshot) OperationEntry {
 	action := OperationActionBatchEdit
-	if snapshot.ParentJobID != "" {
+	if snapshot.Operation == BatchOperationDelete {
+		action = OperationActionBatchDelete
+	}
+	if snapshot.ParentJobID != "" && snapshot.Operation == BatchOperationDelete {
+		action = OperationActionBatchDeleteRetry
+	} else if snapshot.ParentJobID != "" {
 		action = OperationActionBatchRetry
 	}
 	return OperationEntry{

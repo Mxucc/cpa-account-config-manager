@@ -29,6 +29,7 @@ type HTTPDoer interface {
 type ManagementWriter interface {
 	PatchFields(context.Context, string, BatchPatch) error
 	PatchDisabled(context.Context, string, bool) error
+	DeleteAuthFile(context.Context, string) error
 }
 
 type ManagementAuthFileDeleter interface {

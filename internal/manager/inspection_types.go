@@ -14,6 +14,7 @@ const (
 	defaultInspectionInterval   = 30
 	defaultModelProbeInterval   = 60
 	defaultModelProbeBatchSize  = 20
+	defaultOpenAIProbeModel     = "gpt-5.6-sol"
 	defaultAnomalyThreshold     = 50
 	defaultAnomalyMinimum       = 10
 	defaultAnomalyCooldown      = 60
@@ -397,8 +398,8 @@ func defaultInspectionPolicy() InspectionPolicy {
 
 func defaultModelProbeModels() ModelProbeModels {
 	return ModelProbeModels{
-		Codex:  "gpt-5.4",
-		OpenAI: "gpt-5.4",
+		Codex:  defaultOpenAIProbeModel,
+		OpenAI: defaultOpenAIProbeModel,
 		Claude: "claude-sonnet-4-5-20250929",
 		Gemini: "gemini-2.0-flash",
 		XAI:    "grok-4",

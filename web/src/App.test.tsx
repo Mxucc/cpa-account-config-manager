@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
@@ -190,7 +190,7 @@ describe("primary account batch flow", () => {
         return jsonResponse({
           account_id: "auth-1",
           provider: "codex",
-          model: "gpt-5.4",
+          model: "gpt-5.6-sol",
           status: "available",
           reason_code: "model_response_ok",
           latency_ms: 286,
@@ -280,13 +280,13 @@ describe("primary account batch flow", () => {
 
     await user.click(screen.getByRole("button", { name: "测试模型 operator@example.com" }));
     const modelTestDialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
-    expect(within(modelTestDialog).getByLabelText("测试模型")).toHaveValue("gpt-5.4");
+    expect(within(modelTestDialog).getByLabelText("测试模型")).toHaveValue("gpt-5.6-sol");
     await user.click(within(modelTestDialog).getByRole("button", { name: "开始测试" }));
     expect(await within(modelTestDialog).findByText("模型可用")).toBeInTheDocument();
     expect(within(modelTestDialog).getByText("已收到符合预期的模型响应")).toBeInTheDocument();
     expect(within(modelTestDialog).getByText("286 ms")).toBeInTheDocument();
     const modelTestRequest = requests.find((request) => request.url.includes("/accounts/model-test"));
-    expect(JSON.parse(String(modelTestRequest?.init.body))).toEqual({ account_id: "auth-1", model: "gpt-5.4" });
+    expect(JSON.parse(String(modelTestRequest?.init.body))).toEqual({ account_id: "auth-1", model: "gpt-5.6-sol" });
     await user.click(within(modelTestDialog).getAllByRole("button", { name: "关闭" })[1]);
 
     await user.click(screen.getByLabelText("选择 operator@example.com"));
@@ -319,6 +319,92 @@ describe("primary account batch flow", () => {
     expect(body.patch).toEqual({ note: "rotated pool" });
     await waitFor(() => expect(new Headers(previewRequest?.init.headers).get("Authorization")).toBe("Bearer management-secret"));
     expect(localStorage.getItem("management-secret")).toBeNull();
+  });
+
+  it("previews filtered and selected batch deletion, confirms it, and clears the selection", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    let deleteJobStarted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/batch/delete/preview")) {
+        const body = JSON.parse(String(init.body)) as { scope: { mode: string } };
+        return jsonResponse({
+          operation: "delete",
+          id: `delete-preview-${body.scope.mode}`,
+          created_at: "2026-07-23T10:00:00Z",
+          expires_at: "2026-07-23T10:05:00Z",
+          scope_mode: body.scope.mode,
+          total: 1,
+          eligible: 1,
+          read_only: 0,
+          missing: 0,
+          physical_files: 1,
+          providers: { codex: 1 },
+          patch: { fields: [], proxy_mutation: false },
+          targets: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", eligible: true }],
+        });
+      }
+      if (url.includes("/batch/delete/start")) {
+        deleteJobStarted = true;
+        return jsonResponse({
+          operation: "delete",
+          id: "delete-job-1",
+          state: "running",
+          running: true,
+          total: 1,
+          eligible: 1,
+          done: 0,
+          succeeded: 0,
+          failed: 0,
+          conflicts: 0,
+          skipped: 0,
+          workers: 1,
+          patch: { fields: [], proxy_mutation: false },
+          retry_available: false,
+          persisted: false,
+          results: [{ id: "auth-1", label: "operator@example.com", provider: "codex", status: "pending", applied_fields: [], retryable: false }],
+        }, 202);
+      }
+      if (url.includes("/batch/status")) {
+        return jsonResponse(deleteJobStarted ? {
+          operation: "delete", id: "delete-job-1", state: "running", running: true,
+          total: 1, eligible: 1, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0,
+          workers: 1, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        } : {
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: url.includes("page_size=1") ? 1 : 50, pages: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByRole("button", { name: "批量删除" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "批量删除" }));
+    const filteredPreview = await screen.findByRole("dialog", { name: "批量删除预览" });
+    expect(JSON.parse(String(requests.find(({ url }) => url.includes("/batch/delete/preview"))?.init.body)).scope).toEqual({ mode: "filtered", filters: {} });
+    await user.click(within(filteredPreview).getByLabelText("关闭"));
+
+    await user.click(screen.getByLabelText("选择 operator@example.com"));
+    await user.click(screen.getByRole("button", { name: "批量删除" }));
+    const selectedPreview = await screen.findByRole("dialog", { name: "批量删除预览" });
+    expect(within(selectedPreview).getByText("删除后无法通过插件恢复这些 Auth 文件，请确认目标范围后再继续。")).toBeInTheDocument();
+    expect(within(selectedPreview).queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(within(selectedPreview).getByRole("button", { name: "删除 1 个账号" }));
+
+    expect(await screen.findByRole("complementary", { name: "批量删除任务" })).toBeInTheDocument();
+    expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
+    const previews = requests.filter(({ url }) => url.includes("/batch/delete/preview"));
+    expect(JSON.parse(String(previews[1].init.body)).scope).toEqual({ mode: "selected", ids: ["auth-1"] });
+    const start = requests.find(({ url }) => url.includes("/batch/delete/start"));
+    expect(JSON.parse(String(start?.init.body))).toEqual({ preview_id: "delete-preview-selected", confirm: true });
   });
 
   it("restores and persists the selected account page size", async () => {
@@ -870,6 +956,78 @@ describe("primary account batch flow", () => {
     expect(pastedFile.type).toBe("text/plain");
     expect(pastedFile.size).toBe(new Blob([rawJSON]).size);
     expect(new Headers(previewRequest?.init.headers).get("Content-Type")).toBeNull();
+    expect(localStorage.length).toBe(0);
+  });
+});
+
+describe("Agent Identity Session login mode", () => {
+  beforeEach(() => {
+    _resetSessionForTest();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("fails closed for an invalid OAuth state without rendering account management", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/?agent_identity_login=%3Cinvalid%3E");
+
+    render(<App />);
+
+    expect(await screen.findByText("该 Agent Identity 登录请求已过期，请返回 CPA 重新发起登录。")).toBeInTheDocument();
+    expect(screen.queryByText("筛选账号")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clears the Session input and shows only redacted account metadata after conversion", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    let finishConversion: ((response: Response) => void) | undefined;
+    const conversion = new Promise<Response>((resolve) => { finishConversion = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/experiments/agent-identity/session-login")) return conversion;
+      return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 1, pages: 0 });
+    }));
+    window.history.replaceState({}, "", "/?agent_identity_login=login-state_123");
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    const sessionLink = await screen.findByRole("link", { name: "打开 ChatGPT Session" });
+    expect(sessionLink).toHaveAttribute("href", "https://chatgpt.com/api/auth/session");
+    expect(screen.queryByText("筛选账号")).not.toBeInTheDocument();
+    const input = screen.getByLabelText("ChatGPT Session JSON");
+    const sessionJSON = "{\"accessToken\":\"browser-session-secret\"}";
+    fireEvent.change(input, { target: { value: sessionJSON } });
+    await user.click(screen.getByRole("button", { name: "转换并登录" }));
+
+    expect(input).toHaveValue("");
+    expect(await screen.findByRole("button", { name: "正在创建 Agent Identity" })).toBeDisabled();
+    finishConversion?.(jsonResponse({
+      status: "completed",
+      account: { email: "agent@example.com", plan_type: "team", provider: "codex-agent-identity", login_state: "login-state_123" },
+    }));
+
+    expect(await screen.findByText("Agent Identity 已就绪")).toBeInTheDocument();
+    expect(screen.getByText("agent@example.com")).toBeInTheDocument();
+    expect(screen.getByText("team")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭登录窗口" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("browser-session-secret");
+    expect(document.body.textContent).not.toContain("agent_private_key");
+    expect(document.body.textContent).not.toContain("task_id");
+
+    const request = requests.find(({ url }) => url.endsWith("/experiments/agent-identity/session-login"));
+    expect(request).toBeDefined();
+    expect(JSON.parse(String(request?.init.body))).toEqual({ state: "login-state_123", session_json: sessionJSON });
+    expect(new Headers(request?.init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
 });

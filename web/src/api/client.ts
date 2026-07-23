@@ -11,6 +11,7 @@ import type {
 	DefaultPolicy,
 	ExperimentalSettings,
 	ExperimentalSettingsSnapshot,
+	AgentIdentitySessionLoginResponse,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
   ExportFormat,
@@ -280,10 +281,24 @@ export async function createPreview(scope: TargetScope, patch: BatchPatch): Prom
   });
 }
 
+export async function createBatchDeletePreview(scope: TargetScope): Promise<BatchPreview> {
+  return request<BatchPreview>("/batch/delete/preview", {
+    method: "POST",
+    body: JSON.stringify({ scope }),
+  });
+}
+
 export async function startBatch(previewID: string): Promise<JobSnapshot> {
   return request<JobSnapshot>("/batch/start", {
     method: "POST",
     body: JSON.stringify({ preview_id: previewID }),
+  });
+}
+
+export async function startBatchDelete(previewID: string): Promise<JobSnapshot> {
+  return request<JobSnapshot>("/batch/delete/start", {
+    method: "POST",
+    body: JSON.stringify({ preview_id: previewID, confirm: true }),
   });
 }
 
@@ -462,6 +477,13 @@ export async function saveExperimentalSettings(settings: ExperimentalSettings): 
 	return request<ExperimentalSettingsSnapshot>("/experiments", {
 		method: "PUT",
 		body: JSON.stringify(settings),
+	});
+}
+
+export async function completeAgentIdentitySessionLogin(state: string, sessionJSON: string): Promise<AgentIdentitySessionLoginResponse> {
+	return request<AgentIdentitySessionLoginResponse>("/experiments/agent-identity/session-login", {
+		method: "POST",
+		body: JSON.stringify({ state, session_json: sessionJSON }),
 	});
 }
 

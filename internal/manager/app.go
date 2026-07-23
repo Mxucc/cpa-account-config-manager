@@ -218,6 +218,20 @@ func (a *App) HandleAgentIdentityAuthRefresh(request cpaapi.AuthRefreshRequest) 
 	return a.agentIdentity.RefreshAuth(request)
 }
 
+func (a *App) HandleAgentIdentityLoginStart(request cpaapi.AuthLoginStartRequest) (cpaapi.AuthLoginStartResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.AuthLoginStartResponse{}, fmt.Errorf("Agent Identity experiment is unavailable")
+	}
+	return a.agentIdentity.StartLogin(request)
+}
+
+func (a *App) HandleAgentIdentityLoginPoll(request cpaapi.AuthLoginPollRequest) (cpaapi.AuthLoginPollResponse, error) {
+	if a == nil || a.agentIdentity == nil {
+		return cpaapi.AuthLoginPollResponse{Status: "error", Message: "Agent Identity experiment is unavailable"}, nil
+	}
+	return a.agentIdentity.PollLogin(request), nil
+}
+
 func (a *App) HandleAgentIdentityModels(request cpaapi.AuthModelRequest) (cpaapi.ModelResponse, error) {
 	if a == nil || a.agentIdentity == nil {
 		return cpaapi.ModelResponse{Provider: agentIdentityProvider}, nil
@@ -255,6 +269,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/start", Description: "Delete one confirmed unchanged physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/preview", Description: "Preview a batch account configuration patch."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/start", Description: "Start an approved batch account configuration patch."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/delete/preview", Description: "Preview deletion of editable physical Auth files in a selected or filtered scope."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/delete/start", Description: "Start an explicitly confirmed batch Auth-file deletion."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/batch/status", Description: "Read current or last batch progress."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/retry", Description: "Retry the failed subset of the last in-memory batch."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export filtered account credentials for an explicitly selected target format."},
@@ -286,6 +302,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Record an immediate CPA plugin-store update check."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/experiments", Description: "Read removable experimental feature settings."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/experiments", Description: "Persist removable experimental feature settings."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/experiments/agent-identity/session-login", Description: "Convert one explicitly submitted ChatGPT Session JSON into a pending Agent Identity login credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations", Description: "List the persistent sanitized account-manager operation journal."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/export", Description: "Export the sanitized operation journal as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/operations/settings", Description: "Read operation-journal retention settings."},
@@ -330,6 +347,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handlePreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/start":
 		return a.handleStart(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/delete/preview":
+		return a.handleBatchDeletePreview(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/delete/start":
+		return a.handleBatchDeleteStart(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/batch/status":
 		return jsonResponse(http.StatusOK, a.jobs.Snapshot(statusWantsResults(req.Query)))
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/batch/retry":
@@ -416,6 +437,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return jsonResponse(http.StatusOK, a.experiments.Snapshot())
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/experiments":
 		return a.handlePutExperimentalSettings(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/experiments/agent-identity/session-login":
+		return a.handleAgentIdentitySessionLogin(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations":
 		return a.handleListOperations(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/operations/export":
@@ -820,6 +843,9 @@ func (a *App) handleStart(req cpaapi.ManagementRequest) cpaapi.ManagementRespons
 			return jsonResponse(http.StatusNotFound, map[string]any{"error": "preview not found"})
 		}
 	}
+	if preview.Operation != BatchOperationPatch {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "preview is not a batch configuration patch"})
+	}
 	managementKey := resolveManagementKey(req.Headers)
 	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
@@ -837,12 +863,69 @@ func (a *App) handleStart(req cpaapi.ManagementRequest) cpaapi.ManagementRespons
 	return jsonResponse(http.StatusAccepted, snapshot)
 }
 
+func (a *App) handleBatchDeletePreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request BatchDeletePreviewRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	preview, errPreview := a.previews.CreateDelete(ctx, request)
+	if errPreview != nil {
+		if strings.Contains(errPreview.Error(), "resolve target accounts") || strings.Contains(errPreview.Error(), "account service is unavailable") {
+			return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to resolve target accounts"})
+		}
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errPreview.Error()})
+	}
+	return jsonResponse(http.StatusOK, preview)
+}
+
+func (a *App) handleBatchDeleteStart(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request BatchDeleteStartRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	if !request.Confirm {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "batch deletion requires explicit confirmation"})
+	}
+	preview, errPreview := a.previews.Get(request.PreviewID)
+	if errPreview != nil {
+		switch {
+		case errors.Is(errPreview, ErrPreviewExpired):
+			return jsonResponse(http.StatusGone, map[string]any{"error": "delete preview expired; create a new preview"})
+		default:
+			return jsonResponse(http.StatusNotFound, map[string]any{"error": "delete preview not found"})
+		}
+	}
+	if preview.Operation != BatchOperationDelete {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "preview is not a batch deletion"})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	snapshot, errStart := a.jobs.Start(preview, managementKey, "")
+	managementKey = ""
+	if errStart != nil {
+		return jsonResponse(jobHTTPStatus(errStart), map[string]any{"error": publicJobStartError(errStart, "failed to start batch delete job")})
+	}
+	entry := operationFromJob(snapshot)
+	entry.Scope = normalizeOperationScope(preview.Public.ScopeMode)
+	a.operations.Upsert("batch:"+snapshot.ID, entry)
+	a.previews.Delete(request.PreviewID)
+	return jsonResponse(http.StatusAccepted, snapshot)
+}
+
 func (a *App) handleRetry(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
-	scope, patch, parentJobID, errIntent := a.jobs.RetryIntent()
+	scope, patch, operation, parentJobID, errIntent := a.jobs.RetryIntent()
 	if errIntent != nil {
 		return jsonResponse(jobHTTPStatus(errIntent), map[string]any{"error": errIntent.Error()})
 	}
-	preview, errPreview := a.previews.BuildTransient(ctx, scope, patch)
+	var preview previewSnapshot
+	var errPreview error
+	if operation == BatchOperationDelete {
+		preview, errPreview = a.previews.BuildDeleteTransient(ctx, scope)
+	} else {
+		preview, errPreview = a.previews.BuildTransient(ctx, scope, patch)
+	}
 	if errPreview != nil {
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to refresh failed targets"})
 	}

@@ -2,11 +2,47 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"cpa-account-config-manager/internal/cpaapi"
 	"cpa-account-config-manager/internal/manager"
 )
+
+func TestDecodeHostHTTPResponseAcceptsCurrentAndLegacyStatusCodeShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "CPA host PascalCase", raw: `{"StatusCode":200,"Headers":{"Content-Type":["application/json"]},"Body":"eyJvayI6dHJ1ZX0="}`, want: http.StatusOK},
+		{name: "plugin snake_case", raw: `{"status_code":201,"headers":{"Content-Type":["application/json"]},"body":"eyJvayI6dHJ1ZX0="}`, want: http.StatusCreated},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response, errDecode := decodeHostHTTPResponse([]byte(test.raw))
+			if errDecode != nil {
+				t.Fatalf("decodeHostHTTPResponse() error = %v", errDecode)
+			}
+			if response.StatusCode != test.want || response.Headers.Get("Content-Type") != "application/json" || string(response.Body) != `{"ok":true}` {
+				t.Fatalf("decodeHostHTTPResponse() = %#v", response)
+			}
+		})
+	}
+}
+
+func TestDecodeHostHTTPResponseRejectsMissingInvalidAndConflictingStatusCodes(t *testing.T) {
+	for _, raw := range []string{
+		`{"Headers":{"Content-Type":["application/json"]}}`,
+		`{"StatusCode":99}`,
+		`{"status_code":1000}`,
+		`{"StatusCode":200,"status_code":401}`,
+	} {
+		if _, errDecode := decodeHostHTTPResponse([]byte(raw)); errDecode == nil {
+			t.Fatalf("decodeHostHTTPResponse(%s) succeeded", raw)
+		}
+	}
+}
 
 func TestHandleMethodRegistersManagementCapability(t *testing.T) {
 	raw, errHandle := handleMethod(cpaapi.MethodPluginRegister, []byte(`{"config_yaml":"d29ya2VyczogNAo="}`))

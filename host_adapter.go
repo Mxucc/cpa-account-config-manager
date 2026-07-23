@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -52,11 +53,30 @@ func (hostAdapter) AgentIdentityDo(_ context.Context, callbackID string, request
 	if errCall != nil {
 		return cpaapi.HostHTTPResponse{}, errCall
 	}
-	var response cpaapi.HostHTTPResponse
-	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+	return decodeHostHTTPResponse(result)
+}
+
+func decodeHostHTTPResponse(result []byte) (cpaapi.HostHTTPResponse, error) {
+	var wire struct {
+		StatusCode       int         `json:"status_code"`
+		PascalStatusCode int         `json:"StatusCode"`
+		Headers          http.Header `json:"headers,omitempty"`
+		Body             []byte      `json:"body,omitempty"`
+	}
+	if errUnmarshal := json.Unmarshal(result, &wire); errUnmarshal != nil {
 		return cpaapi.HostHTTPResponse{}, fmt.Errorf("decode host HTTP response: %w", errUnmarshal)
 	}
-	return response, nil
+	statusCode := wire.StatusCode
+	if wire.PascalStatusCode != 0 {
+		if statusCode != 0 && statusCode != wire.PascalStatusCode {
+			return cpaapi.HostHTTPResponse{}, fmt.Errorf("decode host HTTP response: conflicting status codes")
+		}
+		statusCode = wire.PascalStatusCode
+	}
+	if statusCode < 100 || statusCode > 999 {
+		return cpaapi.HostHTTPResponse{}, fmt.Errorf("decode host HTTP response: missing or invalid status code")
+	}
+	return cpaapi.HostHTTPResponse{StatusCode: statusCode, Headers: wire.Headers, Body: wire.Body}, nil
 }
 
 func (hostAdapter) AgentIdentityDoStream(_ context.Context, callbackID string, request cpaapi.HostHTTPRequest) (cpaapi.HostHTTPStreamResponse, error) {

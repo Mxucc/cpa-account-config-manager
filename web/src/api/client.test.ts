@@ -24,6 +24,7 @@ import {
   saveInspectionPolicy,
   saveOperationRetentionSettings,
   saveUpdatePolicy,
+  scanAccountDuplicates,
   scanFullInspection,
   scanNativeInspection,
   startImport,
@@ -339,6 +340,25 @@ describe("management API client", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({ scope: { mode: "filtered", filters: { provider: "codex", disabled: true } } });
     expect(String(fetchMock.mock.calls[2][0])).toContain("/batch/delete/start");
     expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({ preview_id: "batch-delete-preview-1", confirm: true });
+  });
+
+  it("requests a redacted account-deduplication preview through the authenticated fixed route", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const preview = {
+      scanned_credentials: 2, identified_credentials: 2, duplicate_groups: 1,
+      duplicate_credentials: 1, proposed_deletions: 1, read_only_skipped: 0,
+      missing_identity: 0, groups: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(preview));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(scanAccountDuplicates()).resolves.toEqual(preview);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/accounts/deduplicate/preview");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 
   it("retries failed batch-delete items through the shared batch retry route", async () => {

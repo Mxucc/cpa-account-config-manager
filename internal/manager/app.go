@@ -53,6 +53,7 @@ type App struct {
 	mu            sync.RWMutex
 	config        Config
 	accounts      *AccountService
+	deduplication *AccountDeduplicationService
 	deletions     *AccountDeleteService
 	previews      *PreviewService
 	jobs          *JobEngine
@@ -99,6 +100,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	return &App{
 		config:        normalizeConfig(Config{}),
 		accounts:      accounts,
+		deduplication: NewAccountDeduplicationService(accounts),
 		deletions:     deletions,
 		previews:      NewPreviewService(accounts),
 		jobs:          jobs,
@@ -265,6 +267,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/deduplicate/preview", Description: "Find duplicate upstream accounts and return a redacted review plan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test", Description: "Run one bounded account-specific model availability probe through CLIProxyAPI."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/preview", Description: "Preview deletion of one editable physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/start", Description: "Delete one confirmed unchanged physical Auth file."},
@@ -340,6 +343,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		}
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/accounts":
 		return a.handleListAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/deduplicate/preview":
+		return a.handleAccountDeduplicationPreview(ctx)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/model-test":
 		return a.handleAccountModelTest(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/preview":
@@ -465,6 +470,19 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			"path":   path,
 		})
 	}
+}
+
+func (a *App) handleAccountDeduplicationPreview(ctx context.Context) cpaapi.ManagementResponse {
+	preview, errPreview := a.deduplication.Preview(ctx)
+	if errPreview != nil {
+		switch {
+		case errors.Is(errPreview, ErrDeduplicationTooLarge):
+			return jsonResponse(http.StatusRequestEntityTooLarge, map[string]any{"error": errPreview.Error()})
+		default:
+			return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to analyze account identities"})
+		}
+	}
+	return jsonResponse(http.StatusOK, preview)
 }
 
 func (a *App) handleExportInspection(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

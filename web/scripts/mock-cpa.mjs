@@ -976,6 +976,52 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname.endsWith("/plugins/cpa-account-config-manager/accounts")) {
     return json(response, 200, listFromURL(url));
   }
+  if (request.method === "POST" && url.pathname.endsWith("/accounts/deduplicate/preview")) {
+    const member = (account, recommendedAction) => ({
+      id: account.id,
+      name: account.name,
+      email: account.email,
+      provider: account.provider,
+      type: account.type,
+      plan_type: account.plan_type,
+      status: account.status,
+      disabled: account.disabled,
+      unavailable: account.unavailable,
+      editable: account.editable,
+      read_only_reason: account.read_only_reason,
+      updated_at: account.updated_at,
+      recommended_action: recommendedAction,
+    });
+    return json(response, 200, {
+      scanned_credentials: accounts.length,
+      identified_credentials: accounts.length - 1,
+      duplicate_groups: 2,
+      duplicate_credentials: 3,
+      proposed_deletions: 2,
+      read_only_skipped: 1,
+      missing_identity: 1,
+      groups: [
+        {
+          id: "mock-codex-identity",
+          provider: "codex",
+          matched_by: "account_id",
+          identity_label: "ID #8ad93f20b417",
+          keep_id: accounts[4].id,
+          keep_reason: "healthier_account",
+          members: [member(accounts[4], "keep"), member(accounts[8], "delete"), member(accounts[0], "skip")],
+        },
+        {
+          id: "mock-codex-email",
+          provider: "codex",
+          matched_by: "email",
+          identity_label: "shared-codex@example.com",
+          keep_id: accounts[12].id,
+          keep_reason: "newer_evidence",
+          members: [member(accounts[12], "keep"), member(accounts[16], "delete")],
+        },
+      ],
+    });
+  }
   if (request.method === "POST" && url.pathname.endsWith("/experiments/agent-identity/session-login")) {
     const body = await readJSON(request);
     const state = typeof body.state === "string" ? body.state.trim() : "";

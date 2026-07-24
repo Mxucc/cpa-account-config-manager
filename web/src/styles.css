@@ -122,6 +122,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .header-status button:hover { color: var(--text-primary); border-color: var(--border-hover); background: var(--bg-tertiary); }
 .header-actions { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .header-add-account { min-height: 38px; height: 38px; padding-inline: 13px; }
+.header-deduplicate-account { min-height: 38px; height: 38px; padding-inline: 11px; }
 .icon-button { width: 38px; height: 38px; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; cursor: pointer; text-decoration: none; transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast); }
 .icon-button.mobile-job-action { display: none; }
 .icon-button:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-color); background: var(--bg-tertiary); }
@@ -465,6 +466,52 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .eligibility { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 .eligibility.muted, .tone-muted { color: var(--muted); }
 .preview-more { padding: 8px 10px; color: var(--muted); background: var(--surface-2); text-align: center; font-size: 10px; }
+.deduplication-intro { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 9px; margin-bottom: 12px; padding: 10px 11px; border-left: 3px solid var(--blue); background: var(--blue-soft); color: var(--blue); }
+.deduplication-intro > svg { margin-top: 1px; }
+.deduplication-intro > div { min-width: 0; display: grid; gap: 3px; }
+.deduplication-intro strong { font-size: 11px; }
+.deduplication-intro span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.deduplication-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 13px; border: 1px solid var(--line); overflow: hidden; }
+.deduplication-metrics > div { min-width: 0; min-height: 58px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 10px; border-right: 1px solid var(--line); background: var(--surface-2); }
+.deduplication-metrics > div:last-child { border-right: none; }
+.deduplication-metrics span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.deduplication-metrics strong { font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: 17px; }
+.deduplication-metrics .success strong { color: var(--success); }
+.deduplication-metrics .warning strong { color: var(--warning); }
+.deduplication-metrics .danger strong { color: var(--danger); }
+.deduplication-empty { min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: var(--muted); text-align: center; }
+.deduplication-empty > svg { color: var(--success); }
+.deduplication-empty strong { color: var(--ink); font-size: 13px; }
+.deduplication-empty span { max-width: 520px; font-size: 10px; line-height: 1.55; }
+.deduplication-groups { display: grid; gap: 10px; }
+.deduplication-group { border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: var(--surface); }
+.deduplication-group > header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.deduplication-group > header > div { min-width: 0; display: grid; gap: 2px; }
+.deduplication-group > header strong, .deduplication-group > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deduplication-group > header strong { font-size: 11px; }
+.deduplication-group > header span { color: var(--muted); font-size: 9px; }
+.deduplication-group > header > span { flex: 0 0 auto; }
+.deduplication-members { display: grid; }
+.deduplication-member { min-height: 54px; display: grid; grid-template-columns: minmax(210px, 1fr) 110px 94px minmax(130px, auto); align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); font-size: 10px; }
+.deduplication-member:last-child { border-bottom: none; }
+.deduplication-member.is-retained { background: color-mix(in srgb, var(--success-soft) 48%, var(--surface)); }
+.deduplication-keep-control { min-width: 0; display: grid; grid-template-columns: 15px 18px minmax(0, 1fr); align-items: center; gap: 7px; cursor: pointer; }
+.deduplication-keep-control input, .deduplication-delete-control input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.deduplication-keep-control input:disabled { cursor: not-allowed; }
+.deduplication-keep-control > svg { color: var(--muted); }
+.deduplication-member.is-retained .deduplication-keep-control > svg { color: var(--success); }
+.deduplication-keep-control > span { min-width: 0; display: grid; gap: 2px; }
+.deduplication-keep-control strong, .deduplication-keep-control small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deduplication-keep-control strong { font-size: 10px; }
+.deduplication-keep-control small { color: var(--muted); font-size: 9px; }
+.deduplication-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deduplication-state.success { color: var(--success); }
+.deduplication-state.warning { color: var(--warning); }
+.deduplication-delete-control { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; cursor: pointer; }
+.deduplication-delete-control span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deduplication-delete-control.is-disabled { color: var(--muted); cursor: default; }
+.deduplication-group > footer { min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 9px; }
+.deduplication-group > footer > svg { flex: 0 0 auto; color: var(--success); }
 .force-preview-metrics { grid-template-columns: repeat(4, 1fr); }
 .force-policy-values { min-height: 42px; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 12px 0 8px; }
 .force-policy-values > span { height: 28px; display: inline-flex; align-items: center; overflow: hidden; border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 6px; background: var(--blue-soft); color: var(--blue); }
@@ -1141,6 +1188,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .icon-button.mobile-job-action { display: inline-grid; }
   .header-add-account { width: 38px; padding: 0; }
   .header-add-account span { display: none; }
+  .header-deduplicate-account { width: 38px; padding: 0; }
+  .header-deduplicate-account span { display: none; }
   .brand-icon { width: 38px; height: 38px; border-radius: var(--radius-md); }
   .brand-block h1 { font-size: 23px; }
   .brand-block div > span { font-size: 11px; }
@@ -1199,6 +1248,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .header-row { grid-template-columns: 76px 1fr 32px; }
   .header-row input:nth-of-type(2) { grid-column: 1 / span 2; }
   .preview-metrics { grid-template-columns: repeat(3, 1fr); }
+  .deduplication-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .deduplication-metrics > div:nth-child(3n) { border-right: none; }
+  .deduplication-metrics > div:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+  .deduplication-member { grid-template-columns: minmax(150px, 1fr) 90px 90px; }
+  .deduplication-delete-control { grid-column: 2 / -1; justify-content: flex-start; }
   .preview-metric { border-bottom: 1px solid var(--line); }
   .preview-target { grid-template-columns: 18px minmax(100px, 1fr) 80px; }
   .preview-target .eligibility { grid-column: 2 / -1; text-align: left; }

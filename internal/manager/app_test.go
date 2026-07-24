@@ -24,6 +24,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	registration := app.ManagementRegistration()
 	expected := map[string]struct{}{
 		http.MethodGet + " /plugins/cpa-account-config-manager/accounts":                                  {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/deduplicate/preview":             {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/model-test":                      {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/delete/preview":                  {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/delete/start":                    {},

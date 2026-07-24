@@ -113,6 +113,47 @@ export interface AccountListResponse {
   pages: number;
 }
 
+export type AccountDeduplicationMatch = "account_id" | "email" | "multiple";
+export type AccountDeduplicationAction = "keep" | "delete" | "skip";
+
+export interface AccountDeduplicationMember {
+  id: string;
+  name?: string;
+  email?: string;
+  provider?: string;
+  type?: string;
+  plan_type?: string;
+  status?: string;
+  disabled: boolean;
+  unavailable: boolean;
+  editable: boolean;
+  read_only_reason?: string;
+  updated_at?: string;
+  last_refresh?: string;
+  recommended_action: AccountDeduplicationAction;
+}
+
+export interface AccountDeduplicationGroup {
+  id: string;
+  provider: string;
+  matched_by: AccountDeduplicationMatch;
+  identity_label: string;
+  keep_id: string;
+  keep_reason: "editable_physical_file" | "enabled_account" | "healthier_account" | "newer_evidence" | "more_complete_credential" | "deterministic_order";
+  members: AccountDeduplicationMember[];
+}
+
+export interface AccountDeduplicationPreview {
+  scanned_credentials: number;
+  identified_credentials: number;
+  duplicate_groups: number;
+  duplicate_credentials: number;
+  proposed_deletions: number;
+  read_only_skipped: number;
+  missing_identity: number;
+  groups: AccountDeduplicationGroup[];
+}
+
 export type ModelTestStatus = "available" | "unavailable" | "unsupported" | "review";
 
 export interface ModelTestResult {

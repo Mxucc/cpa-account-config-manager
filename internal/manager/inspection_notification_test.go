@@ -24,7 +24,7 @@ func (function anomalyNotificationDoerFunc) Do(request *http.Request) (*http.Res
 }
 
 func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
-	valid := "https://notify.example/events?event=${event}&available=${available_accounts}&available_percent=${available_percent}&count_threshold=${available_accounts_threshold}&percent_threshold=${availability_percent_threshold}&abnormal=${abnormal_accounts}&at=${triggered_at}"
+	valid := "https://notify.example/events?event=${event}&available=${available_accounts}&available_percent=${available_percent}&count_threshold=${available_accounts_threshold}&percent_threshold=${availability_percent_threshold}&abnormal=${abnormal_accounts}&abnormal_percent=${abnormal_percent}&threshold=${threshold_percent}&at=${triggered_at}"
 	if errValidate := validateAnomalyNotificationTemplate(valid); errValidate != nil {
 		t.Fatalf("valid template rejected: %v", errValidate)
 	}
@@ -37,6 +37,8 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 			AvailableAccountsThreshold: 20,
 			AvailabilityThreshold:      50,
 			AbnormalAccounts:           5,
+			AbnormalPercent:            73,
+			ThresholdPercent:           50,
 		},
 		TriggeredAt: time.Date(2026, time.July, 22, 8, 9, 10, 0, time.FixedZone("UTC+8", 8*60*60)),
 	}
@@ -49,12 +51,13 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 		t.Fatalf("parse expanded URL: %v", errParse)
 	}
 	if parsed.Query().Get("event") != "available_accounts_low,availability_percent_low" || parsed.Query().Get("available") != "17" ||
-		parsed.Query().Get("available_percent") != "42" || parsed.Query().Get("count_threshold") != "20" ||
-		parsed.Query().Get("percent_threshold") != "50" || parsed.Query().Get("abnormal") != "5" || parsed.Query().Get("at") != "2026-07-22T00:09:10Z" {
+		parsed.Query().Get("available_percent") != "42%" || parsed.Query().Get("count_threshold") != "20" ||
+		parsed.Query().Get("percent_threshold") != "50" || parsed.Query().Get("abnormal") != "5" || parsed.Query().Get("abnormal_percent") != "73%" ||
+		parsed.Query().Get("threshold") != "50%" || parsed.Query().Get("at") != "2026-07-22T00:09:10Z" {
 		t.Fatalf("expanded query = %#v", parsed.Query())
 	}
 	combined := event
-	combined.URLTemplate = "https://notify.example/events?message=event:${event},available:${available_accounts}/${total_accounts},rate:${available_percent}%25"
+	combined.URLTemplate = "https://notify.example/events?message=event:${event},available:${available_accounts}/${total_accounts},rate:${available_percent}"
 	combined.Metrics.TotalAccounts = 40
 	combinedURL, errCombined := expandAnomalyNotificationURL(combined)
 	if errCombined != nil {
@@ -81,13 +84,13 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 	if errParseLocalized != nil {
 		t.Fatalf("parse localized URL: %v", errParseLocalized)
 	}
-	if got, want := localizedParsed.Query().Get("message"), "可用账号剩余17，可用率42"; got != want {
+	if got, want := localizedParsed.Query().Get("message"), "可用账号剩余17，可用率42%"; got != want {
 		t.Fatalf("localized message = %q, want %q", got, want)
 	}
 	if got, want := localizedParsed.Query().Get("title"), "CPA 告警"; got != want {
 		t.Fatalf("localized title = %q, want %q", got, want)
 	}
-	if got, want := localizedParsed.RawQuery, "message=%E5%8F%AF%E7%94%A8%E8%B4%A6%E5%8F%B7%E5%89%A9%E4%BD%9917%EF%BC%8C%E5%8F%AF%E7%94%A8%E7%8E%8742&title=CPA%20%E5%91%8A%E8%AD%A6"; got != want {
+	if got, want := localizedParsed.RawQuery, "message=%E5%8F%AF%E7%94%A8%E8%B4%A6%E5%8F%B7%E5%89%A9%E4%BD%9917%EF%BC%8C%E5%8F%AF%E7%94%A8%E7%8E%8742%25&title=CPA%20%E5%91%8A%E8%AD%A6"; got != want {
 		t.Fatalf("localized raw query = %q, want %q", got, want)
 	}
 	localizedRequest, errLocalizedRequest := http.NewRequest(http.MethodGet, localizedURL, nil)
@@ -154,14 +157,14 @@ func TestInspectionNotificationPreviewUsesCurrentValuesWithoutAppendingFieldsOrS
 	if errParse != nil {
 		t.Fatalf("parse preview URL: %v", errParse)
 	}
-	if got, want := parsed.Query().Get("message"), "available:1,rate:50"; got != want {
+	if got, want := parsed.Query().Get("message"), "available:1,rate:50%"; got != want {
 		t.Fatalf("preview message = %q, want %q", got, want)
 	}
 	if len(parsed.Query()) != 1 || parsed.Query().Has("event") {
 		t.Fatalf("preview appended fields not present in the template: %#v", parsed.Query())
 	}
 	if preview.Variables["total_accounts"] != "2" || preview.Variables["available_accounts"] != "1" ||
-		preview.Variables["available_percent"] != "50" || preview.Variables["available_accounts_threshold"] != "2" {
+		preview.Variables["available_percent"] != "50%" || preview.Variables["available_accounts_threshold"] != "2" {
 		t.Fatalf("preview variables = %#v", preview.Variables)
 	}
 	if preview.Scenario != InspectionNotificationScenarioAvailableLow || preview.Event != InspectionNotificationScenarioAvailableLow || !preview.TriggeredAt.Equal(now) {
@@ -287,7 +290,7 @@ func TestInspectionAnomalyNotificationSendsAggregateGETOnceAndLogsSanitizedOutco
 	policy.AnomalyMinimumAccounts = 2
 	policy.AnomalyCooldownMinutes = 60
 	policy.AnomalyNotificationEnabled = true
-	policy.AnomalyNotificationURL = "https://notify.example/hook?event=${event}&total=${total_accounts}&eligible=${eligible_accounts}&available=${available_accounts}&abnormal=${abnormal_accounts}&percent=${abnormal_percent}&quota=${quota_limited_accounts}&invalid=${invalid_credential_accounts}&disabled=${disabled_accounts}&threshold=${threshold_percent}"
+	policy.AnomalyNotificationURL = "https://notify.example/hook?event=${event}&total=${total_accounts}&eligible=${eligible_accounts}&available=${available_accounts}&availability=${available_percent}&abnormal=${abnormal_accounts}&percent=${abnormal_percent}&quota=${quota_limited_accounts}&invalid=${invalid_credential_accounts}&disabled=${disabled_accounts}&threshold=${threshold_percent}"
 
 	journal := NewOperationJournal()
 	journal.Configure(Config{DataDir: t.TempDir()})
@@ -340,8 +343,8 @@ func TestInspectionAnomalyNotificationSendsAggregateGETOnceAndLogsSanitizedOutco
 		t.Fatalf("parse requested URL: %v", errParse)
 	}
 	wantQuery := map[string]string{
-		"event": "anomaly_threshold", "total": "4", "eligible": "3", "available": "1",
-		"abnormal": "2", "percent": "66", "quota": "1", "invalid": "1", "disabled": "2", "threshold": "50",
+		"event": "anomaly_threshold", "total": "4", "eligible": "3", "available": "1", "availability": "25%",
+		"abnormal": "2", "percent": "66%", "quota": "1", "invalid": "1", "disabled": "2", "threshold": "50%",
 	}
 	for key, want := range wantQuery {
 		if got := parsed.Query().Get(key); got != want {

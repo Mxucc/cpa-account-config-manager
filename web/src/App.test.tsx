@@ -1056,6 +1056,74 @@ describe("primary account batch flow", () => {
   });
 });
 
+describe("account deduplication flow", () => {
+  beforeEach(() => {
+    _resetSessionForTest();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("requires group review and the existing second deletion confirmation", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/accounts/deduplicate/preview")) {
+        return jsonResponse({
+          scanned_credentials: 2, identified_credentials: 2, duplicate_groups: 1,
+          duplicate_credentials: 1, proposed_deletions: 1, read_only_skipped: 0, missing_identity: 0,
+          groups: [{
+            id: "duplicate-group", provider: "codex", matched_by: "email", identity_label: "operator@example.com",
+            keep_id: "auth-1", keep_reason: "enabled_account",
+            members: [
+              { id: "auth-1", name: "operator.json", email: "operator@example.com", provider: "codex", type: "codex", status: "active", disabled: false, unavailable: false, editable: true, recommended_action: "keep" },
+              { id: "auth-2", name: "operator-copy.json", email: "operator@example.com", provider: "codex", type: "codex", status: "active", disabled: true, unavailable: false, editable: true, recommended_action: "delete" },
+            ],
+          }],
+        });
+      }
+      if (url.endsWith("/batch/delete/preview")) {
+        return jsonResponse({
+          operation: "delete", id: "delete-preview", created_at: "2026-07-25T00:00:00Z", expires_at: "2026-07-25T00:05:00Z",
+          scope_mode: "selected", total: 1, eligible: 1, read_only: 0, missing: 0, physical_files: 1,
+          providers: { codex: 1 }, patch: { fields: [], proxy_mutation: false },
+          targets: [{ id: "auth-2", name: "operator-copy.json", provider: "codex", label: "operator@example.com", eligible: true }],
+        });
+      }
+      if (url.endsWith("/batch/delete/start")) {
+        return jsonResponse({
+          operation: "delete", id: "delete-job", state: "completed", running: false, total: 1, eligible: 1,
+          done: 1, succeeded: 1, failed: 0, conflicts: 0, skipped: 0, workers: 1,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: true, results: [],
+        }, 202);
+      }
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    await user.click(await screen.findByRole("button", { name: "账号去重" }));
+
+    const deduplication = await screen.findByRole("dialog", { name: "账号去重" });
+    await user.click(within(deduplication).getByRole("button", { name: "复核删除（1）" }));
+
+    const deletionPreview = await screen.findByRole("dialog", { name: "批量删除预览" });
+    expect(requests.some(({ url }) => url.endsWith("/batch/delete/start"))).toBe(false);
+    const previewRequest = requests.find(({ url }) => url.endsWith("/batch/delete/preview"));
+    expect(JSON.parse(String(previewRequest?.init.body))).toEqual({ scope: { mode: "selected", ids: ["auth-2"] } });
+
+    await user.click(within(deletionPreview).getByRole("button", { name: "删除 1 个账号" }));
+    await waitFor(() => expect(requests.some(({ url }) => url.endsWith("/batch/delete/start"))).toBe(true));
+    const startRequest = requests.find(({ url }) => url.endsWith("/batch/delete/start"));
+    expect(JSON.parse(String(startRequest?.init.body))).toEqual({ preview_id: "delete-preview", confirm: true });
+  });
+});
+
 describe("Agent Identity Session login mode", () => {
   beforeEach(() => {
     _resetSessionForTest();

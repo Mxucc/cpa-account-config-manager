@@ -202,19 +202,23 @@ func anomalyNotificationVariableValues(event anomalyNotificationEvent) map[strin
 		"total_accounts":                 strconv.Itoa(event.Metrics.TotalAccounts),
 		"eligible_accounts":              strconv.Itoa(event.Metrics.EligibleAccounts),
 		"available_accounts":             strconv.Itoa(event.Metrics.AvailableAccounts),
-		"available_percent":              strconv.Itoa(event.Metrics.AvailablePercent),
+		"available_percent":              notificationPercentValue(event.Metrics.AvailablePercent),
 		"abnormal_accounts":              strconv.Itoa(event.Metrics.AbnormalAccounts),
-		"abnormal_percent":               strconv.Itoa(event.Metrics.AbnormalPercent),
+		"abnormal_percent":               notificationPercentValue(event.Metrics.AbnormalPercent),
 		"quota_limited_accounts":         strconv.Itoa(event.Metrics.QuotaLimitedAccounts),
 		"invalid_credential_accounts":    strconv.Itoa(event.Metrics.InvalidCredentialAccounts),
 		"deactivated_accounts":           strconv.Itoa(event.Metrics.DeactivatedAccounts),
 		"unavailable_accounts":           strconv.Itoa(event.Metrics.UnavailableAccounts),
 		"disabled_accounts":              strconv.Itoa(event.Metrics.DisabledAccounts),
-		"threshold_percent":              strconv.Itoa(event.Metrics.ThresholdPercent),
+		"threshold_percent":              notificationPercentValue(event.Metrics.ThresholdPercent),
 		"available_accounts_threshold":   strconv.Itoa(event.Metrics.AvailableAccountsThreshold),
 		"availability_percent_threshold": strconv.Itoa(event.Metrics.AvailabilityThreshold),
 		"triggered_at":                   event.TriggeredAt.UTC().Format(time.RFC3339),
 	}
+}
+
+func notificationPercentValue(value int) string {
+	return strconv.Itoa(value) + "%"
 }
 
 func inspectionNotificationEnabled(policy InspectionPolicy) bool {
@@ -358,7 +362,9 @@ func (e *InspectionEngine) TestNotification(ctx context.Context, request Inspect
 }
 
 func parseNotificationMetric(values map[string]string, key string) int {
-	value, _ := strconv.Atoi(values[key])
+	raw := strings.TrimSpace(values[key])
+	raw = strings.TrimSpace(strings.TrimSuffix(raw, "%"))
+	value, _ := strconv.Atoi(raw)
 	return value
 }
 

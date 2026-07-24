@@ -101,7 +101,8 @@ describe("AutomationSettingsDialog", () => {
     const template = String((urlInput as HTMLInputElement).value);
     expect(template).toContain("可用账号剩余${available_accounts}");
     expect(template).toContain("事件 ${event}");
-    expect(template).toContain("可用率 ${available_percent}%");
+    expect(template).toContain("可用率 ${available_percent}");
+    expect(template).not.toContain("${available_percent}%");
     expect(template).not.toContain("&event=");
     expect(template).not.toContain("available_accounts=${available_accounts}");
 
@@ -125,9 +126,9 @@ describe("AutomationSettingsDialog", () => {
       event: request.scenario,
       expanded_url: `https://notify.example/publish?message=${request.scenario}:${request.available_accounts_threshold}`,
       variables: {
-        event: request.scenario, total_accounts: "122", eligible_accounts: "71", available_accounts: "10", available_percent: "8",
-        abnormal_accounts: "60", abnormal_percent: "84", quota_limited_accounts: "60", invalid_credential_accounts: "0",
-        deactivated_accounts: "0", unavailable_accounts: "0", disabled_accounts: "0", threshold_percent: String(request.threshold_percent),
+        event: request.scenario, total_accounts: "122", eligible_accounts: "71", available_accounts: "10", available_percent: "8%",
+        abnormal_accounts: "60", abnormal_percent: "84%", quota_limited_accounts: "60", invalid_credential_accounts: "0",
+        deactivated_accounts: "0", unavailable_accounts: "0", disabled_accounts: "0", threshold_percent: `${request.threshold_percent}%`,
         available_accounts_threshold: String(request.available_accounts_threshold), availability_percent_threshold: String(request.availability_percent_threshold),
         triggered_at: "2026-07-24T08:00:00Z",
       },

@@ -2,6 +2,7 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
+  CopyCheck,
   Download,
   Eye,
   FileCog,
@@ -26,6 +27,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
 import { AccountDetailsDialog } from "./components/AccountDetailsDialog";
+import { AccountDeduplicationDialog } from "./components/AccountDeduplicationDialog";
 import { BatchEditor } from "./components/BatchEditor";
 import { AccountUsageCell } from "./components/AccountUsageCell";
 import { AgentIdentitySessionLogin } from "./components/AgentIdentitySessionLogin";
@@ -66,6 +68,7 @@ import { clearSession, setSession } from "./store/session";
 import type {
   Account,
   AccountDeletePreview,
+  AccountDeduplicationPreview,
   AccountExportFormat,
   AccountFilters,
   AccountListResponse,
@@ -180,6 +183,10 @@ function AccountManagerApp() {
   const [deletePreviewing, setDeletePreviewing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [deduplicationPreview, setDeduplicationPreview] = useState<AccountDeduplicationPreview | null>(null);
+  const [deduplicationLoading, setDeduplicationLoading] = useState(false);
+  const [deduplicationReviewing, setDeduplicationReviewing] = useState(false);
+  const [deduplicationError, setDeduplicationError] = useState("");
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -541,6 +548,38 @@ function AccountManagerApp() {
       handleAPIError(error);
     } finally {
       setPreviewLoading(false);
+    }
+  };
+
+  const openAccountDeduplication = async () => {
+    setDeduplicationLoading(true);
+    setDeduplicationError("");
+    try {
+      setDeduplicationPreview(await api.scanAccountDuplicates());
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setDeduplicationLoading(false);
+    }
+  };
+
+  const reviewDuplicateDeletions = async (accountIDs: string[]) => {
+    if (accountIDs.length === 0) return;
+    setDeduplicationReviewing(true);
+    setDeduplicationError("");
+    try {
+      const deletePreview = await api.createBatchDeletePreview({ mode: "selected", ids: accountIDs });
+      setDeduplicationPreview(null);
+      setPreview(deletePreview);
+    } catch (error) {
+      if (error instanceof api.APIError && error.status === 401) {
+        setDeduplicationPreview(null);
+        handleAPIError(error);
+      } else {
+        setDeduplicationError(errorText(error, locale));
+      }
+    } finally {
+      setDeduplicationReviewing(false);
     }
   };
 
@@ -949,6 +988,7 @@ function AccountManagerApp() {
               {forceJob?.id ? <IconButton className="mobile-job-action" label={tx("ui.open_force_sync_job")} onClick={() => { setJobOpen(false); setForceJobOpen(true); }}><RefreshCw size={17} /></IconButton> : null}
               {activeView === "accounts" ? <>
                 <button className="button button-primary header-add-account" type="button" title={tx("ui.add_accounts")} aria-label={tx("ui.add_accounts")} onClick={openImport}><UserPlus size={16} /><span>{tx("ui.add_accounts")}</span></button>
+                <button className="button header-deduplicate-account" type="button" title={tx("ui.deduplicate_accounts")} aria-label={tx("ui.deduplicate_accounts")} disabled={deduplicationLoading} onClick={() => void openAccountDeduplication()}>{deduplicationLoading ? <LoaderCircle className="spin" size={16} /> : <CopyCheck size={16} />}<span>{tx("ui.deduplicate_accounts")}</span></button>
                 <IconButton label={tx("ui.default_policy")} onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
                 <IconButton className="export-action" label={tx("ui.download_filtered_credentials")} onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
                 <IconButton label={tx("ui.refresh_accounts")} onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
@@ -1160,6 +1200,7 @@ function AccountManagerApp() {
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
       {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
+      {deduplicationPreview ? <AccountDeduplicationDialog preview={deduplicationPreview} reviewing={deduplicationReviewing} error={deduplicationError} onClose={() => { setDeduplicationPreview(null); setDeduplicationError(""); }} onReview={(ids) => void reviewDuplicateDeletions(ids)} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} title={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} ariaLabel={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}

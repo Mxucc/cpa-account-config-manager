@@ -2,6 +2,7 @@ import { getSession } from "../store/session";
 import type {
   AccountDeletePreview,
   AccountDeleteResult,
+  AccountDeduplicationPreview,
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
@@ -288,6 +289,12 @@ export async function createBatchDeletePreview(scope: TargetScope): Promise<Batc
   return request<BatchPreview>("/batch/delete/preview", {
     method: "POST",
     body: JSON.stringify({ scope }),
+  });
+}
+
+export async function scanAccountDuplicates(): Promise<AccountDeduplicationPreview> {
+  return request<AccountDeduplicationPreview>("/accounts/deduplicate/preview", {
+    method: "POST",
   });
 }
 

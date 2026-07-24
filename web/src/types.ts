@@ -781,6 +781,7 @@ export interface UpdateSnapshot {
     process_scope?: string;
     storage_error?: string;
     restart_required: boolean;
+    restart_recommended: boolean;
   };
 }
 

@@ -2,12 +2,61 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 
 	"cpa-account-config-manager/internal/cpaapi"
 	"cpa-account-config-manager/internal/manager"
 )
+
+func TestCallMethodSafelyAlwaysReturnsAValidEnvelope(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler methodHandler
+		code    string
+	}{
+		{
+			name: "panic",
+			handler: func(string, []byte) ([]byte, error) {
+				panic("sensitive panic detail")
+			},
+			code: "plugin_panic",
+		},
+		{
+			name: "empty response",
+			handler: func(string, []byte) ([]byte, error) {
+				return nil, nil
+			},
+			code: "empty_response",
+		},
+		{
+			name: "handler error",
+			handler: func(string, []byte) ([]byte, error) {
+				return nil, errors.New("bounded failure")
+			},
+			code: "plugin_error",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, callCode := callMethodSafely(test.handler, "management.handle", nil)
+			if callCode == 0 || len(raw) == 0 || !json.Valid(raw) {
+				t.Fatalf("callCode=%d raw=%q", callCode, raw)
+			}
+			var response envelope
+			if errDecode := json.Unmarshal(raw, &response); errDecode != nil {
+				t.Fatalf("decode response: %v", errDecode)
+			}
+			if response.OK || response.Error == nil || response.Error.Code != test.code {
+				t.Fatalf("response = %#v", response)
+			}
+			if test.name == "panic" && response.Error.Message == "sensitive panic detail" {
+				t.Fatal("panic detail leaked into the ABI response")
+			}
+		})
+	}
+}
 
 func TestDecodeHostHTTPResponseAcceptsCurrentAndLegacyStatusCodeShapes(t *testing.T) {
 	tests := []struct {

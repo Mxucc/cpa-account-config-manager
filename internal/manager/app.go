@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -166,6 +167,9 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	if a == nil || a.usage == nil {
 		return
 	}
+	if a.runtime != nil && a.runtime.Snapshot().Superseded {
+		return
+	}
 	a.usage.Observe(record)
 	a.inspection.Observe(record)
 }
@@ -184,6 +188,7 @@ func (a *App) quiesceRetiredInstance() {
 		return
 	}
 	a.quiesceOnce.Do(func() {
+		superseded := a.runtime != nil && a.runtime.Snapshot().Superseded
 		a.force.Shutdown()
 		a.inspection.Shutdown()
 		a.updates.Shutdown()
@@ -194,6 +199,9 @@ func (a *App) quiesceRetiredInstance() {
 		a.imports.Clear()
 		a.agentIdentity.Clear()
 		a.usage.Close()
+		if superseded {
+			debug.FreeOSMemory()
+		}
 	})
 }
 
@@ -353,6 +361,14 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 }
 
 func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if a == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "plugin runtime is unavailable"})
+	}
+	if a.runtime != nil && a.runtime.Snapshot().Superseded {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{
+			"error": "plugin runtime has been superseded; restart CPA and retry",
+		})
+	}
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = http.MethodGet

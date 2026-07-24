@@ -169,6 +169,13 @@ func TestNewerAppInstanceQuiescesSupersededBackgroundServices(t *testing.T) {
 	if !newer.runtime.AllowsBackgroundWork() {
 		t.Fatalf("new app did not take ownership: %#v", newer.runtime.Snapshot())
 	}
+	retiredResponse := older.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/accounts",
+	})
+	if retiredResponse.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(retiredResponse.Body), "superseded") {
+		t.Fatalf("retired response = %d %s", retiredResponse.StatusCode, retiredResponse.Body)
+	}
 }
 
 func TestInspectionLiveRouteDisablesCaching(t *testing.T) {

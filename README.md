@@ -611,7 +611,23 @@ stale owner expires after a bounded timeout. Claims contain only a random
 instance ID, plugin version, process-scope hash, and timestamps. If claim
 storage is unavailable, background automation fails closed. The first upgrade
 from a release without this protocol still needs one real CPA restart because
-new code cannot stop an already-running legacy binary retroactively.
+new code cannot stop an already-running legacy binary retroactively. On Linux,
+the process scope includes the kernel boot ID and `/proc/self/stat` process
+start token, so restarting a container whose hostname and PID remain unchanged
+is still recognized as a real CPA restart. Version-1 bootstrap state migrates
+without treating a same-process hot reload as a restart. The update warning is
+shown only while the first-restart gate is pending or the current process has
+actually hot-loaded another native plugin version, and disappears after a
+verified full restart.
+
+The native ABI also guarantees a non-empty JSON envelope for handler errors,
+recoverable panics, and response-allocation failure. A superseded instance
+returns a bounded `503` response instead of continuing to serve account data,
+and releases unused Go heap pages after its background services stop. If CPA
+logs `decode plugin envelope management.handle: unexpected end of JSON input`
+after many in-process plugin updates, install a release containing this guard
+and fully restart CPA once; changing the Management URL cannot repair an empty
+native ABI response.
 
 ## Unified Operation Journal
 

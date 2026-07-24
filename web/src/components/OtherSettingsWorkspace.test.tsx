@@ -33,7 +33,7 @@ describe("OtherSettingsWorkspace", () => {
         return jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: true }, current_version: "0.2.91", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z" });
       }
       if (url.endsWith("/updates")) {
-        return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.91", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z" });
+        return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.91", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z", runtime: { active: true, superseded: false, instance_version: "0.2.91", restart_required: false, restart_recommended: true } });
       }
       if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false } });
       if (url === "/v0/management/plugin-store") {
@@ -103,6 +103,7 @@ describe("OtherSettingsWorkspace", () => {
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
     const workspace = await screen.findByRole("region", { name: "其他配置" });
+    expect(within(workspace).queryByText(/原生插件更新后必须完整重启 CPA/)).not.toBeInTheDocument();
     await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
     const panel = within(workspace).getByRole("tabpanel", { name: "实验性功能" });
     expect(within(panel).getByText("实验性行为")).toBeInTheDocument();

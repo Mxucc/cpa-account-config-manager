@@ -276,7 +276,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
           {updates?.update_available ? (
             <div className="settings-update-callout" role="status"><UploadCloud size={18} /><strong>{tx("ui.version_version_available", { version: updates.latest_version || "-" })}</strong></div>
           ) : null}
-          <div className="settings-update-callout" role="note"><AlertTriangle size={18} /><strong>{tx("ui.native_plugin_update_requires_a_full_cpa_restart")}</strong></div>
+          {updates?.runtime?.restart_required || updates?.runtime?.restart_recommended ? <div className="settings-update-callout" role="note"><AlertTriangle size={18} /><strong>{tx("ui.native_plugin_update_requires_a_full_cpa_restart")}</strong></div> : null}
           {updates?.runtime?.restart_required ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.restart_cpa_to_enable_this_plugin_instance_s_background_automation")}</span></div> : null}
           {updates?.runtime?.storage_error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.runtime_ownership_storage_is_unavailable")}</span></div> : null}
           <div className="update-policy-controls">

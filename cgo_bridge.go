@@ -5,6 +5,7 @@ package main
 /*
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct {
 	void* ptr;
@@ -58,6 +59,32 @@ static void free_host_buffer(void* ptr, size_t len) {
 		stored_host->free_buffer(ptr, len);
 	}
 }
+
+static const char emergency_plugin_response[] =
+	"{\"ok\":false,\"error\":{\"code\":\"response_allocation_failed\","
+	"\"message\":\"plugin response allocation failed; restart CPA and retry\"}}";
+
+static int write_plugin_response(const uint8_t* raw, size_t raw_len, cliproxy_buffer* response) {
+	if (response == NULL || raw == NULL || raw_len == 0) {
+		return 0;
+	}
+	void* ptr = malloc(raw_len);
+	if (ptr != NULL) {
+		memcpy(ptr, raw, raw_len);
+		response->ptr = ptr;
+		response->len = raw_len;
+		return 1;
+	}
+	response->ptr = (void*)emergency_plugin_response;
+	response->len = sizeof(emergency_plugin_response) - 1;
+	return 1;
+}
+
+static void free_plugin_response(void* ptr) {
+	if (ptr != NULL && ptr != (void*)emergency_plugin_response) {
+		free(ptr);
+	}
+}
 */
 import "C"
 
@@ -96,19 +123,17 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	if request != nil && requestLen > 0 {
 		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
 	}
-	raw, errHandle := handleMethod(C.GoString(method), requestBytes)
-	if errHandle != nil {
-		writeResponse(response, errorEnvelopeFor(errHandle))
+	raw, callCode := callMethodSafely(handleMethod, C.GoString(method), requestBytes)
+	if !writeResponse(response, raw) {
 		return 1
 	}
-	writeResponse(response, raw)
-	return 0
+	return C.int(callCode)
 }
 
 //export cliproxyPluginFree
 func cliproxyPluginFree(pointer unsafe.Pointer, length C.size_t) {
 	if pointer != nil {
-		C.free(pointer)
+		C.free_plugin_response(pointer)
 	}
 	_ = length
 }
@@ -158,14 +183,10 @@ func callHost(method string, payload any) (json.RawMessage, error) {
 	return result, nil
 }
 
-func writeResponse(response *C.cliproxy_buffer, raw []byte) {
+func writeResponse(response *C.cliproxy_buffer, raw []byte) bool {
 	if response == nil || len(raw) == 0 {
-		return
+		return false
 	}
-	pointer := C.CBytes(raw)
-	if pointer == nil {
-		return
-	}
-	response.ptr = pointer
-	response.len = C.size_t(len(raw))
+	written := C.write_plugin_response((*C.uint8_t)(unsafe.Pointer(&raw[0])), C.size_t(len(raw)), response)
+	return written != 0 && response.ptr != nil && response.len > 0
 }

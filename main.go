@@ -18,6 +18,28 @@ var pluginApp = manager.NewApp(hostAdapter{}, web.IndexHTML())
 
 func main() {}
 
+type methodHandler func(string, []byte) ([]byte, error)
+
+func callMethodSafely(handler methodHandler, method string, request []byte) (raw []byte, callCode int) {
+	defer func() {
+		if recover() != nil {
+			raw = errorEnvelope("plugin_panic", "plugin request failed; restart CPA and retry")
+			callCode = 1
+		}
+	}()
+	if handler == nil {
+		return errorEnvelope("plugin_unavailable", "plugin request handler is unavailable"), 1
+	}
+	raw, errHandle := handler(method, request)
+	if errHandle != nil {
+		return errorEnvelopeFor(errHandle), 1
+	}
+	if len(raw) == 0 {
+		return errorEnvelope("empty_response", "plugin produced an empty response; restart CPA and retry"), 1
+	}
+	return raw, 0
+}
+
 func handleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
 	case cpaapi.MethodPluginRegister, cpaapi.MethodPluginReconfigure:

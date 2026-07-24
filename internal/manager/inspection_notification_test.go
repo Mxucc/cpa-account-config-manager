@@ -23,6 +23,16 @@ func (function anomalyNotificationDoerFunc) Do(request *http.Request) (*http.Res
 	return function(request)
 }
 
+type notificationUsageReader map[string]*AccountUsageSnapshot
+
+func (reader notificationUsageReader) Snapshot(authIndex string) *AccountUsageSnapshot {
+	return reader[authIndex]
+}
+
+func notificationCodexUsage(fiveHour, sevenDay *UsageWindowSnapshot) *AccountUsageSnapshot {
+	return &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{FiveHour: fiveHour, SevenDay: sevenDay}}
+}
+
 func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 	valid := "https://notify.example/events?event=${event}&available=${available_accounts}&available_percent=${available_percent}&count_threshold=${available_accounts_threshold}&percent_threshold=${availability_percent_threshold}&abnormal=${abnormal_accounts}&abnormal_percent=${abnormal_percent}&threshold=${threshold_percent}&at=${triggered_at}"
 	if errValidate := validateAnomalyNotificationTemplate(valid); errValidate != nil {
@@ -128,7 +138,17 @@ func TestInspectionNotificationPreviewUsesCurrentValuesWithoutAppendingFieldsOrS
 		{AuthIndex: "healthy", Name: "healthy.json", Provider: "codex", Source: "file", Path: "/auths/healthy.json"},
 		{AuthIndex: "quota", Name: "quota.json", Provider: "codex", Source: "file", Path: "/auths/quota.json"},
 	}}
-	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	usage := notificationUsageReader{
+		"healthy": notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 20},
+			&UsageWindowSnapshot{UsedPercent: 99},
+		),
+		"quota": notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 80},
+			nil,
+		),
+	}
+	engine := NewInspectionEngine(NewAccountService(host, usage), host, NewMutationCoordinator())
 	engine.now = func() time.Time { return now }
 	requests := 0
 	engine.notificationDoer = anomalyNotificationDoerFunc(func(*http.Request) (*http.Response, error) {
@@ -310,10 +330,18 @@ func TestInspectionAnomalyNotificationSendsAggregateGETOnceAndLogsSanitizedOutco
 	t.Cleanup(engine.Shutdown)
 
 	accounts := map[string]Account{
-		"healthy":          {ID: "healthy", Editable: true},
-		"quota":            {ID: "quota", Editable: true},
-		"invalid-disabled": {ID: "invalid-disabled", Editable: true, Disabled: true},
-		"manual-disabled":  {ID: "manual-disabled", Editable: true, Disabled: true},
+		"healthy": {ID: "healthy", Editable: true, Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 50}, nil,
+		)},
+		"quota": {ID: "quota", Editable: true, Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 100}, nil,
+		)},
+		"invalid-disabled": {ID: "invalid-disabled", Editable: true, Disabled: true, Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 0}, nil,
+		)},
+		"manual-disabled": {ID: "manual-disabled", Editable: true, Disabled: true, Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 100}, nil,
+		)},
 	}
 	records := map[string]inspectionRecord{
 		"healthy": {Result: InspectionResult{ID: "healthy", Health: InspectionHealthHealthy}},
@@ -402,8 +430,10 @@ func TestInspectionNotificationCombinesAvailabilityConditionsWithStrictBoundarie
 	policy.NotificationCooldownMinutes = 60
 	policy.AnomalyNotificationURL = "https://notify.example/hook?event=${event}&available=${available_accounts}&rate=${available_percent}"
 	accounts := map[string]Account{
-		"healthy-a": {ID: "healthy-a"}, "healthy-b": {ID: "healthy-b"},
-		"quota": {ID: "quota"}, "invalid": {ID: "invalid"},
+		"healthy-a": {ID: "healthy-a", Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 0}, nil)},
+		"healthy-b": {ID: "healthy-b", Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 0}, nil)},
+		"quota":     {ID: "quota", Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 100}, nil)},
+		"invalid":   {ID: "invalid", Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 100}, nil)},
 	}
 	records := map[string]inspectionRecord{
 		"healthy-a": {Result: InspectionResult{Health: InspectionHealthHealthy}},
@@ -439,6 +469,66 @@ func TestInspectionNotificationCombinesAvailabilityConditionsWithStrictBoundarie
 	}
 	if boundaryEngine.evaluateInspectionNotification(boundary, map[string]Account{}, map[string]inspectionRecord{}, now, true) {
 		t.Fatal("an empty account pool must not trigger")
+	}
+}
+
+func TestEnabledAccountQuotaAvailabilityPrefersFiveHourExcludesDisabledAndClamps(t *testing.T) {
+	accounts := map[string]Account{
+		"five-hour": {Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 20},
+			&UsageWindowSnapshot{UsedPercent: 99},
+		)},
+		"seven-day": {Usage: notificationCodexUsage(nil, &UsageWindowSnapshot{UsedPercent: 60})},
+		"over-limit": {Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: 150}, nil,
+		)},
+		"negative": {Usage: notificationCodexUsage(
+			&UsageWindowSnapshot{UsedPercent: -10}, nil,
+		)},
+		"without-quota": {},
+		"disabled-full": {
+			Disabled: true,
+			Usage:    notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 0}, nil),
+		},
+		"disabled-empty": {
+			Disabled: true,
+			Usage:    notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 100}, nil),
+		},
+	}
+
+	percent, samples := enabledAccountQuotaAvailability(accounts)
+	if percent != 55 || samples != 4 {
+		t.Fatalf("enabled quota availability = %d%% from %d samples, want 55%% from 4", percent, samples)
+	}
+}
+
+func TestInspectionAvailabilityThresholdUsesQuotaAverageAndRequiresASample(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 8, 0, 0, 0, time.UTC)
+	policy := defaultInspectionPolicy()
+	policy.NotificationPercentEnabled = true
+	policy.NotificationPercentBelow = 50
+	policy.AnomalyNotificationURL = "https://notify.example/hook?rate=${available_percent}"
+	accounts := map[string]Account{
+		"healthy": {Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 10}, nil)},
+		"limited": {Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 100}, nil)},
+	}
+	records := map[string]inspectionRecord{
+		"healthy": {Result: InspectionResult{Health: InspectionHealthHealthy}},
+		"limited": {Result: InspectionResult{Health: InspectionHealthQuotaLimited}},
+	}
+
+	engine := NewInspectionEngine(nil, nil, nil)
+	if !engine.evaluateInspectionNotification(policy, accounts, records, now, true) {
+		t.Fatal("45% quota average did not trigger the 50% availability threshold")
+	}
+	event := <-engine.notificationWake
+	if event.Event != InspectionNotificationScenarioAvailabilityLow || event.Metrics.AvailablePercent != 45 || event.Metrics.AvailabilitySamples != 2 {
+		t.Fatalf("quota availability event = %#v", event)
+	}
+
+	withoutSamples := NewInspectionEngine(nil, nil, nil)
+	if withoutSamples.evaluateInspectionNotification(policy, map[string]Account{"healthy": {}}, records, now, true) {
+		t.Fatal("missing quota samples must not fabricate a zero-percent notification")
 	}
 }
 

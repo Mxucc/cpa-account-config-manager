@@ -58,6 +58,7 @@ type anomalyNotificationMetrics struct {
 	EligibleAccounts           int
 	AvailableAccounts          int
 	AvailablePercent           int
+	AvailabilitySamples        int
 	AbnormalAccounts           int
 	AbnormalPercent            int
 	QuotaLimitedAccounts       int
@@ -406,7 +407,7 @@ func inspectionNotificationReasons(policy InspectionPolicy, metrics anomalyNotif
 	if policy.NotificationAvailableEnabled && metrics.AvailableAccounts < policy.NotificationAvailableBelow {
 		reasons = append(reasons, "available_accounts_low")
 	}
-	if policy.NotificationPercentEnabled && metrics.AvailableAccounts*100 < metrics.TotalAccounts*policy.NotificationPercentBelow {
+	if policy.NotificationPercentEnabled && metrics.AvailabilitySamples > 0 && metrics.AvailablePercent < policy.NotificationPercentBelow {
 		reasons = append(reasons, "availability_percent_low")
 	}
 	return reasons

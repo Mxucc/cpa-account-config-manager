@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"math"
 	"strings"
 	"time"
 )
@@ -47,10 +48,38 @@ func inspectionAnomalyNotificationMetrics(accounts map[string]Account, records m
 	if metrics.EligibleAccounts > 0 {
 		metrics.AbnormalPercent = metrics.AbnormalAccounts * 100 / metrics.EligibleAccounts
 	}
-	if metrics.TotalAccounts > 0 {
-		metrics.AvailablePercent = metrics.AvailableAccounts * 100 / metrics.TotalAccounts
-	}
+	metrics.AvailablePercent, metrics.AvailabilitySamples = enabledAccountQuotaAvailability(accounts)
 	return metrics
+}
+
+func enabledAccountQuotaAvailability(accounts map[string]Account) (percent, samples int) {
+	totalRemaining := 0.0
+	for _, account := range accounts {
+		if account.Disabled || account.Usage == nil || account.Usage.Codex == nil {
+			continue
+		}
+		window := reliableUsageWindow(account.Usage.Codex.FiveHour)
+		if window == nil {
+			window = reliableUsageWindow(account.Usage.Codex.SevenDay)
+		}
+		if window == nil {
+			continue
+		}
+		remaining := math.Max(0, math.Min(100, 100-window.UsedPercent))
+		totalRemaining += remaining
+		samples++
+	}
+	if samples == 0 {
+		return 0, 0
+	}
+	return int(math.Round(totalRemaining / float64(samples))), samples
+}
+
+func reliableUsageWindow(window *UsageWindowSnapshot) *UsageWindowSnapshot {
+	if window == nil || math.IsNaN(window.UsedPercent) || math.IsInf(window.UsedPercent, 0) {
+		return nil
+	}
+	return window
 }
 
 func inspectionAnomalyTriggered(eligible, abnormal, minimum, thresholdPercent int) bool {

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import type { Account, ModelTestAttempt, ModelTestResponsePreview, ModelTestResult, ModelTestStatus } from "../types";
 import { technicalLabel } from "../format/accountDisplay";
 import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
+import { normalizeManualModelTestModel, readManualModelTestPreference, recordManualModelTestModel } from "../store/manualModelTestModel";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
@@ -60,10 +61,27 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
   const { locale, tx } = useI18n();
   const accountProvider = (account.provider || account.type || "").trim().toLowerCase();
   const provider = accountProvider === "codex-agent-identity" ? "codex" : accountProvider;
-  const suggestions = useMemo(() => modelSuggestions[provider] || [], [provider]);
-  const [model, setModel] = useState(suggestions[0] || "");
+  const builtInSuggestions = useMemo(() => modelSuggestions[provider] || [], [provider]);
+  const initialPreference = useMemo(
+    () => readManualModelTestPreference(provider, builtInSuggestions[0] || ""),
+    [builtInSuggestions, provider],
+  );
+  const [model, setModel] = useState(initialPreference.model);
+  const [testedModels, setTestedModels] = useState(initialPreference.testedModels);
+  const suggestions = useMemo(
+    () => [...new Set([...testedModels, ...builtInSuggestions])],
+    [builtInSuggestions, testedModels],
+  );
   const identity = account.label || account.email || account.name || account.id;
-  const valid = model.trim().length > 0 && model.trim().length <= 128;
+  const normalizedModel = normalizeManualModelTestModel(model);
+  const valid = normalizedModel.length > 0;
+  const submitTest = (experimentalWeeklyOverdraft: boolean) => {
+    if (!normalizedModel) return;
+    const preference = recordManualModelTestModel(provider, normalizedModel);
+    setModel(preference.model);
+    setTestedModels(preference.testedModels);
+    onTest(preference.model, experimentalWeeklyOverdraft);
+  };
 
   return (
     <Modal
@@ -74,12 +92,12 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
           <span className="modal-scope">{tx("ui.single_account_minimal_upstream_usage")}</span>
           <button className="button" type="button" disabled={testing} onClick={onClose}>{tx("ui.close")}</button>
           {experimentalAvailable && provider === "codex" ? (
-            <button className="button experimental-model-test-button" type="button" disabled={!valid || testing} onClick={() => onTest(model.trim(), true)}>
+            <button className="button experimental-model-test-button" type="button" disabled={!valid || testing} onClick={() => submitTest(true)}>
               {testing ? <LoaderCircle className="spin" size={15} /> : <FlaskConical size={15} />}
               {tx("ui.load_experimental_feature")}
             </button>
           ) : null}
-          <button className="button button-primary" type="button" disabled={!valid || testing} onClick={() => onTest(model.trim(), false)}>
+          <button className="button button-primary" type="button" disabled={!valid || testing} onClick={() => submitTest(false)}>
             {testing ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}
             {tx(testing ? "ui.testing" : result ? "ui.test_again" : "ui.start_test")}
           </button>
@@ -112,7 +130,7 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
           <div className="model-test-experimental-note" role="note"><FlaskConical size={17} /><span>{tx("ui.experimental_model_test_description")}</span></div>
         ) : null}
 
-        {testing ? <div className="model-test-running" role="status"><LoaderCircle className="spin" size={20} /><div><strong>{tx("ui.connecting_to_model")}</strong><span>{model.trim()}</span></div></div> : null}
+        {testing ? <div className="model-test-running" role="status"><LoaderCircle className="spin" size={20} /><div><strong>{tx("ui.connecting_to_model")}</strong><span>{normalizedModel}</span></div></div> : null}
         {error ? <div className="model-test-error" role="alert"><AlertTriangle size={18} /><span>{error}</span></div> : null}
         {result && !testing ? <ModelTestOutcome result={result} /> : null}
       </div>

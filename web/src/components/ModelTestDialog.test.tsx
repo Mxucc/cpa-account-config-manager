@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Account, ModelTestResult } from "../types";
+import { recordManualModelTestModel } from "../store/manualModelTestModel";
 import { ModelTestDialog } from "./ModelTestDialog";
 
 const account: Account = {
@@ -42,6 +43,8 @@ const result: ModelTestResult = {
 };
 
 describe("ModelTestDialog", () => {
+  beforeEach(() => localStorage.clear());
+
   it("shows the primary failure and successful gpt-5.5 fallback as one test flow", async () => {
     const user = userEvent.setup();
     const fallbackResult: ModelTestResult = {
@@ -228,5 +231,39 @@ describe("ModelTestDialog", () => {
     expect(onTest).toHaveBeenCalledWith("gpt-5.6-sol", false);
     await user.click(within(dialog).getByRole("button", { name: "加载实验性功能" }));
     expect(onTest).toHaveBeenCalledWith("gpt-5.6-sol", true);
+  });
+
+  it("restores the latest tested model and keeps tested models in the dropdown", async () => {
+    const user = userEvent.setup();
+    const onTest = vi.fn();
+    recordManualModelTestModel("codex", "gpt-5.4");
+    recordManualModelTestModel("codex", "gpt-5.5");
+
+    const first = render(<ModelTestDialog
+      account={account}
+      result={null}
+      error=""
+      testing={false}
+      onClose={vi.fn()}
+      onTest={onTest}
+    />);
+    const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
+    const modelInput = within(dialog).getByLabelText("测试模型");
+    expect(modelInput).toHaveValue("gpt-5.5");
+    expect(dialog.querySelector('option[value="gpt-5.5"]')).not.toBeNull();
+    expect(dialog.querySelector('option[value="gpt-5.4"]')).not.toBeNull();
+
+    await user.clear(modelInput);
+    await user.type(modelInput, "  gpt-5.3-codex  ");
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+    expect(onTest).toHaveBeenCalledWith("gpt-5.3-codex", false);
+    first.unmount();
+
+    render(<ModelTestDialog account={account} result={null} error="" testing={false} onClose={vi.fn()} onTest={vi.fn()} />);
+    const reopened = screen.getByRole("dialog", { name: "模型可用性测试" });
+    expect(within(reopened).getByLabelText("测试模型")).toHaveValue("gpt-5.3-codex");
+    expect(reopened.querySelector('option[value="gpt-5.3-codex"]')).not.toBeNull();
+    expect(reopened.querySelector('option[value="gpt-5.5"]')).not.toBeNull();
+    expect(reopened.querySelector('option[value="gpt-5.4"]')).not.toBeNull();
   });
 });

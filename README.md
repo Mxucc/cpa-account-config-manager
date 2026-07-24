@@ -219,7 +219,7 @@ parameters, fragments, and remote hosts are rejected.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `workers` | `6` | Concurrent account mutations. Values below 1 use 6; values above 16 are clamped to 16. |
-| `data_dir` | `data/cpa-account-config-manager` | Directory for sanitized terminal job state, the backward-compatible `default-policy.json` cache, `usage-snapshots.json`, `inspection-state.json`, `update-state.json`, and the bounded `operation-log.json` journal. Persist this directory to retain inspection/action/update policies and audit history across CPA restarts and plugin replacement. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. When neither override is set, usage additionally migrates to the durable local Auth directory as described below. |
+| `data_dir` | `data/cpa-account-config-manager` | Directory for sanitized terminal job state, the backward-compatible `default-policy.json` cache, `usage-snapshots.json`, `inspection-state.json`, `update-state.json`, `runtime-ownership.json`, ephemeral `runtime-instances/` claims, and the bounded `operation-log.json` journal. Persist this directory to retain inspection/action/update policies, runtime upgrade handoff state, and audit history across CPA restarts and plugin replacement. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. When neither override is set, usage additionally migrates to the durable local Auth directory as described below. |
 | `management_base_url` | `http://127.0.0.1:8317` | Optional loopback CLIProxyAPI Management API base used by ordinary batch edits and confirmed account deletion. Default-policy reconciliation and force sync use host Auth callbacks instead. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, a loopback-only `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
 
 The `enabled` and `priority` values in the same YAML object are owned by the
@@ -591,10 +591,27 @@ An available release produces an in-page prompt. Installation is delegated to
 CPA's authenticated plugin-store endpoints, which own registry selection,
 platform matching, archive limits, checksum verification, and final placement.
 Automatic installation defaults off, requires a first-time confirmation, and
-runs only while the authenticated inspection page is open. Native libraries
-may require a CPA restart before the new version becomes active; a failed or
-locked install remains available for manual retry. The plugin does not download
-or replace its own dynamic library and never stores the browser Management Key.
+runs only while the authenticated inspection page is open. Every native plugin
+update requires a full CPA process restart. CPA hot replacement retires the old
+library from routing but can leave its already-loaded code and background
+goroutines alive; deleting the old file only removes the disk artifact and does
+not unload it from process memory. The UI therefore treats every successful
+store install as `restart_required` even when the current CPA response says
+otherwise. A failed or locked install remains available for manual retry. The
+plugin does not download, delete, or replace its own dynamic library and never
+stores the browser Management Key.
+
+Participating releases also write a sanitized heartbeat claim under
+`data_dir/runtime-instances/`. Within one CPA process and data directory, the
+highest stable plugin version becomes the sole owner of scheduled inspection,
+automatic account actions, external notifications, default-policy scans, and
+continuing batch/force-sync work. A replacement first announces itself, the old
+instance stops, and the replacement waits through a short takeover window; a
+stale owner expires after a bounded timeout. Claims contain only a random
+instance ID, plugin version, process-scope hash, and timestamps. If claim
+storage is unavailable, background automation fails closed. The first upgrade
+from a release without this protocol still needs one real CPA restart because
+new code cannot stop an already-running legacy binary retroactively.
 
 ## Unified Operation Journal
 
@@ -658,6 +675,9 @@ and otherwise unsupported records remain visible but read-only.
   patch values are not persisted. Persisted running state is marked
   `interrupted`; exact failed-only retry is available only while the in-memory
   patch intent still exists.
+- Native plugin file removal is not a runtime unload operation. Restart CPA
+  after every plugin-store installation, including the first installation of a
+  release that supports cross-version runtime ownership.
 
 ## Security Model
 

@@ -131,9 +131,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
       const result = await api.installPluginUpdate(version);
       attemptedUpdate.current = version;
       setUpdates((current) => current ? { ...current, current_version: result.version, update_available: false } : current);
-      onNotice(result.restart_required
-        ? tx("ui.plugin_version_installed_restart_cpa_to_activate_it", { version: result.version })
-        : tx("ui.plugin_version_installed_refresh_to_use_the_new_version", { version: result.version }));
+      onNotice(tx("ui.plugin_version_installed_restart_cpa_to_activate_it", { version: result.version }));
     } catch (caught) {
       attemptedUpdate.current = version;
       handleError(caught);
@@ -278,6 +276,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
           {updates?.update_available ? (
             <div className="settings-update-callout" role="status"><UploadCloud size={18} /><strong>{tx("ui.version_version_available", { version: updates.latest_version || "-" })}</strong></div>
           ) : null}
+          <div className="settings-update-callout" role="note"><AlertTriangle size={18} /><strong>{tx("ui.native_plugin_update_requires_a_full_cpa_restart")}</strong></div>
+          {updates?.runtime?.restart_required ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.restart_cpa_to_enable_this_plugin_instance_s_background_automation")}</span></div> : null}
+          {updates?.runtime?.storage_error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.runtime_ownership_storage_is_unavailable")}</span></div> : null}
           <div className="update-policy-controls">
             <label><span>{tx("ui.check_for_updates")}</span><input type="checkbox" checked={checkEnabled} disabled={saving} onChange={(event) => { setCheckEnabled(event.target.checked); if (!event.target.checked) setAutoUpdate(false); }} /></label>
             <label><span>{tx("ui.check_interval")}</span><span className="number-suffix"><input type="number" min="1" max="168" value={checkInterval} disabled={!checkEnabled || saving} onChange={(event) => setCheckInterval(event.target.value)} /><b>{tx("ui.hours")}</b></span></label>

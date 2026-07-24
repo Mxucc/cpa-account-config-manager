@@ -454,6 +454,12 @@ func (e *InspectionEngine) queueAnomalyNotification(event anomalyNotificationEve
 	if e == nil || e.notificationWake == nil {
 		return
 	}
+	e.mu.RLock()
+	owner := e.backgroundOwner
+	e.mu.RUnlock()
+	if !backgroundWorkAllowed(owner) {
+		return
+	}
 	select {
 	case e.notificationWake <- event:
 	default:
@@ -475,6 +481,15 @@ func (e *InspectionEngine) notificationLoop(ctx context.Context) {
 }
 
 func (e *InspectionEngine) deliverAnomalyNotification(ctx context.Context, event anomalyNotificationEvent) anomalyNotificationResult {
+	e.mu.RLock()
+	owner := e.backgroundOwner
+	e.mu.RUnlock()
+	if !backgroundWorkAllowed(owner) {
+		return anomalyNotificationResult{ReasonCode: "notification_superseded"}
+	}
+	ownedCtx, cancelOwnership := contextWithBackgroundOwnership(ctx, owner)
+	defer cancelOwnership()
+	ctx = ownedCtx
 	target, errExpand := expandAnomalyNotificationURL(event)
 	if errExpand != nil {
 		return anomalyNotificationResult{ReasonCode: "notification_rejected"}

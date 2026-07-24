@@ -71,18 +71,19 @@ type forceSyncRun struct {
 }
 
 type ForceSyncEngine struct {
-	mu        sync.Mutex
-	wait      sync.WaitGroup
-	accounts  *AccountService
-	host      AuthHost
-	policies  *PolicyEngine
-	mutations *MutationCoordinator
-	config    Config
-	now       func() time.Time
-	previews  map[string]forceSyncPreviewSnapshot
-	running   bool
-	cancel    context.CancelFunc
-	snapshot  ForceSyncJobSnapshot
+	mu              sync.Mutex
+	wait            sync.WaitGroup
+	accounts        *AccountService
+	host            AuthHost
+	policies        *PolicyEngine
+	mutations       *MutationCoordinator
+	backgroundOwner BackgroundWorkOwner
+	config          Config
+	now             func() time.Time
+	previews        map[string]forceSyncPreviewSnapshot
+	running         bool
+	cancel          context.CancelFunc
+	snapshot        ForceSyncJobSnapshot
 }
 
 func NewForceSyncEngine(accounts *AccountService, host AuthHost, policies *PolicyEngine, mutations *MutationCoordinator) *ForceSyncEngine {
@@ -99,6 +100,15 @@ func NewForceSyncEngine(accounts *AccountService, host AuthHost, policies *Polic
 		previews:  make(map[string]forceSyncPreviewSnapshot),
 		snapshot:  ForceSyncJobSnapshot{State: JobStateIdle},
 	}
+}
+
+func (e *ForceSyncEngine) SetBackgroundWorkOwner(owner BackgroundWorkOwner) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.backgroundOwner = owner
+	e.mu.Unlock()
 }
 
 func (e *ForceSyncEngine) Configure(config Config) {
@@ -311,6 +321,12 @@ func (e *ForceSyncEngine) run(ctx context.Context, run forceSyncRun, workers int
 	defer e.wait.Done()
 	defer e.mutations.Release(run.owner)
 	defer e.policies.operationMu.Unlock()
+	e.mu.Lock()
+	owner := e.backgroundOwner
+	e.mu.Unlock()
+	ownedCtx, cancelOwnership := contextWithBackgroundOwnership(ctx, owner)
+	defer cancelOwnership()
+	ctx = ownedCtx
 
 	jobs := make(chan Account)
 	var workerGroup sync.WaitGroup

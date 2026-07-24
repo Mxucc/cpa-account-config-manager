@@ -161,6 +161,7 @@ const reasonLabels: Record<string, UIMessageKey> = {
   notification_failed: "ui.notification_failed",
   notification_rejected: "ui.notification_rejected",
   notification_queue_full: "ui.notification_queue_full",
+  notification_superseded: "ui.notification_superseded",
 };
 
 const scopeLabels: Record<string, UIMessageKey> = {

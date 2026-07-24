@@ -773,6 +773,15 @@ export interface UpdateSnapshot {
   error?: string;
   release_source?: "plugin_store" | "none";
   store_error?: string;
+  runtime?: {
+    active: boolean;
+    superseded: boolean;
+    instance_version: string;
+    owner_version?: string;
+    process_scope?: string;
+    storage_error?: string;
+    restart_required: boolean;
+  };
 }
 
 export interface PluginStoreEntry {

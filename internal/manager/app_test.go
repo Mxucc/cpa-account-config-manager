@@ -120,6 +120,57 @@ func TestRegistrationUsesInjectedReleaseMetadata(t *testing.T) {
 	}
 }
 
+func TestNewerAppInstanceQuiescesSupersededBackgroundServices(t *testing.T) {
+	originalVersion := PluginVersion
+	defer func() { PluginVersion = originalVersion }()
+	dataDir := t.TempDir()
+	config := []byte("data_dir: " + dataDir + "\n")
+
+	PluginVersion = "0.3.1202"
+	older := NewApp(&fakeAuthHost{}, []byte("old"))
+	older.runtime.bootstrapEnabled = false
+	older.runtime.heartbeat = 10 * time.Millisecond
+	older.Configure(config)
+	t.Cleanup(older.Close)
+
+	PluginVersion = "0.3.1203"
+	newer := NewApp(&fakeAuthHost{}, []byte("new"))
+	newer.runtime.bootstrapEnabled = false
+	newer.runtime.heartbeat = 10 * time.Millisecond
+	newer.runtime.takeover = 20 * time.Millisecond
+	newer.Configure(config)
+	t.Cleanup(newer.Close)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		older.inspection.mu.RLock()
+		inspectionClosed := older.inspection.closed
+		older.inspection.mu.RUnlock()
+		older.policies.mu.RLock()
+		policyClosed := older.policies.closed
+		older.policies.mu.RUnlock()
+		older.updates.mu.RLock()
+		updatesClosed := older.updates.closed
+		older.updates.mu.RUnlock()
+		if older.runtime.Snapshot().Superseded && inspectionClosed && policyClosed && updatesClosed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("old app did not quiesce: runtime=%#v inspection=%t policy=%t updates=%t", older.runtime.Snapshot(), inspectionClosed, policyClosed, updatesClosed)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !newer.runtime.AllowsBackgroundWork() {
+		deadline = time.Now().Add(time.Second)
+		for !newer.runtime.AllowsBackgroundWork() && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !newer.runtime.AllowsBackgroundWork() {
+		t.Fatalf("new app did not take ownership: %#v", newer.runtime.Snapshot())
+	}
+}
+
 func TestInspectionLiveRouteDisablesCaching(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
 	defer app.Close()

@@ -88,20 +88,21 @@ type jobRun struct {
 }
 
 type JobEngine struct {
-	mu        sync.Mutex
-	wait      sync.WaitGroup
-	accounts  *AccountService
-	mutations *MutationCoordinator
-	config    Config
-	doer      HTTPDoer
-	newWriter func(string, string, HTTPDoer) (ManagementWriter, error)
-	now       func() time.Time
-	cancel    context.CancelFunc
-	running   bool
-	snapshot  JobSnapshot
-	retry     *retryIntent
-	store     string
-	loaded    bool
+	mu              sync.Mutex
+	wait            sync.WaitGroup
+	accounts        *AccountService
+	mutations       *MutationCoordinator
+	backgroundOwner BackgroundWorkOwner
+	config          Config
+	doer            HTTPDoer
+	newWriter       func(string, string, HTTPDoer) (ManagementWriter, error)
+	now             func() time.Time
+	cancel          context.CancelFunc
+	running         bool
+	snapshot        JobSnapshot
+	retry           *retryIntent
+	store           string
+	loaded          bool
 }
 
 func NewJobEngine(accounts *AccountService) *JobEngine {
@@ -124,6 +125,15 @@ func NewJobEngineWithCoordinator(accounts *AccountService, mutations *MutationCo
 	}
 	engine.Configure(engine.config)
 	return engine
+}
+
+func (e *JobEngine) SetBackgroundWorkOwner(owner BackgroundWorkOwner) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.backgroundOwner = owner
+	e.mu.Unlock()
 }
 
 func (e *JobEngine) Configure(config Config) {
@@ -332,6 +342,12 @@ func (e *JobEngine) run(ctx context.Context, run jobRun, workers int) {
 	defer e.wait.Done()
 	defer clearManagementWriterSecrets(run.writer)
 	defer e.mutations.Release(run.jobID)
+	e.mu.Lock()
+	owner := e.backgroundOwner
+	e.mu.Unlock()
+	ownedCtx, cancelOwnership := contextWithBackgroundOwnership(ctx, owner)
+	defer cancelOwnership()
+	ctx = ownedCtx
 	jobs := make(chan Account)
 	var workerGroup sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {

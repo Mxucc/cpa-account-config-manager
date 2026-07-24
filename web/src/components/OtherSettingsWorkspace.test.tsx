@@ -60,7 +60,8 @@ describe("OtherSettingsWorkspace", () => {
     expect(within(plugin).getAllByText("0.3.0").length).toBeGreaterThan(0);
     await user.click(within(plugin).getByRole("button", { name: "更新" }));
     await waitFor(() => expect(requests.some(({ url }) => url.endsWith("/plugin-store/cpa-account-config-manager/install"))).toBe(true));
-    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("0.3.0"));
+    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*重启 CPA/));
+    expect(within(plugin).getByText(/原生插件更新后必须完整重启 CPA/)).toBeInTheDocument();
 
     await user.click(within(plugin).getByLabelText("自动更新"));
     await user.click(within(plugin).getByRole("button", { name: "保存设置" }));

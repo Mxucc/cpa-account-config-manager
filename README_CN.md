@@ -126,7 +126,7 @@ plugins:
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `workers` | `6` | 同时执行的账号修改数。小于 1 时恢复为 6，大于 16 时限制为 16。 |
-| `data_dir` | `data/cpa-account-config-manager` | 脱敏终态任务、向后兼容的 `default-policy.json`、`usage-snapshots.json`、`inspection-state.json`、`update-state.json` 与有界 `operation-log.json` 的目录。要让巡检/动作/更新策略和审计记录跨 CPA 重启与插件替换保留，必须持久化该目录；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。两种覆盖都未设置时，用量还会按下文规则迁移到耐久的本地 Auth 目录。 |
+| `data_dir` | `data/cpa-account-config-manager` | 脱敏终态任务、向后兼容的 `default-policy.json`、`usage-snapshots.json`、`inspection-state.json`、`update-state.json`、`runtime-ownership.json`、临时 `runtime-instances/` 声明与有界 `operation-log.json` 的目录。要让巡检/动作/更新策略、运行时升级交接状态和审计记录跨 CPA 重启与插件替换保留，必须持久化该目录；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。两种覆盖都未设置时，用量还会按下文规则迁移到耐久的本地 Auth 目录。 |
 | `management_base_url` | `http://127.0.0.1:8317` | 普通批量编辑和确认删除使用的可选 CLIProxyAPI 原生写入接口回环地址；默认策略补齐和强制同步改用宿主 Auth 回调。还支持 `CPA_MANAGEMENT_BASE_URL`、仅限回环地址的 `CPA_BASE_URL`、`PORT`、`CPA_PORT`。 |
 
 同一对象里的 `enabled` 和 `priority` 由 CLIProxyAPI 插件宿主管理；界面中编辑的账号 `priority` 是另一项账号字段。
@@ -275,7 +275,9 @@ Release 检查只使用 CPA 已鉴权插件商店 Registry 作为版本来源。
 
 `update-state.json` 只持久化检查策略和最近检查时间。旧版本遗留的 GitHub 版本与错误会在加载时忽略，并在下次保存时清除。Management Key 只随当前浏览器请求发送给 CPA Management API，不会发往 CPA 之外，也不会被插件持久化。已鉴权管理页面保持打开时，启用的更新检查会按配置的 1-168 小时间隔重复执行。
 
-发现新版本后页面会显示提示。真正安装委托给 CPA 鉴权插件商店，由宿主负责 Registry 来源、平台匹配、归档限制、Checksum 校验和最终落盘。自动安装默认关闭，首次开启必须确认，并且只在已鉴权巡检页面打开期间运行。原生动态库可能需要重启 CPA 才能启用新版本；安装失败或文件被占用时仍可手动重试。插件不会自行下载或替换自己的动态库，也不会保存浏览器中的 Management Key。
+发现新版本后页面会显示提示。真正安装委托给 CPA 鉴权插件商店，由宿主负责 Registry 来源、平台匹配、归档限制、Checksum 校验和最终落盘。自动安装默认关闭，首次开启必须确认，并且只在已鉴权巡检页面打开期间运行。每次原生插件更新后都必须完整重启 CPA：CPA 热替换会把旧库移出路由，但已载入内存的旧代码和后台协程仍可能继续运行；删除旧动态库文件只会清理磁盘，不会从进程内存卸载旧实例。因此，即使当前 CPA 安装接口返回 `restart_required: false`，界面也会按“需要重启”处理并记录 warning。安装失败或文件被占用时仍可手动重试。插件不会自行下载、删除或替换自己的动态库，也不会保存浏览器中的 Management Key。
+
+支持本机制的版本还会在 `data_dir/runtime-instances/` 写入脱敏心跳声明。同一个 CPA 进程和数据目录内，稳定语义版本最高的插件实例独占定时巡检、自动处置、外部通知、默认策略扫描，以及尚未结束的批处理和强制同步。替换版本先声明接管，旧实例停止，新实例经过一个短暂接管窗口后再开始；崩溃实例的声明会在有界超时后失效。声明只包含随机实例 ID、插件版本、进程作用域哈希和时间戳。声明存储不可用时，后台自动化会安全停用。从尚未实现该协议的旧版本首次升级时仍必须真正重启一次 CPA，因为新代码无法反向停止已经运行的旧二进制实例。
 
 ## 统一操作日志
 
@@ -308,6 +310,7 @@ Release 检查只使用 CPA 已鉴权插件商店 Registry 作为版本来源。
 - 某些账号失败不会回滚已经成功的账号。
 - 后台默认策略始终只补缺失字段，使用共享写入槽位；槽位被占用时会短延迟重试，并在 `host.auth.save` 前再次读取 Auth。已存在的受管 Key 不会被覆盖。
 - 进程重启后无法继续正在运行的任务，因为 Management Key 和 Patch 值不会落盘。保存为 running 的任务会标记为 `interrupted`；只有内存中的 Patch Intent 仍存在时才能精确“仅重试失败项”。
+- 删除旧插件动态库不是运行时卸载操作。每次通过插件商店安装后都必须重启 CPA，包括首次升级到支持跨版本单活协议的版本。
 
 ## 安全边界
 

@@ -15,12 +15,22 @@ type UpdateChecker struct {
 	config         Config
 	store          string
 	currentVersion string
+	runtime        *RuntimeOwnership
 	policy         UpdatePolicy
 	checkedAt      time.Time
 	error          string
 	configured     bool
 	closed         bool
 	now            func() time.Time
+}
+
+func (c *UpdateChecker) SetRuntimeOwnership(runtime *RuntimeOwnership) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.runtime = runtime
+	c.mu.Unlock()
 }
 
 func NewUpdateChecker(currentVersion string) *UpdateChecker {
@@ -113,16 +123,21 @@ func (c *UpdateChecker) Snapshot() UpdateSnapshot {
 	current := c.currentVersion
 	checkedAt := c.checkedAt
 	errMessage := c.error
+	runtime := c.runtime
 	c.mu.RUnlock()
 	if _, _, currentOK := parseReleaseVersion(current); !currentOK && errMessage == "" {
 		errMessage = "current version is invalid"
 	}
-	return UpdateSnapshot{
+	snapshot := UpdateSnapshot{
 		Policy:         policy,
 		CurrentVersion: current,
 		CheckedAt:      checkedAt,
 		Error:          safeUpdateError(errMessage),
 	}
+	if runtime != nil {
+		snapshot.Runtime = runtime.Snapshot()
+	}
+	return snapshot
 }
 
 func (c *UpdateChecker) SetPolicy(policy UpdatePolicy) (UpdateSnapshot, error) {

@@ -570,6 +570,7 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
     release_source: "none",
     store_error: storeError ? "plugin store metadata is unavailable" : undefined,
     error: retainedError || undefined,
+    runtime: status.runtime,
   };
 
   if (!storeVersion || !currentVersion) {
@@ -611,11 +612,12 @@ export async function installPluginUpdate(version: string): Promise<PluginInstal
     if (!arrayOrEmpty(store.plugins).some((plugin) => plugin.id === pluginID)) {
       throw new APIError(404, "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store");
     }
-    const result = await managementRequest<PluginInstallResult>("/plugin-store/cpa-account-config-manager/install", {
+    const installed = await managementRequest<PluginInstallResult>("/plugin-store/cpa-account-config-manager/install", {
       method: "POST",
       body: JSON.stringify({ version }),
     });
-    void recordBrowserOperation("update_install", result.restart_required ? "warning" : "succeeded", result.version).catch(() => undefined);
+    const result = { ...installed, restart_required: true };
+    void recordBrowserOperation("update_install", "warning", result.version).catch(() => undefined);
     return result;
   } catch (error) {
     void recordBrowserOperation("update_install", "failed", version).catch(() => undefined);

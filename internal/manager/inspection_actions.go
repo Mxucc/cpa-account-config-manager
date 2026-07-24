@@ -46,6 +46,12 @@ func (e *InspectionEngine) applyAutomaticActions(
 	managementKey string,
 ) (InspectionRunSummary, []InspectionAction) {
 	summary := InspectionRunSummary{}
+	e.mu.RLock()
+	owner := e.backgroundOwner
+	e.mu.RUnlock()
+	if !backgroundWorkAllowed(owner) {
+		return summary, nil
+	}
 	if !policy.AutoDisable && !policy.AutoEnable && !policy.AutoDelete {
 		return summary, nil
 	}

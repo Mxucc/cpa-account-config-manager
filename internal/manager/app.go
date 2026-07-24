@@ -66,9 +66,11 @@ type App struct {
 	operations    *OperationJournal
 	modelTests    *ModelTestService
 	requestHooks  *RequestHook
+	runtime       *RuntimeOwnership
 	experiments   *ExperimentalSettingsService
 	agentIdentity *AgentIdentityExperiment
 	indexHTML     []byte
+	quiesceOnce   sync.Once
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -92,12 +94,16 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)
 	requestHooks := NewRequestHook(weeklyOverdraft)
+	runtime := NewRuntimeOwnership(PluginVersion)
+	updates := NewUpdateChecker(PluginVersion)
+	updates.SetRuntimeOwnership(runtime)
+	force := NewForceSyncEngine(accounts, host, policies, mutations)
 	modelTests.SetExperimentalTransformer(weeklyOverdraft)
 	inspection.RegisterAutomaticDisableGuard(weeklyOverdraft)
 	inspection.SetModelTestService(modelTests)
 	inspection.SetDeleteService(deletions)
 	inspection.SetOperationJournal(operations)
-	return &App{
+	app := &App{
 		config:        normalizeConfig(Config{}),
 		accounts:      accounts,
 		deduplication: NewAccountDeduplicationService(accounts),
@@ -106,17 +112,20 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		jobs:          jobs,
 		policies:      policies,
 		inspection:    inspection,
-		updates:       NewUpdateChecker(PluginVersion),
-		force:         NewForceSyncEngine(accounts, host, policies, mutations),
+		updates:       updates,
+		force:         force,
 		imports:       imports,
 		usage:         usage,
 		operations:    operations,
 		modelTests:    modelTests,
 		requestHooks:  requestHooks,
+		runtime:       runtime,
 		experiments:   experiments,
 		agentIdentity: agentIdentity,
 		indexHTML:     append([]byte(nil), indexHTML...),
 	}
+	runtime.SetOnSuperseded(app.quiesceRetiredInstance)
+	return app
 }
 
 func (a *App) Configure(raw []byte) {
@@ -127,6 +136,15 @@ func (a *App) Configure(raw []byte) {
 	a.config = ParseConfig(raw)
 	config := a.config
 	a.mu.Unlock()
+	a.runtime.Configure(config)
+	if a.runtime.Snapshot().Superseded {
+		a.quiesceRetiredInstance()
+		return
+	}
+	a.jobs.SetBackgroundWorkOwner(a.runtime)
+	a.policies.SetBackgroundWorkOwner(a.runtime)
+	a.inspection.SetBackgroundWorkOwner(a.runtime)
+	a.force.SetBackgroundWorkOwner(a.runtime)
 	a.operations.Configure(config)
 	a.experiments.Configure(config)
 	a.jobs.Configure(config)
@@ -156,17 +174,27 @@ func (a *App) Close() {
 	if a == nil {
 		return
 	}
-	a.force.Shutdown()
-	a.inspection.Shutdown()
-	a.updates.Shutdown()
-	a.policies.Shutdown()
-	a.jobs.Shutdown()
-	a.deletions.Clear()
-	a.previews.Clear()
-	a.imports.Clear()
-	a.agentIdentity.Clear()
-	a.usage.Close()
+	a.quiesceRetiredInstance()
 	a.reconcileOperationSources()
+	a.runtime.Shutdown()
+}
+
+func (a *App) quiesceRetiredInstance() {
+	if a == nil {
+		return
+	}
+	a.quiesceOnce.Do(func() {
+		a.force.Shutdown()
+		a.inspection.Shutdown()
+		a.updates.Shutdown()
+		a.policies.Shutdown()
+		a.jobs.Shutdown()
+		a.deletions.Clear()
+		a.previews.Clear()
+		a.imports.Clear()
+		a.agentIdentity.Clear()
+		a.usage.Close()
+	})
 }
 
 func (a *App) Registration() Registration {

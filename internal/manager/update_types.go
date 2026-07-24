@@ -25,15 +25,16 @@ type UpdatePolicyRequest struct {
 }
 
 type UpdateSnapshot struct {
-	Policy          UpdatePolicy `json:"policy"`
-	CurrentVersion  string       `json:"current_version"`
-	LatestVersion   string       `json:"latest_version,omitempty"`
-	UpdateAvailable bool         `json:"update_available"`
-	ReleaseURL      string       `json:"release_url,omitempty"`
-	Checking        bool         `json:"checking"`
-	Pending         bool         `json:"pending"`
-	CheckedAt       time.Time    `json:"checked_at,omitempty"`
-	Error           string       `json:"error,omitempty"`
+	Policy          UpdatePolicy             `json:"policy"`
+	CurrentVersion  string                   `json:"current_version"`
+	LatestVersion   string                   `json:"latest_version,omitempty"`
+	UpdateAvailable bool                     `json:"update_available"`
+	ReleaseURL      string                   `json:"release_url,omitempty"`
+	Checking        bool                     `json:"checking"`
+	Pending         bool                     `json:"pending"`
+	CheckedAt       time.Time                `json:"checked_at,omitempty"`
+	Error           string                   `json:"error,omitempty"`
+	Runtime         RuntimeOwnershipSnapshot `json:"runtime"`
 }
 
 type releaseVersion struct {

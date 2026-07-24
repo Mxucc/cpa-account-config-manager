@@ -712,3 +712,19 @@ func TestAnomalyNotificationFailureDoesNotReportStaleHTTPStatus(t *testing.T) {
 		t.Fatalf("attempts=%d result=%#v", attempts, result)
 	}
 }
+
+func TestAnomalyNotificationDoesNotSendFromSupersededInstance(t *testing.T) {
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.SetBackgroundWorkOwner(backgroundWorkOwnerFunc(func() bool { return false }))
+	attempts := 0
+	engine.notificationDoer = anomalyNotificationDoerFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, nil
+	})
+	result := engine.deliverAnomalyNotification(context.Background(), anomalyNotificationEvent{
+		URLTemplate: "https://notify.example/hook?available=${available_accounts}",
+	})
+	if attempts != 0 || result.ReasonCode != "notification_superseded" {
+		t.Fatalf("attempts=%d result=%#v", attempts, result)
+	}
+}

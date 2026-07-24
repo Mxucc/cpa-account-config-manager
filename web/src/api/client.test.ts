@@ -599,7 +599,8 @@ describe("management API client", () => {
     await saveInspectionPolicy(inspectionSnapshot.policy, true, true);
     await saveUpdatePolicy(updateSnapshot.policy, true);
     await executeInspectionAutoDelete();
-    await installPluginUpdate("0.3.0");
+		const installResult = await installPluginUpdate("0.3.0");
+		expect(installResult.restart_required).toBe(true);
 
 		const [inspectionConfigURL, inspectionConfigInit] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(inspectionConfigURL).toContain("/plugins/cpa-account-config-manager/config");
@@ -633,6 +634,9 @@ describe("management API client", () => {
     expect(installURL).toBe("/v0/management/plugin-store/cpa-account-config-manager/install");
     expect(JSON.parse(String(installInit.body))).toEqual({ version: "0.3.0" });
     expect(new Headers(installInit.headers).get("Authorization")).toBe("Bearer management-secret");
+		await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(8));
+		const [, operationInit] = fetchMock.mock.calls[8] as [string, RequestInit];
+		expect(JSON.parse(String(operationInit.body))).toMatchObject({ action: "update_install", status: "warning", version: "0.3.0" });
     expect(localStorage.length).toBe(0);
   });
 

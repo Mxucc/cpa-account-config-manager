@@ -23,6 +23,7 @@ type InspectionEngine struct {
 	accounts               *AccountService
 	host                   AuthHost
 	mutations              *MutationCoordinator
+	backgroundOwner        BackgroundWorkOwner
 	modelTests             *ModelTestService
 	deletions              *AccountDeleteService
 	operations             *OperationJournal
@@ -127,6 +128,15 @@ func (e *InspectionEngine) SetOperationJournal(journal *OperationJournal) {
 	}
 	e.mu.Lock()
 	e.operations = journal
+	e.mu.Unlock()
+}
+
+func (e *InspectionEngine) SetBackgroundWorkOwner(owner BackgroundWorkOwner) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.backgroundOwner = owner
 	e.mu.Unlock()
 }
 
@@ -665,7 +675,7 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 	inspection.Result.ID = authIndex
 	applyUsageRecordToInspection(&inspection, record, e.policy, now)
 	e.records[authIndex] = inspection
-	wake := e.started && (passiveCircuitThresholdReached(e.policy, inspection) ||
+	wake := e.started && backgroundWorkAllowed(e.backgroundOwner) && (passiveCircuitThresholdReached(e.policy, inspection) ||
 		usageObservationRequiresImmediateScan(e.policy, record, inspection, now) && e.usageAutoDisableAllowedLocked(record, now))
 	if wake {
 		e.pending = true
@@ -1100,7 +1110,10 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 			e.mu.Unlock()
 			e.scanWithMode(ctx, false, probe, sweep)
 		case <-timer.C:
-			if e.scheduledEnabled() {
+			e.mu.RLock()
+			owner := e.backgroundOwner
+			e.mu.RUnlock()
+			if backgroundWorkAllowed(owner) && e.scheduledEnabled() {
 				e.scanWithMode(ctx, true, false, false)
 			}
 		}
@@ -1138,6 +1151,15 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualProbe, requestedSweep bool) {
 	e.scanMu.Lock()
 	defer e.scanMu.Unlock()
+	e.mu.RLock()
+	owner := e.backgroundOwner
+	e.mu.RUnlock()
+	if !backgroundWorkAllowed(owner) {
+		return
+	}
+	ownedCtx, cancelOwnership := contextWithBackgroundOwnership(ctx, owner)
+	defer cancelOwnership()
+	ctx = ownedCtx
 	if ctx.Err() != nil {
 		return
 	}
@@ -1580,6 +1602,11 @@ func (e *InspectionEngine) persist() {
 		return
 	}
 	e.mu.RLock()
+	owner := e.backgroundOwner
+	if !backgroundWorkAllowed(owner) {
+		e.mu.RUnlock()
+		return
+	}
 	if !e.dirty || strings.TrimSpace(e.store) == "" {
 		e.mu.RUnlock()
 		return

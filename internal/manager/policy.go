@@ -72,23 +72,24 @@ type authFingerprint struct {
 }
 
 type PolicyEngine struct {
-	mu           sync.RWMutex
-	operationMu  sync.Mutex
-	wait         sync.WaitGroup
-	host         AuthHost
-	mutations    *MutationCoordinator
-	config       Config
-	store        string
-	policy       DefaultPolicy
-	lastScan     PolicyScanSummary
-	running      bool
-	scanStarted  time.Time
-	fingerprints map[string]authFingerprint
-	wake         chan struct{}
-	cancel       context.CancelFunc
-	started      bool
-	closed       bool
-	now          func() time.Time
+	mu              sync.RWMutex
+	operationMu     sync.Mutex
+	wait            sync.WaitGroup
+	host            AuthHost
+	mutations       *MutationCoordinator
+	backgroundOwner BackgroundWorkOwner
+	config          Config
+	store           string
+	policy          DefaultPolicy
+	lastScan        PolicyScanSummary
+	running         bool
+	scanStarted     time.Time
+	fingerprints    map[string]authFingerprint
+	wake            chan struct{}
+	cancel          context.CancelFunc
+	started         bool
+	closed          bool
+	now             func() time.Time
 }
 
 func NewPolicyEngine(host AuthHost) *PolicyEngine {
@@ -110,6 +111,15 @@ func NewPolicyEngineWithCoordinator(host AuthHost, mutations *MutationCoordinato
 		wake:         make(chan struct{}, 1),
 		now:          time.Now,
 	}
+}
+
+func (e *PolicyEngine) SetBackgroundWorkOwner(owner BackgroundWorkOwner) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.backgroundOwner = owner
+	e.mu.Unlock()
 }
 
 func (e *PolicyEngine) Configure(config Config) {
@@ -328,6 +338,15 @@ func (e *PolicyEngine) scanInterval() time.Duration {
 }
 
 func (e *PolicyEngine) reconcile(ctx context.Context) bool {
+	e.mu.RLock()
+	owner := e.backgroundOwner
+	e.mu.RUnlock()
+	if !backgroundWorkAllowed(owner) {
+		return false
+	}
+	ownedCtx, cancelOwnership := contextWithBackgroundOwnership(ctx, owner)
+	defer cancelOwnership()
+	ctx = ownedCtx
 	e.operationMu.Lock()
 	defer e.operationMu.Unlock()
 

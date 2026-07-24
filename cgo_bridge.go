@@ -85,6 +85,42 @@ static void free_plugin_response(void* ptr) {
 		free(ptr);
 	}
 }
+
+static int valid_process_marker(const char* value) {
+	if (value == NULL || strlen(value) != 32) {
+		return 0;
+	}
+	for (size_t index = 0; index < 32; index++) {
+		char current = value[index];
+		if (!((current >= '0' && current <= '9') || (current >= 'a' && current <= 'f') || (current >= 'A' && current <= 'F'))) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+static char* get_or_create_process_marker(const char* name, const char* candidate) {
+	if (name == NULL || candidate == NULL || !valid_process_marker(candidate)) {
+		return NULL;
+	}
+	const char* current = getenv(name);
+	if (!valid_process_marker(current)) {
+#ifdef _WIN32
+		if (_putenv_s(name, candidate) != 0) {
+			return NULL;
+		}
+#else
+		if (setenv(name, candidate, current == NULL ? 0 : 1) != 0) {
+			return NULL;
+		}
+#endif
+		current = getenv(name);
+	}
+	if (!valid_process_marker(current)) {
+		return NULL;
+	}
+	return strdup(current);
+}
 */
 import "C"
 
@@ -94,7 +130,22 @@ import (
 	"unsafe"
 
 	"cpa-account-config-manager/internal/cpaapi"
+	"cpa-account-config-manager/internal/manager"
 )
+
+func sharedRuntimeProcessMarker() string {
+	candidate := manager.NewRuntimeProcessMarker()
+	name := C.CString(manager.RuntimeProcessMarkerEnvironment)
+	candidateValue := C.CString(candidate)
+	defer C.free(unsafe.Pointer(name))
+	defer C.free(unsafe.Pointer(candidateValue))
+	marker := C.get_or_create_process_marker(name, candidateValue)
+	if marker == nil {
+		return ""
+	}
+	defer C.free(unsafe.Pointer(marker))
+	return C.GoString(marker)
+}
 
 //export cliproxy_plugin_init
 func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {

@@ -95,7 +95,11 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)
 	requestHooks := NewRequestHook(weeklyOverdraft)
-	runtime := NewRuntimeOwnership(PluginVersion)
+	runtimeMarker := ""
+	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
+		runtimeMarker = provider.RuntimeProcessMarker()
+	}
+	runtime := NewRuntimeOwnershipWithMarker(PluginVersion, runtimeMarker)
 	updates := NewUpdateChecker(PluginVersion)
 	updates.SetRuntimeOwnership(runtime)
 	force := NewForceSyncEngine(accounts, host, policies, mutations)

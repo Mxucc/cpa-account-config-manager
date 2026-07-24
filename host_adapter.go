@@ -11,6 +11,8 @@ import (
 
 type hostAdapter struct{}
 
+func (hostAdapter) RuntimeProcessMarker() string { return sharedRuntimeProcessMarker() }
+
 func (hostAdapter) ListAuth(context.Context) ([]cpaapi.HostAuthFileEntry, error) {
 	result, errCall := callHost(cpaapi.MethodHostAuthList, map[string]any{})
 	if errCall != nil {

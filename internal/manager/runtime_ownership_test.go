@@ -31,6 +31,7 @@ func TestRuntimeOwnershipRequiresOneRestartWhenProtocolIsFirstInstalled(t *testi
 	first := NewRuntimeOwnership(runtimeProtocolVersion)
 	first.instanceID = "instance-first"
 	first.scope = "scope-before-restart"
+	first.bootstrapScope = "bootstrap-before-restart"
 	first.now = func() time.Time { return now }
 	first.heartbeat = time.Hour
 	first.Configure(Config{DataDir: dataDir})
@@ -42,6 +43,7 @@ func TestRuntimeOwnershipRequiresOneRestartWhenProtocolIsFirstInstalled(t *testi
 	afterRestart := NewRuntimeOwnership(runtimeProtocolVersion)
 	afterRestart.instanceID = "instance-after-restart"
 	afterRestart.scope = "scope-after-restart"
+	afterRestart.bootstrapScope = "bootstrap-after-restart"
 	afterRestart.now = func() time.Time { return now.Add(time.Minute) }
 	afterRestart.heartbeat = time.Hour
 	afterRestart.Configure(Config{DataDir: dataDir})
@@ -51,7 +53,7 @@ func TestRuntimeOwnershipRequiresOneRestartWhenProtocolIsFirstInstalled(t *testi
 	}
 }
 
-func TestRuntimeBootstrapMigratesDockerPIDScopeAfterAnObservedRestart(t *testing.T) {
+func TestRuntimeBootstrapMigratesWhenTheLegacyProcessScopeChanged(t *testing.T) {
 	dataDir := t.TempDir()
 	updatedAt := time.Date(2026, 7, 25, 8, 0, 0, 0, time.UTC)
 	legacy := persistedRuntimeBootstrap{
@@ -63,8 +65,7 @@ func TestRuntimeBootstrapMigratesDockerPIDScopeAfterAnObservedRestart(t *testing
 	restartRequired, storageErr := runtimeBootstrapStatus(
 		dataDir,
 		"process-start-v2",
-		"legacy-docker-pid-1",
-		updatedAt.Add(time.Second),
+		[]string{"different-current-process"},
 		updatedAt.Add(2*time.Second),
 		true,
 	)
@@ -79,8 +80,7 @@ func TestRuntimeBootstrapMigratesDockerPIDScopeAfterAnObservedRestart(t *testing
 
 func TestRuntimeBootstrapMigrationDoesNotMistakeHotReloadForRestart(t *testing.T) {
 	dataDir := t.TempDir()
-	processStartedAt := time.Date(2026, 7, 25, 8, 0, 0, 0, time.UTC)
-	updatedAt := processStartedAt.Add(time.Minute)
+	updatedAt := time.Date(2026, 7, 25, 8, 1, 0, 0, time.UTC)
 	legacy := persistedRuntimeBootstrap{
 		Version: runtimeBootstrapVersion - 1, PendingProcessScope: "legacy-same-process", UpdatedAt: updatedAt,
 	}
@@ -90,8 +90,7 @@ func TestRuntimeBootstrapMigrationDoesNotMistakeHotReloadForRestart(t *testing.T
 	restartRequired, storageErr := runtimeBootstrapStatus(
 		dataDir,
 		"process-start-v2",
-		"legacy-same-process",
-		processStartedAt,
+		[]string{"legacy-same-process"},
 		updatedAt.Add(time.Second),
 		true,
 	)
@@ -104,6 +103,47 @@ func TestRuntimeBootstrapMigrationDoesNotMistakeHotReloadForRestart(t *testing.T
 	}
 }
 
+func TestRuntimeBootstrapMigrationUsesIncarnationWhenPIDScopeIsStable(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 7, 25, 8, 0, 0, 0, time.UTC)
+	legacy := persistedRuntimeBootstrap{
+		Version: runtimeBootstrapVersion - 1, PendingProcessScope: "stable-pid-scope", UpdatedAt: now,
+	}
+	if errSave := savePrivateJSON(filepath.Join(dataDir, runtimeBootstrapStoreName), legacy); errSave != nil {
+		t.Fatalf("save legacy bootstrap: %v", errSave)
+	}
+
+	restartRequired, storageErr := runtimeBootstrapStatus(
+		dataDir,
+		"process-incarnation-a",
+		[]string{"stable-pid-scope"},
+		now.Add(time.Second),
+		true,
+	)
+	if storageErr != "" || !restartRequired {
+		t.Fatalf("same-process migration restart=%t error=%q", restartRequired, storageErr)
+	}
+	state := readPersistedRuntimeBootstrap(t, dataDir)
+	if state.Version != runtimeBootstrapVersion || state.Ready || state.PendingProcessScope != "process-incarnation-a" {
+		t.Fatalf("migrated state = %#v", state)
+	}
+
+	restartRequired, storageErr = runtimeBootstrapStatus(
+		dataDir,
+		"process-incarnation-b",
+		[]string{"stable-pid-scope"},
+		now.Add(2*time.Second),
+		true,
+	)
+	if storageErr != "" || restartRequired {
+		t.Fatalf("post-restart result restart=%t error=%q", restartRequired, storageErr)
+	}
+	state = readPersistedRuntimeBootstrap(t, dataDir)
+	if !state.Ready || state.PendingProcessScope != "" {
+		t.Fatalf("restarted state = %#v", state)
+	}
+}
+
 func TestParseLinuxProcStatStartTimeHandlesSpacesAndParentheses(t *testing.T) {
 	raw := "1 (cpa worker (main)) S 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23"
 	if startTime := parseLinuxProcStatStartTime(raw); startTime != "22" {
@@ -113,6 +153,21 @@ func TestParseLinuxProcStatStartTimeHandlesSpacesAndParentheses(t *testing.T) {
 		if startTime := parseLinuxProcStatStartTime(malformed); startTime != "" {
 			t.Fatalf("malformed stat %q returned %q", malformed, startTime)
 		}
+	}
+}
+
+func TestRuntimeProcessIncarnationSharesOneMarkerWithinTheProcess(t *testing.T) {
+	marker := NewRuntimeProcessMarker()
+	first := runtimeProcessIncarnation(marker)
+	second := runtimeProcessIncarnation(marker)
+	if first == "" || second != first {
+		t.Fatalf("process incarnation first=%q second=%q", first, second)
+	}
+	if normalizedRuntimeProcessMarker(marker) == "" {
+		t.Fatalf("stored process marker is invalid: %q", marker)
+	}
+	if normalizedRuntimeProcessMarker("not-a-process-marker") != "" {
+		t.Fatal("invalid process marker was accepted")
 	}
 }
 
@@ -131,6 +186,9 @@ func TestRuntimeOwnershipNewerVersionSupersedesOlderAfterTakeoverDelay(t *testin
 	newer := newTestRuntimeOwnership("0.3.1203", "instance-new", "scope-shared", now.Add(time.Second))
 	newer.Configure(Config{DataDir: dataDir})
 	t.Cleanup(newer.Shutdown)
+	if !newer.Snapshot().RestartRecommended {
+		t.Fatalf("live hot-reload peer did not recommend a process restart: %#v", newer.Snapshot())
+	}
 	older.now = func() time.Time { return now.Add(time.Second) }
 	older.refresh()
 	if older.AllowsBackgroundWork() || newer.AllowsBackgroundWork() {
@@ -151,8 +209,8 @@ func TestRuntimeOwnershipNewerVersionSupersedesOlderAfterTakeoverDelay(t *testin
 	if !newer.AllowsBackgroundWork() || !older.Snapshot().Superseded {
 		t.Fatalf("takeover failed: older=%#v newer=%#v", older.Snapshot(), newer.Snapshot())
 	}
-	if !newer.Snapshot().RestartRecommended {
-		t.Fatalf("hot-reloaded owner did not recommend a process restart: %#v", newer.Snapshot())
+	if newer.Snapshot().RestartRecommended {
+		t.Fatalf("restart recommendation remained after the old claim stopped: %#v", newer.Snapshot())
 	}
 }
 
@@ -191,6 +249,27 @@ func TestRuntimeOwnershipIgnoresExpiredNewerClaim(t *testing.T) {
 	t.Cleanup(older.Shutdown)
 	if !older.AllowsBackgroundWork() || older.Snapshot().OwnerVersion != "0.3.1202" {
 		t.Fatalf("stale claim blocked active instance = %#v", older.Snapshot())
+	}
+}
+
+func TestRuntimeOwnershipIgnoresRecentClaimFromPreviousProcessIncarnation(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 7, 25, 8, 0, 0, 0, time.UTC)
+	directory := filepath.Join(dataDir, runtimeOwnershipStoreName, "scope-shared")
+	previous := runtimeClaim{
+		Version: runtimeClaimVersion, InstanceID: "instance-previous", PluginVersion: "9.0.0",
+		ProcessScope: "scope-shared", ProcessIncarnation: "process-previous",
+		StartedAt: now.Add(-time.Minute), HeartbeatAt: now.Add(-time.Second),
+	}
+	if errSave := savePrivateJSON(filepath.Join(directory, previous.InstanceID+".json"), previous); errSave != nil {
+		t.Fatalf("save prior-process claim: %v", errSave)
+	}
+	owner := newTestRuntimeOwnership("0.3.1204", "instance-current", "scope-shared", now)
+	owner.processIncarnation = "process-current"
+	owner.Configure(Config{DataDir: dataDir})
+	t.Cleanup(owner.Shutdown)
+	if !owner.AllowsBackgroundWork() || owner.Snapshot().RestartRecommended || owner.Snapshot().OwnerVersion != "0.3.1204" {
+		t.Fatalf("prior-process claim blocked current instance = %#v", owner.Snapshot())
 	}
 }
 
@@ -251,8 +330,10 @@ func newTestRuntimeOwnership(version, instanceID, scope string, now time.Time) *
 	owner := NewRuntimeOwnership(version)
 	owner.instanceID = instanceID
 	owner.scope = scope
+	owner.bootstrapScope = scope
 	owner.legacyScope = scope
-	owner.processStartedAt = now.Add(-time.Minute)
+	owner.previousBootstrapScope = scope
+	owner.processIncarnation = "test-process"
 	owner.now = func() time.Time { return now }
 	owner.heartbeat = time.Hour
 	owner.bootstrapEnabled = false

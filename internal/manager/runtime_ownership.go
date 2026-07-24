@@ -19,7 +19,7 @@ import (
 
 const (
 	runtimeClaimVersion       = 1
-	runtimeBootstrapVersion   = 2
+	runtimeBootstrapVersion   = 3
 	runtimeHeartbeatInterval  = time.Second
 	runtimeClaimTimeout       = 10 * time.Second
 	runtimeTakeoverDelay      = 2 * time.Second
@@ -29,6 +29,8 @@ const (
 	runtimeBootstrapStoreName = "runtime-ownership.json"
 	runtimeProtocolVersion    = "0.3.1203"
 )
+
+const RuntimeProcessMarkerEnvironment = "CLIPROXY_CPA_ACCOUNT_CONFIG_MANAGER_PROCESS_MARKER"
 
 type BackgroundWorkOwner interface {
 	AllowsBackgroundWork() bool
@@ -53,43 +55,46 @@ type persistedRuntimeBootstrap struct {
 }
 
 type runtimeClaim struct {
-	Version       int       `json:"version"`
-	InstanceID    string    `json:"instance_id"`
-	PluginVersion string    `json:"plugin_version"`
-	ProcessScope  string    `json:"process_scope"`
-	StartedAt     time.Time `json:"started_at"`
-	HeartbeatAt   time.Time `json:"heartbeat_at"`
+	Version            int       `json:"version"`
+	InstanceID         string    `json:"instance_id"`
+	PluginVersion      string    `json:"plugin_version"`
+	ProcessScope       string    `json:"process_scope"`
+	ProcessIncarnation string    `json:"process_incarnation,omitempty"`
+	StartedAt          time.Time `json:"started_at"`
+	HeartbeatAt        time.Time `json:"heartbeat_at"`
 }
 
 type RuntimeOwnership struct {
-	lifecycleMu        sync.Mutex
-	mu                 sync.RWMutex
-	wait               sync.WaitGroup
-	instanceID         string
-	version            string
-	scope              string
-	legacyScope        string
-	processStartedAt   time.Time
-	directory          string
-	claimPath          string
-	startedAt          time.Time
-	takeoverAt         time.Time
-	active             bool
-	owner              runtimeClaim
-	storageErr         string
-	bootstrapErr       string
-	restartRequired    bool
-	restartRecommended bool
-	bootstrapEnabled   bool
-	retired            bool
-	onSuperseded       func()
-	cancel             context.CancelFunc
-	started            bool
-	closed             bool
-	now                func() time.Time
-	heartbeat          time.Duration
-	timeout            time.Duration
-	takeover           time.Duration
+	lifecycleMu            sync.Mutex
+	mu                     sync.RWMutex
+	wait                   sync.WaitGroup
+	instanceID             string
+	version                string
+	scope                  string
+	bootstrapScope         string
+	previousBootstrapScope string
+	legacyScope            string
+	processIncarnation     string
+	directory              string
+	claimPath              string
+	startedAt              time.Time
+	takeoverAt             time.Time
+	active                 bool
+	owner                  runtimeClaim
+	storageErr             string
+	bootstrapErr           string
+	restartRequired        bool
+	restartRecommended     bool
+	bootstrapEnabled       bool
+	retired                bool
+	onSuperseded           func()
+	cancel                 context.CancelFunc
+	started                bool
+	closed                 bool
+	now                    func() time.Time
+	heartbeat              time.Duration
+	timeout                time.Duration
+	takeover               time.Duration
 }
 
 func (o *RuntimeOwnership) SetOnSuperseded(callback func()) {
@@ -102,18 +107,30 @@ func (o *RuntimeOwnership) SetOnSuperseded(callback func()) {
 }
 
 func NewRuntimeOwnership(version string) *RuntimeOwnership {
+	return NewRuntimeOwnershipWithMarker(version, "")
+}
+
+func NewRuntimeOwnershipWithMarker(version, processMarker string) *RuntimeOwnership {
+	scope := runtimeProcessScope()
+	processIncarnation := runtimeProcessIncarnation(processMarker)
 	return &RuntimeOwnership{
-		instanceID:       newRuntimeInstanceID(),
-		version:          strings.TrimSpace(version),
-		scope:            runtimeProcessScope(),
-		legacyScope:      legacyRuntimeProcessScope(),
-		processStartedAt: runtimeProcessStartedAt(),
-		now:              time.Now,
-		heartbeat:        runtimeHeartbeatInterval,
-		timeout:          runtimeClaimTimeout,
-		takeover:         runtimeTakeoverDelay,
-		bootstrapEnabled: runtimeBootstrapApplies(version),
+		instanceID:             newRuntimeInstanceID(),
+		version:                strings.TrimSpace(version),
+		scope:                  scope,
+		bootstrapScope:         runtimeBootstrapProcessScope(scope, processIncarnation),
+		previousBootstrapScope: scope,
+		legacyScope:            legacyRuntimeProcessScope(),
+		processIncarnation:     processIncarnation,
+		now:                    time.Now,
+		heartbeat:              runtimeHeartbeatInterval,
+		timeout:                runtimeClaimTimeout,
+		takeover:               runtimeTakeoverDelay,
+		bootstrapEnabled:       runtimeBootstrapApplies(version),
 	}
+}
+
+func NewRuntimeProcessMarker() string {
+	return newRuntimeInstanceID()
 }
 
 func (o *RuntimeOwnership) Configure(config Config) {
@@ -138,9 +155,8 @@ func (o *RuntimeOwnership) Configure(config Config) {
 	now := o.currentTime()
 	restartRequired, bootstrapErr := runtimeBootstrapStatus(
 		config.DataDir,
-		o.scope,
-		o.legacyScope,
-		o.processStartedAt,
+		o.bootstrapScope,
+		[]string{o.previousBootstrapScope, o.legacyScope},
 		now,
 		o.bootstrapEnabled,
 	)
@@ -245,7 +261,8 @@ func (o *RuntimeOwnership) refresh() {
 	}
 	claim := runtimeClaim{
 		Version: runtimeClaimVersion, InstanceID: o.instanceID, PluginVersion: o.version,
-		ProcessScope: o.scope, StartedAt: o.startedAt, HeartbeatAt: now,
+		ProcessScope: o.scope, ProcessIncarnation: o.processIncarnation,
+		StartedAt: o.startedAt, HeartbeatAt: now,
 	}
 	claimPath := o.claimPath
 	directory := o.directory
@@ -263,7 +280,7 @@ func (o *RuntimeOwnership) refresh() {
 		o.setRefreshResult(false, runtimeClaim{}, "runtime ownership state could not be persisted")
 		return
 	}
-	claims, errClaims := loadRuntimeClaims(directory, claim.ProcessScope, now, timeout)
+	claims, errClaims := loadRuntimeClaims(directory, claim.ProcessScope, claim.ProcessIncarnation, now, timeout)
 	if errClaims != nil {
 		o.setRefreshResult(false, runtimeClaim{}, "runtime ownership state could not be loaded")
 		return
@@ -278,9 +295,7 @@ func (o *RuntimeOwnership) refresh() {
 			if len(claims) > 1 && o.takeoverAt.IsZero() {
 				o.takeoverAt = now.Add(takeover)
 			}
-			if len(claims) > 1 {
-				o.restartRecommended = true
-			}
+			o.restartRecommended = hasCurrentProcessPeer(claims, claim.InstanceID, claim.ProcessIncarnation)
 			active = !restartRequired && (o.takeoverAt.IsZero() || !now.Before(o.takeoverAt))
 		} else {
 			o.takeoverAt = time.Time{}
@@ -356,7 +371,7 @@ func (o *RuntimeOwnership) isRetired() bool {
 	return o.retired
 }
 
-func loadRuntimeClaims(directory, scope string, now time.Time, timeout time.Duration) ([]runtimeClaim, error) {
+func loadRuntimeClaims(directory, scope, processIncarnation string, now time.Time, timeout time.Duration) ([]runtimeClaim, error) {
 	entries, errRead := os.ReadDir(directory)
 	if errRead != nil {
 		return nil, errRead
@@ -376,7 +391,7 @@ func loadRuntimeClaims(directory, scope string, now time.Time, timeout time.Dura
 			continue
 		}
 		var claim runtimeClaim
-		if errDecode := json.Unmarshal(raw, &claim); errDecode != nil || !validRuntimeClaim(claim, scope, now, timeout) {
+		if errDecode := json.Unmarshal(raw, &claim); errDecode != nil || !validRuntimeClaim(claim, scope, processIncarnation, now, timeout) {
 			continue
 		}
 		claims = append(claims, claim)
@@ -387,10 +402,13 @@ func loadRuntimeClaims(directory, scope string, now time.Time, timeout time.Dura
 	return claims, nil
 }
 
-func validRuntimeClaim(claim runtimeClaim, scope string, now time.Time, timeout time.Duration) bool {
+func validRuntimeClaim(claim runtimeClaim, scope, processIncarnation string, now time.Time, timeout time.Duration) bool {
 	if claim.Version != runtimeClaimVersion || claim.ProcessScope != scope ||
 		strings.TrimSpace(claim.InstanceID) == "" || strings.TrimSpace(claim.PluginVersion) == "" ||
 		claim.StartedAt.IsZero() || claim.HeartbeatAt.IsZero() {
+		return false
+	}
+	if claim.ProcessIncarnation != "" && processIncarnation != "" && claim.ProcessIncarnation != processIncarnation {
 		return false
 	}
 	if timeout <= 0 {
@@ -400,6 +418,18 @@ func validRuntimeClaim(claim runtimeClaim, scope string, now time.Time, timeout 
 		return false
 	}
 	return true
+}
+
+func hasCurrentProcessPeer(claims []runtimeClaim, instanceID, processIncarnation string) bool {
+	if strings.TrimSpace(processIncarnation) == "" {
+		return false
+	}
+	for _, claim := range claims {
+		if claim.InstanceID != instanceID && claim.ProcessIncarnation == processIncarnation {
+			return true
+		}
+	}
+	return false
 }
 
 func selectRuntimeOwner(claims []runtimeClaim) runtimeClaim {
@@ -464,6 +494,30 @@ func newRuntimeInstanceID() string {
 
 func runtimeProcessScope() string {
 	return processScopeHash(runtimeProcessScopeMaterial(true))
+}
+
+func runtimeBootstrapProcessScope(ownershipScope, processIncarnation string) string {
+	return processScopeHash("v3\x00" + strings.TrimSpace(ownershipScope) + "\x00" + strings.TrimSpace(processIncarnation))
+}
+
+func runtimeProcessIncarnation(marker string) string {
+	marker = normalizedRuntimeProcessMarker(marker)
+	if marker == "" {
+		return processScopeHash("fallback\x00" + runtimeProcessScopeMaterial(true))
+	}
+	return processScopeHash("v1\x00" + marker)
+}
+
+func normalizedRuntimeProcessMarker(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) != 32 {
+		return ""
+	}
+	decoded, errDecode := hex.DecodeString(value)
+	if errDecode != nil || len(decoded) != 16 {
+		return ""
+	}
+	return strings.ToLower(value)
 }
 
 func legacyRuntimeProcessScope() string {
@@ -532,14 +586,6 @@ func parseLinuxProcStatStartTime(raw string) string {
 	return startTime
 }
 
-func runtimeProcessStartedAt() time.Time {
-	info, errStat := os.Stat("/proc/self")
-	if errStat != nil || info.ModTime().IsZero() {
-		return time.Time{}
-	}
-	return info.ModTime().UTC()
-}
-
 func runtimeBootstrapApplies(version string) bool {
 	current, _, currentOK := parseReleaseVersion(version)
 	minimum, _, minimumOK := parseReleaseVersion(runtimeProtocolVersion)
@@ -555,7 +601,7 @@ func runtimeBootstrapApplies(version string) bool {
 	return current.patch >= minimum.patch
 }
 
-func runtimeBootstrapStatus(dataDir, processScope, legacyProcessScope string, processStartedAt, now time.Time, enabled bool) (bool, string) {
+func runtimeBootstrapStatus(dataDir, processScope string, legacyProcessScopes []string, now time.Time, enabled bool) (bool, string) {
 	if !enabled {
 		return false, ""
 	}
@@ -577,13 +623,10 @@ func runtimeBootstrapStatus(dataDir, processScope, legacyProcessScope string, pr
 	if errDecode := json.Unmarshal(raw, &state); errDecode != nil {
 		return false, "runtime ownership state could not be loaded"
 	}
-	if state.Version == 1 {
+	if state.Version > 0 && state.Version < runtimeBootstrapVersion {
 		state.Version = runtimeBootstrapVersion
 		if !state.Ready && strings.TrimSpace(state.PendingProcessScope) != "" {
-			restarted := state.PendingProcessScope != strings.TrimSpace(legacyProcessScope)
-			if !restarted && !processStartedAt.IsZero() && !state.UpdatedAt.IsZero() {
-				restarted = processStartedAt.After(state.UpdatedAt)
-			}
+			restarted := !matchesRuntimeProcessScope(state.PendingProcessScope, legacyProcessScopes)
 			if restarted {
 				state.Ready = true
 				state.PendingProcessScope = ""
@@ -620,6 +663,19 @@ func runtimeBootstrapStatus(dataDir, processScope, legacyProcessScope string, pr
 		return false, "runtime ownership state could not be persisted"
 	}
 	return false, ""
+}
+
+func matchesRuntimeProcessScope(scope string, candidates []string) bool {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if scope == strings.TrimSpace(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func backgroundWorkAllowed(owner BackgroundWorkOwner) bool {

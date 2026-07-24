@@ -18,6 +18,22 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+type runtimeMarkerHost struct {
+	*fakeAuthHost
+	marker string
+}
+
+func (h *runtimeMarkerHost) RuntimeProcessMarker() string { return h.marker }
+
+func TestNewAppUsesTheHostProcessMarkerForRuntimeOwnership(t *testing.T) {
+	marker := "0123456789abcdef0123456789abcdef"
+	app := NewApp(&runtimeMarkerHost{fakeAuthHost: &fakeAuthHost{}, marker: marker}, []byte("index"))
+	defer app.Close()
+	if app.runtime.processIncarnation != runtimeProcessIncarnation(marker) {
+		t.Fatalf("runtime incarnation = %q", app.runtime.processIncarnation)
+	}
+}
+
 func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
 	defer app.Close()

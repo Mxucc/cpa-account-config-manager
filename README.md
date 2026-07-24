@@ -608,17 +608,24 @@ automatic account actions, external notifications, default-policy scans, and
 continuing batch/force-sync work. A replacement first announces itself, the old
 instance stops, and the replacement waits through a short takeover window; a
 stale owner expires after a bounded timeout. Claims contain only a random
-instance ID, plugin version, process-scope hash, and timestamps. If claim
-storage is unavailable, background automation fails closed. The first upgrade
-from a release without this protocol still needs one real CPA restart because
-new code cannot stop an already-running legacy binary retroactively. On Linux,
-the process scope includes the kernel boot ID and `/proc/self/stat` process
-start token, so restarting a container whose hostname and PID remain unchanged
-is still recognized as a real CPA restart. Version-1 bootstrap state migrates
-without treating a same-process hot reload as a restart. The update warning is
-shown only while the first-restart gate is pending or the current process has
-actually hot-loaded another native plugin version, and disappears after a
-verified full restart.
+instance ID, plugin version, hashed process incarnation, process-scope hash,
+and timestamps. If claim storage is unavailable, background automation fails
+closed. The first upgrade from a release without this protocol still needs one
+real CPA restart because new code cannot stop an already-running legacy binary
+retroactively.
+
+On Linux, the ownership scope includes the kernel boot ID and `/proc/self/stat`
+process start token. The bootstrap gate additionally uses a random marker shared
+by plugin libraries in the current CPA process and recreated by a normal CPA or
+container restart. This distinguishes a real restart even when hostname, PID 1,
+and readable `/proc` identity remain unchanged. A recent heartbeat claim from a
+previous process is ignored when its hashed incarnation differs, so the bounded
+claim timeout cannot create a sticky restart warning. Version-1 and version-2
+bootstrap state migrate without treating a same-process hot reload as a restart.
+The update warning is shown only while the first-restart gate is pending or a
+second live plugin claim still exists in the current process. It disappears
+after a verified full restart, or after a transient startup peer has quiesced
+and removed its claim.
 
 The native ABI also guarantees a non-empty JSON envelope for handler errors,
 recoverable panics, and response-allocation failure. A superseded instance

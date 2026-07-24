@@ -21,22 +21,22 @@ interface AutomationSettingsDialogProps {
   onNotificationTest?: (request: InspectionNotificationRequest) => Promise<InspectionNotificationTestResult>;
 }
 
-const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
+const notificationVariables: Array<{ name: string; label: UIMessageKey; suffix?: string }> = [
   { name: "event", label: "ui.notification_parameter_event" },
   { name: "total_accounts", label: "ui.notification_parameter_total_accounts" },
   { name: "eligible_accounts", label: "ui.notification_parameter_eligible_accounts" },
   { name: "available_accounts", label: "ui.notification_parameter_available_accounts" },
-  { name: "available_percent", label: "ui.notification_parameter_available_percent" },
+  { name: "available_percent", label: "ui.notification_parameter_available_percent", suffix: "%" },
   { name: "abnormal_accounts", label: "ui.notification_parameter_abnormal_accounts" },
-  { name: "abnormal_percent", label: "ui.notification_parameter_abnormal_percent" },
+  { name: "abnormal_percent", label: "ui.notification_parameter_abnormal_percent", suffix: "%" },
   { name: "quota_limited_accounts", label: "ui.notification_parameter_quota_limited_accounts" },
   { name: "invalid_credential_accounts", label: "ui.notification_parameter_invalid_credential_accounts" },
   { name: "deactivated_accounts", label: "ui.notification_parameter_deactivated_accounts" },
   { name: "unavailable_accounts", label: "ui.notification_parameter_unavailable_accounts" },
   { name: "disabled_accounts", label: "ui.notification_parameter_disabled_accounts" },
-  { name: "threshold_percent", label: "ui.notification_parameter_threshold_percent" },
+  { name: "threshold_percent", label: "ui.notification_parameter_threshold_percent", suffix: "%" },
   { name: "available_accounts_threshold", label: "ui.notification_parameter_available_accounts_threshold" },
-  { name: "availability_percent_threshold", label: "ui.notification_parameter_availability_percent_threshold" },
+  { name: "availability_percent_threshold", label: "ui.notification_parameter_availability_percent_threshold", suffix: "%" },
   { name: "triggered_at", label: "ui.notification_parameter_triggered_at" },
 ];
 
@@ -418,7 +418,7 @@ export function AutomationSettingsDialog({
                     <strong>{tx("ui.current_variable_values")}</strong>
                     <dl>
                       {notificationVariables.map((variable) => (
-                        <div key={variable.name}><dt>{tx(variable.label)}<code>${"{"}{variable.name}{"}"}</code></dt><dd>{notificationResult.preview.variables[variable.name] ?? "-"}</dd></div>
+                        <div key={variable.name}><dt>{tx(variable.label)}<code>${"{"}{variable.name}{"}"}</code></dt><dd>{notificationResult.preview.variables[variable.name] === undefined ? "-" : `${notificationResult.preview.variables[variable.name]}${variable.suffix ?? ""}`}</dd></div>
                       ))}
                     </dl>
                   </div>

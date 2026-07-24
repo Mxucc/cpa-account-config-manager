@@ -1,8 +1,11 @@
 package manager
 
 import (
+	"errors"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +66,8 @@ type UsageTracker struct {
 	accounts     map[string]usageAggregate
 	now          func() time.Time
 	store        string
+	durableStore string
+	allowDurable bool
 	loaded       bool
 	dirty        bool
 	generation   uint64
@@ -96,6 +101,12 @@ func (t *UsageTracker) Configure(config Config) {
 	t.storeMu.Lock()
 	defer t.storeMu.Unlock()
 	t.mu.Lock()
+	t.allowDurable = config.implicitDataDir
+	if !t.allowDurable {
+		t.durableStore = ""
+	} else if t.durableStore != "" {
+		storePath = t.durableStore
+	}
 	if t.loaded && t.store == storePath {
 		t.mu.Unlock()
 		return
@@ -117,6 +128,65 @@ func (t *UsageTracker) Configure(config Config) {
 	t.generation++
 	t.mu.Unlock()
 	if recovered {
+		t.requestPersist()
+	}
+}
+
+func (t *UsageTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
+	if t == nil {
+		return
+	}
+	authDir := discoverUsageAuthDir(entries)
+	if authDir == "" {
+		return
+	}
+	t.configureDurableStore(durableUsageStorePath(authDir))
+}
+
+func (t *UsageTracker) configureDurableStore(storePath string) {
+	storePath = filepath.Clean(strings.TrimSpace(storePath))
+	if t == nil || storePath == "." || !filepath.IsAbs(storePath) {
+		return
+	}
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
+
+	t.mu.RLock()
+	if !t.allowDurable || t.store == storePath {
+		t.mu.RUnlock()
+		return
+	}
+	generation := t.generation
+	current := cloneUsageAggregates(t.accounts)
+	t.mu.RUnlock()
+
+	stored, recovered, errLoad := loadUsageStateWithBackup(storePath)
+	if errLoad != nil && !errors.Is(errLoad, os.ErrNotExist) {
+		return
+	}
+	merged := mergeUsageAggregates(current, stored)
+	if len(merged) > 0 || recovered {
+		persisted, errPersist := persistUsageState(storePath, merged)
+		if errPersist != nil {
+			return
+		}
+		merged = persisted
+	}
+
+	t.mu.Lock()
+	if !t.allowDurable {
+		t.mu.Unlock()
+		return
+	}
+	t.accounts = mergeUsageAggregates(t.accounts, merged)
+	t.store = storePath
+	t.durableStore = storePath
+	t.loaded = true
+	t.dirty = t.generation != generation
+	t.generation++
+	dirty := t.dirty
+	t.mu.Unlock()
+	if dirty {
 		t.requestPersist()
 	}
 }

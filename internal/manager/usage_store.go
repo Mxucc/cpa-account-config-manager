@@ -1,11 +1,13 @@
 package manager
 
 import (
+	"cpa-account-config-manager/internal/cpaapi"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ const (
 	usageStoreLockTimeout = 2 * time.Second
 	usageStoreLockStale   = 30 * time.Second
 	usageStoreLockRetry   = 10 * time.Millisecond
+	usageDurableDirName   = ".cpa-account-config-manager"
+	usageDurableFileName  = "usage-snapshots.state"
 )
 
 type persistedUsageState struct {
@@ -25,6 +29,50 @@ type persistedUsageState struct {
 
 func usageStorePath(dataDir string) string {
 	return filepath.Join(dataDir, "usage-snapshots.json")
+}
+
+func durableUsageStorePath(authDir string) string {
+	return filepath.Join(authDir, usageDurableDirName, usageDurableFileName)
+}
+
+func discoverUsageAuthDir(entries []cpaapi.HostAuthFileEntry) string {
+	authDir := ""
+	for _, entry := range entries {
+		path := strings.TrimSpace(entry.Path)
+		name := strings.TrimSpace(entry.Name)
+		if entry.RuntimeOnly || !strings.EqualFold(strings.TrimSpace(entry.Source), "file") ||
+			!filepath.IsAbs(path) || !safeAuthJSONName(name) || !strings.EqualFold(filepath.Base(path), name) {
+			continue
+		}
+		info, errStat := os.Stat(path)
+		if errStat != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		candidate, errResolve := filepath.EvalSymlinks(filepath.Dir(path))
+		if errResolve != nil {
+			continue
+		}
+		candidate = filepath.Clean(candidate)
+		directoryInfo, errDirectory := os.Stat(candidate)
+		if errDirectory != nil || !directoryInfo.IsDir() {
+			continue
+		}
+		if authDir == "" {
+			authDir = candidate
+			continue
+		}
+		if !sameFilePath(authDir, candidate) {
+			return ""
+		}
+	}
+	return authDir
+}
+
+func sameFilePath(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 func usageStoreBackupPath(path string) string {

@@ -2,6 +2,8 @@ package manager
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -175,6 +177,163 @@ func TestUsagePersistenceRecoversLastGoodBackup(t *testing.T) {
 	snapshot := restored.Snapshot("recoverable")
 	if snapshot == nil || snapshot.TotalTokens != 42 {
 		t.Fatalf("backup-restored usage = %#v, want 42 tokens", snapshot)
+	}
+}
+
+func TestUsagePersistenceRestoresFromAuthStorageAcrossCPAUpgrade(t *testing.T) {
+	authDir := t.TempDir()
+	authName := "upgrade-account.json"
+	authPath := filepath.Join(authDir, authName)
+	if errWrite := os.WriteFile(authPath, []byte(`{"type":"codex","email":"upgrade@example.com"}`), 0o600); errWrite != nil {
+		t.Fatalf("write auth fixture: %v", errWrite)
+	}
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "upgrade-index", Name: authName, Provider: "codex", Type: "codex",
+			Source: "file", Path: authPath, Email: "upgrade@example.com",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"upgrade-index": {AuthIndex: "upgrade-index", Name: authName, Path: authPath, JSON: json.RawMessage(`{"type":"codex","email":"upgrade@example.com"}`)},
+		},
+	}
+	now := time.Date(2026, time.July, 24, 8, 0, 0, 0, time.UTC)
+	oldCoreData := t.TempDir()
+	oldInstance := NewUsageTracker()
+	oldInstance.now = func() time.Time { return now }
+	oldInstance.persistDelay = time.Hour
+	oldInstance.Configure(Config{DataDir: oldCoreData, implicitDataDir: true})
+	oldInstance.Observe(cpaapi.UsageRecord{
+		AuthIndex: "upgrade-index", AuthID: "secret-auth-id", APIKey: "sk-secret-key",
+		Failure: cpaapi.UsageFailure{Body: "Bearer secret-response"},
+		Detail:  cpaapi.UsageDetail{TotalTokens: 73},
+		ResponseHeaders: http.Header{
+			"Authorization":                       []string{"Bearer secret-header"},
+			"X-Codex-Primary-Used-Percent":        []string{"64"},
+			"X-Codex-Primary-Window-Minutes":      []string{"10080"},
+			"X-Codex-Primary-Reset-After-Seconds": []string{"3600"},
+		},
+	})
+	if _, errList := NewAccountService(host, oldInstance).List(t.Context(), ListQuery{Page: 1, PageSize: 20}); errList != nil {
+		t.Fatalf("prime durable storage from account list: %v", errList)
+	}
+	oldInstance.Close()
+
+	resolvedAuthDir, errResolve := filepath.EvalSymlinks(authDir)
+	if errResolve != nil {
+		t.Fatalf("resolve auth directory: %v", errResolve)
+	}
+	durablePath := durableUsageStorePath(resolvedAuthDir)
+	if filepath.Ext(durablePath) == ".json" {
+		t.Fatalf("durable usage path %q must not look like an auth JSON file", durablePath)
+	}
+	for _, path := range []string{durablePath, usageStoreBackupPath(durablePath)} {
+		raw, errRead := os.ReadFile(path)
+		if errRead != nil {
+			t.Fatalf("read durable usage state %q: %v", filepath.Base(path), errRead)
+		}
+		for _, secret := range []string{authPath, "secret-auth-id", "sk-secret-key", "secret-response", "secret-header", "Authorization"} {
+			if bytes.Contains(raw, []byte(secret)) {
+				t.Fatalf("durable usage state leaked %q: %s", secret, raw)
+			}
+		}
+	}
+
+	newCoreData := t.TempDir()
+	upgradedInstance := NewUsageTracker()
+	defer upgradedInstance.Close()
+	upgradedInstance.now = func() time.Time { return now.Add(time.Minute) }
+	upgradedInstance.Configure(Config{DataDir: newCoreData, implicitDataDir: true})
+	response, errList := NewAccountService(host, upgradedInstance).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("list accounts after CPA upgrade: %v", errList)
+	}
+	if len(response.Accounts) != 1 || response.Accounts[0].Usage == nil || response.Accounts[0].Usage.TotalTokens != 73 {
+		t.Fatalf("first account list after CPA upgrade = %#v", response.Accounts)
+	}
+	if response.Accounts[0].Usage.Codex == nil || response.Accounts[0].Usage.Codex.SevenDay == nil || response.Accounts[0].Usage.Codex.SevenDay.UsedPercent != 64 {
+		t.Fatalf("restored Codex usage = %#v", response.Accounts[0].Usage)
+	}
+	upgradedInstance.Configure(Config{DataDir: newCoreData, implicitDataDir: true})
+	upgradedInstance.Observe(cpaapi.UsageRecord{AuthIndex: "upgrade-index", Detail: cpaapi.UsageDetail{TotalTokens: 2}})
+	upgradedInstance.mu.RLock()
+	storePath := upgradedInstance.store
+	upgradedInstance.mu.RUnlock()
+	if storePath != durablePath {
+		t.Fatalf("default reconfiguration changed durable usage store to %q", storePath)
+	}
+	if _, errStat := os.Stat(usageStorePath(newCoreData)); !errors.Is(errStat, os.ErrNotExist) {
+		t.Fatalf("new CPA working data unexpectedly became the usage authority: %v", errStat)
+	}
+}
+
+func TestUsagePersistenceKeepsExplicitDataDirAuthoritative(t *testing.T) {
+	authDir := t.TempDir()
+	authName := "explicit-account.json"
+	authPath := filepath.Join(authDir, authName)
+	if errWrite := os.WriteFile(authPath, []byte(`{"type":"codex"}`), 0o600); errWrite != nil {
+		t.Fatalf("write auth fixture: %v", errWrite)
+	}
+	explicitDataDir := t.TempDir()
+	tracker := NewUsageTracker()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: explicitDataDir})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "explicit-index", Detail: cpaapi.UsageDetail{TotalTokens: 19}})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "explicit-index", Name: authName, Source: "file", Path: authPath,
+	}})
+	tracker.Close()
+
+	if _, errStat := os.Stat(usageStorePath(explicitDataDir)); errStat != nil {
+		t.Fatalf("explicit usage store was not written: %v", errStat)
+	}
+	if _, errStat := os.Stat(durableUsageStorePath(authDir)); !errors.Is(errStat, os.ErrNotExist) {
+		t.Fatalf("explicit data_dir unexpectedly wrote an auth-directory mirror: %v", errStat)
+	}
+}
+
+func TestUsagePersistenceRejectsAmbiguousAuthDirectories(t *testing.T) {
+	leftDir := t.TempDir()
+	rightDir := t.TempDir()
+	leftPath := filepath.Join(leftDir, "left.json")
+	rightPath := filepath.Join(rightDir, "right.json")
+	for path, raw := range map[string]string{leftPath: `{"type":"codex"}`, rightPath: `{"type":"codex"}`} {
+		if errWrite := os.WriteFile(path, []byte(raw), 0o600); errWrite != nil {
+			t.Fatalf("write auth fixture: %v", errWrite)
+		}
+	}
+	dataDir := t.TempDir()
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.Configure(Config{DataDir: dataDir, implicitDataDir: true})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{
+		{Name: filepath.Base(leftPath), Source: "file", Path: leftPath},
+		{Name: filepath.Base(rightPath), Source: "file", Path: rightPath},
+	})
+	tracker.mu.RLock()
+	storePath := tracker.store
+	tracker.mu.RUnlock()
+	if storePath != usageStorePath(dataDir) {
+		t.Fatalf("ambiguous auth roots selected usage store %q", storePath)
+	}
+}
+
+func TestConfigTracksImplicitAndExplicitDataDirectories(t *testing.T) {
+	t.Setenv("CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR", "")
+	implicit := normalizeConfig(Config{})
+	if !implicit.implicitDataDir || implicit.DataDir != "data/cpa-account-config-manager" {
+		t.Fatalf("implicit data directory = %#v", implicit)
+	}
+	if normalizedAgain := normalizeConfig(implicit); !normalizedAgain.implicitDataDir || normalizedAgain.DataDir != implicit.DataDir {
+		t.Fatalf("renormalized implicit data directory = %#v", normalizedAgain)
+	}
+	explicit := normalizeConfig(Config{DataDir: "operator-data"})
+	if explicit.implicitDataDir || explicit.DataDir != "operator-data" {
+		t.Fatalf("explicit data directory = %#v", explicit)
+	}
+	t.Setenv("CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR", "environment-data")
+	environment := normalizeConfig(Config{})
+	if environment.implicitDataDir || environment.DataDir != "environment-data" {
+		t.Fatalf("environment data directory = %#v", environment)
 	}
 }
 

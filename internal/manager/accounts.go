@@ -33,6 +33,10 @@ type UsageSnapshotReader interface {
 	Snapshot(string) *AccountUsageSnapshot
 }
 
+type UsageStorageDiscoverer interface {
+	DiscoverAuthStorage([]cpaapi.HostAuthFileEntry)
+}
+
 type AccountService struct {
 	host  AuthHost
 	usage UsageSnapshotReader
@@ -175,6 +179,9 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	entries, errList := s.host.ListAuth(ctx)
 	if errList != nil {
 		return nil, fmt.Errorf("list host auth records: %w", errList)
+	}
+	if discoverer, ok := s.usage.(UsageStorageDiscoverer); ok {
+		discoverer.DiscoverAuthStorage(entries)
 	}
 	pathCounts := make(map[string]int)
 	indexCounts := make(map[string]int)

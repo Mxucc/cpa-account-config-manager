@@ -219,7 +219,7 @@ parameters, fragments, and remote hosts are rejected.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `workers` | `6` | Concurrent account mutations. Values below 1 use 6; values above 16 are clamped to 16. |
-| `data_dir` | `data/cpa-account-config-manager` | Directory for sanitized terminal job state, the backward-compatible `default-policy.json` cache, `usage-snapshots.json`, `inspection-state.json`, `update-state.json`, and the bounded `operation-log.json` journal. Persist this directory to retain inspection/action/update policies and audit history across CPA restarts and plugin replacement. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. |
+| `data_dir` | `data/cpa-account-config-manager` | Directory for sanitized terminal job state, the backward-compatible `default-policy.json` cache, `usage-snapshots.json`, `inspection-state.json`, `update-state.json`, and the bounded `operation-log.json` journal. Persist this directory to retain inspection/action/update policies and audit history across CPA restarts and plugin replacement. `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` is used when this field is empty. When neither override is set, usage additionally migrates to the durable local Auth directory as described below. |
 | `management_base_url` | `http://127.0.0.1:8317` | Optional loopback CLIProxyAPI Management API base used by ordinary batch edits and confirmed account deletion. Default-policy reconciliation and force sync use host Auth callbacks instead. Environment fallbacks are `CPA_MANAGEMENT_BASE_URL`, a loopback-only `CPA_BASE_URL`, `PORT`, and `CPA_PORT`. |
 
 The `enabled` and `priority` values in the same YAML object are owned by the
@@ -234,23 +234,45 @@ Manual YAML editing is not required. The private `default-policy.json` remains
 a backward-compatible fallback and scan-summary cache; configured policy is
 authoritative when both copies exist.
 
+When `data_dir` and `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` are both unset, the
+usage tracker starts with the legacy relative directory for compatibility. On
+the first account enumeration that exposes existing local file-backed Auth
+records under one physical parent directory, it synchronously merges usage
+into `<auth-dir>/.cpa-account-config-manager/usage-snapshots.state` and its
+last-known-good backup. The first account list after a CPA core restart loads
+that mirror before projecting usage, and later plugin reconfiguration keeps
+the discovered store. The `.state` extension prevents CPA from treating the
+snapshot as an Auth JSON file.
+
+This automatic mirror protects core binary and container updates only when the
+Auth directory itself is persisted. An explicit `data_dir` or environment
+override remains authoritative and disables automatic Auth-directory storage.
+Runtime-only, remote, or Home-backed accounts that do not expose a common
+local Auth root require an explicitly persisted `data_dir`. A snapshot already
+deleted before installing a version with this behavior cannot be reconstructed
+from CPA counters. For Docker, mount the Auth directory and any explicit
+`data_dir` outside the replaceable container filesystem.
+
 ## Permissions
 
 The CLIProxyAPI process needs:
 
 - read and execute access to the platform library;
 - read/write access to the CLIProxyAPI Auth directory, because CLIProxyAPI's
-  canonical Management endpoints persist the requested account fields;
+  canonical Management endpoints persist the requested account fields and the
+  implicit default mode stores a sanitized usage mirror below that directory;
 - read/write access to the effective `data_dir`. Inspection and update policies,
   sanitized inspection/action state, terminal jobs, policy scan cache, and
   sanitized usage snapshots use this path; the default Auth-file policy itself
   additionally has a durable copy in CPA config.
 
 The plugin creates `data_dir` with mode `0700` where supported and writes its
-JSON state through unique temporary files with mode `0600`. Inspection and
+JSON state through unique temporary files with mode `0600`. The implicit usage
+mirror uses a private `0700` subdirectory and `0600` files. Inspection and
 update state contain only allow-listed identities, reason codes, counters,
 policies, versions, and timestamps. Usage state is written to
-`usage-snapshots.json` and a last-known-good `usage-snapshots.json.bak`; both
+`usage-snapshots.json` plus a last-known-good backup for explicit storage, or
+`usage-snapshots.state` plus its backup for the implicit Auth mirror; both
 contain only cumulative Token counters and normalized Codex window
 percentages/reset times. Usage writes are serialized across overlapping plugin
 instances and merge monotonically before replacement, so a plugin upgrade

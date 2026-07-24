@@ -21,6 +21,7 @@ type Config struct {
 	UpdatePolicy         *UpdatePolicy            `yaml:"update_policy,omitempty"`
 	OperationSettings    *OperationSettingsConfig `yaml:"operation_settings,omitempty"`
 	ExperimentalSettings *ExperimentalSettings    `yaml:"experimental_settings,omitempty"`
+	implicitDataDir      bool
 }
 
 type OperationSettingsConfig struct {
@@ -43,11 +44,14 @@ func normalizeConfig(cfg Config) Config {
 		cfg.Workers = maxWorkers
 	}
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
-	if cfg.DataDir == "" {
-		cfg.DataDir = strings.TrimSpace(os.Getenv("CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR"))
-	}
-	if cfg.DataDir == "" {
-		cfg.DataDir = "data/cpa-account-config-manager"
+	if !cfg.implicitDataDir {
+		if cfg.DataDir == "" {
+			cfg.DataDir = strings.TrimSpace(os.Getenv("CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR"))
+		}
+		if cfg.DataDir == "" {
+			cfg.DataDir = "data/cpa-account-config-manager"
+			cfg.implicitDataDir = true
+		}
 	}
 	cfg.ManagementBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ManagementBaseURL), "/")
 	if cfg.DefaultPolicy != nil {

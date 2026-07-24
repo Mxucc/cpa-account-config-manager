@@ -126,22 +126,26 @@ plugins:
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `workers` | `6` | 同时执行的账号修改数。小于 1 时恢复为 6，大于 16 时限制为 16。 |
-| `data_dir` | `data/cpa-account-config-manager` | 脱敏终态任务、向后兼容的 `default-policy.json`、`usage-snapshots.json`、`inspection-state.json`、`update-state.json` 与有界 `operation-log.json` 的目录。要让巡检/动作/更新策略和审计记录跨 CPA 重启与插件替换保留，必须持久化该目录；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。 |
+| `data_dir` | `data/cpa-account-config-manager` | 脱敏终态任务、向后兼容的 `default-policy.json`、`usage-snapshots.json`、`inspection-state.json`、`update-state.json` 与有界 `operation-log.json` 的目录。要让巡检/动作/更新策略和审计记录跨 CPA 重启与插件替换保留，必须持久化该目录；字段为空时读取 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR`。两种覆盖都未设置时，用量还会按下文规则迁移到耐久的本地 Auth 目录。 |
 | `management_base_url` | `http://127.0.0.1:8317` | 普通批量编辑和确认删除使用的可选 CLIProxyAPI 原生写入接口回环地址；默认策略补齐和强制同步改用宿主 Auth 回调。还支持 `CPA_MANAGEMENT_BASE_URL`、仅限回环地址的 `CPA_BASE_URL`、`PORT`、`CPA_PORT`。 |
 
 同一对象里的 `enabled` 和 `priority` 由 CLIProxyAPI 插件宿主管理；界面中编辑的账号 `priority` 是另一项账号字段。
 
 操作界面会自动把不含秘密值的 `default_policy` 浅合并到 `plugins.configs.cpa-account-config-manager`。CPA 将它写回自己的 `config.yaml`，因此策略启用状态、受管字段、字段值和扫描间隔可以跨进程重启及插件版本替换恢复，无需手工编辑 YAML。私有 `default-policy.json` 继续作为旧版本兼容回退和扫描摘要缓存；两份数据同时存在时以宿主配置为准。
 
+当 `data_dir` 和 `CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR` 都没有设置时，用量跟踪器会先沿用旧版相对目录。首次列出账号时，如果宿主返回了位于同一个物理父目录中的现存本地文件型 Auth，插件会同步合并到 `<auth-dir>/.cpa-account-config-manager/usage-snapshots.state` 及其最近有效备份。CPA 主程序重启后，第一次账号列表会先读取该镜像再生成用量字段；后续重新应用插件配置也不会切回相对目录。镜像使用 `.state` 扩展名，CPA 不会把它当成 Auth JSON 扫描。
+
+自动镜像只能在 Auth 目录本身被持久化时保护 CPA 二进制或容器更新。显式 `data_dir` 或环境变量覆盖始终优先，并会关闭 Auth 目录自动存储；运行时账号、远程账号或 Home 后端没有共同本地 Auth 根目录时，仍必须显式配置并持久化 `data_dir`。安装此行为之前已经被升级过程删除的快照无法从 CPA 计数中反推恢复。Docker 部署必须把 Auth 目录以及显式 `data_dir` 挂载到可替换容器文件系统之外。
+
 ## 权限要求
 
 CLIProxyAPI 进程需要：
 
 - 对动态库有读取和执行权限；
-- 对 Auth 目录有读写权限，因为真正的字段持久化由 CLIProxyAPI 原生 Management API 完成；
+- 对 Auth 目录有读写权限，因为真正的字段持久化由 CLIProxyAPI 原生 Management API 完成，隐式默认模式还会在该目录下保存脱敏用量镜像；
 - 对实际生效的 `data_dir` 有读写权限。巡检与更新策略、脱敏巡检/动作状态、终态任务、策略扫描缓存和脱敏使用量快照都使用该目录；默认 Auth 策略还会在 CPA 配置中保留一份耐久副本。
 
-支持权限位的平台上，插件以 `0700` 创建数据目录，通过临时文件原子替换 JSON 状态，文件权限为 `0600`。巡检和更新状态只包含白名单身份、原因码、计数、策略、版本和时间戳；使用量状态只包含累计 Token 与规范化后的 Codex 百分比/重置时间。所有状态文件都不保存原始 Auth JSON、API Key、失败正文、Cookie、原始响应 Header 或 Management Key。建议让 CLIProxyAPI 和插件使用同一个非 root 服务账号运行。
+支持权限位的平台上，插件以 `0700` 创建数据目录，通过临时文件原子替换状态，文件权限为 `0600`；隐式用量镜像同样使用私有 `0700` 子目录和 `0600` 文件。巡检和更新状态只包含白名单身份、原因码、计数、策略、版本和时间戳；使用量状态只包含累计 Token 与规范化后的 Codex 百分比/重置时间。显式存储使用 `usage-snapshots.json` 及备份，隐式 Auth 镜像使用 `usage-snapshots.state` 及备份。所有状态文件都不保存原始 Auth JSON、API Key、失败正文、Cookie、原始响应 Header 或 Management Key。建议让 CLIProxyAPI 和插件使用同一个非 root 服务账号运行。
 
 `operation-log.json` 最多保留 2,000 条，只含固定类别、动作、状态、来源、范围、公开关联 ID、有界计数、时间、白名单原因码、版本和导出格式。日志落盘是尽力行为：存储失败会单独显示为日志健康异常，但不会把已经完成的账号操作改判为失败。
 

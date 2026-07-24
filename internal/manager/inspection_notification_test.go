@@ -1,15 +1,20 @@
 package manager
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"cpa-account-config-manager/internal/cpaapi"
 )
 
 type anomalyNotificationDoerFunc func(*http.Request) (*http.Response, error)
@@ -79,6 +84,166 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 				t.Fatalf("unsafe template was accepted: %s", template)
 			}
 		})
+	}
+}
+
+func TestInspectionNotificationPreviewUsesCurrentValuesWithoutAppendingFieldsOrSending(t *testing.T) {
+	now := time.Date(2026, time.July, 24, 8, 30, 0, 0, time.UTC)
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "healthy", Name: "healthy.json", Provider: "codex", Source: "file", Path: "/auths/healthy.json"},
+		{AuthIndex: "quota", Name: "quota.json", Provider: "codex", Source: "file", Path: "/auths/quota.json"},
+	}}
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	requests := 0
+	engine.notificationDoer = anomalyNotificationDoerFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("preview must not send")
+	})
+	engine.records = map[string]inspectionRecord{
+		"healthy": {Result: InspectionResult{ID: "healthy", Health: InspectionHealthHealthy}},
+		"quota":   {Result: InspectionResult{ID: "quota", Health: InspectionHealthQuotaLimited}},
+	}
+
+	preview, errPreview := engine.PreviewNotification(context.Background(), InspectionNotificationRequest{
+		URLTemplate:                  "https://notify.example/publish?message=available:${available_accounts},rate:${available_percent}",
+		Scenario:                     InspectionNotificationScenarioAvailableLow,
+		ThresholdPercent:             50,
+		AvailableAccountsThreshold:   2,
+		AvailabilityPercentThreshold: 60,
+	})
+	if errPreview != nil {
+		t.Fatalf("PreviewNotification() error = %v", errPreview)
+	}
+	if requests != 0 {
+		t.Fatalf("preview sent %d network requests", requests)
+	}
+	parsed, errParse := url.Parse(preview.ExpandedURL)
+	if errParse != nil {
+		t.Fatalf("parse preview URL: %v", errParse)
+	}
+	if got, want := parsed.Query().Get("message"), "available:1,rate:50"; got != want {
+		t.Fatalf("preview message = %q, want %q", got, want)
+	}
+	if len(parsed.Query()) != 1 || parsed.Query().Has("event") {
+		t.Fatalf("preview appended fields not present in the template: %#v", parsed.Query())
+	}
+	if preview.Variables["total_accounts"] != "2" || preview.Variables["available_accounts"] != "1" ||
+		preview.Variables["available_percent"] != "50" || preview.Variables["available_accounts_threshold"] != "2" {
+		t.Fatalf("preview variables = %#v", preview.Variables)
+	}
+	if preview.Scenario != InspectionNotificationScenarioAvailableLow || preview.Event != InspectionNotificationScenarioAvailableLow || !preview.TriggeredAt.Equal(now) {
+		t.Fatalf("preview metadata = %#v", preview)
+	}
+}
+
+func TestInspectionNotificationTestUsesHardenedDeliveryAndLogsSanitizedManualOutcome(t *testing.T) {
+	now := time.Date(2026, time.July, 24, 9, 0, 0, 0, time.UTC)
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "quota", Name: "quota.json", Provider: "codex", Source: "file", Path: "/auths/quota.json",
+	}}}
+	journal := NewOperationJournal()
+	journal.Configure(Config{DataDir: t.TempDir()})
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.SetOperationJournal(journal)
+	engine.records = map[string]inspectionRecord{
+		"quota": {Result: InspectionResult{ID: "quota", Health: InspectionHealthQuotaLimited}},
+	}
+	var requested string
+	engine.notificationDoer = anomalyNotificationDoerFunc(func(request *http.Request) (*http.Response, error) {
+		requested = request.URL.String()
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(strings.NewReader("sensitive response body")),
+			Header:     make(http.Header),
+			Request:    request,
+		}, nil
+	})
+	result, errTest := engine.TestNotification(context.Background(), InspectionNotificationRequest{
+		URLTemplate:                  "https://secret.notify.example/publish?message=${event}:${available_accounts}",
+		Scenario:                     InspectionNotificationScenarioCombined,
+		ThresholdPercent:             50,
+		AvailableAccountsThreshold:   1,
+		AvailabilityPercentThreshold: 20,
+	})
+	if errTest != nil {
+		t.Fatalf("TestNotification() error = %v", errTest)
+	}
+	if !result.Delivered || result.StatusCode != http.StatusAccepted || result.Attempts != 1 || result.ReasonCode != "notification_delivered" {
+		t.Fatalf("test result = %#v", result)
+	}
+	if requested != result.Preview.ExpandedURL || !strings.Contains(requested, "available_accounts_low") {
+		t.Fatalf("requested URL = %q, preview = %q", requested, result.Preview.ExpandedURL)
+	}
+	operations := journal.List(OperationQuery{Page: 1})
+	if len(operations.Operations) != 1 {
+		t.Fatalf("operation count = %d", len(operations.Operations))
+	}
+	entry := operations.Operations[0]
+	if entry.Action != OperationActionNotificationTest || entry.Source != OperationSourceManual || entry.Scope != OperationScopeSystem ||
+		entry.Status != OperationStatusSucceeded || entry.TargetCount != 1 || entry.HTTPStatus != http.StatusAccepted || entry.Attempts != 1 {
+		t.Fatalf("test notification operation = %#v", entry)
+	}
+	encoded, errEncode := json.Marshal(entry)
+	if errEncode != nil {
+		t.Fatal(errEncode)
+	}
+	for _, secret := range []string{"secret.notify.example", "message=", "sensitive response body"} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("operation log leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestNotificationSettingChangeImmediatelyEvaluatesZeroAvailabilityAndDisablesQuotaAccount(t *testing.T) {
+	now := time.Date(2026, time.July, 24, 10, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	host.entries[0].Status = "quota exhausted"
+	patchCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		patchCalls++
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.mu.Lock()
+	engine.config = normalizeConfig(Config{DataDir: t.TempDir(), ManagementBaseURL: server.URL})
+	engine.store = inspectionStorePath(engine.config.DataDir)
+	engine.managementKey = "management-secret"
+	engine.mu.Unlock()
+	policy := defaultInspectionPolicy()
+	policy.Enabled = true
+	policy.AutoDisable = true
+	policy.NotificationAvailableEnabled = true
+	policy.NotificationAvailableBelow = 1
+	policy.AnomalyNotificationURL = "https://notify.example/publish?available=${available_accounts}&rate=${available_percent}"
+	if _, errSet := engine.SetPolicy(policy); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	engine.scan(context.Background())
+
+	if patchCalls != 1 {
+		t.Fatalf("automatic disable calls = %d, want 1", patchCalls)
+	}
+	if len(engine.notificationWake) != 1 {
+		t.Fatalf("queued notifications = %d, want 1", len(engine.notificationWake))
+	}
+	event := <-engine.notificationWake
+	if event.Event != InspectionNotificationScenarioAvailableLow || event.Metrics.AvailableAccounts != 0 || event.Metrics.AvailablePercent != 0 {
+		t.Fatalf("immediate notification event = %#v", event)
+	}
+	if engine.notificationPending {
+		t.Fatal("notification pending flag was not cleared after the immediate native scan")
+	}
+	if snapshot := engine.Snapshot(); snapshot.LastRun.AutoDisabled != 1 {
+		t.Fatalf("last run = %#v", snapshot.LastRun)
+	}
+	engine.scan(context.Background())
+	if len(engine.notificationWake) != 0 {
+		t.Fatal("notification cooldown allowed a duplicate from a subsequent native scan")
 	}
 }
 

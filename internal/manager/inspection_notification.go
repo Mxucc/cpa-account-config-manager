@@ -45,6 +45,14 @@ var anomalyNotificationVariables = map[string]struct{}{
 	"availability_percent_threshold": {}, "triggered_at": {},
 }
 
+const (
+	InspectionNotificationScenarioManualTest       = "manual_test"
+	InspectionNotificationScenarioAnomalyThreshold = "anomaly_threshold"
+	InspectionNotificationScenarioAvailableLow     = "available_accounts_low"
+	InspectionNotificationScenarioAvailabilityLow  = "availability_percent_low"
+	InspectionNotificationScenarioCombined         = "combined"
+)
+
 type anomalyNotificationMetrics struct {
 	TotalAccounts              int
 	EligibleAccounts           int
@@ -137,7 +145,26 @@ func expandAnomalyNotificationURL(event anomalyNotificationEvent) (string, error
 	if errValidate := validateAnomalyNotificationTemplate(event.URLTemplate); errValidate != nil {
 		return "", errValidate
 	}
-	values := map[string]string{
+	values := anomalyNotificationVariableValues(event)
+	expanded := anomalyNotificationVariablePattern.ReplaceAllStringFunc(event.URLTemplate, func(variable string) string {
+		match := anomalyNotificationVariablePattern.FindStringSubmatch(variable)
+		return url.QueryEscape(values[match[1]])
+	})
+	if len(expanded) > maxAnomalyNotificationURLBytes {
+		return "", fmt.Errorf("expanded anomaly notification URL exceeds %d bytes", maxAnomalyNotificationURLBytes)
+	}
+	parsed, errParse := url.Parse(expanded)
+	if errParse != nil {
+		return "", fmt.Errorf("expanded anomaly notification URL is invalid")
+	}
+	if errValidate := validateAnomalyNotificationDestination(parsed); errValidate != nil {
+		return "", errValidate
+	}
+	return parsed.String(), nil
+}
+
+func anomalyNotificationVariableValues(event anomalyNotificationEvent) map[string]string {
+	return map[string]string{
 		"event":                          event.Event,
 		"total_accounts":                 strconv.Itoa(event.Metrics.TotalAccounts),
 		"eligible_accounts":              strconv.Itoa(event.Metrics.EligibleAccounts),
@@ -155,21 +182,176 @@ func expandAnomalyNotificationURL(event anomalyNotificationEvent) (string, error
 		"availability_percent_threshold": strconv.Itoa(event.Metrics.AvailabilityThreshold),
 		"triggered_at":                   event.TriggeredAt.UTC().Format(time.RFC3339),
 	}
-	expanded := anomalyNotificationVariablePattern.ReplaceAllStringFunc(event.URLTemplate, func(variable string) string {
-		match := anomalyNotificationVariablePattern.FindStringSubmatch(variable)
-		return url.QueryEscape(values[match[1]])
+}
+
+func inspectionNotificationEnabled(policy InspectionPolicy) bool {
+	return policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled
+}
+
+func inspectionNotificationPolicyChanged(previous, next InspectionPolicy) bool {
+	return previous.AnomalyNotificationEnabled != next.AnomalyNotificationEnabled ||
+		previous.AnomalyNotificationURL != next.AnomalyNotificationURL ||
+		previous.AnomalyThresholdPercent != next.AnomalyThresholdPercent ||
+		previous.AnomalyMinimumAccounts != next.AnomalyMinimumAccounts ||
+		previous.NotificationAvailableEnabled != next.NotificationAvailableEnabled ||
+		previous.NotificationAvailableBelow != next.NotificationAvailableBelow ||
+		previous.NotificationPercentEnabled != next.NotificationPercentEnabled ||
+		previous.NotificationPercentBelow != next.NotificationPercentBelow ||
+		previous.NotificationCooldownMinutes != next.NotificationCooldownMinutes
+}
+
+func normalizeInspectionNotificationScenario(value string) (string, string, error) {
+	scenario := strings.ToLower(strings.TrimSpace(value))
+	switch scenario {
+	case InspectionNotificationScenarioManualTest:
+		return scenario, InspectionNotificationScenarioManualTest, nil
+	case InspectionNotificationScenarioAnomalyThreshold:
+		return scenario, InspectionNotificationScenarioAnomalyThreshold, nil
+	case InspectionNotificationScenarioAvailableLow:
+		return scenario, InspectionNotificationScenarioAvailableLow, nil
+	case InspectionNotificationScenarioAvailabilityLow:
+		return scenario, InspectionNotificationScenarioAvailabilityLow, nil
+	case InspectionNotificationScenarioCombined:
+		return scenario, strings.Join([]string{
+			InspectionNotificationScenarioAnomalyThreshold,
+			InspectionNotificationScenarioAvailableLow,
+			InspectionNotificationScenarioAvailabilityLow,
+		}, ","), nil
+	default:
+		return "", "", fmt.Errorf("unsupported notification scenario")
+	}
+}
+
+func validateInspectionNotificationRequest(request InspectionNotificationRequest) (InspectionNotificationRequest, string, error) {
+	request.URLTemplate = strings.TrimSpace(request.URLTemplate)
+	scenario, event, errScenario := normalizeInspectionNotificationScenario(request.Scenario)
+	if errScenario != nil {
+		return InspectionNotificationRequest{}, "", errScenario
+	}
+	request.Scenario = scenario
+	if request.ThresholdPercent < 1 || request.ThresholdPercent > 100 {
+		return InspectionNotificationRequest{}, "", fmt.Errorf("threshold_percent must be between 1 and 100")
+	}
+	if request.AvailableAccountsThreshold < 1 || request.AvailableAccountsThreshold > maxInspectionAccounts {
+		return InspectionNotificationRequest{}, "", fmt.Errorf("available_accounts_threshold must be between 1 and %d", maxInspectionAccounts)
+	}
+	if request.AvailabilityPercentThreshold < 1 || request.AvailabilityPercentThreshold > 100 {
+		return InspectionNotificationRequest{}, "", fmt.Errorf("availability_percent_threshold must be between 1 and 100")
+	}
+	if errValidate := validateAnomalyNotificationTemplate(request.URLTemplate); errValidate != nil {
+		return InspectionNotificationRequest{}, "", errValidate
+	}
+	return request, event, nil
+}
+
+func (e *InspectionEngine) PreviewNotification(ctx context.Context, request InspectionNotificationRequest) (InspectionNotificationPreview, error) {
+	if e == nil || e.accounts == nil {
+		return InspectionNotificationPreview{}, fmt.Errorf("inspection engine is unavailable")
+	}
+	request, eventName, errValidate := validateInspectionNotificationRequest(request)
+	if errValidate != nil {
+		return InspectionNotificationPreview{}, errValidate
+	}
+	accounts, errAccounts := e.accounts.baseAccounts(ctx)
+	if errAccounts != nil {
+		return InspectionNotificationPreview{}, fmt.Errorf("list accounts for notification preview: %w", errAccounts)
+	}
+	if len(accounts) > maxInspectionAccounts {
+		accounts = accounts[:maxInspectionAccounts]
+	}
+	accountsByID := make(map[string]Account, len(accounts))
+	for _, account := range accounts {
+		if id := strings.TrimSpace(account.ID); id != "" {
+			accountsByID[id] = account
+		}
+	}
+	e.mu.RLock()
+	records := cloneInspectionRecords(e.records)
+	e.mu.RUnlock()
+	metrics := inspectionAnomalyNotificationMetrics(accountsByID, records)
+	metrics.ThresholdPercent = request.ThresholdPercent
+	metrics.AvailableAccountsThreshold = request.AvailableAccountsThreshold
+	metrics.AvailabilityThreshold = request.AvailabilityPercentThreshold
+	triggeredAt := e.currentTime()
+	event := anomalyNotificationEvent{
+		URLTemplate: request.URLTemplate,
+		Event:       eventName,
+		Metrics:     metrics,
+		TriggeredAt: triggeredAt,
+	}
+	expanded, errExpand := expandAnomalyNotificationURL(event)
+	if errExpand != nil {
+		return InspectionNotificationPreview{}, errExpand
+	}
+	return InspectionNotificationPreview{
+		Scenario: request.Scenario, Event: eventName, ExpandedURL: expanded,
+		Variables: anomalyNotificationVariableValues(event), TriggeredAt: triggeredAt,
+	}, nil
+}
+
+func (e *InspectionEngine) TestNotification(ctx context.Context, request InspectionNotificationRequest) (InspectionNotificationTestResult, error) {
+	preview, errPreview := e.PreviewNotification(ctx, request)
+	if errPreview != nil {
+		return InspectionNotificationTestResult{}, errPreview
+	}
+	event := anomalyNotificationEvent{
+		URLTemplate: request.URLTemplate,
+		Event:       preview.Event,
+		Metrics: anomalyNotificationMetrics{
+			TotalAccounts:              parseNotificationMetric(preview.Variables, "total_accounts"),
+			EligibleAccounts:           parseNotificationMetric(preview.Variables, "eligible_accounts"),
+			AvailableAccounts:          parseNotificationMetric(preview.Variables, "available_accounts"),
+			AvailablePercent:           parseNotificationMetric(preview.Variables, "available_percent"),
+			AbnormalAccounts:           parseNotificationMetric(preview.Variables, "abnormal_accounts"),
+			AbnormalPercent:            parseNotificationMetric(preview.Variables, "abnormal_percent"),
+			QuotaLimitedAccounts:       parseNotificationMetric(preview.Variables, "quota_limited_accounts"),
+			InvalidCredentialAccounts:  parseNotificationMetric(preview.Variables, "invalid_credential_accounts"),
+			DeactivatedAccounts:        parseNotificationMetric(preview.Variables, "deactivated_accounts"),
+			UnavailableAccounts:        parseNotificationMetric(preview.Variables, "unavailable_accounts"),
+			DisabledAccounts:           parseNotificationMetric(preview.Variables, "disabled_accounts"),
+			ThresholdPercent:           parseNotificationMetric(preview.Variables, "threshold_percent"),
+			AvailableAccountsThreshold: parseNotificationMetric(preview.Variables, "available_accounts_threshold"),
+			AvailabilityThreshold:      parseNotificationMetric(preview.Variables, "availability_percent_threshold"),
+		},
+		TriggeredAt: preview.TriggeredAt,
+	}
+	result := e.deliverAnomalyNotification(ctx, event)
+	delivered := result.ReasonCode == "notification_delivered"
+	e.recordNotificationTest(event, result)
+	return InspectionNotificationTestResult{
+		Preview: preview, Delivered: delivered, StatusCode: result.StatusCode,
+		Attempts: result.Attempts, ReasonCode: result.ReasonCode,
+	}, nil
+}
+
+func parseNotificationMetric(values map[string]string, key string) int {
+	value, _ := strconv.Atoi(values[key])
+	return value
+}
+
+func (e *InspectionEngine) recordNotificationTest(event anomalyNotificationEvent, result anomalyNotificationResult) {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	journal := e.operations
+	e.mu.RUnlock()
+	if journal == nil {
+		return
+	}
+	status := OperationStatusFailed
+	succeeded, failed := 0, 1
+	if result.ReasonCode == "notification_delivered" {
+		status = OperationStatusSucceeded
+		succeeded, failed = 1, 0
+	}
+	journal.Record(OperationEntry{
+		Category: OperationCategoryInspection, Action: OperationActionNotificationTest,
+		Status: status, Source: OperationSourceManual, Scope: OperationScopeSystem,
+		TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
+		StartedAt: event.TriggeredAt, FinishedAt: e.currentTime(), ReasonCode: result.ReasonCode,
+		HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})
-	if len(expanded) > maxAnomalyNotificationURLBytes {
-		return "", fmt.Errorf("expanded anomaly notification URL exceeds %d bytes", maxAnomalyNotificationURLBytes)
-	}
-	parsed, errParse := url.Parse(expanded)
-	if errParse != nil {
-		return "", fmt.Errorf("expanded anomaly notification URL is invalid")
-	}
-	if errValidate := validateAnomalyNotificationDestination(parsed); errValidate != nil {
-		return "", errValidate
-	}
-	return parsed.String(), nil
 }
 
 func inspectionNotificationReasons(policy InspectionPolicy, metrics anomalyNotificationMetrics) []string {

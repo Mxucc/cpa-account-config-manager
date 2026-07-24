@@ -35,6 +35,7 @@ const (
 	OperationActionInspectionScan         = "inspection_scan"
 	OperationActionInspectionManualDelete = "inspection_manual_delete"
 	OperationActionAnomalyNotification    = "anomaly_notification"
+	OperationActionNotificationTest       = "notification_test"
 	OperationActionAutoDisable            = "auto_disable"
 	OperationActionAutoEnable             = "auto_enable"
 	OperationActionDeleteCandidate        = "delete_candidate"
@@ -202,7 +203,7 @@ func normalizeOperationAction(value string) string {
 		OperationActionBatchDelete, OperationActionBatchDeleteRetry, OperationActionImport,
 		OperationActionExportAccounts, OperationActionExportResults, OperationActionPolicySave,
 		OperationActionPolicyScan, OperationActionForceSync, OperationActionInspectionSave,
-		OperationActionInspectionScan, OperationActionInspectionManualDelete, OperationActionAnomalyNotification, OperationActionAutoDisable, OperationActionAutoEnable,
+		OperationActionInspectionScan, OperationActionInspectionManualDelete, OperationActionAnomalyNotification, OperationActionNotificationTest, OperationActionAutoDisable, OperationActionAutoEnable,
 		OperationActionDeleteCandidate, OperationActionAutoDelete, OperationActionUpdateSave,
 		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
 		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear:

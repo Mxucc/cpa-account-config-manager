@@ -19,6 +19,9 @@ import type {
   ImportResult,
   InspectionAction,
   InspectionDeleteRun,
+	InspectionNotificationPreview,
+	InspectionNotificationRequest,
+	InspectionNotificationTestResult,
   InspectionPolicy,
   InspectionRemediationSummary,
   InspectionResultList,
@@ -371,6 +374,20 @@ export async function scanFullInspection(): Promise<InspectionSnapshot> {
 
 export async function scanNativeInspection(): Promise<InspectionSnapshot> {
   return request<InspectionSnapshot>("/inspection/scan/native", { method: "POST" });
+}
+
+export async function previewInspectionNotification(notification: InspectionNotificationRequest): Promise<InspectionNotificationPreview> {
+  return request<InspectionNotificationPreview>("/inspection/notification/preview", {
+    method: "POST",
+    body: JSON.stringify(notification),
+  });
+}
+
+export async function testInspectionNotification(notification: InspectionNotificationRequest): Promise<InspectionNotificationTestResult> {
+  return request<InspectionNotificationTestResult>("/inspection/notification/test", {
+    method: "POST",
+    body: JSON.stringify(notification),
+  });
 }
 
 export async function startInspectionRun(run: InspectionRunRequest): Promise<InspectionSnapshot> {

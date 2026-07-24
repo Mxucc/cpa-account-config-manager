@@ -29,6 +29,9 @@ import type {
   BatchPreview,
   InspectionAction,
   InspectionHealth,
+	InspectionNotificationPreview,
+	InspectionNotificationRequest,
+	InspectionNotificationTestResult,
   InspectionPolicy,
   InspectionResult,
   InspectionResultList,
@@ -562,6 +565,26 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
     }
   };
 
+  const previewNotification = async (request: InspectionNotificationRequest): Promise<InspectionNotificationPreview> => {
+    setSettingsError("");
+    try {
+      return await api.previewInspectionNotification(request);
+    } catch (caught) {
+      handleError(caught, "settings");
+      throw caught;
+    }
+  };
+
+  const testNotification = async (request: InspectionNotificationRequest): Promise<InspectionNotificationTestResult> => {
+    setSettingsError("");
+    try {
+      return await api.testInspectionNotification(request);
+    } catch (caught) {
+      handleError(caught, "settings");
+      throw caught;
+    }
+  };
+
   const lastRun = snapshot?.last_run;
   const sweepTotal = snapshot?.probe_sweep_total ?? 0;
   const sweepCompleted = snapshot?.probe_sweep_completed ?? 0;
@@ -782,6 +805,8 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
           error={settingsError}
           onClose={() => setSettingsOpen(false)}
           onSave={(inspection, confirmDelete, confirmDeleteInvalid) => void saveSettings(inspection, confirmDelete, confirmDeleteInvalid)}
+          onNotificationPreview={previewNotification}
+          onNotificationTest={testNotification}
         />
       ) : null}
       {actionTarget ? (

@@ -55,6 +55,14 @@ let inspectionPolicy = {
   anomaly_threshold_percent: 50,
   anomaly_minimum_accounts: 10,
   anomaly_cooldown_minutes: 60,
+  anomaly_notification_enabled: false,
+  anomaly_notification_only: false,
+  anomaly_notification_url: "",
+  notification_available_accounts_enabled: false,
+  notification_available_accounts_threshold: 10,
+  notification_availability_percent_enabled: false,
+  notification_availability_percent_threshold: 20,
+  notification_cooldown_minutes: 60,
 };
 let updatePolicy = {
   check_enabled: true,
@@ -1478,6 +1486,50 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname.endsWith("/inspection/scan/native")) {
     return json(response, 202, mockInspectionSnapshot(true));
   }
+  if (request.method === "POST" && (url.pathname.endsWith("/inspection/notification/preview") || url.pathname.endsWith("/inspection/notification/test"))) {
+    const body = await readJSON(request);
+    const results = mockInspectionResults();
+    const total = results.length;
+    const available = results.filter((result) => result.health === "healthy" && !result.disabled).length;
+    const event = body.scenario === "combined"
+      ? "anomaly_threshold,available_accounts_low,availability_percent_low"
+      : String(body.scenario || "manual_test");
+    const values = {
+      event,
+      total_accounts: String(total),
+      eligible_accounts: String(total),
+      available_accounts: String(available),
+      available_percent: String(total ? Math.floor((available * 100) / total) : 0),
+      abnormal_accounts: String(total - available),
+      abnormal_percent: String(total ? Math.floor(((total - available) * 100) / total) : 0),
+      quota_limited_accounts: String(results.filter((result) => result.health === "quota_limited").length),
+      invalid_credential_accounts: String(results.filter((result) => result.health === "invalid_credentials").length),
+      deactivated_accounts: String(results.filter((result) => result.health === "deactivated").length),
+      unavailable_accounts: String(results.filter((result) => result.health === "unavailable").length),
+      disabled_accounts: String(results.filter((result) => result.disabled).length),
+      threshold_percent: String(body.threshold_percent || 50),
+      available_accounts_threshold: String(body.available_accounts_threshold || 10),
+      availability_percent_threshold: String(body.availability_percent_threshold || 20),
+      triggered_at: new Date().toISOString(),
+    };
+    const expandedURL = String(body.url_template || "").replace(/\$\{([a-z_]+)\}/g, (_, name) => encodeURIComponent(values[name] || ""));
+    const preview = {
+      scenario: String(body.scenario || "manual_test"),
+      event,
+      expanded_url: expandedURL,
+      variables: values,
+      triggered_at: values.triggered_at,
+    };
+    if (url.pathname.endsWith("/test")) {
+      operationLog.unshift({
+        id: crypto.randomUUID(), category: "inspection", action: "notification_test", status: "succeeded", source: "manual", scope: "system",
+        target_count: total, succeeded: 1, failed: 0, skipped: 0, started_at: values.triggered_at, finished_at: new Date().toISOString(),
+        reason_code: "notification_delivered", http_status: 204, attempts: 1,
+      });
+      return json(response, 200, { preview, delivered: true, status_code: 204, attempts: 1, reason_code: "notification_delivered" });
+    }
+    return json(response, 200, preview);
+  }
   if (request.method === "POST" && url.pathname.endsWith("/inspection/delete")) {
     const body = await readJSON(request);
     const ids = Array.isArray(body.account_ids) ? body.account_ids.slice(0, 100) : [];
@@ -1519,6 +1571,14 @@ const server = http.createServer(async (request, response) => {
       anomaly_threshold_percent: Math.min(100, Math.max(1, Number(body.anomaly_threshold_percent) || 50)),
       anomaly_minimum_accounts: Math.min(10_000, Math.max(1, Number(body.anomaly_minimum_accounts) || 10)),
       anomaly_cooldown_minutes: Math.min(1440, Math.max(5, Number(body.anomaly_cooldown_minutes) || 60)),
+      anomaly_notification_enabled: Boolean(body.anomaly_notification_enabled),
+      anomaly_notification_only: Boolean(body.anomaly_notification_only),
+      anomaly_notification_url: String(body.anomaly_notification_url || ""),
+      notification_available_accounts_enabled: Boolean(body.notification_available_accounts_enabled),
+      notification_available_accounts_threshold: Math.min(10_000, Math.max(1, Number(body.notification_available_accounts_threshold) || 10)),
+      notification_availability_percent_enabled: Boolean(body.notification_availability_percent_enabled),
+      notification_availability_percent_threshold: Math.min(100, Math.max(1, Number(body.notification_availability_percent_threshold) || 20)),
+      notification_cooldown_minutes: Math.min(1440, Math.max(5, Number(body.notification_cooldown_minutes) || 60)),
     };
     return json(response, 200, mockInspectionSnapshot());
   }

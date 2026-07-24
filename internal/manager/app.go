@@ -290,6 +290,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/inspection", Description: "Validate and save the account inspection policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan", Description: "Request an immediate account inspection scan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/scan/native", Description: "Request an immediate full CPA-native account census without model probes."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/notification/preview", Description: "Preview an exact expanded external notification URL with current aggregate values."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/notification/test", Description: "Send one authenticated external notification test through the hardened GET delivery path."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/run", Description: "Start a full, incremental, retry, or scoped active inspection."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/inspection/stop", Description: "Stop the current manual active inspection."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/inspection/results", Description: "List redacted account inspection results."},
@@ -412,6 +414,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			managementKey = ""
 		}
 		return jsonResponse(http.StatusAccepted, a.inspection.RequestScan())
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/notification/preview":
+		return a.handleInspectionNotificationPreview(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/notification/test":
+		return a.handleInspectionNotificationTest(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/run":
 		return a.handleInspectionRun(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/stop":
@@ -1055,6 +1061,36 @@ func (a *App) handlePutInspectionPolicy(req cpaapi.ManagementRequest) cpaapi.Man
 	}
 	a.recordPolicyChange(OperationCategoryInspection, OperationActionInspectionSave, OperationSourceManual, OperationStatusSucceeded)
 	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) handleInspectionNotificationPreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if resolveManagementKey(req.Headers) == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	var request InspectionNotificationRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	preview, errPreview := a.inspection.PreviewNotification(ctx, request)
+	if errPreview != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errPreview.Error()})
+	}
+	return jsonResponse(http.StatusOK, preview)
+}
+
+func (a *App) handleInspectionNotificationTest(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if resolveManagementKey(req.Headers) == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	var request InspectionNotificationRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	result, errTest := a.inspection.TestNotification(ctx, request)
+	if errTest != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errTest.Error()})
+	}
+	return jsonResponse(http.StatusOK, result)
 }
 
 func (a *App) handleListInspectionResults(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

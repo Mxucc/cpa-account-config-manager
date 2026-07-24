@@ -66,7 +66,7 @@ describe("AutomationSettingsDialog", () => {
     expect(confirmDeleteInvalid).toBe(true);
   });
 
-  it("builds and saves an external GET notification template from selected aggregate parameters", async () => {
+  it("inserts placeholder-only notification content at the cursor without adding query fields", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     render(
@@ -94,22 +94,16 @@ describe("AutomationSettingsDialog", () => {
     await user.click(screen.getByLabelText("可用账号数不足时通知"));
     await user.click(screen.getByLabelText("总可用率不足时通知"));
     const urlInput = screen.getByLabelText("通知 URL 模板");
-    await user.type(urlInput, "https://notify.example/hook");
+    await user.type(urlInput, "https://notify.example/hook?message=可用账号剩余");
     const parameterSelect = screen.getByLabelText("插入通知参数");
     await user.selectOptions(parameterSelect, "available_accounts");
     await user.selectOptions(parameterSelect, "__notification_details__");
-    await user.selectOptions(parameterSelect, "");
-    await user.selectOptions(parameterSelect, "__notification_details__");
     const template = String((urlInput as HTMLInputElement).value);
-    expect(template).toContain("event=${event}");
-    expect(template).toContain("total_accounts=${total_accounts}");
-    expect(template).toContain("available_accounts=${available_accounts}");
-    expect(template).toContain("available_percent=${available_percent}");
-    expect(template).toContain("abnormal_percent=${abnormal_percent}");
-    expect(template).toContain("available_accounts_threshold=${available_accounts_threshold}");
-    expect(template).toContain("availability_percent_threshold=${availability_percent_threshold}");
-    expect(template).toContain("triggered_at=${triggered_at}");
-    expect(template.match(/\$\{available_accounts\}/g)).toHaveLength(1);
+    expect(template).toContain("可用账号剩余${available_accounts}");
+    expect(template).toContain("事件 ${event}");
+    expect(template).toContain("可用率 ${available_percent}%");
+    expect(template).not.toContain("&event=");
+    expect(template).not.toContain("available_accounts=${available_accounts}");
 
     await user.click(screen.getByRole("button", { name: "保存设置" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
@@ -122,6 +116,68 @@ describe("AutomationSettingsDialog", () => {
       notification_availability_percent_threshold: 20,
       notification_cooldown_minutes: 60,
     }), false, false);
+  });
+
+  it("previews and sends current unsaved values while caching multiple scenarios", async () => {
+    const user = userEvent.setup();
+    const onPreview = vi.fn(async (request) => ({
+      scenario: request.scenario,
+      event: request.scenario,
+      expanded_url: `https://notify.example/publish?message=${request.scenario}:${request.available_accounts_threshold}`,
+      variables: {
+        event: request.scenario, total_accounts: "9", eligible_accounts: "9", available_accounts: "0", available_percent: "0",
+        abnormal_accounts: "9", abnormal_percent: "100", quota_limited_accounts: "9", invalid_credential_accounts: "0",
+        deactivated_accounts: "0", unavailable_accounts: "0", disabled_accounts: "0", threshold_percent: String(request.threshold_percent),
+        available_accounts_threshold: String(request.available_accounts_threshold), availability_percent_threshold: String(request.availability_percent_threshold),
+        triggered_at: "2026-07-24T08:00:00Z",
+      },
+      triggered_at: "2026-07-24T08:00:00Z",
+    }));
+    const onTest = vi.fn(async (request) => ({
+      preview: await onPreview(request), delivered: true, status_code: 204, attempts: 1, reason_code: "notification_delivered",
+    }));
+    render(
+      <AutomationSettingsDialog
+        inspection={{
+          enabled: true, scan_interval_minutes: 30,
+          model_probe_enabled: false, model_probe_full_sweep: false, scan_manually_disabled: false, model_probe_interval_minutes: 60, model_probe_batch_size: 20,
+          model_probe_models: { codex: "gpt-5.6-sol", openai: "gpt-5.6-sol", claude: "claude-sonnet-4-5-20250929", gemini: "gemini-2.0-flash", xai: "grok-4" },
+          failure_threshold: 3, recovery_threshold: 2, auto_disable: true, auto_enable: false,
+          passive_circuit_enabled: false, passive_failure_threshold: 5, passive_failure_window_minutes: 180, passive_circuit_minutes: 15,
+          auto_delete: false, auto_delete_invalid_credentials: false, delete_grace_hours: 168, delete_batch_size: 10,
+          anomaly_trigger_enabled: true, anomaly_threshold_percent: 50, anomaly_minimum_accounts: 10, anomaly_cooldown_minutes: 60,
+          anomaly_notification_enabled: true, anomaly_notification_only: true,
+          anomaly_notification_url: "https://notify.example/publish?message=可用${available_accounts}，可用率${available_percent}",
+          notification_available_accounts_enabled: true, notification_available_accounts_threshold: 10,
+          notification_availability_percent_enabled: true, notification_availability_percent_threshold: 20, notification_cooldown_minutes: 60,
+        }}
+        saving={false}
+        onClose={() => undefined}
+        onSave={() => undefined}
+        onNotificationPreview={onPreview}
+        onNotificationTest={onTest}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText("可用账号数低于"));
+    await user.type(screen.getByLabelText("可用账号数低于"), "3");
+    await user.click(screen.getByRole("button", { name: "预览" }));
+    expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({
+      scenario: "manual_test", available_accounts_threshold: 3,
+      url_template: "https://notify.example/publish?message=可用${available_accounts}，可用率${available_percent}",
+    }));
+    expect(screen.getByText("https://notify.example/publish?message=manual_test:3")).toBeInTheDocument();
+    expect(screen.getAllByText("0", { selector: "dd" }).length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("tab", { name: "可用账号数" }));
+    await user.click(screen.getByRole("button", { name: "发送测试" }));
+    expect(onTest).toHaveBeenCalledWith(expect.objectContaining({ scenario: "available_accounts_low", available_accounts_threshold: 3 }));
+    expect(await screen.findByText("外部通知发送成功")).toBeInTheDocument();
+    expect(screen.getByText("204")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /手动测试/ }));
+    expect(screen.getByText("https://notify.example/publish?message=manual_test:3")).toBeInTheDocument();
+    expect(onPreview).toHaveBeenCalledTimes(2);
   });
 
   it("enables scheduled inspection when low-availability notification is enabled independently", async () => {

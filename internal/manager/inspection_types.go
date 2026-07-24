@@ -155,6 +155,30 @@ type InspectionPolicyUpdateRequest struct {
 	ConfirmDeleteInvalidCredentials bool `json:"confirm_delete_invalid_credentials"`
 }
 
+type InspectionNotificationRequest struct {
+	URLTemplate                  string `json:"url_template"`
+	Scenario                     string `json:"scenario"`
+	ThresholdPercent             int    `json:"threshold_percent"`
+	AvailableAccountsThreshold   int    `json:"available_accounts_threshold"`
+	AvailabilityPercentThreshold int    `json:"availability_percent_threshold"`
+}
+
+type InspectionNotificationPreview struct {
+	Scenario    string            `json:"scenario"`
+	Event       string            `json:"event"`
+	ExpandedURL string            `json:"expanded_url"`
+	Variables   map[string]string `json:"variables"`
+	TriggeredAt time.Time         `json:"triggered_at"`
+}
+
+type InspectionNotificationTestResult struct {
+	Preview    InspectionNotificationPreview `json:"preview"`
+	Delivered  bool                          `json:"delivered"`
+	StatusCode int                           `json:"status_code,omitempty"`
+	Attempts   int                           `json:"attempts"`
+	ReasonCode string                        `json:"reason_code"`
+}
+
 type InspectionRunSummary struct {
 	StartedAt          time.Time `json:"started_at,omitempty"`
 	FinishedAt         time.Time `json:"finished_at,omitempty"`

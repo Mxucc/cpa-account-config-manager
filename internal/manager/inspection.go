@@ -53,6 +53,8 @@ type InspectionEngine struct {
 	anomalyTriggerPending  bool
 	lastAnomalyTriggerAt   time.Time
 	lastNotificationAt     time.Time
+	notificationPending    bool
+	notificationRevision   uint64
 	anomalyEligible        int
 	anomalyCount           int
 	anomalyPercent         int
@@ -482,6 +484,7 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 	storePath := e.store
 	state := e.persistedStateLocked()
 	closed := e.closed
+	currentPolicy := e.policy
 	e.mu.RUnlock()
 	if closed || strings.TrimSpace(storePath) == "" {
 		return InspectionSnapshot{}, fmt.Errorf("inspection storage is unavailable")
@@ -505,6 +508,12 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 
 	e.mu.Lock()
 	e.policy = normalized
+	if inspectionNotificationPolicyChanged(currentPolicy, normalized) && inspectionNotificationEnabled(normalized) {
+		e.notificationPending = true
+		e.notificationRevision++
+	} else if !inspectionNotificationEnabled(normalized) {
+		e.notificationPending = false
+	}
 	if !normalized.AnomalyTriggerEnabled {
 		e.anomalyTriggerPending = false
 	}
@@ -1137,6 +1146,8 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	e.scanStarted = startedAt
 	previous := cloneInspectionRecords(e.records)
 	policy := e.policy
+	notificationPending := e.notificationPending
+	notificationRevision := e.notificationRevision
 	managementKey := e.managementKey
 	lastNativeRunAt := e.lastNativeRunAt
 	lastProbeRunAt := e.lastProbeRunAt
@@ -1343,7 +1354,15 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	}
 	armed := strings.TrimSpace(managementKey) != "" && modelTests != nil
 	triggered, anomalySweepSize := e.evaluateAnomalyTrigger(policy, accountsByID, next, now, scheduled && runNative, armed)
-	e.evaluateInspectionNotification(policy, accountsByID, next, now, scheduled && runNative)
+	notificationEvaluated := runNative && inspectionNotificationEnabled(policy)
+	e.evaluateInspectionNotification(policy, accountsByID, next, now, notificationEvaluated)
+	if notificationEvaluated && notificationPending {
+		e.mu.Lock()
+		if e.notificationRevision == notificationRevision {
+			e.notificationPending = false
+		}
+		e.mu.Unlock()
+	}
 	if triggered && !policy.AnomalyNotificationOnly {
 		probeSweep = true
 		probeSweepRemaining = anomalySweepSize

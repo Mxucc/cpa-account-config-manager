@@ -49,6 +49,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPut + " /plugins/cpa-account-config-manager/inspection":                                {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/scan":                          {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/scan/native":                   {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/notification/preview":          {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/notification/test":             {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/run":                           {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/stop":                          {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/inspection/review":                        {},
@@ -127,6 +129,23 @@ func TestInspectionLiveRouteDisablesCaching(t *testing.T) {
 	})
 	if response.StatusCode != http.StatusOK || response.Headers.Get("Cache-Control") != "no-store" {
 		t.Fatalf("live response = %d headers=%v body=%s", response.StatusCode, response.Headers, response.Body)
+	}
+}
+
+func TestInspectionNotificationRoutesRequireManagementKey(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	body := []byte(`{"url_template":"https://notify.example/publish?available=${available_accounts}","scenario":"manual_test","threshold_percent":50,"available_accounts_threshold":1,"availability_percent_threshold":20}`)
+	for _, route := range []string{
+		"/v0/management/plugins/cpa-account-config-manager/inspection/notification/preview",
+		"/v0/management/plugins/cpa-account-config-manager/inspection/notification/test",
+	} {
+		response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+			Method: http.MethodPost, Path: route, Body: body,
+		})
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("route %s status = %d body=%s", route, response.StatusCode, response.Body)
+		}
 	}
 }
 

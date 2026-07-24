@@ -523,6 +523,32 @@ export interface InspectionPolicy {
   notification_cooldown_minutes: number;
 }
 
+export type InspectionNotificationScenario = "manual_test" | "anomaly_threshold" | "available_accounts_low" | "availability_percent_low" | "combined";
+
+export interface InspectionNotificationRequest {
+  url_template: string;
+  scenario: InspectionNotificationScenario;
+  threshold_percent: number;
+  available_accounts_threshold: number;
+  availability_percent_threshold: number;
+}
+
+export interface InspectionNotificationPreview {
+  scenario: InspectionNotificationScenario;
+  event: string;
+  expanded_url: string;
+  variables: Record<string, string>;
+  triggered_at: string;
+}
+
+export interface InspectionNotificationTestResult {
+  preview: InspectionNotificationPreview;
+  delivered: boolean;
+  status_code?: number;
+  attempts: number;
+  reason_code: string;
+}
+
 export interface InspectionRunSummary {
   started_at?: string;
   finished_at?: string;

@@ -1,6 +1,12 @@
-import { AlertTriangle, BellRing, LoaderCircle, Save, ShieldCheck, Trash2 } from "lucide-react";
-import { useState } from "react";
-import type { InspectionPolicy } from "../types";
+import { AlertTriangle, BellRing, Eye, LoaderCircle, Save, Send, ShieldCheck, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import type {
+  InspectionNotificationPreview,
+  InspectionNotificationRequest,
+  InspectionNotificationScenario,
+  InspectionNotificationTestResult,
+  InspectionPolicy,
+} from "../types";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
@@ -11,6 +17,8 @@ interface AutomationSettingsDialogProps {
   error?: string;
   onClose: () => void;
   onSave: (inspection: InspectionPolicy, confirmDelete: boolean, confirmDeleteInvalid: boolean) => void;
+  onNotificationPreview?: (request: InspectionNotificationRequest) => Promise<InspectionNotificationPreview>;
+  onNotificationTest?: (request: InspectionNotificationRequest) => Promise<InspectionNotificationTestResult>;
 }
 
 const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
@@ -34,8 +42,29 @@ const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
 
 const notificationDetailsPreset = "__notification_details__";
 
-export function AutomationSettingsDialog({ inspection, saving, error = "", onClose, onSave }: AutomationSettingsDialogProps) {
-  const { tx } = useI18n();
+const notificationScenarios: Array<{ value: InspectionNotificationScenario; label: UIMessageKey }> = [
+  { value: "manual_test", label: "ui.notification_scenario_manual" },
+  { value: "anomaly_threshold", label: "ui.notification_scenario_anomaly" },
+  { value: "available_accounts_low", label: "ui.notification_scenario_available_accounts" },
+  { value: "availability_percent_low", label: "ui.notification_scenario_availability_percent" },
+  { value: "combined", label: "ui.notification_scenario_combined" },
+];
+
+type NotificationScenarioResult = {
+  preview: InspectionNotificationPreview;
+  test?: InspectionNotificationTestResult;
+};
+
+export function AutomationSettingsDialog({
+  inspection,
+  saving,
+  error = "",
+  onClose,
+  onSave,
+  onNotificationPreview,
+  onNotificationTest,
+}: AutomationSettingsDialogProps) {
+  const { tx, formatDateTime } = useI18n();
   const [scheduleEnabled, setScheduleEnabled] = useState(inspection.enabled);
   const [scanInterval, setScanInterval] = useState(String(inspection.scan_interval_minutes));
   const [probeEnabled, setProbeEnabled] = useState(inspection.model_probe_enabled);
@@ -71,6 +100,10 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
   const [confirmDelete, setConfirmDelete] = useState(inspection.auto_delete);
   const [confirmDeleteInvalid, setConfirmDeleteInvalid] = useState(inspection.auto_delete_invalid_credentials);
   const [formError, setFormError] = useState("");
+  const [notificationScenario, setNotificationScenario] = useState<InspectionNotificationScenario>("manual_test");
+  const [notificationAction, setNotificationAction] = useState<"preview" | "test" | "">("");
+  const [notificationResults, setNotificationResults] = useState<Partial<Record<InspectionNotificationScenario, NotificationScenarioResult>>>({});
+  const notificationURLRef = useRef<HTMLInputElement>(null);
 
   const save = () => {
     setFormError("");
@@ -151,16 +184,94 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
   };
 
   const insertNotificationVariable = (name: string) => {
-    if (!name || !notificationURL.trim()) return;
-    const selected = name === notificationDetailsPreset ? notificationVariables.map((variable) => variable.name) : [name];
-    let next = notificationURL;
-    for (const variable of selected) {
-      if (next.includes(`\${${variable}}`)) continue;
-      const separator = next.includes("?") ? (next.endsWith("?") || next.endsWith("&") ? "" : "&") : "?";
-      next = `${next}${separator}${variable}=\${${variable}}`;
-    }
+    if (!name) return;
+    const insertion = name === notificationDetailsPreset
+      ? tx("ui.notification_full_message_template")
+      : `\${${name}}`;
+    const input = notificationURLRef.current;
+    const start = input?.selectionStart ?? notificationURL.length;
+    const end = input?.selectionEnd ?? start;
+    const next = `${notificationURL.slice(0, start)}${insertion}${notificationURL.slice(end)}`;
     setNotificationURL(next);
+    window.setTimeout(() => {
+      const cursor = start + insertion.length;
+      notificationURLRef.current?.focus();
+      notificationURLRef.current?.setSelectionRange(cursor, cursor);
+    }, 0);
   };
+
+  const buildNotificationRequest = (): InspectionNotificationRequest | null => {
+    setFormError("");
+    const urlTemplate = notificationURL.trim();
+    const thresholdPercent = Number(anomalyThreshold);
+    const availableAccountsThreshold = Number(availableNotificationThreshold);
+    const availabilityPercentThreshold = Number(availabilityNotificationThreshold);
+    if (!urlTemplate) {
+      setFormError(tx("ui.notification_url_is_required"));
+      return null;
+    }
+    if (!urlTemplate.toLowerCase().startsWith("https://")) {
+      setFormError(tx("ui.notification_url_must_use_https"));
+      return null;
+    }
+    if (!Number.isInteger(thresholdPercent) || thresholdPercent < 1 || thresholdPercent > 100) {
+      setFormError(tx("ui.anomaly_threshold_must_be_between_1_and_100_percent"));
+      return null;
+    }
+    if (!Number.isInteger(availableAccountsThreshold) || availableAccountsThreshold < 1 || availableAccountsThreshold > 10000) {
+      setFormError(tx("ui.notification_available_accounts_must_be_between_1_and_10000"));
+      return null;
+    }
+    if (!Number.isInteger(availabilityPercentThreshold) || availabilityPercentThreshold < 1 || availabilityPercentThreshold > 100) {
+      setFormError(tx("ui.notification_availability_percent_must_be_between_1_and_100"));
+      return null;
+    }
+    return {
+      url_template: urlTemplate,
+      scenario: notificationScenario,
+      threshold_percent: thresholdPercent,
+      available_accounts_threshold: availableAccountsThreshold,
+      availability_percent_threshold: availabilityPercentThreshold,
+    };
+  };
+
+  const previewNotification = async () => {
+    if (!onNotificationPreview) return;
+    const request = buildNotificationRequest();
+    if (!request) return;
+    setNotificationAction("preview");
+    try {
+      const preview = await onNotificationPreview(request);
+      setNotificationResults((current) => ({
+        ...current,
+        [request.scenario]: { ...current[request.scenario], preview },
+      }));
+    } catch {
+      // The workspace owns authenticated API error presentation.
+    } finally {
+      setNotificationAction("");
+    }
+  };
+
+  const testNotification = async () => {
+    if (!onNotificationTest) return;
+    const request = buildNotificationRequest();
+    if (!request) return;
+    setNotificationAction("test");
+    try {
+      const test = await onNotificationTest(request);
+      setNotificationResults((current) => ({
+        ...current,
+        [request.scenario]: { preview: test.preview, test },
+      }));
+    } catch {
+      // The workspace owns authenticated API error presentation.
+    } finally {
+      setNotificationAction("");
+    }
+  };
+
+  const notificationResult = notificationResults[notificationScenario];
 
   return (
     <Modal
@@ -231,6 +342,7 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
             <label className="notification-template-field">
               <span>{tx("ui.notification_url_template")}</span>
               <input
+                ref={notificationURLRef}
                 type="text"
                 maxLength={4096}
                 value={notificationURL}
@@ -258,6 +370,62 @@ export function AutomationSettingsDialog({ inspection, saving, error = "", onClo
               </select>
             </label>
           </div>
+          {onNotificationPreview && onNotificationTest ? (
+            <div className="notification-test-panel">
+              <div className="notification-test-heading">
+                <strong>{tx("ui.notification_preview_and_test")}</strong>
+                <div className="notification-test-actions">
+                  <button className="button button-quiet" type="button" disabled={saving || Boolean(notificationAction) || !notificationURL.trim()} onClick={() => void previewNotification()}>
+                    {notificationAction === "preview" ? <LoaderCircle className="spin" size={14} /> : <Eye size={14} />}{tx("ui.preview_notification")}
+                  </button>
+                  <button className="button button-primary" type="button" disabled={saving || Boolean(notificationAction) || !notificationURL.trim()} onClick={() => void testNotification()}>
+                    {notificationAction === "test" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}{tx("ui.send_test_notification")}
+                  </button>
+                </div>
+              </div>
+              <div className="notification-scenario-tabs" role="tablist" aria-label={tx("ui.notification_test_scenario")}>
+                {notificationScenarios.map((scenario) => (
+                  <button
+                    key={scenario.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={notificationScenario === scenario.value}
+                    className={notificationScenario === scenario.value ? "is-active" : ""}
+                    onClick={() => setNotificationScenario(scenario.value)}
+                  >
+                    {tx(scenario.label)}{notificationResults[scenario.value] ? <span aria-label={tx("ui.preview_ready")}>✓</span> : null}
+                  </button>
+                ))}
+              </div>
+              {notificationResult ? (
+                <div className="notification-preview-result" role="tabpanel">
+                  <div className="notification-preview-meta">
+                    <span><b>{tx("ui.notification_event")}</b><code>{notificationResult.preview.event}</code></span>
+                    <span><b>{tx("ui.generated_at")}</b><time>{formatDateTime(notificationResult.preview.triggered_at)}</time></span>
+                    {notificationResult.test ? (
+                      <>
+                        <span className={notificationResult.test.delivered ? "is-success" : "is-failed"}><b>{tx("ui.delivery_result")}</b>{tx(notificationResult.test.delivered ? "ui.notification_delivered" : "ui.notification_failed")}</span>
+                        <span><b>{tx("ui.http_status")}</b><code>{notificationResult.test.status_code || "-"}</code></span>
+                        <span><b>{tx("ui.attempts")}</b><code>{notificationResult.test.attempts}</code></span>
+                      </>
+                    ) : null}
+                  </div>
+                  <label className="notification-expanded-url">
+                    <span>{tx("ui.exact_get_url")}</span>
+                    <code>{notificationResult.preview.expanded_url}</code>
+                  </label>
+                  <div className="notification-variable-values">
+                    <strong>{tx("ui.current_variable_values")}</strong>
+                    <dl>
+                      {notificationVariables.map((variable) => (
+                        <div key={variable.name}><dt>{tx(variable.label)}<code>${"{"}{variable.name}{"}"}</code></dt><dd>{notificationResult.preview.variables[variable.name] ?? "-"}</dd></div>
+                      ))}
+                    </dl>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <section className="automation-settings-section">

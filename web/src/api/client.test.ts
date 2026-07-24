@@ -17,6 +17,7 @@ import {
   listInspectionResults,
   listOperations,
 	persistCurrentSettings,
+  previewInspectionNotification,
   reconcileUpdateStatus,
   retryBatch,
   saveDefaultPolicy,
@@ -27,6 +28,7 @@ import {
   scanNativeInspection,
   startImport,
   startBatchDelete,
+  testInspectionNotification,
   testAccountModel,
 } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
@@ -133,6 +135,40 @@ describe("management API client", () => {
     expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/inspection\/scan$/);
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
     expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe("POST");
+  });
+
+  it("posts current notification form values to the fixed authenticated preview and test routes", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const preview = {
+      scenario: "available_accounts_low", event: "available_accounts_low",
+      expanded_url: "https://notify.example/publish?message=0", variables: { available_accounts: "0" }, triggered_at: "2026-07-24T08:00:00Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(preview))
+      .mockResolvedValueOnce(jsonResponse({ preview, delivered: true, status_code: 204, attempts: 1, reason_code: "notification_delivered" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const request = {
+      url_template: "https://notify.example/publish?message=${available_accounts}",
+      scenario: "available_accounts_low" as const,
+      threshold_percent: 55,
+      available_accounts_threshold: 3,
+      availability_percent_threshold: 25,
+    };
+
+    await expect(previewInspectionNotification(request)).resolves.toEqual(preview);
+    await expect(testInspectionNotification(request)).resolves.toMatchObject({ delivered: true, status_code: 204 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [previewURL, previewInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [testURL, testInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(previewURL).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/inspection/notification/preview");
+    expect(testURL).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/inspection/notification/test");
+    expect(previewInit.method).toBe("POST");
+    expect(testInit.method).toBe("POST");
+    expect(JSON.parse(String(previewInit.body))).toEqual(request);
+    expect(JSON.parse(String(testInit.body))).toEqual(request);
+    expect(new Headers(previewInit.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(new Headers(testInit.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 
   it("normalizes nullable list payloads from older or malformed backends", async () => {

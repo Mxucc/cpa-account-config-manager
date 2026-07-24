@@ -106,6 +106,7 @@ const actionLabels: Record<string, UIMessageKey> = {
   inspection_scan: "ui.account_inspection",
   inspection_manual_delete: "ui.manual_inspection_bulk_delete",
   anomaly_notification: "ui.external_get_notification",
+  notification_test: "ui.external_notification_test",
   auto_disable: "ui.auto_disable",
   auto_enable: "ui.auto_enable",
   delete_candidate: "ui.add_deletion_candidate",

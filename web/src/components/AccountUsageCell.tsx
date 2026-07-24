@@ -32,7 +32,7 @@ export function AccountUsageCell({ account }: { account: Account }) {
     : String(account.provider || account.type).toLowerCase() === "codex"
       ? tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")
       : tx("ui.no_cpa_usage_data_received");
-  const exhaustedAction = longWindowExhausted && !account.disabled
+  const exhaustedAction = quotaExhausted && !account.disabled
     ? tx("ui.suggested_disable")
     : tx("ui.waiting_for_quota_recovery");
 

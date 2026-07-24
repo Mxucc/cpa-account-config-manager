@@ -84,15 +84,24 @@ func (e *WeeklyOverdraftExperiment) AllowUsageAutoDisable(usage cpaapi.UsageReco
 		return true
 	}
 	usageSnapshot := parseCodexUsageHeaders(usage.ResponseHeaders, now)
-	return usageSnapshot == nil || usageSnapshot.SevenDay == nil || usageSnapshot.SevenDay.UsedPercent < 100 ||
-		usageSnapshot.SevenDay.ResetAt != nil && !usageSnapshot.SevenDay.ResetAt.After(now)
+	if usageSnapshot == nil {
+		return true
+	}
+	if quotaWindowExhausted(usageSnapshot.FiveHour, now) {
+		return true
+	}
+	return !quotaWindowExhausted(usageSnapshot.SevenDay, now)
 }
 
 func (e *WeeklyOverdraftExperiment) AllowInspectionAutoDisable(result InspectionResult) bool {
-	if e == nil || e.enabled == nil || !e.enabled() || result.ReasonCode != "quota_exhausted" {
+	if e == nil || e.enabled == nil || !e.enabled() || result.ReasonCode != "quota_exhausted" && result.ReasonCode != "quota_limited" {
 		return true
 	}
-	return result.QuotaWindow != InspectionQuotaWindowSevenDay && result.QuotaWindow != InspectionQuotaWindowMultiple
+	return result.QuotaWindow != InspectionQuotaWindowSevenDay
+}
+
+func quotaWindowExhausted(window *UsageWindowSnapshot, now time.Time) bool {
+	return window != nil && window.UsedPercent >= 100 && (window.ResetAt == nil || window.ResetAt.After(now))
 }
 
 func (e *WeeklyOverdraftExperiment) bodyLimit() int {

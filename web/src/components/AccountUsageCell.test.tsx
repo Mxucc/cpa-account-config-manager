@@ -98,7 +98,7 @@ describe("AccountUsageCell", () => {
       usage: {
         input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
         cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
-        codex: { observed_at: "2026-07-21T12:00:00Z", seven_day: { used_percent: 100, window_minutes: 10_080 } },
+        codex: { observed_at: "2026-07-21T12:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
       },
     }} />);
     expect(screen.getByRole("status")).toHaveTextContent("额度已用尽建议禁用");

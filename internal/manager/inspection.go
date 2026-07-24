@@ -687,9 +687,12 @@ func usageObservationRequiresImmediateScan(policy InspectionPolicy, usage cpaapi
 	if !policy.Enabled || !policy.AutoDisable {
 		return false
 	}
-	if codex := parseCodexUsageHeaders(usage.ResponseHeaders, now); codex != nil && codex.SevenDay != nil &&
-		codex.SevenDay.UsedPercent >= 100 && (codex.SevenDay.ResetAt == nil || codex.SevenDay.ResetAt.After(now)) {
-		return true
+	if codex := parseCodexUsageHeaders(usage.ResponseHeaders, now); codex != nil {
+		for _, window := range []*UsageWindowSnapshot{codex.FiveHour, codex.SevenDay} {
+			if window != nil && window.UsedPercent >= 100 && (window.ResetAt == nil || window.ResetAt.After(now)) {
+				return true
+			}
+		}
 	}
 	return usage.Failed && inspection.Signal.AutoDisableEligible &&
 		inspection.Signal.ConsecutiveFailures >= policy.FailureThreshold

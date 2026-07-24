@@ -321,8 +321,8 @@ func TestCodexCredentialQuotaWindowsPreserveFiveHourAndLongWindowActions(t *test
 		wantHealth         string
 	}{
 		{name: "healthy disabled account enables", body: `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":12,"limit_window_seconds":18000},"secondary_window":{"used_percent":30,"limit_window_seconds":604800}}}`, disabled: true, wantRecommendation: InspectionRecommendationEnable, wantHealth: InspectionHealthHealthy},
-		{name: "five hour exhaustion keeps enabled account", body: `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000},"secondary_window":{"used_percent":30,"limit_window_seconds":604800}}}`, wantWindow: InspectionQuotaWindowFiveHour, wantRecommendation: InspectionRecommendationKeep, wantHealth: InspectionHealthQuotaLimited},
-		{name: "aggregate denial does not override healthy long window", body: `{"rate_limit":{"allowed":false,"limit_reached":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000},"secondary_window":{"used_percent":30,"limit_window_seconds":604800}}}`, wantWindow: InspectionQuotaWindowFiveHour, wantRecommendation: InspectionRecommendationKeep, wantHealth: InspectionHealthQuotaLimited},
+		{name: "five hour exhaustion disables enabled account", body: `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000},"secondary_window":{"used_percent":30,"limit_window_seconds":604800}}}`, wantWindow: InspectionQuotaWindowFiveHour, wantRecommendation: InspectionRecommendationDisable, wantHealth: InspectionHealthQuotaLimited},
+		{name: "aggregate denial preserves five hour remediation", body: `{"rate_limit":{"allowed":false,"limit_reached":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000},"secondary_window":{"used_percent":30,"limit_window_seconds":604800}}}`, wantWindow: InspectionQuotaWindowFiveHour, wantRecommendation: InspectionRecommendationDisable, wantHealth: InspectionHealthQuotaLimited},
 		{name: "long exhaustion disables enabled account", body: `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":10,"limit_window_seconds":18000},"secondary_window":{"used_percent":100,"limit_window_seconds":604800}}}`, wantWindow: InspectionQuotaWindowSevenDay, wantRecommendation: InspectionRecommendationDisable, wantHealth: InspectionHealthQuotaLimited},
 		{name: "long exhaustion keeps disabled account", body: `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":10,"limit_window_seconds":18000},"secondary_window":{"used_percent":100,"limit_window_seconds":604800}}}`, disabled: true, wantWindow: InspectionQuotaWindowSevenDay, wantRecommendation: InspectionRecommendationKeep, wantHealth: InspectionHealthQuotaLimited},
 	}
@@ -339,6 +339,12 @@ func TestCodexCredentialQuotaWindowsPreserveFiveHourAndLongWindowActions(t *test
 			updateInspectionRecord(&record, account, decideInspection(account, record, now), now)
 			if record.Result.Health != test.wantHealth || record.Result.QuotaWindow != test.wantWindow || record.Result.Recommendation != test.wantRecommendation {
 				t.Fatalf("window result=%#v", record.Result)
+			}
+			if test.wantWindow != "" && record.Result.ReasonCode != "quota_exhausted" {
+				t.Fatalf("explicit quota window reason = %q, want quota_exhausted", record.Result.ReasonCode)
+			}
+			if test.wantRecommendation == InspectionRecommendationDisable && !record.Result.AutoDisableEligible {
+				t.Fatalf("quota disable recommendation is not eligible for automatic remediation: %#v", record.Result)
 			}
 		})
 	}

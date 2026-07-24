@@ -157,10 +157,43 @@ func expandAnomalyNotificationURL(event anomalyNotificationEvent) (string, error
 	if errParse != nil {
 		return "", fmt.Errorf("expanded anomaly notification URL is invalid")
 	}
+	parsed.RawQuery = escapeUnsafeNotificationQuery(parsed.RawQuery)
 	if errValidate := validateAnomalyNotificationDestination(parsed); errValidate != nil {
 		return "", errValidate
 	}
 	return parsed.String(), nil
+}
+
+func escapeUnsafeNotificationQuery(query string) string {
+	var escaped strings.Builder
+	escaped.Grow(len(query))
+	for index := 0; index < len(query); index++ {
+		character := query[index]
+		if character == '%' && index+2 < len(query) && isHexDigit(query[index+1]) && isHexDigit(query[index+2]) {
+			escaped.WriteString(query[index : index+3])
+			index += 2
+			continue
+		}
+		if isNotificationQueryCharacter(character) {
+			escaped.WriteByte(character)
+			continue
+		}
+		escaped.WriteByte('%')
+		escaped.WriteByte("0123456789ABCDEF"[character>>4])
+		escaped.WriteByte("0123456789ABCDEF"[character&0x0f])
+	}
+	return escaped.String()
+}
+
+func isHexDigit(character byte) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F'
+}
+
+func isNotificationQueryCharacter(character byte) bool {
+	if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+		return true
+	}
+	return strings.ContainsRune("-._~!$&'()*+,;=:@/?", rune(character))
 }
 
 func anomalyNotificationVariableValues(event anomalyNotificationEvent) map[string]string {

@@ -68,6 +68,38 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 		t.Fatalf("combined detail message = %q, want %q", got, want)
 	}
 
+	localized := event
+	localized.URLTemplate = "https://ntfy.example/topic/publish?message=可用账号剩余${available_accounts}，可用率${available_percent}&title=CPA%20告警"
+	localizedURL, errLocalized := expandAnomalyNotificationURL(localized)
+	if errLocalized != nil {
+		t.Fatalf("expand localized template: %v", errLocalized)
+	}
+	if strings.ContainsAny(localizedURL, "可用账号剩余，率告警") {
+		t.Fatalf("localized URL contains unescaped Unicode: %q", localizedURL)
+	}
+	localizedParsed, errParseLocalized := url.Parse(localizedURL)
+	if errParseLocalized != nil {
+		t.Fatalf("parse localized URL: %v", errParseLocalized)
+	}
+	if got, want := localizedParsed.Query().Get("message"), "可用账号剩余17，可用率42"; got != want {
+		t.Fatalf("localized message = %q, want %q", got, want)
+	}
+	if got, want := localizedParsed.Query().Get("title"), "CPA 告警"; got != want {
+		t.Fatalf("localized title = %q, want %q", got, want)
+	}
+	if got, want := localizedParsed.RawQuery, "message=%E5%8F%AF%E7%94%A8%E8%B4%A6%E5%8F%B7%E5%89%A9%E4%BD%9917%EF%BC%8C%E5%8F%AF%E7%94%A8%E7%8E%8742&title=CPA%20%E5%91%8A%E8%AD%A6"; got != want {
+		t.Fatalf("localized raw query = %q, want %q", got, want)
+	}
+	localizedRequest, errLocalizedRequest := http.NewRequest(http.MethodGet, localizedURL, nil)
+	if errLocalizedRequest != nil {
+		t.Fatalf("create localized notification request: %v", errLocalizedRequest)
+	}
+	for _, character := range []byte(localizedRequest.URL.RequestURI()) {
+		if character >= 0x80 {
+			t.Fatalf("localized request URI contains a non-ASCII byte: %q", localizedRequest.URL.RequestURI())
+		}
+	}
+
 	for name, template := range map[string]string{
 		"HTTP":             "http://notify.example/events?total=${total_accounts}",
 		"loopback":         "https://127.0.0.1/events?total=${total_accounts}",

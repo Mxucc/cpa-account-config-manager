@@ -107,11 +107,18 @@ func TestWeeklyOverdraftExperimentSuppressesOnlyWeeklyQuotaAutoDisable(t *testin
 	if !experiment.AllowUsageAutoDisable(cpaapi.UsageRecord{ResponseHeaders: codexUsageObservationHeaders(now, 100, 20)}, now) {
 		t.Fatal("five-hour exhaustion was incorrectly treated as weekly overdraft")
 	}
+	if !experiment.AllowUsageAutoDisable(cpaapi.UsageRecord{ResponseHeaders: codexUsageObservationHeaders(now, 100, 100)}, now) {
+		t.Fatal("weekly exhaustion suppressed an actionable five-hour exhaustion")
+	}
 	if experiment.AllowInspectionAutoDisable(InspectionResult{ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowSevenDay}) {
 		t.Fatal("weekly quota inspection was allowed to auto-disable")
 	}
+	if experiment.AllowInspectionAutoDisable(InspectionResult{ReasonCode: "quota_limited", QuotaWindow: InspectionQuotaWindowSevenDay}) {
+		t.Fatal("weekly quota probe was allowed to bypass the overdraft guard")
+	}
 	for _, result := range []InspectionResult{
 		{ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowFiveHour},
+		{ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowMultiple},
 		{ReasonCode: "invalid_credentials", QuotaWindow: InspectionQuotaWindowSevenDay},
 		{ReasonCode: "account_deactivated"},
 	} {
@@ -152,6 +159,28 @@ func TestWeeklyOverdraftExperimentVetoesAutomaticQuotaMutation(t *testing.T) {
 	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, time.Now().UTC(), "", "")
 	if summary.AutoDisabled != 0 || summary.Failed != 0 || len(actions) != 0 || len(host.saves) != 0 {
 		t.Fatalf("weekly quota guard result summary=%#v actions=%#v saves=%d", summary, actions, len(host.saves))
+	}
+}
+
+func TestWeeklyOverdraftExperimentAllowsFiveHourQuotaMutation(t *testing.T) {
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	records := map[string]inspectionRecord{
+		"inspection-account": {Result: InspectionResult{
+			ID: "inspection-account", Name: "inspection.json", Provider: "codex", Health: InspectionHealthQuotaLimited,
+			ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowFiveHour, Confidence: InspectionConfidenceHigh,
+			Recommendation: InspectionRecommendationDisable, Editable: true, AutoDisableEligible: true, SignalSource: InspectionSignalActiveProbe,
+		}, Probe: inspectionProbeSignal{Status: "review", ReasonCode: "quota_limited"}},
+	}
+	accounts := map[string]Account{
+		"inspection-account": {ID: "inspection-account", Name: "inspection.json", Provider: "codex", Editable: true, path: "/auths/inspection.json"},
+	}
+	policy := defaultInspectionPolicy()
+	policy.AutoDisable = true
+	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, time.Now().UTC(), "", "")
+	if summary.AutoDisabled != 1 || summary.Failed != 0 || len(actions) != 1 || len(host.saves) != 1 || !records["inspection-account"].Result.Disabled {
+		t.Fatalf("five-hour quota result summary=%#v actions=%#v saves=%d record=%#v", summary, actions, len(host.saves), records["inspection-account"])
 	}
 }
 

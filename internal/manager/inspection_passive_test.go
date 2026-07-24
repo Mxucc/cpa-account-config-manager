@@ -241,8 +241,8 @@ func TestUsageObservationQueuesImmediateAutoDisableScan(t *testing.T) {
 		engine.Observe(cpaapi.UsageRecord{
 			Provider: "codex", AuthIndex: "short-window", ResponseHeaders: codexUsageObservationHeaders(now, 100, 30),
 		})
-		if engine.pending || len(engine.scanWake) != 0 {
-			t.Fatalf("short-window exhaustion queued disable scan: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+		if !engine.pending || len(engine.scanWake) != 1 {
+			t.Fatalf("short-window exhaustion did not queue disable scan: pending=%t wake=%d", engine.pending, len(engine.scanWake))
 		}
 	})
 
@@ -298,7 +298,7 @@ func TestUsageObservationAutoDisableRetriesFailedMutation(t *testing.T) {
 	defer engine.Shutdown()
 
 	record := cpaapi.UsageRecord{
-		Provider: "codex", AuthIndex: "inspection-account", ResponseHeaders: codexUsageObservationHeaders(now, 20, 100),
+		Provider: "codex", AuthIndex: "inspection-account", ResponseHeaders: codexUsageObservationHeaders(now, 100, 20),
 	}
 	usage.Observe(record)
 	engine.Observe(record)
@@ -315,7 +315,7 @@ func TestUsageObservationAutoDisableRetriesFailedMutation(t *testing.T) {
 		return result.Disabled && result.OwnedDisable && result.AutoAction == InspectionActionDisable &&
 			result.AutoActionStatus == InspectionActionSucceeded
 	})
-	if result.ReasonCode != "quota_exhausted" || result.QuotaWindow != InspectionQuotaWindowSevenDay {
+	if result.ReasonCode != "quota_exhausted" || result.QuotaWindow != InspectionQuotaWindowFiveHour {
 		t.Fatalf("automatic disable result = %#v", result)
 	}
 	host.mu.Lock()

@@ -422,16 +422,14 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "quota_limited":
-		recommendation := InspectionRecommendationDisable
-		autoDisableEligible := true
-		if probe.QuotaWindow == InspectionQuotaWindowFiveHour {
-			recommendation = InspectionRecommendationKeep
-			autoDisableEligible = false
+		reasonCode := probe.ReasonCode
+		if probe.QuotaWindow != "" {
+			reasonCode = "quota_exhausted"
 		}
 		return inspectionDecision{
-			Health: InspectionHealthQuotaLimited, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceMedium, Recommendation: recommendation,
-			AutoDisableEligible: autoDisableEligible, FailureCount: probe.ConsecutiveFailures,
+			Health: InspectionHealthQuotaLimited, ReasonCode: reasonCode,
+			Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationDisable,
+			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures,
 			SignalSource: InspectionSignalActiveProbe, QuotaWindow: probe.QuotaWindow,
 		}, true
 	case "model_not_found", "request_timeout", "upstream_unavailable", "invalid_response":

@@ -1048,6 +1048,32 @@ const server = http.createServer(async (request, response) => {
     };
     return json(response, 200, { settings: experimentalSettings });
   }
+  if (request.method === "POST" && url.pathname.endsWith("/accounts/models")) {
+    const body = await readJSON(request);
+    const targets = resolveScope(body.scope || {});
+    const editable = targets.filter((target) => target.editable);
+    const provider = editable[0]?.provider || "";
+    const sameProvider = editable.every((target) => target.provider === provider);
+    const byProvider = {
+      codex: ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol"],
+      "codex-agent-identity": ["gpt-5.5", "gpt-5.6-sol"],
+      claude: ["claude-sonnet-4-5-20250929", "claude-opus-4-1"],
+      gemini: ["gemini-2.0-flash", "gemini-2.5-pro"],
+      antigravity: ["gemini-2.0-flash", "gemini-2.5-pro"],
+    };
+    const models = sameProvider ? (byProvider[provider] || []).map((id) => ({ id, display_name: id.toUpperCase(), owned_by: provider })) : [];
+    return json(response, 200, {
+      models,
+      ...(editable.length === 1 ? { current_policy: editable[0].model_policy || { mode: "all", excluded_count: 0 } } : {}),
+      total: targets.length,
+      eligible: editable.length,
+      loaded: editable.length,
+      failed: 0,
+      read_only: targets.length - editable.length,
+      missing: 0,
+      warnings: [],
+    });
+  }
   if (request.method === "POST" && url.pathname.endsWith("/accounts/model-test")) {
     const body = await readJSON(request);
     const account = accounts.find((candidate) => candidate.id === body.account_id);

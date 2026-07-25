@@ -68,7 +68,30 @@ func (c *managementClient) PatchFields(ctx context.Context, name string, patch B
 	if !patch.HasFieldUpdates() {
 		return nil
 	}
+	if patch.ModelPolicy != nil && len(patch.resolvedModelFields) == 0 {
+		return fmt.Errorf("model policy fields were not resolved")
+	}
 	return c.patch(ctx, "/v0/management/auth-files/fields", patch.FieldPayload(name))
+}
+
+func (c *managementClient) GetAuthFileModels(ctx context.Context, name string) ([]AccountModelOption, error) {
+	if !safeAuthJSONName(name) {
+		return nil, fmt.Errorf("auth file name is invalid")
+	}
+	query := url.Values{"name": []string{name}}
+	var response struct {
+		Models []AccountModelOption `json:"models"`
+	}
+	if errRequest := c.requestJSON(ctx, http.MethodGet, "/v0/management/auth-files/models?"+query.Encode(), nil, "", &response); errRequest != nil {
+		return nil, errRequest
+	}
+	models := make([]AccountModelOption, 0, len(response.Models))
+	for _, option := range response.Models {
+		if sanitized, ok := sanitizeAccountModelOption(option); ok {
+			models = append(models, sanitized)
+		}
+	}
+	return mergeAccountModelCatalog(models, nil), nil
 }
 
 func (c *managementClient) PatchDisabled(ctx context.Context, name string, disabled bool) error {
@@ -95,6 +118,10 @@ func (c *managementClient) patch(ctx context.Context, path string, payload any) 
 }
 
 func (c *managementClient) request(ctx context.Context, method, path string, body io.Reader, contentType string) error {
+	return c.requestJSON(ctx, method, path, body, contentType, nil)
+}
+
+func (c *managementClient) requestJSON(ctx context.Context, method, path string, body io.Reader, contentType string, output any) error {
 	request, errRequest := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if errRequest != nil {
 		return fmt.Errorf("create management request: %w", errRequest)
@@ -122,6 +149,14 @@ func (c *managementClient) request(ctx context.Context, method, path string, bod
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("management API returned HTTP %d", response.StatusCode)
+	}
+	if output != nil {
+		if len(bytes.TrimSpace(responseBody)) == 0 {
+			return fmt.Errorf("management API returned an empty response")
+		}
+		if errDecode := json.Unmarshal(responseBody, output); errDecode != nil {
+			return fmt.Errorf("management API returned invalid JSON")
+		}
 	}
 	return nil
 }

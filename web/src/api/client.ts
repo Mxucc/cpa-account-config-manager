@@ -6,6 +6,7 @@ import type {
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
+	AccountModelCatalogResponse,
   BatchPatch,
   BatchPreview,
 	CPAServerVersionSnapshot,
@@ -262,6 +263,14 @@ export async function testAccountModel(accountID: string, model: string, experim
       ...(experimentalWeeklyOverdraft ? { experimental_weekly_overdraft: true } : {}),
     }),
   });
+}
+
+export async function loadAccountModels(scope: TargetScope): Promise<AccountModelCatalogResponse> {
+	const response = await request<AccountModelCatalogResponse>("/accounts/models", {
+		method: "POST",
+		body: JSON.stringify({ scope }),
+	});
+	return { ...response, models: arrayOrEmpty(response.models), warnings: arrayOrEmpty(response.warnings) };
 }
 
 export async function createAccountDeletePreview(accountID: string): Promise<AccountDeletePreview> {

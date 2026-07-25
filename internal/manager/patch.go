@@ -29,13 +29,16 @@ type HeaderPatch struct {
 }
 
 type BatchPatch struct {
-	Disabled   *bool        `json:"disabled,omitempty"`
-	Priority   *int         `json:"priority,omitempty"`
-	Note       *string      `json:"note,omitempty"`
-	Prefix     *string      `json:"prefix,omitempty"`
-	ProxyURL   *string      `json:"proxy_url,omitempty"`
-	Websockets *bool        `json:"websockets,omitempty"`
-	Headers    *HeaderPatch `json:"headers,omitempty"`
+	Disabled    *bool             `json:"disabled,omitempty"`
+	Priority    *int              `json:"priority,omitempty"`
+	Note        *string           `json:"note,omitempty"`
+	Prefix      *string           `json:"prefix,omitempty"`
+	ProxyURL    *string           `json:"proxy_url,omitempty"`
+	Websockets  *bool             `json:"websockets,omitempty"`
+	Headers     *HeaderPatch      `json:"headers,omitempty"`
+	ModelPolicy *ModelPolicyPatch `json:"model_policy,omitempty"`
+
+	resolvedModelFields map[string]any
 }
 
 type PatchSummary struct {
@@ -114,6 +117,13 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 			patch.Headers = &headers
 		}
 	}
+	if patch.ModelPolicy != nil {
+		policy, errPolicy := patch.ModelPolicy.Validate()
+		if errPolicy != nil {
+			return BatchPatch{}, errPolicy
+		}
+		patch.ModelPolicy = &policy
+	}
 	if patch.Empty() {
 		return BatchPatch{}, fmt.Errorf("at least one patch field is required")
 	}
@@ -122,7 +132,7 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 
 func (patch BatchPatch) Empty() bool {
 	return patch.Disabled == nil && patch.Priority == nil && patch.Note == nil &&
-		patch.Prefix == nil && patch.ProxyURL == nil && patch.Websockets == nil && patch.Headers == nil
+		patch.Prefix == nil && patch.ProxyURL == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil
 }
 
 func (patch BatchPatch) Summary() PatchSummary {
@@ -144,6 +154,9 @@ func (patch BatchPatch) Summary() PatchSummary {
 	}
 	if patch.Websockets != nil {
 		fields = append(fields, "websockets")
+	}
+	if patch.ModelPolicy != nil {
+		fields = append(fields, "model_policy")
 	}
 	summary := PatchSummary{Fields: fields, ProxyMutation: patch.ProxyURL != nil}
 	if patch.Headers != nil {
@@ -189,12 +202,15 @@ func (patch BatchPatch) FieldPayload(name string) map[string]any {
 		}
 		payload["headers"] = headers
 	}
+	for field, value := range patch.resolvedModelFields {
+		payload[field] = value
+	}
 	return payload
 }
 
 func (patch BatchPatch) HasFieldUpdates() bool {
 	return patch.Priority != nil || patch.Note != nil || patch.Prefix != nil ||
-		patch.ProxyURL != nil || patch.Websockets != nil || patch.Headers != nil
+		patch.ProxyURL != nil || patch.Websockets != nil || patch.Headers != nil || patch.ModelPolicy != nil
 }
 
 func cloneBatchPatch(patch BatchPatch) BatchPatch {
@@ -229,6 +245,17 @@ func cloneBatchPatch(patch BatchPatch) BatchPatch {
 			headers.Set[name] = value
 		}
 		clone.Headers = headers
+	}
+	if patch.ModelPolicy != nil {
+		policy := *patch.ModelPolicy
+		policy.Models = append([]string(nil), patch.ModelPolicy.Models...)
+		clone.ModelPolicy = &policy
+	}
+	if patch.resolvedModelFields != nil {
+		clone.resolvedModelFields = make(map[string]any, len(patch.resolvedModelFields))
+		for field, value := range patch.resolvedModelFields {
+			clone.resolvedModelFields[field] = value
+		}
 	}
 	return clone
 }

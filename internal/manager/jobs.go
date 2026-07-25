@@ -400,11 +400,11 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 	if ctx.Err() != nil {
 		return JobResult{Status: ResultInterrupted, Error: "job was interrupted before this target was updated", Retryable: true}
 	}
-	revision, errRevision := e.accounts.CurrentRevision(ctx, account)
-	if errRevision != nil {
+	document, errDocument := e.accounts.CurrentAuthDocument(ctx, account)
+	if errDocument != nil {
 		return JobResult{Status: ResultFailed, Error: "physical auth file could not be re-read", Retryable: true}
 	}
-	if revision != account.revision {
+	if document.Revision != account.revision {
 		return JobResult{Status: ResultConflict, Error: "physical auth file changed after preview", Retryable: true}
 	}
 	if operation == BatchOperationDelete {
@@ -417,9 +417,30 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 		return JobResult{Status: ResultSucceeded}
 	}
 
+	resolvedPatch := cloneBatchPatch(patch)
+	if patch.ModelPolicy != nil {
+		var catalog []AccountModelOption
+		if patch.ModelPolicy.Mode != ModelPolicyModeAll {
+			catalogClient, okCatalog := writer.(ManagementModelCatalog)
+			if !okCatalog {
+				return JobResult{Status: ResultFailed, Error: "account model catalog is unavailable", Retryable: true}
+			}
+			models, errModels := catalogClient.GetAuthFileModels(ctx, account.Name)
+			if errModels != nil {
+				return JobResult{Status: ResultFailed, Error: "account model catalog could not be loaded", Retryable: true}
+			}
+			catalog = mergeAccountModelCatalog(models, document.Metadata)
+		}
+		fields, errFields := resolveModelPolicyFields(document.Metadata, *patch.ModelPolicy, catalog)
+		if errFields != nil {
+			return JobResult{Status: ResultFailed, Error: errFields.Error(), Retryable: true}
+		}
+		resolvedPatch.resolvedModelFields = fields
+	}
+
 	applied := make([]string, 0, len(patch.Summary().Fields))
 	if patch.HasFieldUpdates() {
-		if errFields := writer.PatchFields(ctx, account.Name, patch); errFields != nil {
+		if errFields := writer.PatchFields(ctx, account.Name, resolvedPatch); errFields != nil {
 			if ctx.Err() != nil {
 				return JobResult{Status: ResultInterrupted, Error: "job was interrupted during the update", Retryable: true}
 			}

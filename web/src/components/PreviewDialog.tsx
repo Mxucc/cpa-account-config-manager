@@ -22,6 +22,7 @@ const fieldLabels: Record<string, UIMessageKey> = {
   proxy_url: "ui.proxy_url",
   websockets: "ui.websockets",
   headers: "ui.headers",
+	model_policy: "ui.model_policy",
 };
 
 export function PreviewDialog({ preview, starting, error = "", onClose, onConfirm }: PreviewDialogProps) {

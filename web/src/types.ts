@@ -33,6 +33,39 @@ export interface Account {
   updated_at?: string;
   last_refresh?: string;
   automation?: AccountAutomationSummary;
+	model_policy?: AccountModelPolicySummary;
+}
+
+export type ModelPolicyMode = "all" | "allow_only" | "deny_only";
+
+export interface AccountModelPolicySummary {
+	mode: ModelPolicyMode;
+	models?: string[];
+	excluded_count: number;
+}
+
+export interface ModelPolicyPatch {
+	mode: ModelPolicyMode;
+	models?: string[];
+}
+
+export interface AccountModelOption {
+	id: string;
+	display_name?: string;
+	type?: string;
+	owned_by?: string;
+}
+
+export interface AccountModelCatalogResponse {
+	models: AccountModelOption[];
+	current_policy?: AccountModelPolicySummary;
+	total: number;
+	eligible: number;
+	loaded: number;
+	failed: number;
+	read_only: number;
+	missing: number;
+	warnings?: string[];
 }
 
 export interface AccountAutomationSummary {
@@ -246,6 +279,7 @@ export interface BatchPatch {
   proxy_url?: string;
   websockets?: boolean;
   headers?: HeaderPatch;
+	model_policy?: ModelPolicyPatch;
 }
 
 export interface TargetScope {

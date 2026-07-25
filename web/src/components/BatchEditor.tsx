@@ -1,12 +1,12 @@
-import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
-import type { BatchPatch } from "../types";
+import type { AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-type FieldName = "disabled" | "priority" | "note" | "prefix" | "proxy_url" | "websockets" | "headers";
+type FieldName = "disabled" | "priority" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
 
 interface HeaderRow {
   id: number;
@@ -20,6 +20,7 @@ interface BatchEditorProps {
   scopeLabel: string;
   onClose: () => void;
   onSubmit: (patch: BatchPatch) => void;
+	loadModels: () => Promise<AccountModelCatalogResponse>;
 }
 
 const initialEnabled: Record<FieldName, boolean> = {
@@ -30,9 +31,10 @@ const initialEnabled: Record<FieldName, boolean> = {
   proxy_url: false,
   websockets: false,
   headers: false,
+	model_policy: false,
 };
 
-export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit }: BatchEditorProps) {
+export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels }: BatchEditorProps) {
   const { locale, tx } = useI18n();
   const [enabled, setEnabled] = useState(initialEnabled);
   const [disabled, setDisabled] = useState(false);
@@ -44,9 +46,52 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const [websockets, setWebsockets] = useState(false);
   const [headers, setHeaders] = useState<HeaderRow[]>([{ id: 1, action: "set", name: "", value: "" }]);
   const [error, setError] = useState("");
+	const [modelCatalog, setModelCatalog] = useState<AccountModelCatalogResponse | null>(null);
+	const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+	const [modelCatalogError, setModelCatalogError] = useState(false);
+	const [modelMode, setModelMode] = useState<ModelPolicyMode>("all");
+	const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+	const [modelSearch, setModelSearch] = useState("");
 
   const anyEnabled = useMemo(() => Object.values(enabled).some(Boolean), [enabled]);
   const toggle = (field: FieldName) => setEnabled((current) => ({ ...current, [field]: !current[field] }));
+	const visibleModels = useMemo(() => {
+		const query = modelSearch.trim().toLowerCase();
+		if (!query) return modelCatalog?.models ?? [];
+		return (modelCatalog?.models ?? []).filter((model) => `${model.id}\n${model.display_name ?? ""}\n${model.owned_by ?? ""}`.toLowerCase().includes(query));
+	}, [modelCatalog, modelSearch]);
+
+	const fetchModels = async () => {
+		setModelCatalogLoading(true);
+		setModelCatalogError(false);
+		try {
+			const catalog = await loadModels();
+			setModelCatalog(catalog);
+			if (catalog.current_policy) {
+				setModelMode(catalog.current_policy.mode);
+				setSelectedModels(new Set(catalog.current_policy.models ?? []));
+			}
+		} catch {
+			setModelCatalogError(true);
+		} finally {
+			setModelCatalogLoading(false);
+		}
+	};
+
+	const toggleModelPolicy = () => {
+		const nextEnabled = !enabled.model_policy;
+		setEnabled((current) => ({ ...current, model_policy: nextEnabled }));
+		if (nextEnabled && !modelCatalog && !modelCatalogLoading) void fetchModels();
+	};
+
+	const toggleModel = (modelID: string) => {
+		setSelectedModels((current) => {
+			const next = new Set(current);
+			if (next.has(modelID)) next.delete(modelID);
+			else next.add(modelID);
+			return next;
+		});
+	};
 
   const updateHeader = (id: number, update: Partial<HeaderRow>) => {
     setHeaders((rows) => rows.map((row) => row.id === id ? { ...row, ...update } : row));
@@ -95,6 +140,18 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         ...(remove.length > 0 ? { remove } : {}),
       };
     }
+		if (enabled.model_policy) {
+			if (!modelCatalog) {
+				setError(tx("ui.load_models_before_submitting"));
+				return;
+			}
+			const models = Array.from(selectedModels).sort((left, right) => left.localeCompare(right));
+			if (modelMode !== "all" && models.length === 0) {
+				setError(tx("ui.select_at_least_one_model"));
+				return;
+			}
+			patch.model_policy = { mode: modelMode, ...(modelMode === "all" ? {} : { models }) };
+		}
     setError("");
     onSubmit(patch);
   };
@@ -164,6 +221,53 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
             </button>
           </div>
         </div>
+		<div className={`edit-row edit-row-models ${enabled.model_policy ? "is-enabled" : ""}`}>
+			<label className="edit-optin">
+				<input type="checkbox" checked={enabled.model_policy} onChange={toggleModelPolicy} />
+				<span>{tx("ui.model_policy")}</span>
+			</label>
+			<div className="model-policy-editor">
+				<div className="model-policy-modes" role="group" aria-label={tx("ui.model_policy_mode")}>
+					{(["all", "allow_only", "deny_only"] as ModelPolicyMode[]).map((mode) => (
+						<button key={mode} type="button" className={modelMode === mode ? "active" : ""} disabled={!enabled.model_policy || modelCatalogLoading} onClick={() => setModelMode(mode)}>
+							{tx(mode === "all" ? "ui.all_models" : mode === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist")}
+						</button>
+					))}
+				</div>
+				{modelCatalogLoading ? (
+					<div className="model-catalog-state"><LoaderCircle className="spin" size={16} />{tx("ui.loading_models")}</div>
+				) : modelCatalogError ? (
+					<div className="model-catalog-state is-error"><span>{tx("ui.models_could_not_be_loaded")}</span><button className="button button-quiet" type="button" onClick={() => void fetchModels()}><RefreshCw size={14} />{tx("ui.retry")}</button></div>
+				) : modelCatalog ? (
+					<>
+						<div className="model-catalog-summary">
+							<span>{tx("ui.common_models_count", { count: modelCatalog.models.length })}</span>
+							<span>{tx("ui.model_catalog_loaded_count", { loaded: modelCatalog.loaded, total: modelCatalog.eligible })}</span>
+							{modelCatalog.failed > 0 ? <span className="is-warning">{tx("ui.model_catalog_failed_count", { count: modelCatalog.failed })}</span> : null}
+						</div>
+						{modelMode !== "all" ? (
+							<>
+								<div className="model-list-tools">
+									<label className="model-search"><Search size={14} /><input value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} placeholder={tx("ui.search_models")} aria-label={tx("ui.search_models")} /></label>
+									<button className="button button-quiet" type="button" onClick={() => setSelectedModels(new Set(modelCatalog.models.map((model) => model.id)))}>{tx("ui.select_all")}</button>
+									<button className="button button-quiet" type="button" onClick={() => setSelectedModels(new Set())}>{tx("ui.clear")}</button>
+								</div>
+								<div className="model-option-list" role="group" aria-label={tx("ui.available_models")}>
+									{visibleModels.map((model) => (
+										<label className="model-option" key={model.id}>
+											<input type="checkbox" checked={selectedModels.has(model.id)} onChange={() => toggleModel(model.id)} />
+											<span><strong>{model.display_name || model.id}</strong>{model.display_name && model.display_name !== model.id ? <code>{model.id}</code> : null}</span>
+											{model.owned_by ? <small>{model.owned_by}</small> : null}
+										</label>
+									))}
+									{visibleModels.length === 0 ? <div className="model-list-empty">{tx("ui.no_matching_models")}</div> : null}
+								</div>
+							</>
+						) : <p className="model-policy-help">{tx("ui.all_models_policy_help")}</p>}
+					</>
+				) : <div className="model-catalog-state">{tx("ui.enable_model_policy_to_load")}</div>}
+			</div>
+		</div>
         {error ? <div className="form-error" role="alert">{error}</div> : null}
       </form>
     </Modal>

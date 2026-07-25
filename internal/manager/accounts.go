@@ -155,21 +155,35 @@ func (s *AccountService) ResolveTargets(ctx context.Context, scope TargetScope) 
 }
 
 func (s *AccountService) CurrentRevision(ctx context.Context, account Account) (string, error) {
+	document, errDocument := s.CurrentAuthDocument(ctx, account)
+	if errDocument != nil {
+		return "", errDocument
+	}
+	return document.Revision, nil
+}
+
+func (s *AccountService) CurrentAuthDocument(ctx context.Context, account Account) (currentAuthDocument, error) {
 	if s == nil || s.host == nil {
-		return "", fmt.Errorf("auth host is unavailable")
+		return currentAuthDocument{}, fmt.Errorf("auth host is unavailable")
 	}
 	detail, errGet := s.host.GetAuth(ctx, account.ID)
 	if errGet != nil {
-		return "", fmt.Errorf("read physical auth file: %w", errGet)
+		return currentAuthDocument{}, fmt.Errorf("read physical auth file: %w", errGet)
 	}
 	raw := bytes.TrimSpace(detail.JSON)
 	if len(raw) == 0 || !json.Valid(raw) {
-		return "", fmt.Errorf("physical auth file is invalid")
+		return currentAuthDocument{}, fmt.Errorf("physical auth file is invalid")
 	}
 	if currentPath := normalizedPath(detail.Path); account.path != "" && currentPath != "" && currentPath != account.path {
-		return "", fmt.Errorf("physical auth source changed")
+		return currentAuthDocument{}, fmt.Errorf("physical auth source changed")
 	}
-	return revisionFor(raw), nil
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	metadata := make(map[string]any)
+	if errDecode := decoder.Decode(&metadata); errDecode != nil {
+		return currentAuthDocument{}, fmt.Errorf("decode physical auth file: %w", errDecode)
+	}
+	return currentAuthDocument{Revision: revisionFor(raw), Metadata: metadata}, nil
 }
 
 func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
@@ -412,6 +426,7 @@ func enrichAccount(account *Account, detail cpaapi.HostAuthGetResponse) error {
 	}
 	account.HeaderNames = safeHeaderNames(metadata["headers"])
 	account.HeaderCount = len(account.HeaderNames)
+	account.ModelPolicy = modelPolicySummary(metadata)
 	return nil
 }
 

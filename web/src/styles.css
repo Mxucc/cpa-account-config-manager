@@ -407,6 +407,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .header-row { display: grid; grid-template-columns: 80px minmax(130px, 0.8fr) minmax(150px, 1fr) 32px; gap: 6px; }
 .header-row input, .header-row select { height: 32px; }
 .header-add { justify-self: start; min-height: 30px; }
+.edit-row-models { align-items: start; }
+.edit-row-models .edit-optin { padding-top: 8px; }
+.model-policy-editor { min-width: 0; display: grid; gap: 8px; }
+.model-policy-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(100%, 460px); border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
+.model-policy-modes button { min-width: 0; min-height: 32px; padding: 5px 8px; border: none; border-right: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 700; cursor: pointer; }
+.model-policy-modes button:last-child { border-right: none; }
+.model-policy-modes button.active { background: var(--accent-soft); color: var(--accent-strong); }
+.model-policy-modes button:disabled { cursor: not-allowed; opacity: 0.55; }
+.model-catalog-state { min-height: 42px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.model-catalog-state.is-error { color: var(--danger); justify-content: space-between; }
+.model-catalog-summary { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 10px; }
+.model-catalog-summary .is-warning { color: var(--warning); }
+.model-list-tools { display: grid; grid-template-columns: minmax(150px, 1fr) auto auto; gap: 6px; }
+.model-search { height: 32px; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--muted); }
+.model-search > svg { justify-self: center; }
+.model-search input { min-width: 0; height: 30px; border: none; background: transparent; }
+.model-option-list { max-height: 250px; min-height: 72px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.model-option { min-height: 42px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.model-option:last-child { border-bottom: none; }
+.model-option:hover { background: var(--surface-2); }
+.model-option > span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.model-option strong, .model-option code { min-width: 0; overflow-wrap: anywhere; }
+.model-option strong { color: var(--text); font-size: 11px; }
+.model-option code, .model-option small { color: var(--muted); font-size: 9px; }
+.model-option small { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-list-empty { min-height: 72px; display: grid; place-items: center; color: var(--muted); font-size: 11px; }
+.model-policy-help { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .form-error, .auth-error { padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); border-radius: var(--radius-md); color: var(--danger); background: var(--danger-soft); font-size: 11px; }
 
 .policy-status-line { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; color: var(--muted); font-size: 10px; }
@@ -1245,6 +1272,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .modal-footer { min-height: 62px; padding: 10px 16px; }
   .edit-row { grid-template-columns: 1fr; gap: 7px; }
   .edit-row-headers .edit-optin { padding-top: 0; }
+	.edit-row-models .edit-optin { padding-top: 0; }
+	.model-list-tools { grid-template-columns: minmax(0, 1fr) auto auto; }
   .header-row { grid-template-columns: 76px 1fr 32px; }
   .header-row input:nth-of-type(2) { grid-column: 1 / span 2; }
   .preview-metrics { grid-template-columns: repeat(3, 1fr); }

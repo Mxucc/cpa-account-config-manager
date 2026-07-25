@@ -138,7 +138,7 @@ type FilterState = PersistedAccountFilters;
 interface EditorContext {
   title: UIMessageKey;
   scopeLabel: string;
-  scope?: TargetScope;
+	scope: TargetScope;
 }
 
 const agentIdentityLoginStatePattern = /^[A-Za-z0-9._-]{1,256}$/;
@@ -1184,7 +1184,7 @@ function AccountManagerApp() {
           <div className="bulk-actions">
             <button className="button button-success" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: false })}><Power size={16} />{tx("ui.enable_selected")}</button>
             <button className="button button-danger" type="button" disabled={previewLoading} onClick={() => void beginPreview({ disabled: true })}><PowerOff size={16} />{tx("ui.disable_selected")}</button>
-            <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorContext({ title: "ui.batch_edit", scopeLabel })}>
+            <button className="button button-primary" type="button" disabled={previewLoading} onClick={() => setEditorContext({ title: "ui.batch_edit", scopeLabel, scope: targetScope() })}>
               {previewLoading ? <LoaderCircle className="spin" size={16} /> : <SlidersHorizontal size={16} />}{tx("ui.batch_edit")}
             </button>
             <button className="button button-danger" type="button" disabled={previewLoading} onClick={() => void beginBatchDelete()}>
@@ -1196,7 +1196,7 @@ function AccountManagerApp() {
 
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
-      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
+      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} loadModels={() => api.loadAccountModels(editorContext.scope)} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
       {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}

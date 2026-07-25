@@ -51,27 +51,28 @@ type RegistrationCapabilities struct {
 }
 
 type App struct {
-	mu            sync.RWMutex
-	config        Config
-	accounts      *AccountService
-	deduplication *AccountDeduplicationService
-	deletions     *AccountDeleteService
-	previews      *PreviewService
-	jobs          *JobEngine
-	policies      *PolicyEngine
-	inspection    *InspectionEngine
-	updates       *UpdateChecker
-	force         *ForceSyncEngine
-	imports       *ImportService
-	usage         *UsageTracker
-	operations    *OperationJournal
-	modelTests    *ModelTestService
-	requestHooks  *RequestHook
-	runtime       *RuntimeOwnership
-	experiments   *ExperimentalSettingsService
-	agentIdentity *AgentIdentityExperiment
-	indexHTML     []byte
-	quiesceOnce   sync.Once
+	mu             sync.RWMutex
+	config         Config
+	accounts       *AccountService
+	deduplication  *AccountDeduplicationService
+	deletions      *AccountDeleteService
+	previews       *PreviewService
+	jobs           *JobEngine
+	policies       *PolicyEngine
+	inspection     *InspectionEngine
+	updates        *UpdateChecker
+	force          *ForceSyncEngine
+	imports        *ImportService
+	usage          *UsageTracker
+	operations     *OperationJournal
+	modelTests     *ModelTestService
+	managementDoer HTTPDoer
+	requestHooks   *RequestHook
+	runtime        *RuntimeOwnership
+	experiments    *ExperimentalSettingsService
+	agentIdentity  *AgentIdentityExperiment
+	indexHTML      []byte
+	quiesceOnce    sync.Once
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -307,6 +308,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/models", Description: "Load the common effective model catalog for an editable account scope."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/deduplicate/preview", Description: "Find duplicate upstream accounts and return a redacted review plan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test", Description: "Run one bounded account-specific model availability probe through CLIProxyAPI."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/preview", Description: "Preview deletion of one editable physical Auth file."},
@@ -391,6 +393,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		}
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/accounts":
 		return a.handleListAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/models":
+		return a.handleAccountModels(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/deduplicate/preview":
 		return a.handleAccountDeduplicationPreview(ctx)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/model-test":
@@ -814,6 +818,82 @@ func (a *App) handleListAccounts(ctx context.Context, req cpaapi.ManagementReque
 		if summary, exists := summaries[response.Accounts[index].ID]; exists {
 			response.Accounts[index].Automation = &summary
 		}
+	}
+	return jsonResponse(http.StatusOK, response)
+}
+
+func (a *App) handleAccountModels(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var request AccountModelCatalogRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	scope, errScope := request.Scope.Validate()
+	if errScope != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errScope.Error()})
+	}
+	resolved, errResolve := a.accounts.ResolveTargets(ctx, scope)
+	if errResolve != nil {
+		return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to resolve target accounts"})
+	}
+	if len(resolved.Accounts)+len(resolved.MissingIDs) == 0 {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "scope matched no accounts"})
+	}
+	if len(resolved.Accounts) > maxModelCatalogTargets {
+		return jsonResponse(http.StatusRequestEntityTooLarge, map[string]any{"error": fmt.Sprintf("model catalog scope exceeds %d accounts", maxModelCatalogTargets)})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	config := a.configSnapshot()
+	client, errClient := newManagementClient(resolveManagementBaseURL(config.ManagementBaseURL), managementKey, a.managementDoer)
+	managementKey = ""
+	if errClient != nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "account model catalog is unavailable"})
+	}
+	defer client.clearSecrets()
+
+	eligible := make([]Account, 0, len(resolved.Accounts))
+	for _, account := range resolved.Accounts {
+		if account.Editable {
+			eligible = append(eligible, account)
+		}
+	}
+	readOnly := len(resolved.Accounts) - len(eligible)
+	response := AccountModelCatalogResponse{
+		Models:   []AccountModelOption{},
+		Total:    len(resolved.Accounts) + len(resolved.MissingIDs),
+		Eligible: len(eligible),
+		ReadOnly: readOnly,
+		Missing:  len(resolved.MissingIDs),
+	}
+	if len(eligible) == 1 && len(resolved.Accounts) == 1 && len(resolved.MissingIDs) == 0 {
+		response.CurrentPolicy = eligible[0].ModelPolicy
+		if response.CurrentPolicy == nil {
+			response.CurrentPolicy = &AccountModelPolicySummary{Mode: ModelPolicyModeAll}
+		}
+	}
+	if readOnly > 0 {
+		response.Warnings = append(response.Warnings, fmt.Sprintf("%d read-only target(s) were skipped", readOnly))
+	}
+	if len(resolved.MissingIDs) > 0 {
+		response.Warnings = append(response.Warnings, fmt.Sprintf("%d missing target(s) were skipped", len(resolved.MissingIDs)))
+	}
+	if len(eligible) == 0 {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "scope contains no editable accounts"})
+	}
+	catalogs, failed := loadCommonAccountModels(ctx, a.accounts, eligible, client, config.Workers)
+	response.Loaded = len(catalogs)
+	response.Failed = failed
+	if failed > 0 {
+		response.Warnings = append(response.Warnings, fmt.Sprintf("%d account model catalog(s) could not be loaded", failed))
+	}
+	if len(catalogs) == 0 {
+		return jsonResponse(http.StatusBadGateway, map[string]any{"error": "failed to load account model catalogs"})
+	}
+	response.Models = commonAccountModels(catalogs)
+	if len(response.Models) == 0 {
+		response.Warnings = append(response.Warnings, "the loaded accounts have no common models")
 	}
 	return jsonResponse(http.StatusOK, response)
 }

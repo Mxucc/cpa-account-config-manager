@@ -37,6 +37,10 @@ type UsageStorageDiscoverer interface {
 	DiscoverAuthStorage([]cpaapi.HostAuthFileEntry)
 }
 
+type UsageIdentityReader interface {
+	UsageIdentity(string) string
+}
+
 type AccountService struct {
 	host     AuthHost
 	usage    UsageSnapshotReader
@@ -325,6 +329,9 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 	}
 	if usage != nil && authIndex != "" {
 		account.Usage = usage.Snapshot(authIndex)
+		if identities, ok := usage.(UsageIdentityReader); ok {
+			account.usageIdentity = identities.UsageIdentity(authIndex)
+		}
 	}
 	if !entry.UpdatedAt.IsZero() {
 		updatedAt := entry.UpdatedAt

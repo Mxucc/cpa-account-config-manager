@@ -748,8 +748,12 @@ func (h *importUsageAuthHost) SaveAuth(ctx context.Context, name string, rawJSON
 		return response, errSave
 	}
 	h.mu.Lock()
+	var identity struct {
+		Email string `json:"email"`
+	}
+	_ = json.Unmarshal(rawJSON, &identity)
 	h.entries = append(h.entries, cpaapi.HostAuthFileEntry{
-		AuthIndex: name, Name: name, Provider: "codex", Type: "oauth", Source: "file", Path: response.Path,
+		AuthIndex: name, Name: name, Provider: "codex", Type: "oauth", Email: identity.Email, Source: "file", Path: response.Path,
 	})
 	h.details[name] = cpaapi.HostAuthGetResponse{
 		AuthIndex: name, Name: name, Path: response.Path, JSON: append(json.RawMessage(nil), rawJSON...),

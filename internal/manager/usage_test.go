@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -123,6 +124,148 @@ func TestUsageTrackerLoadsPersistedSnapshotAndExpiresQuotaWindows(t *testing.T) 
 	if expired.Codex != nil {
 		t.Fatalf("expired codex window = %#v, want nil", expired.Codex)
 	}
+}
+
+func TestUsageTrackerUsesEmailIdentityAcrossAuthIndexChanges(t *testing.T) {
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "old-index", Provider: "codex", Type: "codex", Email: " Person@Example.com ",
+	}})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "old-index", Detail: cpaapi.UsageDetail{TotalTokens: 41}})
+
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "new-index", Provider: "codex", Type: "codex", Email: "person@example.com",
+	}})
+	if snapshot := tracker.Snapshot("new-index"); snapshot == nil || snapshot.TotalTokens != 41 {
+		t.Fatalf("usage did not follow normalized email identity: %#v", snapshot)
+	}
+	if snapshot := tracker.Snapshot("old-index"); snapshot != nil {
+		t.Fatalf("retired AuthIndex still resolved usage: %#v", snapshot)
+	}
+}
+
+func TestUsageTrackerDoesNotCarryUsageAcrossEmailReplacement(t *testing.T) {
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "stable-index", Provider: "codex", Type: "codex", Email: "old@example.com",
+	}})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "stable-index", Detail: cpaapi.UsageDetail{TotalTokens: 90}})
+
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "stable-index", Provider: "codex", Type: "codex", Email: "new@example.com",
+	}})
+	if snapshot := tracker.Snapshot("stable-index"); snapshot != nil {
+		t.Fatalf("replacement account inherited old usage: %#v", snapshot)
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "stable-index", Detail: cpaapi.UsageDetail{TotalTokens: 7}})
+	if snapshot := tracker.Snapshot("stable-index"); snapshot == nil || snapshot.TotalTokens != 7 {
+		t.Fatalf("replacement account usage = %#v, want 7 tokens", snapshot)
+	}
+}
+
+func TestUsageTrackerUsesHashedAccountIDToRejectSameEmailCollision(t *testing.T) {
+	dataDir := t.TempDir()
+	tracker := NewUsageTracker()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{usageIdentityTestEntry(t, "shared-index", "same@example.com", "account-old")})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "shared-index", Detail: cpaapi.UsageDetail{TotalTokens: 55}})
+
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{usageIdentityTestEntry(t, "shared-index", "same@example.com", "account-new")})
+	if snapshot := tracker.Snapshot("shared-index"); snapshot != nil {
+		t.Fatalf("different upstream account ID inherited usage: %#v", snapshot)
+	}
+	tracker.Close()
+
+	raw, errRead := os.ReadFile(usageStorePath(dataDir))
+	if errRead != nil {
+		t.Fatalf("read identity-aware usage state: %v", errRead)
+	}
+	for _, private := range []string{"same@example.com", "account-old", "account-new"} {
+		if bytes.Contains(raw, []byte(private)) {
+			t.Fatalf("usage state persisted raw identity %q: %s", private, raw)
+		}
+	}
+}
+
+func TestUsageTrackerSuppressesAmbiguousAuthIndexUsage(t *testing.T) {
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "duplicate", Detail: cpaapi.UsageDetail{TotalTokens: 77}})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{
+		{AuthIndex: "duplicate", Provider: "codex", Type: "codex", Email: "first@example.com"},
+		{AuthIndex: "duplicate", Provider: "codex", Type: "codex", Email: "second@example.com"},
+	})
+	if snapshot := tracker.Snapshot("duplicate"); snapshot != nil {
+		t.Fatalf("ambiguous AuthIndex exposed usage: %#v", snapshot)
+	}
+}
+
+func TestUsageTrackerSuppressesSameEmailWithConflictingAccountIDs(t *testing.T) {
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "first-index", Detail: cpaapi.UsageDetail{TotalTokens: 44}})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{
+		{AuthIndex: "missing-id-index", Provider: "codex", Type: "codex", Email: "shared@example.com"},
+		usageIdentityTestEntry(t, "first-index", "shared@example.com", "account-first"),
+		usageIdentityTestEntry(t, "second-index", "shared@example.com", "account-second"),
+	})
+	for _, authIndex := range []string{"missing-id-index", "first-index", "second-index"} {
+		if identity := tracker.UsageIdentity(authIndex); identity != "" {
+			t.Fatalf("conflicting email identity %s unexpectedly bound to %q", authIndex, identity)
+		}
+		if snapshot := tracker.Snapshot(authIndex); snapshot != nil {
+			t.Fatalf("conflicting email identity %s exposed usage: %#v", authIndex, snapshot)
+		}
+	}
+}
+
+func TestUsageTrackerMigratesVersionOneStateIntoCurrentEmailIdentity(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := usageStorePath(dataDir)
+	legacy := []byte(`{"version":1,"accounts":{"legacy-index":{"total_tokens":63,"updated_at":"2026-07-26T00:00:00Z"}}}`)
+	if errWrite := os.WriteFile(storePath, legacy, 0o600); errWrite != nil {
+		t.Fatalf("write legacy usage state: %v", errWrite)
+	}
+	tracker := NewUsageTracker()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "legacy-index", Provider: "codex", Type: "codex", Email: "legacy@example.com",
+	}})
+	if snapshot := tracker.Snapshot("legacy-index"); snapshot == nil || snapshot.TotalTokens != 63 {
+		t.Fatalf("migrated usage snapshot = %#v, want 63 tokens", snapshot)
+	}
+	tracker.Close()
+
+	raw, errRead := os.ReadFile(storePath)
+	if errRead != nil {
+		t.Fatalf("read migrated usage state: %v", errRead)
+	}
+	if !bytes.Contains(raw, []byte(`"version":2`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
+		t.Fatalf("legacy state was not safely migrated: %s", raw)
+	}
+}
+
+func usageIdentityTestEntry(t *testing.T, authIndex, email, accountID string) cpaapi.HostAuthFileEntry {
+	t.Helper()
+	var listed cpaapi.HostAuthListResponse
+	raw := fmt.Sprintf(`{"files":[{"auth_index":%q,"provider":"codex","type":"codex","email":%q,"id_token":{"chatgpt_account_id":%q}}]}`,
+		authIndex, email, accountID)
+	if errDecode := json.Unmarshal([]byte(raw), &listed); errDecode != nil || len(listed.Files) != 1 {
+		t.Fatalf("decode usage identity fixture: files=%#v err=%v", listed.Files, errDecode)
+	}
+	return listed.Files[0]
 }
 
 func TestUsagePersistenceMergesOverlappingPluginInstances(t *testing.T) {

@@ -2,6 +2,8 @@ package cpaapi
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -382,8 +384,9 @@ type HostRecentRequestEntry struct {
 // HostIDTokenInfo retains only non-secret plan metadata from CPA auth-list
 // responses. Unknown identity claims and opaque token strings are discarded.
 type HostIDTokenInfo struct {
-	PlanType        string `json:"plan_type,omitempty"`
-	ChatGPTPlanType string `json:"chatgpt_plan_type,omitempty"`
+	PlanType           string `json:"plan_type,omitempty"`
+	ChatGPTPlanType    string `json:"chatgpt_plan_type,omitempty"`
+	AccountFingerprint string `json:"-"`
 }
 
 func (i *HostIDTokenInfo) UnmarshalJSON(raw []byte) error {
@@ -409,13 +412,41 @@ func (i *HostIDTokenInfo) UnmarshalJSON(raw []byte) error {
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return nil
 	}
-	type planFields HostIDTokenInfo
-	var decoded planFields
+	var decoded struct {
+		PlanType         string `json:"plan_type,omitempty"`
+		ChatGPTPlanType  string `json:"chatgpt_plan_type,omitempty"`
+		AccountID        string `json:"account_id,omitempty"`
+		ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
+		OpenAIAuth       struct {
+			AccountID        string `json:"account_id,omitempty"`
+			ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
+		} `json:"https://api.openai.com/auth,omitempty"`
+	}
 	if errDecode := json.Unmarshal(trimmed, &decoded); errDecode != nil {
 		return errDecode
 	}
-	*i = HostIDTokenInfo(decoded)
+	i.PlanType = decoded.PlanType
+	i.ChatGPTPlanType = decoded.ChatGPTPlanType
+	accountID := strings.TrimSpace(firstNonEmptyString(
+		decoded.ChatGPTAccountID,
+		decoded.AccountID,
+		decoded.OpenAIAuth.ChatGPTAccountID,
+		decoded.OpenAIAuth.AccountID,
+	))
+	if accountID != "" && len(accountID) <= 4096 {
+		sum := sha256.Sum256([]byte(accountID))
+		i.AccountFingerprint = hex.EncodeToString(sum[:])
+	}
 	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type HostAuthFileEntry struct {

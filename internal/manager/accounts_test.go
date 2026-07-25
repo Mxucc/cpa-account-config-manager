@@ -306,6 +306,9 @@ func TestAccountServicePlanTypeProjectionRecognizesCPAInfoAndIDTokenClaims(t *te
 	}]}`), &listed); errUnmarshal != nil {
 		t.Fatalf("Unmarshal() CPA info error = %v", errUnmarshal)
 	}
+	if listed.Files[0].IDToken.AccountFingerprint == "" {
+		t.Fatal("CPA ID-token account identity was not reduced to a private fingerprint")
+	}
 
 	jsonClaims := `{"chatgpt_account_id":"account-json","chatgpt_plan_type":"team"}`
 	explicitClaims := `{"chatgpt_account_id":"account-explicit","chatgpt_plan_type":"enterprise"}`
@@ -386,6 +389,7 @@ func TestAccountServiceListJoinsSanitizedUsageAndNativeRequestActivity(t *testin
 				AuthIndex:      "auth-index-usage",
 				Name:           "usage.json",
 				Provider:       "codex",
+				Email:          "usage@example.com",
 				Source:         "file",
 				Path:           "/auths/usage.json",
 				Success:        12,

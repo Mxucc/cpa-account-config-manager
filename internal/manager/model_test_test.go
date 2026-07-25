@@ -458,7 +458,7 @@ func TestHandleAgentIdentityModelTestUsesSelectedCPAAuthForCredentialAndModelPro
 	authHost := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{
 			AuthIndex: "agent-auth", Name: "agent.json", Provider: agentIdentityProvider, Type: agentIdentityProvider,
-			AccountType: "agent_identity", Source: "file", Path: "/auths/agent.json",
+			AccountType: "agent_identity", Email: "model-test@example.com", Source: "file", Path: "/auths/agent.json",
 		}},
 		details: map[string]cpaapi.HostAuthGetResponse{
 			"agent-auth": {

@@ -265,12 +265,12 @@ func TestAppReplacementRestoresPersistedUsageIntoAccountList(t *testing.T) {
 		return &fakeAuthHost{
 			entries: []cpaapi.HostAuthFileEntry{{
 				ID: "runtime-instance-id", AuthIndex: "stable-auth-index", Name: "persisted.json",
-				Provider: "codex", Type: "oauth", Source: "file", Path: "/auths/persisted.json",
+				Provider: "codex", Type: "oauth", Email: "persisted@example.com", Source: "file", Path: "/auths/persisted.json",
 			}},
 			details: map[string]cpaapi.HostAuthGetResponse{
 				"stable-auth-index": {
 					AuthIndex: "stable-auth-index", Name: "persisted.json", Path: "/auths/persisted.json",
-					JSON: json.RawMessage(`{"type":"codex","access_token":"must-not-be-persisted"}`),
+					JSON: json.RawMessage(`{"type":"codex","email":"persisted@example.com","access_token":"must-not-be-persisted"}`),
 				},
 			},
 		}

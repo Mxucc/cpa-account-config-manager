@@ -48,39 +48,43 @@ type UsageWindowSnapshot struct {
 }
 
 type usageAggregate struct {
-	InputTokens         int64               `json:"input_tokens"`
-	OutputTokens        int64               `json:"output_tokens"`
-	ReasoningTokens     int64               `json:"reasoning_tokens"`
-	CachedTokens        int64               `json:"cached_tokens"`
-	CacheReadTokens     int64               `json:"cache_read_tokens"`
-	CacheCreationTokens int64               `json:"cache_creation_tokens"`
-	TotalTokens         int64               `json:"total_tokens"`
-	LastRequestAt       time.Time           `json:"last_request_at,omitempty"`
-	UpdatedAt           time.Time           `json:"updated_at,omitempty"`
-	Codex               *CodexUsageSnapshot `json:"codex,omitempty"`
+	Identity            usageIdentityFingerprint `json:"identity,omitempty"`
+	InputTokens         int64                    `json:"input_tokens"`
+	OutputTokens        int64                    `json:"output_tokens"`
+	ReasoningTokens     int64                    `json:"reasoning_tokens"`
+	CachedTokens        int64                    `json:"cached_tokens"`
+	CacheReadTokens     int64                    `json:"cache_read_tokens"`
+	CacheCreationTokens int64                    `json:"cache_creation_tokens"`
+	TotalTokens         int64                    `json:"total_tokens"`
+	LastRequestAt       time.Time                `json:"last_request_at,omitempty"`
+	UpdatedAt           time.Time                `json:"updated_at,omitempty"`
+	Codex               *CodexUsageSnapshot      `json:"codex,omitempty"`
 }
 
 type UsageTracker struct {
-	mu           sync.RWMutex
-	storeMu      sync.Mutex
-	accounts     map[string]usageAggregate
-	now          func() time.Time
-	store        string
-	durableStore string
-	allowDurable bool
-	loaded       bool
-	dirty        bool
-	generation   uint64
-	persistDelay time.Duration
-	wake         chan struct{}
-	stop         chan struct{}
-	done         chan struct{}
-	closeOnce    sync.Once
+	mu            sync.RWMutex
+	storeMu       sync.Mutex
+	accounts      map[string]usageAggregate
+	bindings      map[string]usageBinding
+	bindingsReady bool
+	now           func() time.Time
+	store         string
+	durableStore  string
+	allowDurable  bool
+	loaded        bool
+	dirty         bool
+	generation    uint64
+	persistDelay  time.Duration
+	wake          chan struct{}
+	stop          chan struct{}
+	done          chan struct{}
+	closeOnce     sync.Once
 }
 
 func NewUsageTracker() *UsageTracker {
 	tracker := &UsageTracker{
 		accounts:     make(map[string]usageAggregate),
+		bindings:     make(map[string]usageBinding),
 		now:          time.Now,
 		persistDelay: usagePersistDelay,
 		wake:         make(chan struct{}, 1),
@@ -137,10 +141,55 @@ func (t *UsageTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
 		return
 	}
 	authDir := discoverUsageAuthDir(entries)
-	if authDir == "" {
-		return
+	if authDir != "" {
+		t.configureDurableStore(durableUsageStorePath(authDir))
 	}
-	t.configureDurableStore(durableUsageStorePath(authDir))
+	t.bindUsageAccounts(entries)
+}
+
+func (t *UsageTracker) bindUsageAccounts(entries []cpaapi.HostAuthFileEntry) {
+	bindings := buildUsageBindings(entries)
+	now := t.currentTime()
+	changed := false
+	t.mu.Lock()
+	t.bindings = bindings
+	t.bindingsReady = true
+	for authIndex, binding := range bindings {
+		current, exists := t.accounts[binding.Key]
+		if exists && usageIdentitiesConflict(current.Identity, binding.Identity) {
+			current = usageAggregate{Identity: binding.Identity, UpdatedAt: now}
+			t.accounts[binding.Key] = current
+			changed = true
+		} else if exists {
+			mergedIdentity := mergeUsageIdentity(current.Identity, binding.Identity)
+			if mergedIdentity != current.Identity {
+				current.Identity = mergedIdentity
+				t.accounts[binding.Key] = current
+				changed = true
+			}
+		}
+		pendingKey := usagePendingKey(authIndex)
+		pending, pendingExists := t.accounts[pendingKey]
+		if !pendingExists {
+			continue
+		}
+		delete(t.accounts, pendingKey)
+		pending.Identity = mergeUsageIdentity(pending.Identity, binding.Identity)
+		if exists && !usageIdentitiesConflict(current.Identity, pending.Identity) {
+			pending = mergeUsageAggregate(pending, current)
+		}
+		pending.Identity = mergeUsageIdentity(pending.Identity, binding.Identity)
+		t.accounts[binding.Key] = pending
+		changed = true
+	}
+	if changed {
+		t.dirty = true
+		t.generation++
+	}
+	t.mu.Unlock()
+	if changed {
+		t.requestPersist()
+	}
 }
 
 func (t *UsageTracker) configureDurableStore(storePath string) {
@@ -206,10 +255,12 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	}
 
 	t.mu.Lock()
-	if _, exists := t.accounts[authIndex]; !exists && len(t.accounts) >= maxUsageAccounts {
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	if _, exists := t.accounts[storageKey]; !exists && len(t.accounts) >= maxUsageAccounts {
 		t.evictOldestLocked()
 	}
-	aggregate := t.accounts[authIndex]
+	aggregate := t.accounts[storageKey]
+	aggregate.Identity = mergeUsageIdentity(aggregate.Identity, identity)
 	aggregate.InputTokens = saturatingAdd(aggregate.InputTokens, nonNegative(record.Detail.InputTokens))
 	aggregate.OutputTokens = saturatingAdd(aggregate.OutputTokens, nonNegative(record.Detail.OutputTokens))
 	aggregate.ReasoningTokens = saturatingAdd(aggregate.ReasoningTokens, nonNegative(record.Detail.ReasoningTokens))
@@ -238,7 +289,7 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 		}
 		aggregate.Codex.ObservedAt = codex.ObservedAt
 	}
-	t.accounts[authIndex] = aggregate
+	t.accounts[storageKey] = aggregate
 	t.dirty = true
 	t.generation++
 	t.mu.Unlock()
@@ -260,10 +311,12 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 	}
 	cloned.ObservedAt = now
 	t.mu.Lock()
-	if _, exists := t.accounts[authIndex]; !exists && len(t.accounts) >= maxUsageAccounts {
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	if _, exists := t.accounts[storageKey]; !exists && len(t.accounts) >= maxUsageAccounts {
 		t.evictOldestLocked()
 	}
-	aggregate := t.accounts[authIndex]
+	aggregate := t.accounts[storageKey]
+	aggregate.Identity = mergeUsageIdentity(aggregate.Identity, identity)
 	if aggregate.Codex == nil {
 		aggregate.Codex = &CodexUsageSnapshot{}
 	}
@@ -275,7 +328,7 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 	}
 	aggregate.Codex.ObservedAt = now
 	aggregate.UpdatedAt = now
-	t.accounts[authIndex] = aggregate
+	t.accounts[storageKey] = aggregate
 	t.dirty = true
 	t.generation++
 	t.mu.Unlock()
@@ -291,12 +344,41 @@ func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
 		return nil
 	}
 	t.mu.RLock()
-	aggregate, exists := t.accounts[authIndex]
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	if t.bindingsReady && identity == (usageIdentityFingerprint{}) {
+		t.mu.RUnlock()
+		return nil
+	}
+	aggregate, exists := t.accounts[storageKey]
 	t.mu.RUnlock()
-	if !exists {
+	if !exists || usageIdentitiesConflict(aggregate.Identity, identity) {
 		return nil
 	}
 	return publicUsageSnapshot(aggregate, t.currentTime())
+}
+
+func (t *UsageTracker) UsageIdentity(authIndex string) string {
+	if t == nil {
+		return ""
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return ""
+	}
+	t.mu.RLock()
+	binding, exists := t.bindings[authIndex]
+	t.mu.RUnlock()
+	if !exists {
+		return ""
+	}
+	return binding.Key
+}
+
+func (t *UsageTracker) usageStorageKeyLocked(authIndex string) (string, usageIdentityFingerprint) {
+	if binding, exists := t.bindings[authIndex]; exists {
+		return binding.Key, binding.Identity
+	}
+	return usagePendingKey(authIndex), usageIdentityFingerprint{}
 }
 
 func (t *UsageTracker) Close() {
@@ -318,13 +400,13 @@ func (t *UsageTracker) currentTime() time.Time {
 func (t *UsageTracker) evictOldestLocked() {
 	oldestKey := ""
 	var oldest time.Time
-	for authIndex, aggregate := range t.accounts {
+	for storageKey, aggregate := range t.accounts {
 		candidate := aggregate.UpdatedAt
 		if candidate.IsZero() {
 			candidate = aggregate.LastRequestAt
 		}
-		if oldestKey == "" || candidate.Before(oldest) || candidate.Equal(oldest) && authIndex < oldestKey {
-			oldestKey = authIndex
+		if oldestKey == "" || candidate.Before(oldest) || candidate.Equal(oldest) && storageKey < oldestKey {
+			oldestKey = storageKey
 			oldest = candidate
 		}
 	}
@@ -580,9 +662,9 @@ func saturatingAdd(left, right int64) int64 {
 
 func cloneUsageAggregates(accounts map[string]usageAggregate) map[string]usageAggregate {
 	cloned := make(map[string]usageAggregate, len(accounts))
-	for authIndex, aggregate := range accounts {
+	for storageKey, aggregate := range accounts {
 		aggregate.Codex = cloneCodexUsage(aggregate.Codex)
-		cloned[authIndex] = aggregate
+		cloned[storageKey] = aggregate
 	}
 	return cloned
 }

@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	usageStoreVersion     = 1
-	usageStoreLockTimeout = 2 * time.Second
-	usageStoreLockStale   = 30 * time.Second
-	usageStoreLockRetry   = 10 * time.Millisecond
-	usageDurableDirName   = ".cpa-account-config-manager"
-	usageDurableFileName  = "usage-snapshots.state"
+	usageStoreVersion       = 2
+	legacyUsageStoreVersion = 1
+	usageStoreLockTimeout   = 2 * time.Second
+	usageStoreLockStale     = 30 * time.Second
+	usageStoreLockRetry     = 10 * time.Millisecond
+	usageDurableDirName     = ".cpa-account-config-manager"
+	usageDurableFileName    = "usage-snapshots.state"
 )
 
 type persistedUsageState struct {
@@ -92,6 +93,15 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 	if errDecode := json.Unmarshal(raw, &persisted); errDecode != nil {
 		return nil, fmt.Errorf("decode usage state: %w", errDecode)
 	}
+	if persisted.Version == legacyUsageStoreVersion {
+		migrated := make(map[string]usageAggregate, len(persisted.Accounts))
+		for authIndex, aggregate := range persisted.Accounts {
+			if key := usagePendingKey(authIndex); key != "" {
+				migrated[key] = aggregate
+			}
+		}
+		return normalizeUsageAccounts(migrated), nil
+	}
 	if persisted.Version != usageStoreVersion {
 		return nil, fmt.Errorf("unsupported usage store version %d", persisted.Version)
 	}
@@ -119,13 +129,13 @@ func normalizeUsageAccounts(values map[string]usageAggregate) map[string]usageAg
 		aggregate usageAggregate
 	}
 	entries := make([]entry, 0, len(values))
-	for authIndex, aggregate := range values {
-		authIndex = strings.TrimSpace(authIndex)
-		if authIndex == "" {
+	for storageKey, aggregate := range values {
+		storageKey = strings.TrimSpace(storageKey)
+		if !validUsageStorageKey(storageKey) {
 			continue
 		}
 		aggregate = sanitizeUsageAggregate(aggregate)
-		entries = append(entries, entry{authIndex: authIndex, aggregate: aggregate})
+		entries = append(entries, entry{authIndex: storageKey, aggregate: aggregate})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		left := entries[i].aggregate.UpdatedAt
@@ -216,6 +226,10 @@ func mergeUsageAggregates(current, stored map[string]usageAggregate) map[string]
 }
 
 func mergeUsageAggregate(current, stored usageAggregate) usageAggregate {
+	if usageIdentitiesConflict(current.Identity, stored.Identity) {
+		return sanitizeUsageAggregate(current)
+	}
+	current.Identity = mergeUsageIdentity(current.Identity, stored.Identity)
 	current.InputTokens = maxInt64(current.InputTokens, stored.InputTokens)
 	current.OutputTokens = maxInt64(current.OutputTokens, stored.OutputTokens)
 	current.ReasoningTokens = maxInt64(current.ReasoningTokens, stored.ReasoningTokens)

@@ -1085,6 +1085,7 @@ func inspectionEditableHost(disabled bool) *fakeAuthHost {
 			Name:      "inspection.json",
 			Provider:  "codex",
 			Type:      "codex",
+			Email:     "inspection@example.com",
 			Status:    "ready",
 			Disabled:  disabled,
 			Source:    "file",
@@ -1098,6 +1099,31 @@ func inspectionEditableHost(disabled bool) *fakeAuthHost {
 				JSON:      raw,
 			},
 		},
+	}
+}
+
+func TestInspectionRecordDropsStaleEvidenceWhenUsageIdentityChanges(t *testing.T) {
+	oldBinding, oldOK := usageBindingForEntry(cpaapi.HostAuthFileEntry{Provider: "codex", Email: "old@example.com"})
+	newBinding, newOK := usageBindingForEntry(cpaapi.HostAuthFileEntry{Provider: "codex", Email: "new@example.com"})
+	if !oldOK || !newOK || oldBinding.Key == newBinding.Key {
+		t.Fatalf("invalid identity fixtures: old=%#v new=%#v", oldBinding, newBinding)
+	}
+	record := inspectionRecord{
+		AccountIdentity: oldBinding.Key,
+		Signal: inspectionSignal{
+			ReasonCode: "quota_exhausted", AutoDisableEligible: true, ConsecutiveFailures: 9,
+		},
+		Probe:  inspectionProbeSignal{ReasonCode: "quota_limited", ConsecutiveFailures: 5},
+		Result: InspectionResult{ID: "stable-index", OwnedDisable: true, FailureStreak: 9},
+	}
+	account := Account{ID: "stable-index", Provider: "codex", Status: "ready", Success: 1, usageIdentity: newBinding.Key}
+	aligned := inspectionRecordForAccountIdentity(record, account)
+	if aligned.AccountIdentity != newBinding.Key || aligned.Signal != (inspectionSignal{}) || aligned.Probe != (inspectionProbeSignal{}) || aligned.Result.OwnedDisable {
+		t.Fatalf("stale inspection evidence survived identity replacement: %#v", aligned)
+	}
+	decision := decideInspection(account, record, time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC))
+	if decision.ReasonCode == "quota_exhausted" || decision.Recommendation == InspectionRecommendationDisable {
+		t.Fatalf("stale quota evidence affected replacement decision: %#v", decision)
 	}
 }
 

@@ -1913,6 +1913,7 @@ func (e *InspectionEngine) currentTime() time.Time {
 }
 
 func updateInspectionRecord(record *inspectionRecord, account Account, decision inspectionDecision, now time.Time) {
+	*record = inspectionRecordForAccountIdentity(*record, account)
 	previousHealth := record.Result.Health
 	previousReason := record.Result.ReasonCode
 	result := record.Result
@@ -2019,6 +2020,18 @@ func updateInspectionRecord(record *inspectionRecord, account Account, decision 
 		}
 	}
 	record.Result = result
+}
+
+func inspectionRecordForAccountIdentity(record inspectionRecord, account Account) inspectionRecord {
+	identity := strings.TrimSpace(account.usageIdentity)
+	if identity == "" {
+		return record
+	}
+	if existing := strings.TrimSpace(record.AccountIdentity); existing != "" && existing != identity {
+		return inspectionRecord{AccountIdentity: identity}
+	}
+	record.AccountIdentity = identity
+	return record
 }
 
 func incrementInspectionSummary(summary *InspectionRunSummary, health string) {

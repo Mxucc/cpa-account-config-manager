@@ -42,6 +42,7 @@ type Account struct {
 	detailAuthIndex string
 	path            string
 	revision        string
+	usageIdentity   string
 }
 
 type RecentRequestEntry struct {

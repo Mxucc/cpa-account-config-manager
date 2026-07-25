@@ -297,6 +297,7 @@ func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRe
 }
 
 func decideInspection(account Account, record inspectionRecord, now time.Time) inspectionDecision {
+	record = inspectionRecordForAccountIdentity(record, account)
 	now = now.UTC()
 	probeDecision, hasProbeDecision := decisionFromModelProbe(record.Probe, now)
 	// Definitive credential and account-lifecycle failures remain the highest

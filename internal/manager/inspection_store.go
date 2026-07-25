@@ -40,6 +40,7 @@ type inspectionProbeSignal struct {
 }
 
 type inspectionRecord struct {
+	AccountIdentity      string                `json:"account_identity,omitempty"`
 	Result               InspectionResult      `json:"result"`
 	Signal               inspectionSignal      `json:"signal"`
 	Probe                inspectionProbeSignal `json:"probe,omitempty"`

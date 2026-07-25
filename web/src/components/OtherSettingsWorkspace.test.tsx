@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as api from "../api/client";
 import { _resetSessionForTest, setSession } from "../store/session";
 import { OtherSettingsWorkspace } from "./OtherSettingsWorkspace";
 
@@ -60,8 +61,8 @@ describe("OtherSettingsWorkspace", () => {
     expect(within(plugin).getAllByText("0.3.0").length).toBeGreaterThan(0);
     await user.click(within(plugin).getByRole("button", { name: "更新" }));
     await waitFor(() => expect(requests.some(({ url }) => url.endsWith("/plugin-store/cpa-account-config-manager/install"))).toBe(true));
-    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*重启 CPA/));
-    expect(within(plugin).getByText(/原生插件更新后必须完整重启 CPA/)).toBeInTheDocument();
+    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*刷新页面/));
+    expect(within(plugin).queryByText(/原生插件更新后必须完整重启 CPA/)).not.toBeInTheDocument();
 
     await user.click(within(plugin).getByLabelText("自动更新"));
     await user.click(within(plugin).getByRole("button", { name: "保存设置" }));
@@ -74,6 +75,44 @@ describe("OtherSettingsWorkspace", () => {
       policy: { check_enabled: true, check_interval_hours: 24, auto_update: true },
       confirm_auto_update: true,
     });
+  });
+
+  it("keeps the mandatory restart warning only when runtime or CPA explicitly requires it", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    vi.spyOn(api, "getEffectiveUpdateStatus").mockResolvedValue({
+      policy: { check_enabled: false, check_interval_hours: 24, auto_update: false },
+      current_version: "0.2.91", latest_version: "0.3.0", update_available: true,
+      checking: false, pending: false, checked_at: "2026-07-25T08:00:00Z",
+      runtime: { active: false, superseded: false, instance_version: "0.2.91", restart_required: true, restart_recommended: false },
+    });
+    vi.spyOn(api, "getCPAServerVersionStatus").mockResolvedValue({ update_available: false, checked_at: "2026-07-25T08:00:00Z" });
+    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false } });
+    vi.spyOn(api, "installPluginUpdate").mockResolvedValue({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: true });
+
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+    const plugin = within(await screen.findByRole("region", { name: "其他配置" })).getByRole("region", { name: "插件更新" });
+    expect(within(plugin).getByText(/原生插件更新后必须完整重启 CPA/)).toBeInTheDocument();
+    expect(within(plugin).getByText(/等待首次 CPA 重启/)).toBeInTheDocument();
+    await user.click(within(plugin).getByRole("button", { name: "更新" }));
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*重启 CPA/)));
+  });
+
+  it("uses the refresh-only result for automatic plugin-store updates", async () => {
+    const onNotice = vi.fn();
+    vi.spyOn(api, "getEffectiveUpdateStatus").mockResolvedValue({
+      policy: { check_enabled: true, check_interval_hours: 24, auto_update: true },
+      current_version: "0.2.91", latest_version: "0.3.0", update_available: true,
+      checking: false, pending: false, checked_at: "2026-07-25T08:00:00Z",
+    });
+    vi.spyOn(api, "getCPAServerVersionStatus").mockResolvedValue({ update_available: false, checked_at: "2026-07-25T08:00:00Z" });
+    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false } });
+    const install = vi.spyOn(api, "installPluginUpdate").mockResolvedValue({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: false });
+
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+
+    await waitFor(() => expect(install).toHaveBeenCalledWith("0.3.0"));
+    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*刷新页面/));
   });
 
   it("persists independent weekly-overdraft, Agent Identity, and automatic model whitelist experiments", async () => {

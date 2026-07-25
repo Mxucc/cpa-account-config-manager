@@ -617,28 +617,51 @@ export async function getEffectiveUpdateStatus(checkNow = false): Promise<Update
 
 export async function installPluginUpdate(version: string): Promise<PluginInstallResult> {
   try {
+    const requestedVersion = normalizedStableVersion(version);
+    if (!requestedVersion) {
+      throw new APIError(400, "plugin store install response was invalid");
+    }
     const store = await getPluginStore();
-    if (!arrayOrEmpty(store.plugins).some((plugin) => plugin.id === pluginID)) {
+    const plugin = store.plugins_enabled ? arrayOrEmpty(store.plugins).find((entry) => entry.id === pluginID) : undefined;
+    const storeVersion = normalizedStableVersion(plugin?.version);
+    if (!plugin || !storeVersion || compareStableVersions(storeVersion.parts, requestedVersion.parts) !== 0) {
       throw new APIError(404, "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store");
     }
     const installed = await managementRequest<PluginInstallResult>("/plugin-store/cpa-account-config-manager/install", {
       method: "POST",
-      body: JSON.stringify({ version }),
+      body: JSON.stringify({ version: requestedVersion.value }),
     });
-    const result = { ...installed, restart_required: true };
-    void recordBrowserOperation("update_install", "warning", result.version).catch(() => undefined);
+    const installedVersion = normalizedStableVersion(installed.version);
+    if (installed.status !== "installed" || installed.id !== pluginID || !installedVersion ||
+      compareStableVersions(installedVersion.parts, requestedVersion.parts) !== 0) {
+      throw new APIError(502, "plugin store install response was invalid");
+    }
+    const result: PluginInstallResult = {
+      status: "installed",
+      id: pluginID,
+      version: installedVersion.value,
+      restart_required: installed.restart_required === true,
+    };
+    await recordBrowserOperation("update_install", result.restart_required ? "warning" : "succeeded", result.version).catch(() => undefined);
     return result;
   } catch (error) {
-    void recordBrowserOperation("update_install", "failed", version).catch(() => undefined);
+    await recordBrowserOperation("update_install", "failed", version).catch(() => undefined);
     throw error;
   }
 }
 
 export async function recordBrowserOperation(action: "update_install", status: "succeeded" | "failed" | "warning", version?: string): Promise<void> {
-  await request("/operations/record", {
-    method: "POST",
-    body: JSON.stringify({ action, status, version }),
-  });
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 3_000);
+  try {
+    await request("/operations/record", {
+      method: "POST",
+      body: JSON.stringify({ action, status, version }),
+      signal: controller.signal,
+    });
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
 }
 
 export async function listOperations(page: number, filters: OperationFilters = {}, signal?: AbortSignal): Promise<OperationListResponse> {

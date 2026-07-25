@@ -600,7 +600,7 @@ describe("management API client", () => {
     await saveUpdatePolicy(updateSnapshot.policy, true);
     await executeInspectionAutoDelete();
 		const installResult = await installPluginUpdate("0.3.0");
-		expect(installResult.restart_required).toBe(true);
+		expect(installResult.restart_required).toBe(false);
 
 		const [inspectionConfigURL, inspectionConfigInit] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(inspectionConfigURL).toContain("/plugins/cpa-account-config-manager/config");
@@ -636,7 +636,7 @@ describe("management API client", () => {
     expect(new Headers(installInit.headers).get("Authorization")).toBe("Bearer management-secret");
 		await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(8));
 		const [, operationInit] = fetchMock.mock.calls[8] as [string, RequestInit];
-		expect(JSON.parse(String(operationInit.body))).toMatchObject({ action: "update_install", status: "warning", version: "0.3.0" });
+		expect(JSON.parse(String(operationInit.body))).toMatchObject({ action: "update_install", status: "succeeded", version: "0.3.0" });
     expect(localStorage.length).toBe(0);
   });
 
@@ -703,6 +703,50 @@ describe("management API client", () => {
     await expect(installPluginUpdate("0.3.0")).rejects.toMatchObject({
       status: 409,
       message: "plugin_update_requires_restart",
+    });
+  });
+
+  it("normalizes restart outcomes and records the completed install before returning", async () => {
+    setSession("", "management-secret");
+    for (const test of [
+      { name: "restart required", response: { status: "installed", id: "cpa-account-config-manager", version: "v0.3.0", restart_required: true }, wantRestart: true, wantStatus: "warning" },
+      { name: "legacy response without restart flag", response: { status: "installed", id: "cpa-account-config-manager", version: "0.3.0" }, wantRestart: false, wantStatus: "succeeded" },
+    ]) {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
+        .mockResolvedValueOnce(jsonResponse(test.response))
+        .mockResolvedValueOnce(jsonResponse({}));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await installPluginUpdate("v0.3.0");
+
+      expect(result, test.name).toEqual({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: test.wantRestart });
+      expect(fetchMock, test.name).toHaveBeenCalledTimes(3);
+      expect(JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body))).toEqual({ version: "0.3.0" });
+      expect(JSON.parse(String((fetchMock.mock.calls[2] as [string, RequestInit])[1].body))).toMatchObject({
+        action: "update_install", status: test.wantStatus, version: "0.3.0",
+      });
+    }
+  });
+
+  it("rejects unverified versions and malformed plugin-store install responses", async () => {
+    setSession("", "management-secret");
+    const mismatchedStore = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.1", installed: true, installed_version: "0.2.0", update_available: true }] }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", mismatchedStore);
+    await expect(installPluginUpdate("0.3.0")).rejects.toMatchObject({ status: 404 });
+    expect(mismatchedStore).toHaveBeenCalledTimes(2);
+    expect(String(mismatchedStore.mock.calls[1][0])).toContain("/operations/record");
+
+    const malformedInstall = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.0", update_available: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ status: "installed", id: "another-plugin", version: "0.3.0", restart_required: false }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", malformedInstall);
+    await expect(installPluginUpdate("0.3.0")).rejects.toMatchObject({ status: 502, message: "plugin store install response was invalid" });
+    expect(JSON.parse(String((malformedInstall.mock.calls[2] as [string, RequestInit])[1].body))).toMatchObject({
+      action: "update_install", status: "failed", version: "0.3.0",
     });
   });
 

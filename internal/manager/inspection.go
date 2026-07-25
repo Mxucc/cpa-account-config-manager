@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -100,7 +101,7 @@ func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *Mut
 		records:          make(map[string]inspectionRecord),
 		scanWake:         make(chan struct{}, 1),
 		persistWake:      make(chan struct{}, 1),
-		notificationWake: make(chan anomalyNotificationEvent, 4),
+		notificationWake: make(chan anomalyNotificationEvent, maxInspectionNotificationEndpoints*4),
 		now:              time.Now,
 	}
 }
@@ -171,7 +172,7 @@ func (e *InspectionEngine) Configure(config Config) {
 			e.storageErr = ""
 		}
 		e.mu.Unlock()
-		if hasConfiguredPolicy && errConfiguredPolicy == nil && currentPolicy != configuredPolicy {
+		if hasConfiguredPolicy && errConfiguredPolicy == nil && !reflect.DeepEqual(currentPolicy, configuredPolicy) {
 			if _, errSave := e.SetPolicy(configuredPolicy); errSave != nil {
 				e.mu.Lock()
 				e.storageErr = "inspection state could not be persisted"

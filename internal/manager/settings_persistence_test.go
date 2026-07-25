@@ -1,6 +1,9 @@
 package manager
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestMirroredSettingsSurvivePluginPrivateDirectoryReplacement(t *testing.T) {
 	rawConfig := []byte(`
@@ -62,8 +65,8 @@ operation_settings:
 	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.ModelProbeEnabled || !config.InspectionPolicy.AnomalyNotificationEnabled || !config.InspectionPolicy.AnomalyNotificationOnly {
 		t.Fatalf("parsed inspection policy = %#v", config.InspectionPolicy)
 	}
-	if config.InspectionPolicy.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" {
-		t.Fatalf("parsed anomaly notification URL = %q", config.InspectionPolicy.AnomalyNotificationURL)
+	if config.InspectionPolicy.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" || len(config.InspectionPolicy.NotificationEndpoints) != 0 {
+		t.Fatalf("parsed legacy notification policy = URL %q endpoints %#v", config.InspectionPolicy.AnomalyNotificationURL, config.InspectionPolicy.NotificationEndpoints)
 	}
 	if !config.InspectionPolicy.NotificationAvailableEnabled || config.InspectionPolicy.NotificationAvailableBelow != 8 ||
 		!config.InspectionPolicy.NotificationPercentEnabled || config.InspectionPolicy.NotificationPercentBelow != 35 ||
@@ -84,8 +87,8 @@ operation_settings:
 	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled || !gotInspection.AnomalyNotificationEnabled || !gotInspection.AnomalyNotificationOnly {
 		t.Fatalf("restored inspection policy = %#v", gotInspection)
 	}
-	if gotInspection.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" {
-		t.Fatalf("restored anomaly notification URL = %q", gotInspection.AnomalyNotificationURL)
+	if len(gotInspection.NotificationEndpoints) != 1 || gotInspection.NotificationEndpoints[0].URL != "https://notify.example/hook?available=${available_accounts}" || !gotInspection.NotificationEndpoints[0].Enabled {
+		t.Fatalf("restored notification endpoints = %#v", gotInspection.NotificationEndpoints)
 	}
 	if !gotInspection.NotificationAvailableEnabled || gotInspection.NotificationAvailableBelow != 8 ||
 		!gotInspection.NotificationPercentEnabled || gotInspection.NotificationPercentBelow != 35 ||
@@ -114,7 +117,7 @@ operation_settings:
 	reloadedInspection := NewInspectionEngine(nil, nil, nil)
 	reloadedInspection.Configure(replacement)
 	t.Cleanup(reloadedInspection.Shutdown)
-	if got := reloadedInspection.Snapshot().Policy; got != gotInspection {
+	if got := reloadedInspection.Snapshot().Policy; !reflect.DeepEqual(got, gotInspection) {
 		t.Fatalf("inspection policy after private directory replacement = %#v, want %#v", got, gotInspection)
 	}
 	reloadedUpdates := NewUpdateChecker("0.2.982")
@@ -159,6 +162,31 @@ func TestPrivateSettingsRemainBackwardCompatibleWithoutMirroredConfig(t *testing
 	updates.Configure(config)
 	if got := updates.Snapshot().Policy; !got.CheckEnabled || got.CheckIntervalHours != 48 {
 		t.Fatalf("legacy update policy = %#v", got)
+	}
+}
+
+func TestMultipleNotificationEndpointsPersistAndReload(t *testing.T) {
+	dataDir := t.TempDir()
+	policy := defaultInspectionPolicy()
+	policy.NotificationAvailableEnabled = true
+	policy.NotificationEndpoints = []InspectionNotificationEndpoint{
+		{ID: "primary", Name: "Primary", URL: "https://primary.example/hook?available=${available_accounts}", Enabled: true},
+		{ID: "backup", Name: "Backup", URL: "https://backup.example/hook?rate=${available_percent}", Enabled: true},
+	}
+	if errSave := saveInspectionState(inspectionStorePath(dataDir), persistedInspectionState{
+		Version: inspectionStoreVersion, Policy: policy, Records: map[string]inspectionRecord{},
+	}); errSave != nil {
+		t.Fatalf("save multiple notification endpoints: %v", errSave)
+	}
+	loaded, errLoad := loadInspectionState(inspectionStorePath(dataDir))
+	if errLoad != nil {
+		t.Fatalf("load multiple notification endpoints: %v", errLoad)
+	}
+	if !reflect.DeepEqual(loaded.Policy.NotificationEndpoints, policy.NotificationEndpoints) {
+		t.Fatalf("reloaded notification endpoints = %#v, want %#v", loaded.Policy.NotificationEndpoints, policy.NotificationEndpoints)
+	}
+	if loaded.Policy.AnomalyNotificationURL != "" {
+		t.Fatalf("legacy notification URL was persisted with endpoint list: %q", loaded.Policy.AnomalyNotificationURL)
 	}
 }
 

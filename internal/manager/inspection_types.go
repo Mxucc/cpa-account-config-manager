@@ -114,38 +114,46 @@ const (
 )
 
 type InspectionPolicy struct {
-	Enabled                      bool             `json:"enabled" yaml:"enabled"`
-	ScanIntervalMinutes          int              `json:"scan_interval_minutes" yaml:"scan_interval_minutes"`
-	ModelProbeEnabled            bool             `json:"model_probe_enabled" yaml:"model_probe_enabled"`
-	ModelProbeFullSweep          bool             `json:"model_probe_full_sweep" yaml:"model_probe_full_sweep"`
-	ScanManuallyDisabled         bool             `json:"scan_manually_disabled" yaml:"scan_manually_disabled"`
-	ModelProbeIntervalMinutes    int              `json:"model_probe_interval_minutes" yaml:"model_probe_interval_minutes"`
-	ModelProbeBatchSize          int              `json:"model_probe_batch_size" yaml:"model_probe_batch_size"`
-	ModelProbeModels             ModelProbeModels `json:"model_probe_models" yaml:"model_probe_models"`
-	FailureThreshold             int              `json:"failure_threshold" yaml:"failure_threshold"`
-	RecoveryThreshold            int              `json:"recovery_threshold" yaml:"recovery_threshold"`
-	PassiveCircuitEnabled        bool             `json:"passive_circuit_enabled" yaml:"passive_circuit_enabled"`
-	PassiveFailureThreshold      int              `json:"passive_failure_threshold" yaml:"passive_failure_threshold"`
-	PassiveFailureWindowMinutes  int              `json:"passive_failure_window_minutes" yaml:"passive_failure_window_minutes"`
-	PassiveCircuitMinutes        int              `json:"passive_circuit_minutes" yaml:"passive_circuit_minutes"`
-	AutoDisable                  bool             `json:"auto_disable" yaml:"auto_disable"`
-	AutoEnable                   bool             `json:"auto_enable" yaml:"auto_enable"`
-	AutoDelete                   bool             `json:"auto_delete" yaml:"auto_delete"`
-	AutoDeleteInvalidCredentials bool             `json:"auto_delete_invalid_credentials" yaml:"auto_delete_invalid_credentials"`
-	DeleteGraceHours             int              `json:"delete_grace_hours" yaml:"delete_grace_hours"`
-	DeleteBatchSize              int              `json:"delete_batch_size" yaml:"delete_batch_size"`
-	AnomalyTriggerEnabled        bool             `json:"anomaly_trigger_enabled" yaml:"anomaly_trigger_enabled"`
-	AnomalyThresholdPercent      int              `json:"anomaly_threshold_percent" yaml:"anomaly_threshold_percent"`
-	AnomalyMinimumAccounts       int              `json:"anomaly_minimum_accounts" yaml:"anomaly_minimum_accounts"`
-	AnomalyCooldownMinutes       int              `json:"anomaly_cooldown_minutes" yaml:"anomaly_cooldown_minutes"`
-	AnomalyNotificationEnabled   bool             `json:"anomaly_notification_enabled" yaml:"anomaly_notification_enabled"`
-	AnomalyNotificationOnly      bool             `json:"anomaly_notification_only" yaml:"anomaly_notification_only"`
-	AnomalyNotificationURL       string           `json:"anomaly_notification_url" yaml:"anomaly_notification_url"`
-	NotificationAvailableEnabled bool             `json:"notification_available_accounts_enabled" yaml:"notification_available_accounts_enabled"`
-	NotificationAvailableBelow   int              `json:"notification_available_accounts_threshold" yaml:"notification_available_accounts_threshold"`
-	NotificationPercentEnabled   bool             `json:"notification_availability_percent_enabled" yaml:"notification_availability_percent_enabled"`
-	NotificationPercentBelow     int              `json:"notification_availability_percent_threshold" yaml:"notification_availability_percent_threshold"`
-	NotificationCooldownMinutes  int              `json:"notification_cooldown_minutes" yaml:"notification_cooldown_minutes"`
+	Enabled                      bool                             `json:"enabled" yaml:"enabled"`
+	ScanIntervalMinutes          int                              `json:"scan_interval_minutes" yaml:"scan_interval_minutes"`
+	ModelProbeEnabled            bool                             `json:"model_probe_enabled" yaml:"model_probe_enabled"`
+	ModelProbeFullSweep          bool                             `json:"model_probe_full_sweep" yaml:"model_probe_full_sweep"`
+	ScanManuallyDisabled         bool                             `json:"scan_manually_disabled" yaml:"scan_manually_disabled"`
+	ModelProbeIntervalMinutes    int                              `json:"model_probe_interval_minutes" yaml:"model_probe_interval_minutes"`
+	ModelProbeBatchSize          int                              `json:"model_probe_batch_size" yaml:"model_probe_batch_size"`
+	ModelProbeModels             ModelProbeModels                 `json:"model_probe_models" yaml:"model_probe_models"`
+	FailureThreshold             int                              `json:"failure_threshold" yaml:"failure_threshold"`
+	RecoveryThreshold            int                              `json:"recovery_threshold" yaml:"recovery_threshold"`
+	PassiveCircuitEnabled        bool                             `json:"passive_circuit_enabled" yaml:"passive_circuit_enabled"`
+	PassiveFailureThreshold      int                              `json:"passive_failure_threshold" yaml:"passive_failure_threshold"`
+	PassiveFailureWindowMinutes  int                              `json:"passive_failure_window_minutes" yaml:"passive_failure_window_minutes"`
+	PassiveCircuitMinutes        int                              `json:"passive_circuit_minutes" yaml:"passive_circuit_minutes"`
+	AutoDisable                  bool                             `json:"auto_disable" yaml:"auto_disable"`
+	AutoEnable                   bool                             `json:"auto_enable" yaml:"auto_enable"`
+	AutoDelete                   bool                             `json:"auto_delete" yaml:"auto_delete"`
+	AutoDeleteInvalidCredentials bool                             `json:"auto_delete_invalid_credentials" yaml:"auto_delete_invalid_credentials"`
+	DeleteGraceHours             int                              `json:"delete_grace_hours" yaml:"delete_grace_hours"`
+	DeleteBatchSize              int                              `json:"delete_batch_size" yaml:"delete_batch_size"`
+	AnomalyTriggerEnabled        bool                             `json:"anomaly_trigger_enabled" yaml:"anomaly_trigger_enabled"`
+	AnomalyThresholdPercent      int                              `json:"anomaly_threshold_percent" yaml:"anomaly_threshold_percent"`
+	AnomalyMinimumAccounts       int                              `json:"anomaly_minimum_accounts" yaml:"anomaly_minimum_accounts"`
+	AnomalyCooldownMinutes       int                              `json:"anomaly_cooldown_minutes" yaml:"anomaly_cooldown_minutes"`
+	AnomalyNotificationEnabled   bool                             `json:"anomaly_notification_enabled" yaml:"anomaly_notification_enabled"`
+	AnomalyNotificationOnly      bool                             `json:"anomaly_notification_only" yaml:"anomaly_notification_only"`
+	AnomalyNotificationURL       string                           `json:"anomaly_notification_url,omitempty" yaml:"anomaly_notification_url,omitempty"`
+	NotificationEndpoints        []InspectionNotificationEndpoint `json:"notification_endpoints" yaml:"notification_endpoints,omitempty"`
+	NotificationAvailableEnabled bool                             `json:"notification_available_accounts_enabled" yaml:"notification_available_accounts_enabled"`
+	NotificationAvailableBelow   int                              `json:"notification_available_accounts_threshold" yaml:"notification_available_accounts_threshold"`
+	NotificationPercentEnabled   bool                             `json:"notification_availability_percent_enabled" yaml:"notification_availability_percent_enabled"`
+	NotificationPercentBelow     int                              `json:"notification_availability_percent_threshold" yaml:"notification_availability_percent_threshold"`
+	NotificationCooldownMinutes  int                              `json:"notification_cooldown_minutes" yaml:"notification_cooldown_minutes"`
+}
+
+type InspectionNotificationEndpoint struct {
+	ID      string `json:"id" yaml:"id"`
+	Name    string `json:"name,omitempty" yaml:"name,omitempty"`
+	URL     string `json:"url" yaml:"url"`
+	Enabled bool   `json:"enabled" yaml:"enabled"`
 }
 
 type ModelProbeModels struct {
@@ -163,6 +171,8 @@ type InspectionPolicyUpdateRequest struct {
 }
 
 type InspectionNotificationRequest struct {
+	EndpointID                   string `json:"endpoint_id,omitempty"`
+	EndpointName                 string `json:"endpoint_name,omitempty"`
 	URLTemplate                  string `json:"url_template"`
 	Scenario                     string `json:"scenario"`
 	ThresholdPercent             int    `json:"threshold_percent"`
@@ -171,11 +181,13 @@ type InspectionNotificationRequest struct {
 }
 
 type InspectionNotificationPreview struct {
-	Scenario    string            `json:"scenario"`
-	Event       string            `json:"event"`
-	ExpandedURL string            `json:"expanded_url"`
-	Variables   map[string]string `json:"variables"`
-	TriggeredAt time.Time         `json:"triggered_at"`
+	EndpointID   string            `json:"endpoint_id,omitempty"`
+	EndpointName string            `json:"endpoint_name,omitempty"`
+	Scenario     string            `json:"scenario"`
+	Event        string            `json:"event"`
+	ExpandedURL  string            `json:"expanded_url"`
+	Variables    map[string]string `json:"variables"`
+	TriggeredAt  time.Time         `json:"triggered_at"`
 }
 
 type InspectionNotificationTestResult struct {
@@ -453,6 +465,8 @@ func defaultModelProbeModels() ModelProbeModels {
 
 func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 	policy.AnomalyNotificationURL = strings.TrimSpace(policy.AnomalyNotificationURL)
+	policy.NotificationEndpoints = normalizeInspectionNotificationEndpoints(policy.NotificationEndpoints, policy.AnomalyNotificationURL)
+	policy.AnomalyNotificationURL = ""
 	if policy.ScanIntervalMinutes == 0 {
 		policy.ScanIntervalMinutes = defaultInspectionInterval
 	}
@@ -585,14 +599,12 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 		return InspectionPolicy{}, fmt.Errorf("anomaly_notification_only requires anomaly_notification_enabled")
 	}
 	notificationEnabled := policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled
-	if notificationEnabled {
-		if errTemplate := validateAnomalyNotificationTemplate(policy.AnomalyNotificationURL); errTemplate != nil {
-			return InspectionPolicy{}, errTemplate
-		}
-	} else if policy.AnomalyNotificationURL != "" {
-		if errTemplate := validateAnomalyNotificationTemplate(policy.AnomalyNotificationURL); errTemplate != nil {
-			return InspectionPolicy{}, errTemplate
-		}
+	enabledEndpoints, errEndpoints := validateInspectionNotificationEndpoints(policy.NotificationEndpoints)
+	if errEndpoints != nil {
+		return InspectionPolicy{}, errEndpoints
+	}
+	if notificationEnabled && enabledEndpoints == 0 {
+		return InspectionPolicy{}, fmt.Errorf("at least one notification endpoint must be enabled when notifications are enabled")
 	}
 	if policy.AutoDelete && !policy.AutoDisable {
 		return InspectionPolicy{}, fmt.Errorf("auto_delete requires auto_disable")

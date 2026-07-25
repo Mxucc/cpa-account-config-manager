@@ -896,7 +896,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .other-settings-toolbar > div { min-width: 0; display: grid; gap: 3px; }
 .other-settings-toolbar strong { font-size: 16px; }
 .other-settings-toolbar span { color: var(--text-secondary); font-size: 10px; }
-.other-settings-tabs { min-height: 44px; display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
+.other-settings-tabs { min-height: 44px; display: grid; grid-template-columns: repeat(3, minmax(0, 180px)); align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
 .other-settings-tabs button { min-width: 0; min-height: 43px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font-size: 11px; font-weight: 700; cursor: pointer; }
 .other-settings-tabs button:hover { color: var(--text-primary); background: var(--bg-hover); }
 .other-settings-tabs button.active { border-bottom-color: var(--primary-color); color: var(--primary-active); background: var(--bg-primary); }
@@ -925,6 +925,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .update-policy-controls .number-suffix input { width: 62px; height: 32px; border: none; padding: 0 7px; color: var(--text-primary); background: var(--bg-primary); font-size: 10px; }
 .update-policy-controls .number-suffix b { padding: 0 7px; color: var(--text-tertiary); font-size: 8px; font-weight: 600; }
 .other-settings-confirmation { margin: 10px 12px 0; }
+.external-notification-settings { min-width: 0; display: flex; flex-direction: column; }
+.notification-settings-header { min-height: 64px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-secondary); }
+.notification-settings-header > div { min-width: 0; display: grid; gap: 3px; }
+.notification-settings-header strong { color: var(--text-primary); font-size: 12px; }
+.notification-settings-header span { color: var(--text-secondary); font-size: 9px; line-height: 1.45; }
+.notification-global-settings { min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--border-color); }
+.notification-global-settings .automation-setting { border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+.notification-settings-error { margin: 10px 12px 0; }
+.notification-endpoint-list { min-width: 0; display: grid; }
+.notification-endpoint-row { min-width: 0; border-bottom: 1px solid var(--border-primary); }
+.notification-endpoint-heading { min-width: 0; display: grid; grid-template-columns: auto minmax(180px, 0.35fr) auto; align-items: center; gap: 10px; padding: 9px 12px; background: var(--bg-secondary); }
+.notification-endpoint-heading > label:not(.switch-control) { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text-secondary); font-size: 9px; }
+.notification-endpoint-heading input[type="text"] { min-width: 0; width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-size: 10px; }
+.notification-endpoint-heading .icon-button { justify-self: end; }
+.notification-endpoint-actions { min-height: 48px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 7px 12px; border-top: 1px solid var(--border-color); }
+.notification-endpoint-empty { min-height: 180px; display: grid; place-items: center; align-content: center; gap: 10px; padding: 20px; color: var(--text-tertiary); font-size: 10px; }
+.notification-settings-save { border-top: 1px solid var(--border-color); }
+.notification-settings-save > span { margin-right: auto; color: var(--text-tertiary); font-size: 9px; }
 .settings-section-actions { min-height: 58px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; margin-top: auto; padding: 9px 12px; }
 .settings-section-actions .button { min-width: 0; }
 .settings-section-actions a { text-decoration: none; }
@@ -1307,7 +1325,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .app-shell, .app-shell.with-job-panel { padding-bottom: 176px; }
   .app-header, .with-job-panel .app-header { grid-template-columns: 1fr; }
   .workspace-controls { gap: 6px; }
-  .other-settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 8px; }
+  .other-settings-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-inline: 8px; }
   .other-settings-tabs button { padding-inline: 7px; font-size: 9px; }
   .experimental-feature-row { align-items: flex-start; flex-direction: column; }
   .experimental-feature-switch { margin-left: 45px; }
@@ -1381,6 +1399,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notification-test-heading { align-items: stretch; flex-direction: column; }
   .notification-test-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .notification-preview-meta, .notification-variable-values dl { grid-template-columns: 1fr; }
+  .notification-settings-header { grid-template-columns: auto minmax(0, 1fr); }
+  .notification-settings-header > .button { grid-column: 1 / -1; }
+  .notification-global-settings { grid-template-columns: 1fr; }
+  .notification-endpoint-heading { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .notification-endpoint-heading > label:not(.switch-control) { grid-template-columns: 1fr; gap: 4px; }
   .probe-model-field, .probe-model-field:last-child:nth-child(odd) { grid-column: auto; border-right: none; }
   .action-history-row { grid-template-columns: 18px minmax(0, 1fr) 88px; padding-inline: 10px; }
   .filter-heading { align-items: flex-start; }

@@ -614,6 +614,7 @@ export interface InspectionPolicy {
   anomaly_notification_enabled: boolean;
   anomaly_notification_only: boolean;
   anomaly_notification_url: string;
+  notification_endpoints?: InspectionNotificationEndpoint[];
   notification_available_accounts_enabled: boolean;
   notification_available_accounts_threshold: number;
   notification_availability_percent_enabled: boolean;
@@ -621,9 +622,18 @@ export interface InspectionPolicy {
   notification_cooldown_minutes: number;
 }
 
+export interface InspectionNotificationEndpoint {
+  id: string;
+  name?: string;
+  url: string;
+  enabled: boolean;
+}
+
 export type InspectionNotificationScenario = "manual_test" | "anomaly_threshold" | "available_accounts_low" | "availability_percent_low" | "combined";
 
 export interface InspectionNotificationRequest {
+  endpoint_id?: string;
+  endpoint_name?: string;
   url_template: string;
   scenario: InspectionNotificationScenario;
   threshold_percent: number;
@@ -632,6 +642,8 @@ export interface InspectionNotificationRequest {
 }
 
 export interface InspectionNotificationPreview {
+  endpoint_id?: string;
+  endpoint_name?: string;
   scenario: InspectionNotificationScenario;
   event: string;
   expanded_url: string;

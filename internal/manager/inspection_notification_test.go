@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -575,6 +576,129 @@ func TestInspectionNotificationCooldownSurvivesRestart(t *testing.T) {
 	}
 	if !restarted.evaluateInspectionNotification(policy, accounts, records, now.Add(60*time.Minute), true) {
 		t.Fatal("notification did not trigger at the persisted cooldown boundary")
+	}
+}
+
+func TestInspectionNotificationEndpointValidationBoundaries(t *testing.T) {
+	valid := defaultInspectionPolicy()
+	valid.NotificationAvailableEnabled = true
+	valid.NotificationEndpoints = make([]InspectionNotificationEndpoint, maxInspectionNotificationEndpoints)
+	for index := range valid.NotificationEndpoints {
+		valid.NotificationEndpoints[index] = InspectionNotificationEndpoint{
+			ID: fmt.Sprintf("endpoint-%d", index+1), URL: fmt.Sprintf("https://notify-%d.example/hook", index+1), Enabled: index == 0,
+		}
+	}
+	if _, errValidate := validateInspectionPolicy(valid); errValidate != nil {
+		t.Fatalf("maximum endpoint policy validation error = %v", errValidate)
+	}
+
+	tests := map[string]func(*InspectionPolicy){
+		"too many": func(policy *InspectionPolicy) {
+			policy.NotificationEndpoints = append(policy.NotificationEndpoints, InspectionNotificationEndpoint{ID: "overflow", URL: "https://overflow.example/hook"})
+		},
+		"duplicate URL": func(policy *InspectionPolicy) {
+			policy.NotificationEndpoints[1].URL = policy.NotificationEndpoints[0].URL
+		},
+		"duplicate id": func(policy *InspectionPolicy) {
+			policy.NotificationEndpoints[1].ID = policy.NotificationEndpoints[0].ID
+		},
+		"private destination": func(policy *InspectionPolicy) {
+			policy.NotificationEndpoints[0].URL = "https://127.0.0.1/hook"
+		},
+		"no enabled endpoint": func(policy *InspectionPolicy) {
+			for index := range policy.NotificationEndpoints {
+				policy.NotificationEndpoints[index].Enabled = false
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			policy := valid
+			policy.NotificationEndpoints = append([]InspectionNotificationEndpoint(nil), valid.NotificationEndpoints...)
+			mutate(&policy)
+			if _, errValidate := validateInspectionPolicy(policy); errValidate == nil {
+				t.Fatal("invalid notification endpoint policy was accepted")
+			}
+		})
+	}
+}
+
+func TestInspectionNotificationFansOutSkipsDisabledAndLogsEachOutcome(t *testing.T) {
+	policy := defaultInspectionPolicy()
+	policy.NotificationAvailableEnabled = true
+	policy.NotificationAvailableBelow = 2
+	policy.NotificationEndpoints = []InspectionNotificationEndpoint{
+		{ID: "primary", Name: "Primary", URL: "https://primary.example/hook?available=${available_accounts}", Enabled: true},
+		{ID: "disabled", Name: "Disabled", URL: "https://disabled.example/hook", Enabled: false},
+		{ID: "backup", Name: "Backup", URL: "https://backup.example/hook?rate=${available_percent}", Enabled: true},
+	}
+
+	journal := NewOperationJournal()
+	journal.Configure(Config{DataDir: t.TempDir()})
+	requestedHosts := make(chan string, 3)
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.SetOperationJournal(journal)
+	engine.notificationDoer = anomalyNotificationDoerFunc(func(request *http.Request) (*http.Response, error) {
+		requestedHosts <- request.URL.Hostname()
+		status := http.StatusNoContent
+		if request.URL.Hostname() == "backup.example" {
+			status = http.StatusBadRequest
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("private")), Header: make(http.Header), Request: request}, nil
+	})
+	engine.Configure(Config{DataDir: t.TempDir(), InspectionPolicy: &policy})
+	t.Cleanup(engine.Shutdown)
+
+	now := time.Date(2026, time.July, 26, 10, 0, 0, 0, time.UTC)
+	accounts := map[string]Account{"limited": {ID: "limited"}}
+	records := map[string]inspectionRecord{"limited": {Result: InspectionResult{ID: "limited", Health: InspectionHealthQuotaLimited}}}
+	if !engine.evaluateInspectionNotification(policy, accounts, records, now, true) {
+		t.Fatal("multi-endpoint notification did not trigger")
+	}
+
+	hosts := map[string]bool{}
+	for len(hosts) < 2 {
+		select {
+		case host := <-requestedHosts:
+			hosts[host] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("notification hosts = %#v, want primary and backup", hosts)
+		}
+	}
+	if !hosts["primary.example"] || !hosts["backup.example"] || hosts["disabled.example"] {
+		t.Fatalf("notification hosts = %#v", hosts)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		operations := journal.List(OperationQuery{Page: 1}).Operations
+		if len(operations) >= 2 {
+			outcomes := map[string]string{}
+			for _, entry := range operations {
+				outcomes[entry.TargetID] = entry.Status
+			}
+			if outcomes["primary"] != OperationStatusSucceeded || outcomes["backup"] != OperationStatusFailed {
+				t.Fatalf("notification outcomes = %#v", outcomes)
+			}
+			if _, exists := outcomes["disabled"]; exists {
+				t.Fatalf("disabled endpoint was logged as sent: %#v", outcomes)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("per-endpoint notification operations were not recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if engine.evaluateInspectionNotification(policy, accounts, records, now.Add(59*time.Minute), true) {
+		t.Fatal("one fan-out event consumed more than one cooldown window")
+	}
+
+	disabledOnly := policy
+	disabledOnly.NotificationEndpoints = []InspectionNotificationEndpoint{{ID: "disabled", URL: "https://disabled.example/hook", Enabled: false}}
+	withoutDestinations := NewInspectionEngine(nil, nil, nil)
+	if withoutDestinations.evaluateInspectionNotification(disabledOnly, accounts, records, now, true) || !withoutDestinations.lastNotificationAt.IsZero() {
+		t.Fatal("disabled-only endpoints triggered or consumed notification cooldown")
 	}
 }
 

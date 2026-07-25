@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	maxAnomalyNotificationURLBytes = 4096
-	anomalyNotificationTimeout     = 10 * time.Second
-	anomalyNotificationAttempts    = 3
-	maxAnomalyNotificationResponse = 4 << 10
+	maxAnomalyNotificationURLBytes     = 4096
+	maxInspectionNotificationEndpoints = 20
+	maxInspectionNotificationNameBytes = 80
+	anomalyNotificationTimeout         = 10 * time.Second
+	anomalyNotificationAttempts        = 3
+	maxAnomalyNotificationResponse     = 4 << 10
 )
 
 var anomalyNotificationVariablePattern = regexp.MustCompile(`\$\{([a-z_]+)\}`)
@@ -72,10 +74,77 @@ type anomalyNotificationMetrics struct {
 }
 
 type anomalyNotificationEvent struct {
-	URLTemplate string
-	Event       string
-	Metrics     anomalyNotificationMetrics
-	TriggeredAt time.Time
+	EndpointID   string
+	EndpointName string
+	URLTemplate  string
+	Event        string
+	Metrics      anomalyNotificationMetrics
+	TriggeredAt  time.Time
+}
+
+var inspectionNotificationEndpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func normalizeInspectionNotificationEndpoints(endpoints []InspectionNotificationEndpoint, legacyURL string) []InspectionNotificationEndpoint {
+	if len(endpoints) == 0 && strings.TrimSpace(legacyURL) != "" {
+		endpoints = []InspectionNotificationEndpoint{{ID: "legacy", URL: legacyURL, Enabled: true}}
+	}
+	normalized := make([]InspectionNotificationEndpoint, 0, len(endpoints))
+	for index, endpoint := range endpoints {
+		endpoint.ID = strings.TrimSpace(endpoint.ID)
+		if endpoint.ID == "" {
+			endpoint.ID = fmt.Sprintf("notification-%d", index+1)
+		}
+		endpoint.Name = strings.TrimSpace(endpoint.Name)
+		endpoint.URL = strings.TrimSpace(endpoint.URL)
+		normalized = append(normalized, endpoint)
+	}
+	return normalized
+}
+
+func validateInspectionNotificationEndpoints(endpoints []InspectionNotificationEndpoint) (int, error) {
+	if len(endpoints) > maxInspectionNotificationEndpoints {
+		return 0, fmt.Errorf("notification_endpoints must contain at most %d entries", maxInspectionNotificationEndpoints)
+	}
+	ids := make(map[string]struct{}, len(endpoints))
+	urls := make(map[string]struct{}, len(endpoints))
+	enabled := 0
+	for _, endpoint := range endpoints {
+		if !inspectionNotificationEndpointIDPattern.MatchString(endpoint.ID) {
+			return 0, fmt.Errorf("notification endpoint id is invalid")
+		}
+		if _, duplicate := ids[endpoint.ID]; duplicate {
+			return 0, fmt.Errorf("notification endpoint id %q is duplicated", endpoint.ID)
+		}
+		ids[endpoint.ID] = struct{}{}
+		if len(endpoint.Name) > maxInspectionNotificationNameBytes || strings.IndexFunc(endpoint.Name, func(character rune) bool {
+			return character < 0x20 || character == 0x7f
+		}) >= 0 {
+			return 0, fmt.Errorf("notification endpoint name is invalid")
+		}
+		if _, duplicate := urls[endpoint.URL]; duplicate {
+			return 0, fmt.Errorf("notification endpoint URL is duplicated")
+		}
+		urls[endpoint.URL] = struct{}{}
+		if errTemplate := validateAnomalyNotificationTemplate(endpoint.URL); errTemplate != nil {
+			return 0, fmt.Errorf("notification endpoint %q: %w", endpoint.ID, errTemplate)
+		}
+		if endpoint.Enabled {
+			enabled++
+		}
+	}
+	return enabled, nil
+}
+
+func inspectionNotificationEndpointsEqual(left, right []InspectionNotificationEndpoint) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 type anomalyNotificationResult struct {
@@ -223,12 +292,21 @@ func notificationPercentValue(value int) string {
 }
 
 func inspectionNotificationEnabled(policy InspectionPolicy) bool {
-	return policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled
+	if !(policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled) {
+		return false
+	}
+	for _, endpoint := range normalizeInspectionNotificationEndpoints(policy.NotificationEndpoints, policy.AnomalyNotificationURL) {
+		if endpoint.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectionNotificationPolicyChanged(previous, next InspectionPolicy) bool {
 	return previous.AnomalyNotificationEnabled != next.AnomalyNotificationEnabled ||
 		previous.AnomalyNotificationURL != next.AnomalyNotificationURL ||
+		!inspectionNotificationEndpointsEqual(previous.NotificationEndpoints, next.NotificationEndpoints) ||
 		previous.AnomalyThresholdPercent != next.AnomalyThresholdPercent ||
 		previous.AnomalyMinimumAccounts != next.AnomalyMinimumAccounts ||
 		previous.NotificationAvailableEnabled != next.NotificationAvailableEnabled ||
@@ -261,7 +339,17 @@ func normalizeInspectionNotificationScenario(value string) (string, string, erro
 }
 
 func validateInspectionNotificationRequest(request InspectionNotificationRequest) (InspectionNotificationRequest, string, error) {
+	request.EndpointID = strings.TrimSpace(request.EndpointID)
+	request.EndpointName = strings.TrimSpace(request.EndpointName)
 	request.URLTemplate = strings.TrimSpace(request.URLTemplate)
+	if request.EndpointID != "" && !inspectionNotificationEndpointIDPattern.MatchString(request.EndpointID) {
+		return InspectionNotificationRequest{}, "", fmt.Errorf("notification endpoint id is invalid")
+	}
+	if len(request.EndpointName) > maxInspectionNotificationNameBytes || strings.IndexFunc(request.EndpointName, func(character rune) bool {
+		return character < 0x20 || character == 0x7f
+	}) >= 0 {
+		return InspectionNotificationRequest{}, "", fmt.Errorf("notification endpoint name is invalid")
+	}
 	scenario, event, errScenario := normalizeInspectionNotificationScenario(request.Scenario)
 	if errScenario != nil {
 		return InspectionNotificationRequest{}, "", errScenario
@@ -312,16 +400,19 @@ func (e *InspectionEngine) PreviewNotification(ctx context.Context, request Insp
 	metrics.AvailabilityThreshold = request.AvailabilityPercentThreshold
 	triggeredAt := e.currentTime()
 	event := anomalyNotificationEvent{
-		URLTemplate: request.URLTemplate,
-		Event:       eventName,
-		Metrics:     metrics,
-		TriggeredAt: triggeredAt,
+		EndpointID:   request.EndpointID,
+		EndpointName: request.EndpointName,
+		URLTemplate:  request.URLTemplate,
+		Event:        eventName,
+		Metrics:      metrics,
+		TriggeredAt:  triggeredAt,
 	}
 	expanded, errExpand := expandAnomalyNotificationURL(event)
 	if errExpand != nil {
 		return InspectionNotificationPreview{}, errExpand
 	}
 	return InspectionNotificationPreview{
+		EndpointID: request.EndpointID, EndpointName: request.EndpointName,
 		Scenario: request.Scenario, Event: eventName, ExpandedURL: expanded,
 		Variables: anomalyNotificationVariableValues(event), TriggeredAt: triggeredAt,
 	}, nil
@@ -333,8 +424,10 @@ func (e *InspectionEngine) TestNotification(ctx context.Context, request Inspect
 		return InspectionNotificationTestResult{}, errPreview
 	}
 	event := anomalyNotificationEvent{
-		URLTemplate: request.URLTemplate,
-		Event:       preview.Event,
+		EndpointID:   request.EndpointID,
+		EndpointName: request.EndpointName,
+		URLTemplate:  request.URLTemplate,
+		Event:        preview.Event,
 		Metrics: anomalyNotificationMetrics{
 			TotalAccounts:              parseNotificationMetric(preview.Variables, "total_accounts"),
 			EligibleAccounts:           parseNotificationMetric(preview.Variables, "eligible_accounts"),
@@ -388,7 +481,7 @@ func (e *InspectionEngine) recordNotificationTest(event anomalyNotificationEvent
 	journal.Record(OperationEntry{
 		Category: OperationCategoryInspection, Action: OperationActionNotificationTest,
 		Status: status, Source: OperationSourceManual, Scope: OperationScopeSystem,
-		TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
+		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
 		StartedAt: event.TriggeredAt, FinishedAt: e.currentTime(), ReasonCode: result.ReasonCode,
 		HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})
@@ -423,6 +516,17 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 	if e == nil || !evaluate {
 		return false
 	}
+	endpoints := normalizeInspectionNotificationEndpoints(policy.NotificationEndpoints, policy.AnomalyNotificationURL)
+	hasEnabledEndpoint := false
+	for _, endpoint := range endpoints {
+		if endpoint.Enabled {
+			hasEnabledEndpoint = true
+			break
+		}
+	}
+	if !hasEnabledEndpoint {
+		return false
+	}
 	metrics := inspectionAnomalyNotificationMetrics(accounts, records)
 	reasons := inspectionNotificationReasons(policy, metrics)
 	if len(reasons) == 0 {
@@ -442,12 +546,19 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 	metrics.ThresholdPercent = policy.AnomalyThresholdPercent
 	metrics.AvailableAccountsThreshold = policy.NotificationAvailableBelow
 	metrics.AvailabilityThreshold = policy.NotificationPercentBelow
-	e.queueAnomalyNotification(anomalyNotificationEvent{
-		URLTemplate: policy.AnomalyNotificationURL,
-		Event:       strings.Join(reasons, ","),
-		Metrics:     metrics,
-		TriggeredAt: now.UTC(),
-	})
+	for _, endpoint := range endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		e.queueAnomalyNotification(anomalyNotificationEvent{
+			EndpointID:   endpoint.ID,
+			EndpointName: endpoint.Name,
+			URLTemplate:  endpoint.URL,
+			Event:        strings.Join(reasons, ","),
+			Metrics:      metrics,
+			TriggeredAt:  now.UTC(),
+		})
+	}
 	return true
 }
 
@@ -572,7 +683,7 @@ func (e *InspectionEngine) recordAnomalyNotification(event anomalyNotificationEv
 	journal.Record(OperationEntry{
 		Category: OperationCategoryInspection, Action: OperationActionAnomalyNotification,
 		Status: status, Source: OperationSourceInspection, Scope: OperationScopeSystem,
-		TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
+		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
 		StartedAt: event.TriggeredAt, FinishedAt: finishedAt, ReasonCode: result.ReasonCode,
 		HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})

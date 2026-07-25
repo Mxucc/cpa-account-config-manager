@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  BellRing,
   ExternalLink,
   FlaskConical,
 	KeyRound,
@@ -16,6 +17,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { CPAServerVersionSnapshot, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
+import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 
 interface OtherSettingsWorkspaceProps {
   onAPIError: (error: unknown) => void;
@@ -27,7 +29,8 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<"general" | "experimental">("general");
+  const [activeSection, setActiveSection] = useState<"notifications" | "updates" | "experimental">("notifications");
+  const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -234,14 +237,17 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
         <div><strong>{tx("ui.other_settings")}</strong><span>{tx("ui.other_settings_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading} onClick={() => void refreshAll()}>
+        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); void refreshAll(); }}>
           <RefreshCw className={loading ? "spin" : ""} size={16} />{tx("ui.refresh")}
         </button>
       </header>
 
       <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
-        <button type="button" role="tab" aria-selected={activeSection === "general"} className={activeSection === "general" ? "active" : ""} onClick={() => setActiveSection("general")}>
-          <Server size={15} />{tx("ui.general_settings")}
+        <button type="button" role="tab" aria-selected={activeSection === "notifications"} className={activeSection === "notifications" ? "active" : ""} onClick={() => setActiveSection("notifications")}>
+          <BellRing size={15} />{tx("ui.external_notifications")}
+        </button>
+        <button type="button" role="tab" aria-selected={activeSection === "updates"} className={activeSection === "updates" ? "active" : ""} onClick={() => setActiveSection("updates")}>
+          <Server size={15} />{tx("ui.version_updates")}
         </button>
         <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
           <FlaskConical size={15} />{tx("ui.experimental_features")}
@@ -250,7 +256,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
 
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
-      {activeSection === "general" ? <div className="other-settings-grid" role="tabpanel">
+      {activeSection === "notifications" ? (
+        <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
+      ) : activeSection === "updates" ? <div className="other-settings-grid" role="tabpanel" aria-label={tx("ui.version_updates")}>
         <section className="settings-section server-version-section" aria-label={tx("ui.cpa_server_version")}>
           <header><Server size={18} /><div><strong>{tx("ui.cpa_server_version")}</strong><span>{tx("ui.cpa_server_version_description")}</span></div></header>
           <div className="settings-version-grid">

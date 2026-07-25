@@ -51,6 +51,10 @@ describe("OtherSettingsWorkspace", () => {
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
 
     const workspace = await screen.findByRole("region", { name: "其他配置" });
+    const settingsTabs = within(workspace).getByRole("tablist", { name: "其他配置分栏" });
+    expect(within(settingsTabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["外部通知", "版本更新", "实验性功能"]);
+    expect(within(workspace).getByRole("tab", { name: "外部通知" })).toHaveAttribute("aria-selected", "true");
+    await user.click(within(workspace).getByRole("tab", { name: "版本更新" }));
     const server = within(workspace).getByRole("region", { name: "CPA 服务端版本" });
     expect(within(server).getByText("v7.2.92")).toBeInTheDocument();
     expect(within(server).getAllByText("v7.2.93").length).toBeGreaterThan(0);
@@ -91,7 +95,9 @@ describe("OtherSettingsWorkspace", () => {
     vi.spyOn(api, "installPluginUpdate").mockResolvedValue({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: true });
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
-    const plugin = within(await screen.findByRole("region", { name: "其他配置" })).getByRole("region", { name: "插件更新" });
+    const workspace = await screen.findByRole("region", { name: "其他配置" });
+    await user.click(within(workspace).getByRole("tab", { name: "版本更新" }));
+    const plugin = within(workspace).getByRole("region", { name: "插件更新" });
     expect(within(plugin).queryByText(/原生插件更新后必须完整重启 CPA/)).not.toBeInTheDocument();
     expect(within(plugin).queryByText(/等待首次 CPA 重启/)).not.toBeInTheDocument();
     await user.click(within(plugin).getByRole("button", { name: "更新" }));

@@ -77,7 +77,7 @@ describe("OtherSettingsWorkspace", () => {
     });
   });
 
-  it("keeps the mandatory restart warning only when runtime or CPA explicitly requires it", async () => {
+  it("does not turn a legacy runtime restart flag into a persistent automation warning", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
     vi.spyOn(api, "getEffectiveUpdateStatus").mockResolvedValue({
@@ -92,8 +92,8 @@ describe("OtherSettingsWorkspace", () => {
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
     const plugin = within(await screen.findByRole("region", { name: "其他配置" })).getByRole("region", { name: "插件更新" });
-    expect(within(plugin).getByText(/原生插件更新后必须完整重启 CPA/)).toBeInTheDocument();
-    expect(within(plugin).getByText(/等待首次 CPA 重启/)).toBeInTheDocument();
+    expect(within(plugin).queryByText(/原生插件更新后必须完整重启 CPA/)).not.toBeInTheDocument();
+    expect(within(plugin).queryByText(/等待首次 CPA 重启/)).not.toBeInTheDocument();
     await user.click(within(plugin).getByRole("button", { name: "更新" }));
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*重启 CPA/)));
   });

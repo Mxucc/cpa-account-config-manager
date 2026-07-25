@@ -25,31 +25,22 @@ func TestRuntimeOwnershipStartsImmediatelyWithoutCompetitor(t *testing.T) {
 	}
 }
 
-func TestRuntimeOwnershipRequiresOneRestartWhenProtocolIsFirstInstalled(t *testing.T) {
+func TestRuntimeOwnershipStartsImmediatelyWhenBootstrapStateIsMissing(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Now().UTC()
 	first := NewRuntimeOwnership(runtimeProtocolVersion)
 	first.instanceID = "instance-first"
 	first.scope = "scope-before-restart"
-	first.bootstrapScope = "bootstrap-before-restart"
 	first.now = func() time.Time { return now }
 	first.heartbeat = time.Hour
 	first.Configure(Config{DataDir: dataDir})
-	if first.AllowsBackgroundWork() || !first.Snapshot().RestartRequired {
-		t.Fatalf("first process snapshot = %#v", first.Snapshot())
+	t.Cleanup(first.Shutdown)
+	if !first.AllowsBackgroundWork() || first.Snapshot().RestartRequired {
+		t.Fatalf("initial process snapshot = %#v", first.Snapshot())
 	}
-	first.Shutdown()
-
-	afterRestart := NewRuntimeOwnership(runtimeProtocolVersion)
-	afterRestart.instanceID = "instance-after-restart"
-	afterRestart.scope = "scope-after-restart"
-	afterRestart.bootstrapScope = "bootstrap-after-restart"
-	afterRestart.now = func() time.Time { return now.Add(time.Minute) }
-	afterRestart.heartbeat = time.Hour
-	afterRestart.Configure(Config{DataDir: dataDir})
-	t.Cleanup(afterRestart.Shutdown)
-	if !afterRestart.AllowsBackgroundWork() || afterRestart.Snapshot().RestartRequired {
-		t.Fatalf("restarted process snapshot = %#v", afterRestart.Snapshot())
+	state := readPersistedRuntimeBootstrap(t, dataDir)
+	if !state.Ready || state.PendingProcessScope != "" {
+		t.Fatalf("initial bootstrap state = %#v", state)
 	}
 }
 
@@ -62,15 +53,13 @@ func TestRuntimeBootstrapMigratesWhenTheLegacyProcessScopeChanged(t *testing.T) 
 	if errSave := savePrivateJSON(filepath.Join(dataDir, runtimeBootstrapStoreName), legacy); errSave != nil {
 		t.Fatalf("save legacy bootstrap: %v", errSave)
 	}
-	restartRequired, storageErr := runtimeBootstrapStatus(
+	storageErr := runtimeBootstrapStatus(
 		dataDir,
-		"process-start-v2",
-		[]string{"different-current-process"},
 		updatedAt.Add(2*time.Second),
 		true,
 	)
-	if storageErr != "" || restartRequired {
-		t.Fatalf("migration result restart=%t error=%q", restartRequired, storageErr)
+	if storageErr != "" {
+		t.Fatalf("migration error=%q", storageErr)
 	}
 	state := readPersistedRuntimeBootstrap(t, dataDir)
 	if state.Version != runtimeBootstrapVersion || !state.Ready || state.PendingProcessScope != "" {
@@ -78,32 +67,30 @@ func TestRuntimeBootstrapMigratesWhenTheLegacyProcessScopeChanged(t *testing.T) 
 	}
 }
 
-func TestRuntimeBootstrapMigrationDoesNotMistakeHotReloadForRestart(t *testing.T) {
+func TestRuntimeBootstrapClearsPendingStateAfterCPAUpdateKeepsProcessIdentity(t *testing.T) {
 	dataDir := t.TempDir()
 	updatedAt := time.Date(2026, 7, 25, 8, 1, 0, 0, time.UTC)
 	legacy := persistedRuntimeBootstrap{
-		Version: runtimeBootstrapVersion - 1, PendingProcessScope: "legacy-same-process", UpdatedAt: updatedAt,
+		Version: runtimeBootstrapVersion, PendingProcessScope: "same-process-after-cpa-update", UpdatedAt: updatedAt,
 	}
 	if errSave := savePrivateJSON(filepath.Join(dataDir, runtimeBootstrapStoreName), legacy); errSave != nil {
 		t.Fatalf("save legacy bootstrap: %v", errSave)
 	}
-	restartRequired, storageErr := runtimeBootstrapStatus(
+	storageErr := runtimeBootstrapStatus(
 		dataDir,
-		"process-start-v2",
-		[]string{"legacy-same-process"},
 		updatedAt.Add(time.Second),
 		true,
 	)
-	if storageErr != "" || !restartRequired {
-		t.Fatalf("migration result restart=%t error=%q", restartRequired, storageErr)
+	if storageErr != "" {
+		t.Fatalf("CPA update migration error=%q", storageErr)
 	}
 	state := readPersistedRuntimeBootstrap(t, dataDir)
-	if state.Version != runtimeBootstrapVersion || state.Ready || state.PendingProcessScope != "process-start-v2" {
+	if state.Version != runtimeBootstrapVersion || !state.Ready || state.PendingProcessScope != "" {
 		t.Fatalf("migrated state = %#v", state)
 	}
 }
 
-func TestRuntimeBootstrapMigrationUsesIncarnationWhenPIDScopeIsStable(t *testing.T) {
+func TestRuntimeBootstrapMigrationDoesNotDependOnProcessIncarnation(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, 7, 25, 8, 0, 0, 0, time.UTC)
 	legacy := persistedRuntimeBootstrap{
@@ -113,30 +100,26 @@ func TestRuntimeBootstrapMigrationUsesIncarnationWhenPIDScopeIsStable(t *testing
 		t.Fatalf("save legacy bootstrap: %v", errSave)
 	}
 
-	restartRequired, storageErr := runtimeBootstrapStatus(
+	storageErr := runtimeBootstrapStatus(
 		dataDir,
-		"process-incarnation-a",
-		[]string{"stable-pid-scope"},
 		now.Add(time.Second),
 		true,
 	)
-	if storageErr != "" || !restartRequired {
-		t.Fatalf("same-process migration restart=%t error=%q", restartRequired, storageErr)
+	if storageErr != "" {
+		t.Fatalf("same-process migration error=%q", storageErr)
 	}
 	state := readPersistedRuntimeBootstrap(t, dataDir)
-	if state.Version != runtimeBootstrapVersion || state.Ready || state.PendingProcessScope != "process-incarnation-a" {
+	if state.Version != runtimeBootstrapVersion || !state.Ready || state.PendingProcessScope != "" {
 		t.Fatalf("migrated state = %#v", state)
 	}
 
-	restartRequired, storageErr = runtimeBootstrapStatus(
+	storageErr = runtimeBootstrapStatus(
 		dataDir,
-		"process-incarnation-b",
-		[]string{"stable-pid-scope"},
 		now.Add(2*time.Second),
 		true,
 	)
-	if storageErr != "" || restartRequired {
-		t.Fatalf("post-restart result restart=%t error=%q", restartRequired, storageErr)
+	if storageErr != "" {
+		t.Fatalf("post-restart error=%q", storageErr)
 	}
 	state = readPersistedRuntimeBootstrap(t, dataDir)
 	if !state.Ready || state.PendingProcessScope != "" {
@@ -330,9 +313,6 @@ func newTestRuntimeOwnership(version, instanceID, scope string, now time.Time) *
 	owner := NewRuntimeOwnership(version)
 	owner.instanceID = instanceID
 	owner.scope = scope
-	owner.bootstrapScope = scope
-	owner.legacyScope = scope
-	owner.previousBootstrapScope = scope
 	owner.processIncarnation = "test-process"
 	owner.now = func() time.Time { return now }
 	owner.heartbeat = time.Hour

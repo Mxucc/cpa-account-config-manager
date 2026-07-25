@@ -607,15 +607,13 @@ An available release produces an in-page prompt. Installation is delegated to
 CPA's authenticated plugin-store endpoints, which own registry selection,
 platform matching, archive limits, checksum verification, and final placement.
 Automatic installation defaults off, requires a first-time confirmation, and
-runs only while the authenticated inspection page is open. Every native plugin
-update requires a full CPA process restart. CPA hot replacement retires the old
-library from routing but can leave its already-loaded code and background
-goroutines alive; deleting the old file only removes the disk artifact and does
-not unload it from process memory. The UI therefore treats every successful
-store install as `restart_required` even when the current CPA response says
-otherwise. A failed or locked install remains available for manual retry. The
-plugin does not download, delete, or replace its own dynamic library and never
-stores the browser Management Key.
+runs only while the authenticated inspection page is open. A successful CPA
+plugin-store install with `restart_required: false` activates through CPA's
+configuration reload; refresh the page to use the new frontend. Restart CPA
+only when the host explicitly returns `restart_required: true` or reports that
+the loaded library is locked. A failed or locked install remains available for
+manual retry. The plugin does not download, delete, or replace its own dynamic
+library and never stores the browser Management Key.
 
 Participating releases also write a sanitized heartbeat claim under
 `data_dir/runtime-instances/`. Within one CPA process and data directory, the
@@ -626,22 +624,17 @@ instance stops, and the replacement waits through a short takeover window; a
 stale owner expires after a bounded timeout. Claims contain only a random
 instance ID, plugin version, hashed process incarnation, process-scope hash,
 and timestamps. If claim storage is unavailable, background automation fails
-closed. The first upgrade from a release without this protocol still needs one
-real CPA restart because new code cannot stop an already-running legacy binary
-retroactively.
+closed. Cross-version claims, rather than a persisted first-restart gate, are
+the authoritative runtime safety mechanism.
 
 On Linux, the ownership scope includes the kernel boot ID and `/proc/self/stat`
-process start token. The bootstrap gate additionally uses a random marker shared
-by plugin libraries in the current CPA process and recreated by a normal CPA or
-container restart. This distinguishes a real restart even when hostname, PID 1,
-and readable `/proc` identity remain unchanged. A recent heartbeat claim from a
-previous process is ignored when its hashed incarnation differs, so the bounded
-claim timeout cannot create a sticky restart warning. Version-1 and version-2
-bootstrap state migrate without treating a same-process hot reload as a restart.
-The update warning is shown only while the first-restart gate is pending or a
-second live plugin claim still exists in the current process. It disappears
-after a verified full restart, or after a transient startup peer has quiesced
-and removed its claim.
+process start token. A random marker shared by plugin libraries in the current
+CPA process further separates current-process claims from stale claims. A recent
+heartbeat from a previous process is ignored when its hashed incarnation
+differs. Legacy version-1 through version-3 bootstrap files are migrated to a
+ready version-4 record and never block the current owner, including after a CPA
+self-update preserves PID or environment identity. A live replacement still
+quiesces the older participating instance before background automation starts.
 
 The native ABI also guarantees a non-empty JSON envelope for handler errors,
 recoverable panics, and response-allocation failure. A superseded instance
@@ -714,9 +707,9 @@ and otherwise unsupported records remain visible but read-only.
   patch values are not persisted. Persisted running state is marked
   `interrupted`; exact failed-only retry is available only while the in-memory
   patch intent still exists.
-- Native plugin file removal is not a runtime unload operation. Restart CPA
-  after every plugin-store installation, including the first installation of a
-  release that supports cross-version runtime ownership.
+- Native plugin file removal is not a runtime unload operation. Use CPA's
+  plugin-store installation flow so the host reloads configuration and reports
+  whether a process restart is actually required.
 
 ## Security Model
 

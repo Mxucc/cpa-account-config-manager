@@ -365,6 +365,7 @@ export interface JobSnapshot {
 
 export interface DefaultPolicy {
   enabled: boolean;
+  new_account_model_probe_enabled: boolean;
   apply_mode: "missing";
   scan_interval_seconds: number;
   priority: number | null;
@@ -387,6 +388,7 @@ export interface PolicySnapshot {
   running: boolean;
   scan_started_at?: string;
   last_scan: PolicyScanSummary;
+  new_account_model_probe_storage_error?: string;
 }
 
 export interface ForcePolicySummary {

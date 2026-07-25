@@ -1036,6 +1036,10 @@ func (e *InspectionEngine) UpdateReview(request InspectionReviewRequest) (Inspec
 }
 
 func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result ModelTestResult) error {
+	return e.RecordModelTest(ctx, result, InspectionProbeSourceManual)
+}
+
+func (e *InspectionEngine) RecordModelTest(ctx context.Context, result ModelTestResult, source string) error {
 	if e == nil || e.accounts == nil {
 		return fmt.Errorf("inspection engine is unavailable")
 	}
@@ -1055,7 +1059,7 @@ func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result Mod
 	policy := e.policy
 	previousHealth := record.Result.Health
 	previousReason := record.Result.ReasonCode
-	applyModelProbeToInspectionWithSource(&record, result, policy, InspectionProbeSourceManual)
+	applyModelProbeToInspectionWithSource(&record, result, policy, source)
 	decision := decideInspection(account, record, e.currentTime())
 	updateInspectionRecord(&record, account, decision, e.currentTime())
 	if record.Result.Health == InspectionHealthReview || record.Result.Health != previousHealth || record.Result.ReasonCode != previousReason {

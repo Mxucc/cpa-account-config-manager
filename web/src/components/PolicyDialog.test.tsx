@@ -7,6 +7,7 @@ import { PolicyDialog } from "./PolicyDialog";
 const snapshot: PolicySnapshot = {
   policy: {
     enabled: true,
+    new_account_model_probe_enabled: false,
     apply_mode: "missing",
     scan_interval_seconds: 15,
     priority: null,
@@ -35,11 +36,26 @@ describe("PolicyDialog", () => {
 
     expect(onSave).toHaveBeenCalledWith({
       enabled: true,
+      new_account_model_probe_enabled: false,
       apply_mode: "missing",
       scan_interval_seconds: 15,
       priority: null,
       websockets: false,
     });
+  });
+
+  it("persists the new-account model probe independently from auto-apply", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<PolicyDialog snapshot={snapshot} saving={false} scanning={false} forceLoading={false} onClose={vi.fn()} onSave={onSave} onScan={vi.fn()} onForcePreview={vi.fn()} />);
+
+    await user.click(screen.getByRole("checkbox", { name: "启用新账号模型探测" }));
+    await user.click(screen.getByRole("button", { name: "保存策略" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: true,
+      new_account_model_probe_enabled: true,
+    }));
   });
 
   it("submits Priority zero and validates the bounded scan interval", async () => {
@@ -79,5 +95,12 @@ describe("PolicyDialog", () => {
     render(<PolicyDialog snapshot={{ ...snapshot, last_scan: { ...snapshot.last_scan, error: "stored default policy could not be loaded" } }} saving={false} scanning={false} forceLoading={false} onClose={vi.fn()} onSave={vi.fn()} onScan={vi.fn()} onForcePreview={vi.fn()} />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("已保存的默认策略无法读取");
+  });
+
+  it("shows a localized new-account probe persistence error", () => {
+    render(<PolicyDialog snapshot={{ ...snapshot, new_account_model_probe_storage_error: "new-account model-probe state could not be persisted" }} saving={false} scanning={false} forceLoading={false} onClose={vi.fn()} onSave={vi.fn()} onScan={vi.fn()} onForcePreview={vi.fn()} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("新账号模型探测状态无法持久化");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("new-account model-probe state");
   });
 });

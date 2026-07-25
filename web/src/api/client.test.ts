@@ -418,6 +418,7 @@ describe("management API client", () => {
 		const responseBody = {
 			policy: {
 				enabled: true,
+				new_account_model_probe_enabled: true,
 				apply_mode: "missing",
 				scan_interval_seconds: 15,
 				priority: 0,
@@ -433,6 +434,7 @@ describe("management API client", () => {
 
 		await saveDefaultPolicy({
 			enabled: true,
+			new_account_model_probe_enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
 			priority: 0,
@@ -444,6 +446,7 @@ describe("management API client", () => {
 		expect(configInit.method).toBe("PATCH");
 		expect(JSON.parse(String(configInit.body))).toEqual({ default_policy: {
 			enabled: true,
+			new_account_model_probe_enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
 			priority: 0,
@@ -455,6 +458,7 @@ describe("management API client", () => {
 		expect(policyInit.method).toBe("PUT");
 		expect(JSON.parse(String(policyInit.body))).toEqual({
 			enabled: true,
+			new_account_model_probe_enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
 			priority: 0,

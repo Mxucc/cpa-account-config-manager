@@ -481,6 +481,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	compatibilityAttempt, _, _ := runAttempt("compatibility", compatibilityModel, compatibilityProbe, nil)
 	result.Attempts = append(result.Attempts, compatibilityAttempt)
 	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
+	result.CompatibleModels = []string{defaultCodexFallbackModel}
 	if compatibilityAttempt.Status == "available" {
 		result.CompatibleModels = []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}
 	}

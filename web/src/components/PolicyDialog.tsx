@@ -31,6 +31,7 @@ export function PolicyDialog({
   const { locale, tx, formatDateTime } = useI18n();
   const initial = snapshot.policy;
   const [enabled, setEnabled] = useState(initial.enabled);
+  const [probeNewAccounts, setProbeNewAccounts] = useState(initial.new_account_model_probe_enabled ?? false);
   const [managePriority, setManagePriority] = useState(initial.priority !== null);
   const [priority, setPriority] = useState(String(initial.priority ?? 0));
   const [manageWebsockets, setManageWebsockets] = useState(initial.websockets !== null);
@@ -40,13 +41,15 @@ export function PolicyDialog({
   const lastScan = snapshot.last_scan;
   const hasPersistedFields = initial.priority !== null || initial.websockets !== null;
   const dirty = enabled !== initial.enabled ||
+    probeNewAccounts !== Boolean(initial.new_account_model_probe_enabled) ||
     managePriority !== (initial.priority !== null) ||
     managePriority && priority.trim() !== String(initial.priority ?? 0) ||
     manageWebsockets !== (initial.websockets !== null) ||
     manageWebsockets && websockets !== initial.websockets ||
     interval.trim() !== String(initial.scan_interval_seconds);
   const controlsLocked = saving || forceLoading;
-  const policyError = formError || error || operatorMessage(lastScan.error);
+  const probeStorageError = snapshot.new_account_model_probe_storage_error ? tx("ui.new_account_model_probe_storage_error") : "";
+  const policyError = formError || error || probeStorageError || operatorMessage(lastScan.error);
 
   const save = () => {
     setFormError("");
@@ -69,6 +72,7 @@ export function PolicyDialog({
     }
     onSave({
       enabled,
+      new_account_model_probe_enabled: probeNewAccounts,
       apply_mode: "missing",
       scan_interval_seconds: scanInterval,
       priority: managePriority ? Number(priority) : null,
@@ -112,6 +116,11 @@ export function PolicyDialog({
         <label className={`policy-row policy-master ${enabled ? "is-enabled" : ""}`}>
           <span><strong>{tx("ui.auto_apply")}</strong><small>{tx("ui.auth_files")}</small></span>
           <span className="switch-control"><input type="checkbox" checked={enabled} disabled={controlsLocked} onChange={(event) => setEnabled(event.target.checked)} aria-label={tx("ui.enable_default_policy")} /><b>{tx(enabled ? "ui.on_2" : "ui.off_2")}</b></span>
+        </label>
+
+        <label className={`policy-row ${probeNewAccounts ? "is-enabled" : ""}`}>
+          <span><strong>{tx("ui.new_account_model_probe")}</strong><small>{tx("ui.new_account_model_probe_description")}</small></span>
+          <span className="switch-control"><input type="checkbox" checked={probeNewAccounts} disabled={controlsLocked} onChange={(event) => setProbeNewAccounts(event.target.checked)} aria-label={tx("ui.enable_new_account_model_probe")} /><b>{tx(probeNewAccounts ? "ui.on_2" : "ui.off_2")}</b></span>
         </label>
 
         <div className={`policy-row ${managePriority ? "is-enabled" : ""}`}>

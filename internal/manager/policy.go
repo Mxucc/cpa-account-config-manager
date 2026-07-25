@@ -31,11 +31,12 @@ const (
 var ErrPolicyStorageUnavailable = errors.New("default policy storage is unavailable; configure data_dir to a writable directory")
 
 type DefaultPolicy struct {
-	Enabled             bool   `json:"enabled" yaml:"enabled"`
-	ApplyMode           string `json:"apply_mode" yaml:"apply_mode"`
-	ScanIntervalSeconds int    `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
-	Priority            *int   `json:"priority" yaml:"priority"`
-	Websockets          *bool  `json:"websockets" yaml:"websockets"`
+	Enabled                     bool   `json:"enabled" yaml:"enabled"`
+	NewAccountModelProbeEnabled bool   `json:"new_account_model_probe_enabled" yaml:"new_account_model_probe_enabled"`
+	ApplyMode                   string `json:"apply_mode" yaml:"apply_mode"`
+	ScanIntervalSeconds         int    `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
+	Priority                    *int   `json:"priority" yaml:"priority"`
+	Websockets                  *bool  `json:"websockets" yaml:"websockets"`
 }
 
 type PolicyScanSummary struct {
@@ -50,10 +51,11 @@ type PolicyScanSummary struct {
 }
 
 type PolicySnapshot struct {
-	Policy        DefaultPolicy     `json:"policy"`
-	Running       bool              `json:"running"`
-	ScanStartedAt time.Time         `json:"scan_started_at,omitempty"`
-	LastScan      PolicyScanSummary `json:"last_scan"`
+	Policy                           DefaultPolicy     `json:"policy"`
+	Running                          bool              `json:"running"`
+	ScanStartedAt                    time.Time         `json:"scan_started_at,omitempty"`
+	LastScan                         PolicyScanSummary `json:"last_scan"`
+	NewAccountModelProbeStorageError string            `json:"new_account_model_probe_storage_error,omitempty"`
 }
 
 type policyApplyMode uint8
@@ -77,6 +79,7 @@ type PolicyEngine struct {
 	wait            sync.WaitGroup
 	host            AuthHost
 	mutations       *MutationCoordinator
+	observer        interface{ ObserveAccounts([]Account) }
 	backgroundOwner BackgroundWorkOwner
 	config          Config
 	store           string
@@ -90,6 +93,15 @@ type PolicyEngine struct {
 	started         bool
 	closed          bool
 	now             func() time.Time
+}
+
+func (e *PolicyEngine) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.observer = observer
+	e.mu.Unlock()
 }
 
 func NewPolicyEngine(host AuthHost) *PolicyEngine {
@@ -353,13 +365,15 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	e.mu.RLock()
 	policy := cloneDefaultPolicy(e.policy)
 	e.mu.RUnlock()
-	if !policy.Enabled || !policy.ManagesFields() {
+	applyDefaults := policy.Enabled && policy.ManagesFields()
+	if !applyDefaults && !policy.NewAccountModelProbeEnabled {
 		return false
 	}
-	if !e.mutations.TryAcquire(policyMutationOwner) {
-		return true
+	if applyDefaults {
+		if !e.mutations.TryAcquire(policyMutationOwner) {
+			return true
+		}
 	}
-	defer e.mutations.Release(policyMutationOwner)
 
 	startedAt := e.now().UTC()
 	e.mu.Lock()
@@ -367,7 +381,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	e.scanStarted = startedAt
 	e.mu.Unlock()
 
-	summary, fingerprints := e.scan(ctx, policy, startedAt)
+	summary, fingerprints, observedAccounts := e.scan(ctx, policy, startedAt)
 	e.mu.Lock()
 	e.running = false
 	e.scanStarted = time.Time{}
@@ -379,8 +393,17 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	currentPolicy := cloneDefaultPolicy(e.policy)
 	lastScan := e.lastScan
 	e.mu.Unlock()
+	if applyDefaults {
+		e.mutations.Release(policyMutationOwner)
+	}
 	if ctx.Err() != nil {
 		return false
+	}
+	e.mu.RLock()
+	observer := e.observer
+	e.mu.RUnlock()
+	if observer != nil && observedAccounts != nil {
+		observer.ObserveAccounts(observedAccounts)
 	}
 	if errSave := savePolicyState(storePath, currentPolicy, lastScan); errSave != nil {
 		e.mu.Lock()
@@ -390,21 +413,21 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	return false
 }
 
-func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt time.Time) (PolicyScanSummary, map[string]authFingerprint) {
+func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt time.Time) (PolicyScanSummary, map[string]authFingerprint, []Account) {
 	summary := PolicyScanSummary{StartedAt: startedAt}
 	nextFingerprints := make(map[string]authFingerprint)
 	if e.host == nil {
 		summary.Failed = 1
 		summary.Error = "auth file scan failed"
 		summary.FinishedAt = e.now().UTC()
-		return summary, nextFingerprints
+		return summary, nextFingerprints, nil
 	}
 	entries, errList := e.host.ListAuth(ctx)
 	if errList != nil {
 		summary.Failed = 1
 		summary.Error = "auth file scan failed"
 		summary.FinishedAt = e.now().UTC()
-		return summary, nextFingerprints
+		return summary, nextFingerprints, nil
 	}
 	summary.Scanned = len(entries)
 
@@ -418,6 +441,15 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 		if authIndex := strings.TrimSpace(entry.AuthIndex); authIndex != "" {
 			indexCounts[authIndex]++
 		}
+	}
+	observedAccounts := make([]Account, 0, len(entries))
+	for _, entry := range entries {
+		observedAccounts = append(observedAccounts, projectHostEntry(entry, pathCounts, indexCounts, nil))
+	}
+	if !policy.Enabled || !policy.ManagesFields() {
+		summary.Skipped = len(entries)
+		summary.FinishedAt = e.now().UTC()
+		return summary, nextFingerprints, observedAccounts
 	}
 
 	e.mu.RLock()
@@ -457,7 +489,7 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 		}
 	}
 	summary.FinishedAt = e.now().UTC()
-	return summary, nextFingerprints
+	return summary, nextFingerprints, observedAccounts
 }
 
 func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuthFileEntry, policy DefaultPolicy) (bool, error) {
@@ -544,6 +576,7 @@ func defaultPolicyEqual(left, right DefaultPolicy) bool {
 	left = normalizeDefaultPolicy(left)
 	right = normalizeDefaultPolicy(right)
 	return left.Enabled == right.Enabled && left.ApplyMode == right.ApplyMode &&
+		left.NewAccountModelProbeEnabled == right.NewAccountModelProbeEnabled &&
 		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right)
 }
 

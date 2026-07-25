@@ -87,10 +87,11 @@ func TestPolicyStatePersistsReloadsAndUsesPrivatePermissions(t *testing.T) {
 	priority := 0
 	websockets := false
 	policy := normalizeDefaultPolicy(DefaultPolicy{
-		Enabled:             true,
-		ScanIntervalSeconds: 1,
-		Priority:            &priority,
-		Websockets:          &websockets,
+		Enabled:                     true,
+		NewAccountModelProbeEnabled: true,
+		ScanIntervalSeconds:         1,
+		Priority:                    &priority,
+		Websockets:                  &websockets,
 	})
 	lastScan := PolicyScanSummary{Scanned: 3, Changed: 2, FinishedAt: time.Now().UTC()}
 	if errSave := savePolicyState(path, policy, lastScan); errSave != nil {
@@ -101,7 +102,7 @@ func TestPolicyStatePersistsReloadsAndUsesPrivatePermissions(t *testing.T) {
 	if errLoad != nil {
 		t.Fatalf("loadPolicyState() error = %v", errLoad)
 	}
-	if !loaded.Enabled || loaded.Priority == nil || *loaded.Priority != 0 || loaded.Websockets == nil || *loaded.Websockets || loaded.ScanIntervalSeconds != minPolicyScanIntervalSeconds {
+	if !loaded.Enabled || !loaded.NewAccountModelProbeEnabled || loaded.Priority == nil || *loaded.Priority != 0 || loaded.Websockets == nil || *loaded.Websockets || loaded.ScanIntervalSeconds != minPolicyScanIntervalSeconds {
 		t.Fatalf("loaded policy = %#v", loaded)
 	}
 	if loadedScan.Scanned != 3 || loadedScan.Changed != 2 {
@@ -134,9 +135,9 @@ func TestConfiguredPolicyOverridesStaleFileAndSurvivesFreshEngine(t *testing.T) 
 
 	configuredPriority := 7
 	configuredWebsockets := false
-	config := ParseConfig([]byte("data_dir: " + dataDir + "\ndefault_policy:\n  enabled: true\n  scan_interval_seconds: 30\n  priority: 7\n  websockets: false\n"))
+	config := ParseConfig([]byte("data_dir: " + dataDir + "\ndefault_policy:\n  enabled: true\n  new_account_model_probe_enabled: true\n  scan_interval_seconds: 30\n  priority: 7\n  websockets: false\n"))
 	if config.DefaultPolicy == nil || config.DefaultPolicy.Priority == nil || *config.DefaultPolicy.Priority != configuredPriority ||
-		config.DefaultPolicy.Websockets == nil || *config.DefaultPolicy.Websockets != configuredWebsockets {
+		config.DefaultPolicy.Websockets == nil || *config.DefaultPolicy.Websockets != configuredWebsockets || !config.DefaultPolicy.NewAccountModelProbeEnabled {
 		t.Fatalf("parsed default policy = %#v", config.DefaultPolicy)
 	}
 
@@ -144,7 +145,7 @@ func TestConfiguredPolicyOverridesStaleFileAndSurvivesFreshEngine(t *testing.T) 
 	engine.Configure(config)
 	defer engine.Shutdown()
 	snapshot := engine.Snapshot()
-	if !snapshot.Policy.Enabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != configuredPriority ||
+	if !snapshot.Policy.Enabled || !snapshot.Policy.NewAccountModelProbeEnabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != configuredPriority ||
 		snapshot.Policy.Websockets == nil || *snapshot.Policy.Websockets != configuredWebsockets || snapshot.Policy.ScanIntervalSeconds != 30 {
 		t.Fatalf("configured snapshot = %#v", snapshot)
 	}
@@ -261,6 +262,97 @@ func TestPolicyEngineReconcilesMissingFieldsAndDetectsNewFiles(t *testing.T) {
 	if !bytes.Contains(secondJSON, []byte("second-secret")) {
 		t.Fatalf("second reconciliation lost an unknown secret field: %s", secondJSON)
 	}
+}
+
+func TestPolicyEngineScansForNewAccountProbeWithoutApplyingDefaultFields(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "new-auth", ID: "workspace-new", Name: "new-account.json", Provider: "codex", Type: "codex",
+		AccountType: "oauth", Source: "file", Path: "/auths/new-account.json",
+	}}}
+	observed := make(chan []Account, 1)
+	engine := NewPolicyEngine(host)
+	engine.SetObserver(accountObserverFunc(func(accounts []Account) {
+		select {
+		case observed <- append([]Account(nil), accounts...):
+		default:
+		}
+	}))
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+	if _, errSet := engine.SetPolicy(DefaultPolicy{NewAccountModelProbeEnabled: true, ScanIntervalSeconds: 5}); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
+		return !snapshot.Running && snapshot.LastScan.Scanned == 1
+	})
+
+	select {
+	case accounts := <-observed:
+		if len(accounts) != 1 || accounts[0].ID != "new-auth" || accounts[0].AuthID != "workspace-new" {
+			t.Fatalf("observed accounts = %#v", accounts)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("new-account policy scan did not publish observed accounts")
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.saves) != 0 {
+		t.Fatalf("probe-only policy wrote %d auth files", len(host.saves))
+	}
+}
+
+func TestPolicyEnginePublishesNewAccountsAfterDefaultMutationLockRelease(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "new-auth", ID: "workspace-new", Name: "new-account.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/new-account.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"new-auth": {
+				AuthIndex: "new-auth", Name: "new-account.json", Path: "/auths/new-account.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"test-secret"}`),
+			},
+		},
+	}
+	mutations := NewMutationCoordinator()
+	lockAvailable := make(chan bool, 1)
+	engine := NewPolicyEngineWithCoordinator(host, mutations)
+	engine.SetObserver(accountObserverFunc(func([]Account) {
+		acquired := mutations.TryAcquire("model-probe-observer")
+		if acquired {
+			mutations.Release("model-probe-observer")
+		}
+		select {
+		case lockAvailable <- acquired:
+		default:
+		}
+	}))
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+	websockets := false
+	if _, errSet := engine.SetPolicy(DefaultPolicy{
+		Enabled: true, NewAccountModelProbeEnabled: true, ScanIntervalSeconds: 5, Websockets: &websockets,
+	}); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
+		return !snapshot.Running && snapshot.LastScan.Scanned == 1
+	})
+
+	select {
+	case acquired := <-lockAvailable:
+		if !acquired {
+			t.Fatal("new-account observer ran while the default-policy mutation lock was held")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("default-policy scan did not publish observed accounts")
+	}
+}
+
+type accountObserverFunc func([]Account)
+
+func (observer accountObserverFunc) ObserveAccounts(accounts []Account) {
+	observer(accounts)
 }
 
 func TestPolicyEngineSkipsUnsupportedAndDuplicateEntries(t *testing.T) {

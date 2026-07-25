@@ -51,28 +51,29 @@ type RegistrationCapabilities struct {
 }
 
 type App struct {
-	mu             sync.RWMutex
-	config         Config
-	accounts       *AccountService
-	deduplication  *AccountDeduplicationService
-	deletions      *AccountDeleteService
-	previews       *PreviewService
-	jobs           *JobEngine
-	policies       *PolicyEngine
-	inspection     *InspectionEngine
-	updates        *UpdateChecker
-	force          *ForceSyncEngine
-	imports        *ImportService
-	usage          *UsageTracker
-	operations     *OperationJournal
-	modelTests     *ModelTestService
-	managementDoer HTTPDoer
-	requestHooks   *RequestHook
-	runtime        *RuntimeOwnership
-	experiments    *ExperimentalSettingsService
-	agentIdentity  *AgentIdentityExperiment
-	indexHTML      []byte
-	quiesceOnce    sync.Once
+	mu              sync.RWMutex
+	config          Config
+	accounts        *AccountService
+	deduplication   *AccountDeduplicationService
+	deletions       *AccountDeleteService
+	previews        *PreviewService
+	jobs            *JobEngine
+	policies        *PolicyEngine
+	inspection      *InspectionEngine
+	updates         *UpdateChecker
+	force           *ForceSyncEngine
+	imports         *ImportService
+	usage           *UsageTracker
+	operations      *OperationJournal
+	modelTests      *ModelTestService
+	newAccountProbe *newAccountModelProbeEngine
+	managementDoer  HTTPDoer
+	requestHooks    *RequestHook
+	runtime         *RuntimeOwnership
+	experiments     *ExperimentalSettingsService
+	agentIdentity   *AgentIdentityExperiment
+	indexHTML       []byte
+	quiesceOnce     sync.Once
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -86,6 +87,9 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	deletions := NewAccountDeleteService(accounts, mutations)
 	operations := NewOperationJournal()
 	experiments := NewExperimentalSettingsService()
+	newAccountProbe := NewAccountModelProbeEngine(func() bool {
+		return policies.Snapshot().Policy.NewAccountModelProbeEnabled
+	})
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -110,26 +114,30 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	inspection.SetDeleteService(deletions)
 	inspection.SetOperationJournal(operations)
 	app := &App{
-		config:        normalizeConfig(Config{}),
-		accounts:      accounts,
-		deduplication: NewAccountDeduplicationService(accounts),
-		deletions:     deletions,
-		previews:      NewPreviewService(accounts),
-		jobs:          jobs,
-		policies:      policies,
-		inspection:    inspection,
-		updates:       updates,
-		force:         force,
-		imports:       imports,
-		usage:         usage,
-		operations:    operations,
-		modelTests:    modelTests,
-		requestHooks:  requestHooks,
-		runtime:       runtime,
-		experiments:   experiments,
-		agentIdentity: agentIdentity,
-		indexHTML:     append([]byte(nil), indexHTML...),
+		config:          normalizeConfig(Config{}),
+		accounts:        accounts,
+		deduplication:   NewAccountDeduplicationService(accounts),
+		deletions:       deletions,
+		previews:        NewPreviewService(accounts),
+		jobs:            jobs,
+		policies:        policies,
+		inspection:      inspection,
+		updates:         updates,
+		force:           force,
+		imports:         imports,
+		usage:           usage,
+		operations:      operations,
+		modelTests:      modelTests,
+		newAccountProbe: newAccountProbe,
+		requestHooks:    requestHooks,
+		runtime:         runtime,
+		experiments:     experiments,
+		agentIdentity:   agentIdentity,
+		indexHTML:       append([]byte(nil), indexHTML...),
 	}
+	accounts.SetObserver(newAccountProbe)
+	policies.SetObserver(newAccountProbe)
+	newAccountProbe.SetHandler(app.runNewAccountModelProbe)
 	runtime.SetOnSuperseded(app.quiesceRetiredInstance)
 	return app
 }
@@ -150,9 +158,11 @@ func (a *App) Configure(raw []byte) {
 	a.jobs.SetBackgroundWorkOwner(a.runtime)
 	a.policies.SetBackgroundWorkOwner(a.runtime)
 	a.inspection.SetBackgroundWorkOwner(a.runtime)
+	a.newAccountProbe.SetBackgroundWorkOwner(a.runtime)
 	a.force.SetBackgroundWorkOwner(a.runtime)
 	a.operations.Configure(config)
 	a.experiments.Configure(config)
+	a.newAccountProbe.Configure(config)
 	a.jobs.Configure(config)
 	a.policies.Configure(config)
 	a.inspection.Configure(config)
@@ -196,6 +206,7 @@ func (a *App) quiesceRetiredInstance() {
 		superseded := a.runtime != nil && a.runtime.Snapshot().Superseded
 		a.force.Shutdown()
 		a.inspection.Shutdown()
+		a.newAccountProbe.Shutdown()
 		a.updates.Shutdown()
 		a.policies.Shutdown()
 		a.jobs.Shutdown()
@@ -426,11 +437,12 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/import/start":
 		return a.handleImportStart(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults":
-		return jsonResponse(http.StatusOK, a.policies.Snapshot())
+		return jsonResponse(http.StatusOK, a.defaultPolicySnapshot())
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/defaults":
 		return a.handlePutDefaultPolicy(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/defaults/scan":
-		return jsonResponse(http.StatusAccepted, a.policies.RequestScan())
+		a.policies.RequestScan()
+		return jsonResponse(http.StatusAccepted, a.defaultPolicySnapshot())
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/defaults/force/preview":
 		return a.handleForcePreview(ctx)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/defaults/force/start":
@@ -760,9 +772,22 @@ func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.Manage
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
 	}
 	a.recordPolicyChange(OperationCategoryDefaultPolicy, OperationActionPolicySave, OperationSourceManual, OperationStatusSucceeded)
-	snapshot := a.policies.Snapshot()
+	snapshot := a.defaultPolicySnapshot()
 	snapshot.Policy = saved
+	if saved.NewAccountModelProbeEnabled {
+		managementKey := resolveManagementKey(req.Headers)
+		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
+		managementKey = ""
+	}
 	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) defaultPolicySnapshot() PolicySnapshot {
+	snapshot := a.policies.Snapshot()
+	if a != nil && a.newAccountProbe != nil {
+		snapshot.NewAccountModelProbeStorageError = a.newAccountProbe.StorageError()
+	}
+	return snapshot
 }
 
 func (a *App) handleForcePreview(ctx context.Context) cpaapi.ManagementResponse {
@@ -805,6 +830,11 @@ func (a *App) handleForceStart(req cpaapi.ManagementRequest) cpaapi.ManagementRe
 }
 
 func (a *App) handleListAccounts(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if a.policies.Snapshot().Policy.NewAccountModelProbeEnabled {
+		managementKey := resolveManagementKey(req.Headers)
+		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
+		managementKey = ""
+	}
 	query, errQuery := listQueryFromValues(req.Query)
 	if errQuery != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errQuery.Error()})
@@ -1396,6 +1426,11 @@ func (a *App) handlePutExperimentalSettings(req cpaapi.ManagementRequest) cpaapi
 	snapshot, errSave := a.experiments.Set(settings)
 	if errSave != nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "experimental settings could not be persisted"})
+	}
+	if settings.AutoModelWhitelistEnabled && a.policies.Snapshot().Policy.NewAccountModelProbeEnabled {
+		managementKey := resolveManagementKey(req.Headers)
+		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
+		managementKey = ""
 	}
 	return jsonResponse(http.StatusOK, snapshot)
 }

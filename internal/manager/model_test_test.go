@@ -305,6 +305,119 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 	}
 }
 
+func TestRunNewAccountModelProbeUsesFallbackAndBackgroundOperations(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "new-auth", Name: "new-account.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/new-account.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"new-auth": {
+				AuthIndex: "new-auth", Name: "new-account.json", Path: "/auths/new-account.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-new"}`),
+			},
+		},
+	}
+	models := make([]string, 0, 3)
+	var modelPolicyPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v0/management/auth-files/models":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"models": []map[string]any{
+				{"id": defaultOpenAIProbeModel}, {"id": defaultCodexFallbackModel}, {"id": codexCompatibilityMiniModel},
+			}})
+			return
+		case "/v0/management/auth-files/fields":
+			if errDecode := json.NewDecoder(request.Body).Decode(&modelPolicyPayload); errDecode != nil {
+				t.Errorf("decode model policy request: %v", errDecode)
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
+			return
+		case "/v0/management/api-call":
+		default:
+			t.Errorf("unexpected management path %q", request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var received managementAPICallRequest
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		switch received.URL {
+		case "https://chatgpt.com/backend-api/wham/usage":
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"application/json"}},
+				Body:       `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":18,"limit_window_seconds":18000}}}`,
+			})
+		case "https://chatgpt.com/backend-api/codex/responses":
+			var payload map[string]any
+			if errDecode := json.Unmarshal([]byte(received.Data), &payload); errDecode != nil {
+				t.Errorf("decode model payload: %v", errDecode)
+			}
+			model := modelTestStringValue(payload, "model")
+			models = append(models, model)
+			if model == defaultOpenAIProbeModel {
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusBadRequest,
+					Header:     map[string][]string{"Content-Type": {"application/json"}},
+					Body:       `{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}`,
+				})
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"text/event-stream"}},
+				Body:       "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"background-response\"}}\n\n",
+			})
+		default:
+			t.Errorf("unexpected probe URL %q", received.URL)
+		}
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	if _, errSet := app.experiments.Set(ExperimentalSettings{AutoModelWhitelistEnabled: true}); errSet != nil {
+		t.Fatalf("enable auto model whitelist: %v", errSet)
+	}
+	result, errRun := app.runNewAccountModelProbe(t.Context(), Account{
+		ID: "new-auth", Name: "new-account.json", Provider: "codex", Type: "codex", AccountType: "oauth",
+	}, "management-secret", "")
+	if errRun != nil {
+		t.Fatalf("runNewAccountModelProbe() error = %v", errRun)
+	}
+	if !reflect.DeepEqual(models, []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, codexCompatibilityMiniModel}) {
+		t.Fatalf("automatic model attempt order = %#v", models)
+	}
+	if result.Status != "available" || result.Model != defaultCodexFallbackModel || !result.FallbackUsed ||
+		!reflect.DeepEqual(result.CompatibleModels, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}) {
+		t.Fatalf("automatic fallback result = %#v", result)
+	}
+	if result.ModelPolicy == nil || result.ModelPolicy.Status != "applied" || modelPolicyPayload == nil {
+		t.Fatalf("automatic model policy = %#v, payload = %#v", result.ModelPolicy, modelPolicyPayload)
+	}
+	operations := app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations
+	wanted := map[string]bool{OperationActionModelTest: false, OperationActionAutoModelWhitelist: false}
+	for _, operation := range operations {
+		if _, exists := wanted[operation.Action]; !exists {
+			continue
+		}
+		if operation.Source != OperationSourceBackground {
+			t.Errorf("%s operation source = %q, want %q", operation.Action, operation.Source, OperationSourceBackground)
+		}
+		wanted[operation.Action] = true
+	}
+	for action, found := range wanted {
+		if !found {
+			t.Errorf("missing %s background operation", action)
+		}
+	}
+}
+
 func TestCodexModelFallbackTriggerIsStrict(t *testing.T) {
 	exact := []byte(`{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}`)
 	if model := unsupportedChatGPTAccountModel(exact); model != defaultOpenAIProbeModel {

@@ -38,15 +38,19 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 		}
 	}
 	if request.DetectRestrictedModels && len(result.CompatibleModels) > 0 {
-		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey)
+		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey, OperationSourceManual)
 	}
 	managementKey = ""
-	a.recordModelTest(result)
+	a.recordModelTest(result, OperationSourceManual)
 	_ = a.inspection.RecordManualModelTest(ctx, result)
 	return jsonResponse(http.StatusOK, result)
 }
 
-func (a *App) recordModelTest(result ModelTestResult) {
+func (a *App) recordModelTest(result ModelTestResult, requestedSource ...string) {
+	source := OperationSourceManual
+	if len(requestedSource) > 0 && normalizeOperationSource(requestedSource[0]) != "" {
+		source = normalizeOperationSource(requestedSource[0])
+	}
 	status := OperationStatusWarning
 	succeeded := 0
 	failed := 0
@@ -65,8 +69,23 @@ func (a *App) recordModelTest(result ModelTestResult) {
 	finishedAt := result.TestedAt.Add(time.Duration(result.LatencyMS) * time.Millisecond)
 	a.operations.Record(OperationEntry{
 		Category: OperationCategoryAccount, Action: OperationActionModelTest, Status: status,
-		Source: OperationSourceManual, Scope: OperationScopeSingle, TargetID: result.AccountID, TargetCount: 1,
+		Source: source, Scope: OperationScopeSingle, TargetID: result.AccountID, TargetCount: 1,
 		Succeeded: succeeded, Failed: failed, Skipped: skipped, StartedAt: result.TestedAt, FinishedAt: finishedAt,
 		ReasonCode: result.ReasonCode, Model: result.Model,
 	})
+}
+
+func (a *App) runNewAccountModelProbe(ctx context.Context, account Account, managementKey string, hostCallbackID string) (ModelTestResult, error) {
+	result, errRun := a.modelTests.Run(ctx, ModelTestRequest{
+		AccountID: account.ID, Model: defaultOpenAIProbeModel, DetectRestrictedModels: true, SelectPolicyFallback: true,
+	}, a.configSnapshot().ManagementBaseURL, managementKey, hostCallbackID)
+	if errRun != nil {
+		return result, errRun
+	}
+	if a.experiments.AutoModelWhitelistEnabled() && len(result.CompatibleModels) > 0 {
+		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, a.configSnapshot(), managementKey, OperationSourceBackground)
+	}
+	a.recordModelTest(result, OperationSourceBackground)
+	_ = a.inspection.RecordModelTest(ctx, result, InspectionProbeSourceScan)
+	return result, nil
 }

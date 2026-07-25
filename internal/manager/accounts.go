@@ -38,8 +38,16 @@ type UsageStorageDiscoverer interface {
 }
 
 type AccountService struct {
-	host  AuthHost
-	usage UsageSnapshotReader
+	host     AuthHost
+	usage    UsageSnapshotReader
+	observer interface{ ObserveAccounts([]Account) }
+}
+
+func (s *AccountService) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
+	if s == nil {
+		return
+	}
+	s.observer = observer
 }
 
 type ResolvedTargets struct {
@@ -210,6 +218,9 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	accounts := make([]Account, 0, len(entries))
 	for _, entry := range entries {
 		accounts = append(accounts, projectHostEntry(entry, pathCounts, indexCounts, s.usage))
+	}
+	if s.observer != nil {
+		s.observer.ObserveAccounts(accounts)
 	}
 	return accounts, nil
 }

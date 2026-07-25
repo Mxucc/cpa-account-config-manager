@@ -215,7 +215,7 @@ func passiveCircuitFailureEvidence(policy InspectionPolicy, record inspectionRec
 		bestReason = record.Signal.ReasonCode
 	}
 	if !record.Probe.TestedAt.IsZero() && !now.Before(record.Probe.TestedAt) && now.Sub(record.Probe.TestedAt) <= window &&
-		passiveCircuitReasonAllowed(record.Probe.ReasonCode) && record.Probe.ConsecutiveFailures > bestCount {
+		record.Probe.Source != InspectionProbeSourceManual && passiveCircuitReasonAllowed(record.Probe.ReasonCode) && record.Probe.ConsecutiveFailures > bestCount {
 		bestCount = boundedCounter(record.Probe.ConsecutiveFailures)
 		bestReason = record.Probe.ReasonCode
 	}
@@ -237,7 +237,8 @@ func shouldAutoDisableInspection(policy InspectionPolicy, account Account, recor
 		return false
 	}
 	if record.Result.SignalSource == InspectionSignalActiveProbe {
-		return record.Probe.ReasonCode != "" && record.Probe.ReasonCode != "model_response_ok" && record.Probe.Status != "unsupported"
+		return record.Probe.Kind == InspectionProbeKindCredential && record.Probe.ReasonCode != "" &&
+			record.Probe.ReasonCode != "credential_response_ok" && record.Probe.Status != "unsupported"
 	}
 	if record.Result.SignalSource == InspectionSignalNative && record.Result.Confidence == InspectionConfidenceHigh {
 		return true

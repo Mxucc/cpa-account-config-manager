@@ -341,7 +341,8 @@ provider-aware default model. The test sends one minimal `hi` generation via
 CPA's authenticated `/v0/management/api-call`, selecting the exact account by
 `auth_index` so CPA retains responsibility for token refresh and account proxy
 selection. Read-only/runtime accounts may be tested when CPA can resolve their
-runtime auth index; the test never edits account state.
+runtime auth index. By default the test never edits account state. The optional
+automatic model allow-list experiment described below is the only exception.
 
 The browser can submit only a bounded account ID and model ID. It cannot submit
 an upstream URL, headers, prompt, payload, credential, or proxy. The plugin
@@ -361,9 +362,24 @@ API-key, and experimental-probe failures never trigger it. The result keeps the
 primary model, final available model, total latency, and sanitized evidence for
 both attempts so the UI never reports 5.6 as available when only 5.5 succeeded.
 
+**Other Settings → Experimental Features → Codex automatic model allow-list**
+is off by default and persists independently from the inspection policy. When
+enabled, the known 5.6 incompatibility plus a successful 5.5 fallback causes one
+additional minimal `gpt-5.4-mini` compatibility probe. The plugin writes an
+`allow_only` policy containing `gpt-5.5` and `gpt-5.4-mini` only when both models
+were positively verified, CPA returned a non-empty account model catalog, and
+the account has no existing manual allow-list or deny-list. It never infers a
+policy from a timeout, generic 429, authentication error, or failed model probe,
+and it records every applied, skipped, or failed policy write in the operation
+journal. When disabled, there is no third probe and no automatic policy write.
+
 Each outcome enters the operation journal as `model_test` with the public
-account/final-model IDs and normalized reason. A failed, limited, or unauthorized
-probe is informational and never triggers automatic disable, enable, or delete.
+account/final-model IDs and normalized reason. A model-specific failure is
+informational and never triggers account-level automatic disable or delete.
+Generic HTTP 429 responses without explicit quota-window or
+`usage_limit_reached` evidence are treated as transient failures rather than
+quota exhaustion. Credential-level quota, revocation, and deactivation evidence
+keeps its normal inspection remediation.
 
 ## Account Import
 

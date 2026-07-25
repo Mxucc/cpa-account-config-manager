@@ -343,7 +343,7 @@ func TestInspectionActiveProbeStreaksAccumulateAndRecoveryRequiresCurrentEvidenc
 	account := Account{ID: "account", Editable: true}
 	record := inspectionRecord{}
 	for attempt := 1; attempt <= 3; attempt++ {
-		record.Probe = inspectionProbeSignal{Status: "unavailable", ReasonCode: "authentication_failed", TestedAt: now.Add(time.Duration(attempt) * time.Minute)}
+		record.Probe = inspectionProbeSignal{Status: "unavailable", Kind: InspectionProbeKindCredential, Source: InspectionProbeSourceScan, ReasonCode: "authentication_failed", TestedAt: now.Add(time.Duration(attempt) * time.Minute)}
 		decision := decideInspection(account, record, record.Probe.TestedAt)
 		updateInspectionRecord(&record, account, decision, record.Probe.TestedAt)
 		if record.Result.FailureStreak != attempt {

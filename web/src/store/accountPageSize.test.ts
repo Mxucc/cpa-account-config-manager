@@ -11,7 +11,7 @@ describe("account page-size preference", () => {
 
   it("defaults to 50 and restores each supported value", () => {
     expect(readAccountPageSize()).toBe(DEFAULT_ACCOUNT_PAGE_SIZE);
-    for (const pageSize of [20, 50, 100, 200] as const) {
+    for (const pageSize of [20, 50, 100, 200, 500, 1000] as const) {
       writeAccountPageSize(pageSize);
       expect(readAccountPageSize()).toBe(pageSize);
     }

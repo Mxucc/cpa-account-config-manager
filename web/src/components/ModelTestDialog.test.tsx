@@ -61,6 +61,13 @@ describe("ModelTestDialog", () => {
       status_code: 200,
       latency_ms: 1240,
       tested_at: "2026-07-23T08:05:00Z",
+      compatible_models: ["gpt-5.4-mini", "gpt-5.5"],
+      model_policy: {
+        mode: "allow_only",
+        models: ["gpt-5.4-mini", "gpt-5.5"],
+        status: "applied",
+        reason_code: "model_compatibility_detected",
+      },
       attempts: [
         {
           model: "gpt-5.6-sol",
@@ -94,6 +101,16 @@ describe("ModelTestDialog", () => {
             truncated: false,
           },
         },
+        {
+          model: "gpt-5.4-mini",
+          role: "compatibility",
+          status: "available",
+          probe_kind: "model",
+          reason_code: "model_response_ok",
+          status_code: 200,
+          latency_ms: 210,
+          tested_at: "2026-07-23T08:05:02Z",
+        },
       ],
     };
     render(<ModelTestDialog account={account} result={fallbackResult} error="" testing={false} onClose={vi.fn()} onTest={vi.fn()} />);
@@ -105,13 +122,17 @@ describe("ModelTestDialog", () => {
     expect(within(dialog).getByText("可用模型")).toBeInTheDocument();
     const attempts = within(dialog).getByRole("list", { name: "模型探测过程" });
     const rows = within(attempts).getAllByRole("listitem");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(within(rows[0]).getByText("主模型探测")).toBeInTheDocument();
     expect(within(rows[0]).getByText("gpt-5.6-sol")).toBeInTheDocument();
     expect(within(rows[0]).getByText("HTTP 400")).toBeInTheDocument();
     expect(within(rows[1]).getByText("回退模型探测")).toBeInTheDocument();
     expect(within(rows[1]).getByText("gpt-5.5")).toBeInTheDocument();
     expect(within(rows[1]).getByText("HTTP 200")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("兼容性探测")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("gpt-5.4-mini")).toBeInTheDocument();
+    expect(within(dialog).getByText("已应用模型白名单")).toBeInTheDocument();
+    expect(within(dialog).getByText("已识别受限模型兼容性")).toBeInTheDocument();
     await user.click(within(rows[0]).getByText("查看脱敏后的上游响应"));
     await user.click(within(rows[1]).getByText("查看脱敏后的上游响应"));
     expect(within(rows[0]).getByLabelText("响应正文")).toHaveTextContent("not supported");
@@ -265,5 +286,55 @@ describe("ModelTestDialog", () => {
     expect(reopened.querySelector('option[value="gpt-5.3-codex"]')).not.toBeNull();
     expect(reopened.querySelector('option[value="gpt-5.5"]')).not.toBeNull();
     expect(reopened.querySelector('option[value="gpt-5.4"]')).not.toBeNull();
+  });
+
+  it("loads only allow-listed models and defaults to the first when the saved model is blocked", async () => {
+    const user = userEvent.setup();
+    const onTest = vi.fn();
+    recordManualModelTestModel("codex", "gpt-5.6-sol");
+    render(<ModelTestDialog
+      account={{
+        ...account,
+        model_policy: { mode: "allow_only", models: ["gpt-5.4-mini", "gpt-5.5"], excluded_count: 3 },
+      }}
+      result={null}
+      error=""
+      testing={false}
+      onClose={vi.fn()}
+      onTest={onTest}
+    />);
+
+    const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
+    const modelSelect = within(dialog).getByRole("combobox", { name: "测试模型" });
+    expect(modelSelect).toHaveValue("gpt-5.4-mini");
+    expect(within(modelSelect).getAllByRole("option").map((option) => option.textContent)).toEqual(["gpt-5.4-mini", "gpt-5.5"]);
+    expect(dialog.querySelector('option[value="gpt-5.6-sol"]')).toBeNull();
+
+    await user.selectOptions(modelSelect, "gpt-5.5");
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+    expect(onTest).toHaveBeenCalledWith("gpt-5.5", false);
+  });
+
+  it("removes deny-listed defaults and chooses the first safe model", async () => {
+    const user = userEvent.setup();
+    const onTest = vi.fn();
+    recordManualModelTestModel("codex", "gpt-5.6-sol");
+    render(<ModelTestDialog
+      account={{
+        ...account,
+        model_policy: { mode: "deny_only", models: ["gpt-5.6-sol"], excluded_count: 1 },
+      }}
+      result={null}
+      error=""
+      testing={false}
+      onClose={vi.fn()}
+      onTest={onTest}
+    />);
+
+    const dialog = screen.getByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByLabelText("测试模型")).toHaveValue("gpt-5.5");
+    expect(dialog.querySelector('option[value="gpt-5.6-sol"]')).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+    expect(onTest).toHaveBeenCalledWith("gpt-5.5", false);
   });
 });

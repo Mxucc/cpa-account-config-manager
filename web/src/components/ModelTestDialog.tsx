@@ -48,6 +48,16 @@ const reasonLabels: Record<string, UIMessageKey> = {
   upstream_unavailable: "ui.upstream_service_is_temporarily_unavailable",
   invalid_response: "ui.the_upstream_response_cannot_confirm_model_availability",
   unsupported_provider: "ui.this_provider_does_not_support_safe_model_testing_yet",
+  model_blocked_by_account_policy: "ui.model_blocked_by_account_policy",
+  transient_failure: "ui.upstream_service_is_temporarily_unavailable",
+};
+
+const modelPolicyReasonLabels: Record<string, UIMessageKey> = {
+  model_compatibility_detected: "ui.model_compatibility_detected",
+  existing_model_policy: "ui.existing_model_policy_preserved",
+  model_catalog_unavailable: "ui.model_catalog_unavailable",
+  mutation_busy: "ui.another_account_change_is_running",
+  management_unavailable: "ui.cpa_management_api_unavailable",
 };
 
 const quotaWindowLabels: Record<NonNullable<ModelTestResult["quota_window"]>, UIMessageKey> = {
@@ -66,11 +76,28 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
     () => readManualModelTestPreference(provider, builtInSuggestions[0] || ""),
     [builtInSuggestions, provider],
   );
-  const [model, setModel] = useState(initialPreference.model);
+  const policyMode = account.model_policy?.mode || "all";
+  const policyModels = useMemo(
+    () => [...new Set((account.model_policy?.models || []).map(normalizeManualModelTestModel).filter(Boolean))],
+    [account.model_policy?.models],
+  );
+  const policyModelKeys = useMemo(() => new Set(policyModels.map((item) => item.toLowerCase())), [policyModels]);
+  const initialModel = useMemo(() => {
+    if (policyMode === "allow_only") {
+      return policyModelKeys.has(initialPreference.model.toLowerCase()) ? initialPreference.model : (policyModels[0] || "");
+    }
+    if (policyMode === "deny_only" && policyModelKeys.has(initialPreference.model.toLowerCase())) {
+      return builtInSuggestions.find((item) => !policyModelKeys.has(item.toLowerCase())) || "";
+    }
+    return initialPreference.model;
+  }, [builtInSuggestions, initialPreference.model, policyMode, policyModelKeys, policyModels]);
+  const [model, setModel] = useState(initialModel);
   const [testedModels, setTestedModels] = useState(initialPreference.testedModels);
   const suggestions = useMemo(
-    () => [...new Set([...testedModels, ...builtInSuggestions])],
-    [builtInSuggestions, testedModels],
+    () => policyMode === "allow_only"
+      ? policyModels
+      : [...new Set([...testedModels, ...builtInSuggestions])].filter((item) => policyMode !== "deny_only" || !policyModelKeys.has(item.toLowerCase())),
+    [builtInSuggestions, policyMode, policyModelKeys, policyModels, testedModels],
   );
   const identity = account.label || account.email || account.name || account.id;
   const normalizedModel = normalizeManualModelTestModel(model);
@@ -112,15 +139,21 @@ export function ModelTestDialog({ account, result, error, testing, experimentalA
 
         <label className="model-test-field">
           <span>{tx("ui.test_model")}</span>
-          <input
-            aria-label={tx("ui.test_model")}
-            list="model-test-suggestions"
-            maxLength={128}
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            placeholder={tx("ui.enter_model_id")}
-            autoComplete="off"
-          />
+          {policyMode === "allow_only" ? (
+            <select aria-label={tx("ui.test_model")} value={model} onChange={(event) => setModel(event.target.value)}>
+              {suggestions.map((suggestion) => <option key={suggestion} value={suggestion}>{suggestion}</option>)}
+            </select>
+          ) : (
+            <input
+              aria-label={tx("ui.test_model")}
+              list="model-test-suggestions"
+              maxLength={128}
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder={tx("ui.enter_model_id")}
+              autoComplete="off"
+            />
+          )}
         </label>
         <datalist id="model-test-suggestions">
           {suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
@@ -165,6 +198,12 @@ function ModelTestOutcome({ result }: { result: ModelTestResult }) {
           <div><strong>{tx("ui.correlation_call_id")}</strong><code>{result.experiment.call_id || "-"}</code></div>
         </div>
       ) : null}
+      {result.model_policy ? (
+        <div className="model-test-experiment-result" role="status">
+          <span><ShieldQuestion size={15} />{tx(result.model_policy.status === "applied" ? "ui.model_allow_list_applied" : "ui.model_allow_list_not_applied")}</span>
+          <div><strong>{tx(modelPolicyReasonLabels[result.model_policy.reason_code] || "ui.operation_failed")}</strong><code>{result.model_policy.models.join(", ")}</code></div>
+        </div>
+      ) : null}
       {showAttemptTimeline ? <ModelTestAttempts attempts={attempts} /> : result.response ? <ModelTestResponse response={result.response} /> : null}
     </section>
   );
@@ -182,7 +221,7 @@ function ModelTestAttempts({ attempts }: { attempts: ModelTestAttempt[] }) {
             <li key={`${attempt.role}:${attempt.model}:${index}`}>
               <div className="model-test-attempt-heading">
                 <span className={`attempt-status attempt-status-${attempt.status}`}><AttemptIcon size={15} />{tx(statusLabels[attempt.status])}</span>
-                <span>{tx(attempt.role === "fallback" ? "ui.fallback_attempt" : "ui.primary_attempt")}</span>
+                <span>{tx(attempt.role === "fallback" ? "ui.fallback_attempt" : attempt.role === "compatibility" ? "ui.compatibility_attempt" : "ui.primary_attempt")}</span>
                 <code>{attempt.model}</code>
               </div>
               <div className="model-test-attempt-detail">

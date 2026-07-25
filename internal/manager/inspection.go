@@ -1055,7 +1055,7 @@ func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result Mod
 	policy := e.policy
 	previousHealth := record.Result.Health
 	previousReason := record.Result.ReasonCode
-	applyModelProbeToInspection(&record, result, policy)
+	applyModelProbeToInspectionWithSource(&record, result, policy, InspectionProbeSourceManual)
 	decision := decideInspection(account, record, e.currentTime())
 	updateInspectionRecord(&record, account, decision, e.currentTime())
 	if record.Result.Health == InspectionHealthReview || record.Result.Health != previousHealth || record.Result.ReasonCode != previousReason {
@@ -1063,12 +1063,12 @@ func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result Mod
 		record.Result.ReviewedAt = nil
 	}
 	e.records[accountID] = record
-	requestDisable := policy.AutoDisable && decision.AutoDisableEligible && account.Editable && !account.Disabled
+	requestEnable := policy.AutoEnable && account.Disabled && record.Result.OwnedDisable && decision.Health == InspectionHealthHealthy
 	e.dirty = true
 	e.generation++
 	e.mu.Unlock()
 	e.persist()
-	if requestDisable {
+	if requestEnable {
 		e.RequestScan()
 	}
 	return nil

@@ -31,6 +31,12 @@ type AccountModelPolicySummary struct {
 	ExcludedCount int      `json:"excluded_count"`
 }
 
+type accountProbeModelResolution struct {
+	Model    string
+	Allowed  bool
+	Replaced bool
+}
+
 type storedModelPolicy struct {
 	Schema                int      `json:"schema"`
 	Mode                  string   `json:"mode"`
@@ -257,6 +263,55 @@ func modelIdentifierSet(models []string) map[string]struct{} {
 		set[strings.ToLower(model)] = struct{}{}
 	}
 	return set
+}
+
+func resolveAccountProbeModel(requested, provider string, policy *AccountModelPolicySummary, allowFallback bool) accountProbeModelResolution {
+	requested = strings.TrimSpace(requested)
+	if policy == nil || policy.Mode == ModelPolicyModeAll {
+		return accountProbeModelResolution{Model: requested, Allowed: true}
+	}
+	selected := modelIdentifierSet(policy.Models)
+	_, listed := selected[strings.ToLower(requested)]
+	switch policy.Mode {
+	case ModelPolicyModeAllowOnly:
+		if listed {
+			return accountProbeModelResolution{Model: requested, Allowed: true}
+		}
+		if allowFallback && len(policy.Models) > 0 {
+			return accountProbeModelResolution{Model: policy.Models[0], Allowed: true, Replaced: true}
+		}
+	case ModelPolicyModeDenyOnly:
+		if !listed {
+			return accountProbeModelResolution{Model: requested, Allowed: true}
+		}
+		if allowFallback {
+			for _, candidate := range defaultProbeModelCandidates(provider) {
+				if _, denied := selected[strings.ToLower(candidate)]; !denied {
+					return accountProbeModelResolution{Model: candidate, Allowed: true, Replaced: true}
+				}
+			}
+		}
+	}
+	return accountProbeModelResolution{Model: requested}
+}
+
+func accountModelPolicyAllows(policy *AccountModelPolicySummary, model string) bool {
+	return resolveAccountProbeModel(model, "", policy, false).Allowed
+}
+
+func defaultProbeModelCandidates(provider string) []string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex", "openai":
+		return []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, "gpt-5.4", codexCompatibilityMiniModel}
+	case "claude", "anthropic":
+		return []string{"claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"}
+	case "gemini", "gemini-cli", "gemini-interactions", "aistudio":
+		return []string{"gemini-2.0-flash", "gemini-2.5-pro"}
+	case "xai", "grok":
+		return []string{"grok-4", "grok-4-fast"}
+	default:
+		return nil
+	}
 }
 
 func unionModelIdentifiers(groups ...[]string) []string {

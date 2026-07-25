@@ -207,11 +207,18 @@ export interface ModelTestResult {
   response?: ModelTestResponsePreview;
   experiment?: ModelTestExperiment;
   attempts?: ModelTestAttempt[];
+  compatible_models?: string[];
+  model_policy?: {
+    mode: "allow_only";
+    models: string[];
+    status: "applied" | "skipped" | "failed";
+    reason_code: string;
+  };
 }
 
 export interface ModelTestAttempt {
   model: string;
-  role: "primary" | "fallback";
+  role: "primary" | "fallback" | "compatibility";
   status: ModelTestStatus;
   probe_kind?: "model" | "credential";
   reason_code: string;
@@ -852,6 +859,7 @@ export interface CPAServerVersionSnapshot {
 export interface ExperimentalSettings {
   weekly_overdraft_enabled: boolean;
   agent_identity_enabled: boolean;
+  auto_model_whitelist_enabled: boolean;
 }
 
 export interface ExperimentalSettingsSnapshot {

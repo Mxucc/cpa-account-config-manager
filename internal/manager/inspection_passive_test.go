@@ -33,8 +33,30 @@ func TestCodex429ClassifiesResetWindowsAndUsesBoundedFallback(t *testing.T) {
 	fallback := classifyUsageFailure(cpaapi.UsageRecord{
 		Provider: "codex", Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests},
 	}, now)
-	if fallback.QuotaWindow != InspectionQuotaWindowFiveHourFallback || !fallback.RecoverAfter.Equal(now.Add(5*time.Hour)) {
-		t.Fatalf("fallback evidence = %#v", fallback)
+	if fallback.ReasonCode != "transient_failure" || fallback.AutoDisableEligible || fallback.QuotaWindow != "" || !fallback.RecoverAfter.IsZero() {
+		t.Fatalf("generic 429 evidence = %#v", fallback)
+	}
+}
+
+func TestModel429RequiresExplicitQuotaEvidence(t *testing.T) {
+	status, reason := classifyModelProbe("codex", http.StatusTooManyRequests, []byte(`{"error":{"message":"rate limited"}}`))
+	if status != "review" || reason != "transient_failure" {
+		t.Fatalf("generic model 429 = status %q reason %q", status, reason)
+	}
+	status, reason = classifyModelProbe("codex", http.StatusTooManyRequests, []byte(`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
+	if status != "review" || reason != "quota_limited" {
+		t.Fatalf("explicit quota 429 = status %q reason %q", status, reason)
+	}
+}
+
+func TestCredential429RequiresExplicitQuotaEvidence(t *testing.T) {
+	status, reason, window := classifyCredentialProbeDetails(http.StatusTooManyRequests, []byte(`{"error":{"message":"rate limited"}}`))
+	if status != "review" || reason != "transient_failure" || window != "" {
+		t.Fatalf("generic credential 429 = status %q reason %q window %q", status, reason, window)
+	}
+	status, reason, window = classifyCredentialProbeDetails(http.StatusTooManyRequests, []byte(`{"error":{"type":"usage_limit_reached"}}`))
+	if status != "review" || reason != "quota_limited" || window != InspectionQuotaWindowMultiple {
+		t.Fatalf("explicit credential quota = status %q reason %q window %q", status, reason, window)
 	}
 }
 

@@ -91,6 +91,7 @@ const sourceLabels: Record<OperationSource, UIMessageKey> = {
 const actionLabels: Record<string, UIMessageKey> = {
   delete: "ui.delete_account",
   model_test: "ui.model_availability_test",
+  auto_model_whitelist: "ui.auto_model_whitelist_applied",
   batch_edit: "ui.batch_edit_2",
   batch_retry: "ui.retry_failures",
   batch_delete: "ui.batch_delete_2",
@@ -147,6 +148,9 @@ const reasonLabels: Record<string, UIMessageKey> = {
   account_missing: "ui.account_missing",
   account_read_only: "ui.account_is_read_only",
   management_unavailable: "ui.cpa_management_api_unavailable",
+  existing_model_policy: "ui.existing_model_policy_preserved",
+  model_catalog_unavailable: "ui.model_catalog_unavailable",
+  model_compatibility_detected: "ui.model_compatibility_detected",
   delete_failed: "ui.account_deletion_failed",
   model_response_ok: "ui.model_response_is_healthy",
   model_not_found: "ui.model_unavailable_or_missing",

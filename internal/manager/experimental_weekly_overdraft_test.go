@@ -171,7 +171,7 @@ func TestWeeklyOverdraftExperimentAllowsFiveHourQuotaMutation(t *testing.T) {
 			ID: "inspection-account", Name: "inspection.json", Provider: "codex", Health: InspectionHealthQuotaLimited,
 			ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowFiveHour, Confidence: InspectionConfidenceHigh,
 			Recommendation: InspectionRecommendationDisable, Editable: true, AutoDisableEligible: true, SignalSource: InspectionSignalActiveProbe,
-		}, Probe: inspectionProbeSignal{Status: "review", ReasonCode: "quota_limited"}},
+		}, Probe: inspectionProbeSignal{Status: "review", Kind: InspectionProbeKindCredential, ReasonCode: "quota_limited"}},
 	}
 	accounts := map[string]Account{
 		"inspection-account": {ID: "inspection-account", Name: "inspection.json", Provider: "codex", Editable: true, path: "/auths/inspection.json"},

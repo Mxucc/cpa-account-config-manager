@@ -16,23 +16,25 @@ func TestExperimentalSettingsDefaultDisabledAndPersistAcrossRestart(t *testing.T
 	dataDir := t.TempDir()
 	first := NewExperimentalSettingsService()
 	first.Configure(Config{DataDir: dataDir})
-	if snapshot := first.Snapshot(); snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || snapshot.StorageError != "" {
+	if snapshot := first.Snapshot(); snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled ||
+		snapshot.Settings.AutoModelWhitelistEnabled || snapshot.StorageError != "" {
 		t.Fatalf("default snapshot = %#v", snapshot)
 	}
-	if _, errSet := first.Set(ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true}); errSet != nil {
+	if _, errSet := first.Set(ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true, AutoModelWhitelistEnabled: true}); errSet != nil {
 		t.Fatalf("Set() error = %v", errSet)
 	}
 
 	restarted := NewExperimentalSettingsService()
 	restarted.Configure(Config{DataDir: dataDir})
-	if snapshot := restarted.Snapshot(); !snapshot.Settings.WeeklyOverdraftEnabled || !snapshot.Settings.AgentIdentityEnabled || snapshot.StorageError != "" {
+	if snapshot := restarted.Snapshot(); !snapshot.Settings.WeeklyOverdraftEnabled || !snapshot.Settings.AgentIdentityEnabled ||
+		!snapshot.Settings.AutoModelWhitelistEnabled || snapshot.StorageError != "" {
 		t.Fatalf("restarted snapshot = %#v", snapshot)
 	}
 }
 
 func TestExperimentalSettingsConfigOverridePersists(t *testing.T) {
 	dataDir := t.TempDir()
-	settings := ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true}
+	settings := ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true, AutoModelWhitelistEnabled: true}
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir, ExperimentalSettings: &settings})
 	if !service.WeeklyOverdraftEnabled() {
@@ -41,12 +43,15 @@ func TestExperimentalSettingsConfigOverridePersists(t *testing.T) {
 	if !service.AgentIdentityEnabled() {
 		t.Fatal("config override did not enable Agent Identity")
 	}
+	if !service.AutoModelWhitelistEnabled() {
+		t.Fatal("config override did not enable automatic model whitelist")
+	}
 
 	reloaded, errLoad := loadExperimentalSettings(experimentalSettingsStorePath(dataDir))
 	if errLoad != nil {
 		t.Fatalf("loadExperimentalSettings() error = %v", errLoad)
 	}
-	if !reloaded.WeeklyOverdraftEnabled || !reloaded.AgentIdentityEnabled {
+	if !reloaded.WeeklyOverdraftEnabled || !reloaded.AgentIdentityEnabled || !reloaded.AutoModelWhitelistEnabled {
 		t.Fatalf("persisted settings = %#v", reloaded)
 	}
 }
@@ -63,7 +68,7 @@ func TestExperimentalSettingsCorruptStateFailsClosed(t *testing.T) {
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir})
 	snapshot := service.Snapshot()
-	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled {
+	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || snapshot.Settings.AutoModelWhitelistEnabled {
 		t.Fatal("corrupt state enabled the experiment")
 	}
 	if snapshot.StorageError != "experimental settings could not be loaded" {
@@ -86,14 +91,14 @@ func TestExperimentalSettingsManagementRoutesPersistAndValidate(t *testing.T) {
 	if errDecode := json.Unmarshal(response.Body, &initial); errDecode != nil {
 		t.Fatalf("decode GET response: %v", errDecode)
 	}
-	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled {
+	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled || initial.Settings.AutoModelWhitelistEnabled {
 		t.Fatal("GET returned an enabled experiment by default")
 	}
 
 	response = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPut,
 		Path:   path,
-		Body:   []byte(`{"weekly_overdraft_enabled":true,"agent_identity_enabled":true}`),
+		Body:   []byte(`{"weekly_overdraft_enabled":true,"agent_identity_enabled":true,"auto_model_whitelist_enabled":true}`),
 	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("PUT status = %d body=%s", response.StatusCode, response.Body)
@@ -103,6 +108,9 @@ func TestExperimentalSettingsManagementRoutesPersistAndValidate(t *testing.T) {
 	}
 	if !app.experiments.AgentIdentityEnabled() {
 		t.Fatal("PUT did not enable Agent Identity")
+	}
+	if !app.experiments.AutoModelWhitelistEnabled() {
+		t.Fatal("PUT did not enable automatic model whitelist")
 	}
 
 	for name, body := range map[string][]byte{

@@ -20,6 +20,7 @@ const (
 
 	OperationActionDelete                 = "delete"
 	OperationActionModelTest              = "model_test"
+	OperationActionAutoModelWhitelist     = "auto_model_whitelist"
 	OperationActionAgentIdentityLogin     = "agent_identity_login"
 	OperationActionBatchEdit              = "batch_edit"
 	OperationActionBatchRetry             = "batch_retry"
@@ -199,7 +200,7 @@ func normalizeOperationCategory(value string) string {
 
 func normalizeOperationAction(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case OperationActionDelete, OperationActionModelTest, OperationActionAgentIdentityLogin, OperationActionBatchEdit, OperationActionBatchRetry,
+	case OperationActionDelete, OperationActionModelTest, OperationActionAutoModelWhitelist, OperationActionAgentIdentityLogin, OperationActionBatchEdit, OperationActionBatchRetry,
 		OperationActionBatchDelete, OperationActionBatchDeleteRetry, OperationActionImport,
 		OperationActionExportAccounts, OperationActionExportResults, OperationActionPolicySave,
 		OperationActionPolicyScan, OperationActionForceSync, OperationActionInspectionSave,

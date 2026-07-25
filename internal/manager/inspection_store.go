@@ -28,6 +28,7 @@ type inspectionSignal struct {
 type inspectionProbeSignal struct {
 	Status              string    `json:"status,omitempty"`
 	Kind                string    `json:"kind,omitempty"`
+	Source              string    `json:"source,omitempty"`
 	ReasonCode          string    `json:"reason_code,omitempty"`
 	StatusCode          int       `json:"status_code,omitempty"`
 	Model               string    `json:"model,omitempty"`
@@ -218,6 +219,7 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		record.Signal.ConsecutiveSuccess = boundedCounter(record.Signal.ConsecutiveSuccess)
 		record.Probe.Status = normalizeModelProbeStatus(record.Probe.Status)
 		record.Probe.Kind = normalizeInspectionProbeKind(record.Probe.Kind)
+		record.Probe.Source = normalizeInspectionProbeSource(record.Probe.Source)
 		record.Probe.ReasonCode = safeModelProbeReason(record.Probe.ReasonCode)
 		record.Probe.StatusCode = boundedHTTPStatus(record.Probe.StatusCode)
 		record.Probe.Model = safeModelIdentifier(record.Probe.Model)
@@ -349,6 +351,16 @@ func normalizeInspectionProbeKind(value string) string {
 	}
 }
 
+func normalizeInspectionProbeSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case InspectionProbeSourceManual, InspectionProbeSourceScan:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		// Records written before probe sources were persisted came from inspection scans.
+		return InspectionProbeSourceScan
+	}
+}
+
 func safeModelProbeReason(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
@@ -433,6 +445,7 @@ func safeInspectionReason(value string) string {
 		"transient_failure", "no_recent_evidence", "mutation_busy", "account_changed",
 		"account_missing", "account_read_only", "management_unavailable", "delete_failed",
 		"model_response_ok", "credential_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
+		"model_blocked_by_account_policy",
 		"request_timeout", "upstream_unavailable", "invalid_response", "unconfirmed_upstream_response",
 		"passive_circuit_open":
 		return strings.ToLower(strings.TrimSpace(value))

@@ -40,6 +40,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   const [confirmAutoUpdate, setConfirmAutoUpdate] = useState(false);
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
+  const [autoModelWhitelistEnabled, setAutoModelWhitelistEnabled] = useState(false);
   const [error, setError] = useState("");
   const attemptedUpdate = useRef("");
 
@@ -98,6 +99,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     if (!experiments) return;
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
+    setAutoModelWhitelistEnabled(experiments.settings.auto_model_whitelist_enabled === true);
   }, [experiments]);
 
   useEffect(() => {
@@ -215,6 +217,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
       setExperiments(await api.saveExperimentalSettings({
         weekly_overdraft_enabled: weeklyOverdraftEnabled,
         agent_identity_enabled: agentIdentityEnabled,
+        auto_model_whitelist_enabled: autoModelWhitelistEnabled,
       }));
       onNotice(tx("ui.experimental_settings_saved"));
     } catch (caught) {
@@ -354,6 +357,32 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
               <div><strong>{tx("ui.authentication_path")}</strong><span>{tx("ui.agent_identity_authentication_behavior")}</span></div>
               <div><strong>{tx("ui.supported_imports")}</strong><span>{tx("ui.agent_identity_import_formats")}</span></div>
               <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.agent_identity_security_notice")}</span></div>
+            </div>
+          </div>
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><ShieldCheck size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_auto_model_whitelist")}</strong>
+                  <span>{tx("ui.codex_auto_model_whitelist_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input
+                  type="checkbox"
+                  checked={autoModelWhitelistEnabled}
+                  disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setAutoModelWhitelistEnabled(event.target.checked)}
+                  aria-label={tx("ui.codex_auto_model_whitelist")}
+                />
+                <b>{tx(autoModelWhitelistEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.detection_evidence")}</strong><span>{tx("ui.auto_model_whitelist_detection_behavior")}</span></div>
+              <div><strong>{tx("ui.policy_write_behavior")}</strong><span>{tx("ui.auto_model_whitelist_policy_behavior")}</span></div>
+              <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.auto_model_whitelist_safety_notice")}</span></div>
             </div>
           </div>
           <div className="settings-section-actions experimental-actions">

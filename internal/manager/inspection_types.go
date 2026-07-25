@@ -77,6 +77,8 @@ const (
 	InspectionSignalActiveProbe   = "active_probe"
 	InspectionProbeKindModel      = "model"
 	InspectionProbeKindCredential = "credential"
+	InspectionProbeSourceManual   = "manual"
+	InspectionProbeSourceScan     = "inspection"
 
 	InspectionSweepSourceManual    = "manual"
 	InspectionSweepSourceScheduled = "scheduled"

@@ -9,8 +9,9 @@ import (
 )
 
 type ExperimentalSettings struct {
-	WeeklyOverdraftEnabled bool `json:"weekly_overdraft_enabled" yaml:"weekly_overdraft_enabled"`
-	AgentIdentityEnabled   bool `json:"agent_identity_enabled" yaml:"agent_identity_enabled"`
+	WeeklyOverdraftEnabled    bool `json:"weekly_overdraft_enabled" yaml:"weekly_overdraft_enabled"`
+	AgentIdentityEnabled      bool `json:"agent_identity_enabled" yaml:"agent_identity_enabled"`
+	AutoModelWhitelistEnabled bool `json:"auto_model_whitelist_enabled" yaml:"auto_model_whitelist_enabled"`
 }
 
 func (s *ExperimentalSettingsService) AgentIdentityEnabled() bool {
@@ -19,6 +20,16 @@ func (s *ExperimentalSettingsService) AgentIdentityEnabled() bool {
 	}
 	s.mu.RLock()
 	enabled := s.settings.AgentIdentityEnabled
+	s.mu.RUnlock()
+	return enabled
+}
+
+func (s *ExperimentalSettingsService) AutoModelWhitelistEnabled() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	enabled := s.settings.AutoModelWhitelistEnabled
 	s.mu.RUnlock()
 	return enabled
 }

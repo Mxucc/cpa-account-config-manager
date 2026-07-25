@@ -1039,8 +1039,8 @@ func TestAgentIdentityUnsupportedNativeFailureDoesNotRecommendDisable(t *testing
 		TestedAt: now, ConsecutiveFailures: 1,
 	}}
 	decision = decideInspection(agentIdentity, activeProbe, now)
-	if decision.SignalSource != InspectionSignalActiveProbe || decision.Recommendation != InspectionRecommendationDisable || !decision.AutoDisableEligible {
-		t.Fatalf("Agent Identity active-probe decision = %#v, want authoritative disable", decision)
+	if decision.SignalSource != InspectionSignalActiveProbe || decision.Recommendation != InspectionRecommendationReview || decision.AutoDisableEligible {
+		t.Fatalf("Agent Identity active model-probe decision = %#v, want review without account disable", decision)
 	}
 	passiveSignal := inspectionRecord{Signal: inspectionSignal{
 		ReasonCode: "quota_exhausted", Confidence: InspectionConfidenceHigh,

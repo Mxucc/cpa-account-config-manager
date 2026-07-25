@@ -635,6 +635,7 @@ func safeOperationReason(value string) string {
 		"credential_permission_denied", "native_unavailable", "manual_disabled", "transient_failure",
 		"no_recent_evidence", "mutation_busy", "account_changed", "account_missing", "account_read_only",
 		"management_unavailable", "delete_failed", "credential_converted", "experiment_disabled",
+		"existing_model_policy", "model_catalog_unavailable", "model_compatibility_detected",
 		"login_state_not_found", "login_state_expired", "conversion_running", "session_rejected", "invalid_session":
 		return value
 	case "notification_delivered", "notification_failed", "notification_rejected", "notification_queue_full", "notification_superseded":

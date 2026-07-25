@@ -43,6 +43,22 @@ func TestDefaultInspectionProbeModelsUseCurrentOpenAIModel(t *testing.T) {
 	}
 }
 
+func TestPolicyBlockedProbeDoesNotOverwriteInspectionEvidence(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 8, 0, 0, 0, time.UTC)
+	record := inspectionRecord{Probe: inspectionProbeSignal{
+		Status: "available", Kind: InspectionProbeKindModel, Source: InspectionProbeSourceScan,
+		ReasonCode: "model_response_ok", Model: "allowed-model", TestedAt: now.Add(-time.Minute), ConsecutiveSuccess: 3,
+	}}
+	want := record.Probe
+	applyModelProbeToInspection(&record, ModelTestResult{
+		AccountID: "policy-auth", Model: "blocked-model", Status: "unsupported", ProbeKind: InspectionProbeKindModel,
+		ReasonCode: "model_blocked_by_account_policy", TestedAt: now,
+	}, defaultInspectionPolicy())
+	if !reflect.DeepEqual(record.Probe, want) {
+		t.Fatalf("policy skip overwrote prior evidence: got %#v want %#v", record.Probe, want)
+	}
+}
+
 func TestInspectionProbeEligibilityRespectsManualDisablePolicyAndOwnership(t *testing.T) {
 	accounts := []Account{
 		{ID: "active"},
@@ -229,7 +245,7 @@ func TestStoppedInspectionSweepDoesNotResumeAfterRestart(t *testing.T) {
 	}
 }
 
-func TestInspectionProbeDecisionDisablesEveryCompletedAbnormalModelTest(t *testing.T) {
+func TestInspectionProbeDecisionKeepsModelSpecificFailuresOutOfAccountAutoDisable(t *testing.T) {
 	now := time.Date(2026, time.July, 21, 3, 0, 0, 0, time.UTC)
 	tests := []struct {
 		reason      string
@@ -238,12 +254,13 @@ func TestInspectionProbeDecisionDisablesEveryCompletedAbnormalModelTest(t *testi
 		recommend   string
 	}{
 		{reason: "model_response_ok", health: InspectionHealthHealthy, recommend: InspectionRecommendationKeep},
-		{reason: "authentication_failed", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
-		{reason: "quota_limited", health: InspectionHealthQuotaLimited, autoDisable: true, recommend: InspectionRecommendationDisable},
-		{reason: "model_not_found", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
-		{reason: "request_timeout", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
-		{reason: "upstream_unavailable", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
-		{reason: "invalid_response", health: InspectionHealthUnavailable, autoDisable: true, recommend: InspectionRecommendationDisable},
+		{reason: "authentication_failed", health: InspectionHealthReview, recommend: InspectionRecommendationReview},
+		{reason: "quota_limited", health: InspectionHealthReview, recommend: InspectionRecommendationReview},
+		{reason: "model_not_found", health: InspectionHealthReview, recommend: InspectionRecommendationReview},
+		{reason: "request_timeout", health: InspectionHealthUnavailable, recommend: InspectionRecommendationReview},
+		{reason: "upstream_unavailable", health: InspectionHealthUnavailable, recommend: InspectionRecommendationReview},
+		{reason: "invalid_response", health: InspectionHealthUnavailable, recommend: InspectionRecommendationReview},
+		{reason: "transient_failure", health: InspectionHealthUnavailable, recommend: InspectionRecommendationReview},
 	}
 	for _, test := range tests {
 		decision, ok := decisionFromModelProbe(inspectionProbeSignal{Kind: InspectionProbeKindModel, ReasonCode: test.reason, TestedAt: now}, now)
@@ -269,13 +286,13 @@ func TestInspectionProbeAuthenticationFailureUsesProbeKindForActionability(t *te
 	model, okModel := decisionFromModelProbe(inspectionProbeSignal{
 		Kind: InspectionProbeKindModel, ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now,
 	}, now)
-	if !okModel || model.Health != InspectionHealthUnavailable ||
-		model.Recommendation != InspectionRecommendationDisable || !model.AutoDisableEligible {
+	if !okModel || model.Health != InspectionHealthReview ||
+		model.Recommendation != InspectionRecommendationReview || model.AutoDisableEligible {
 		t.Fatalf("model authentication decision = %#v, ok=%v", model, okModel)
 	}
 }
 
-func TestCompletedAbnormalModelProbeBypassesOrdinaryFailureThreshold(t *testing.T) {
+func TestCompletedAbnormalModelProbeDoesNotBypassAccountFailureThreshold(t *testing.T) {
 	policy := defaultInspectionPolicy()
 	policy.AutoDisable = true
 	policy.FailureThreshold = 3
@@ -286,12 +303,24 @@ func TestCompletedAbnormalModelProbeBypassesOrdinaryFailureThreshold(t *testing.
 		},
 		Probe: inspectionProbeSignal{Status: "unavailable", ReasonCode: "upstream_unavailable", ConsecutiveFailures: 1},
 	}
-	if !shouldAutoDisableInspection(policy, Account{ID: "active-probe", Editable: true}, record) {
-		t.Fatal("completed abnormal model probe did not request immediate disable")
+	if shouldAutoDisableInspection(policy, Account{ID: "active-probe", Editable: true}, record) {
+		t.Fatal("completed abnormal model probe requested immediate account disable")
 	}
 	record.Probe.Status = "unsupported"
 	if shouldAutoDisableInspection(policy, Account{ID: "unsupported", Editable: true}, record) {
 		t.Fatal("unsupported provider requested an automatic disable")
+	}
+}
+
+func TestManualModelProbeDoesNotOpenPassiveCircuit(t *testing.T) {
+	policy := passiveCircuitPolicy()
+	now := time.Date(2026, time.July, 25, 0, 0, 0, 0, time.UTC)
+	record := inspectionRecord{Probe: inspectionProbeSignal{
+		Source: InspectionProbeSourceManual, Status: "review", Kind: InspectionProbeKindModel,
+		ReasonCode: "upstream_unavailable", TestedAt: now, ConsecutiveFailures: policy.PassiveFailureThreshold,
+	}}
+	if open, _, _ := shouldOpenPassiveCircuit(policy, Account{Editable: true}, record, now); open {
+		t.Fatal("manual model tests opened the account passive circuit")
 	}
 }
 
@@ -324,7 +353,7 @@ func TestExplicitNativeQuotaDisablesWithoutOrdinaryFailureThreshold(t *testing.T
 	}
 }
 
-func TestCompletedAbnormalModelProbeActuallyDisablesEditableAccount(t *testing.T) {
+func TestCompletedAbnormalModelProbeDoesNotDisableEditableAccount(t *testing.T) {
 	now := time.Date(2026, time.July, 21, 13, 0, 0, 0, time.UTC)
 	host := inspectionEditableHost(false)
 	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
@@ -337,21 +366,22 @@ func TestCompletedAbnormalModelProbeActuallyDisablesEditableAccount(t *testing.T
 		AutoDisable: true, DeleteGraceHours: 168, DeleteBatchSize: 10,
 	}
 	engine.records["inspection-account"] = inspectionRecord{Probe: inspectionProbeSignal{
-		Status: "unavailable", ReasonCode: "upstream_unavailable", Model: "gpt-test",
+		Status: "unavailable", Kind: InspectionProbeKindModel, Source: InspectionProbeSourceScan,
+		ReasonCode: "upstream_unavailable", Model: "gpt-test",
 		TestedAt: now, ConsecutiveFailures: 1,
 	}}
 	engine.mu.Unlock()
 
 	engine.scan(context.Background())
 	result := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 20}).Results[0]
-	if !result.Disabled || !result.OwnedDisable || result.AutoAction != InspectionActionDisable ||
-		result.AutoActionStatus != InspectionActionSucceeded || result.ReasonCode != "upstream_unavailable" || result.FailureStreak != 1 {
-		t.Fatalf("active-probe disable result = %#v", result)
+	if result.Disabled || result.OwnedDisable || result.AutoAction == InspectionActionDisable ||
+		result.ReasonCode != "upstream_unavailable" || result.Recommendation != InspectionRecommendationReview {
+		t.Fatalf("active-probe account result = %#v", result)
 	}
 	host.mu.Lock()
 	defer host.mu.Unlock()
-	if len(host.saves) != 1 || !bytes.Contains(host.saves[0].JSON, []byte(`"disabled":true`)) {
-		t.Fatalf("active-probe disable writes = %#v", host.saves)
+	if len(host.saves) != 0 {
+		t.Fatalf("model-specific probe wrote account state = %#v", host.saves)
 	}
 }
 

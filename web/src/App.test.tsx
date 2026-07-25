@@ -445,6 +445,10 @@ describe("primary account batch flow", () => {
     await waitFor(() => expect(requests.some((url) => url.includes("page=1") && url.includes("page_size=200"))).toBe(true));
     expect(pageSizeSelect).toHaveValue("200");
     expect(localStorage.getItem(ACCOUNT_PAGE_SIZE_STORAGE_KEY)).toBe("200");
+    await user.selectOptions(pageSizeSelect, "1000");
+    await waitFor(() => expect(requests.some((url) => url.includes("page=1") && url.includes("page_size=1000"))).toBe(true));
+    expect(pageSizeSelect).toHaveValue("1000");
+    expect(localStorage.getItem(ACCOUNT_PAGE_SIZE_STORAGE_KEY)).toBe("1000");
   });
 
   it("restores account search and filters and clears the persisted state on reset", async () => {

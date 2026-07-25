@@ -98,8 +98,8 @@ func TestInspectionAuthenticationFailuresHaveExecutableProbeKindSpecificRemediat
 	}
 
 	summary := summarizeInspectionRemediation(results)
-	if summary.Reauth != 1 || summary.DeletableReauth != 1 || summary.SuggestedDisable != 1 ||
-		summary.Actionable != 2 || summary.Review != 0 || summary.Keep != 0 || summary.Handled != 0 {
+	if summary.Reauth != 1 || summary.DeletableReauth != 1 || summary.SuggestedDisable != 0 ||
+		summary.Actionable != 1 || summary.Review != 1 || summary.Keep != 0 || summary.Handled != 0 {
 		t.Fatalf("probe-kind remediation summary = %#v; results = %#v", summary, results)
 	}
 }
@@ -236,7 +236,7 @@ func TestInspectionReference151DistributionIsActionable(t *testing.T) {
 	summary := summarizeInspectionRemediation(results)
 	if len(results) != 151 || summary.Actionable != 68 || summary.SuggestedDelete != 43 ||
 		summary.SuggestedDisable != 0 || summary.SuggestedEnable != 24 || summary.Reauth != 1 ||
-		summary.DeletableReauth != 1 || summary.Keep != 83 || summary.Handled != 0 || summary.Review != 0 {
+		summary.DeletableReauth != 1 || summary.Keep != 55 || summary.Handled != 0 || summary.Review != 28 {
 		t.Fatalf("151-account remediation summary = %#v", summary)
 	}
 }

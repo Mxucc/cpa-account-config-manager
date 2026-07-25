@@ -91,6 +91,18 @@ func TestAccountServiceListReturnsEmptyJSONArray(t *testing.T) {
 	}
 }
 
+func TestNormalizeAccountPageSizeSupportsLargePagesAndCapsAtOneThousand(t *testing.T) {
+	for _, pageSize := range []int{20, 50, 100, 200, 500, 1000} {
+		_, got := normalizePage(1, pageSize)
+		if got != pageSize {
+			t.Fatalf("normalizePage(_, %d) page size = %d", pageSize, got)
+		}
+	}
+	if _, got := normalizePage(1, 1001); got != 1000 {
+		t.Fatalf("normalizePage(_, 1001) page size = %d, want 1000", got)
+	}
+}
+
 func TestAccountServiceListRedactsSensitiveConfig(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -107,7 +108,67 @@ func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *t
 	}
 }
 
-func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedResponse(t *testing.T) {
+func TestModelTestServiceEnforcesAccountModelPolicyBeforeUpstreamCall(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{"id":"resp-policy","object":"response"}`})
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name       string
+		mode       string
+		models     []string
+		requested  string
+		inspection bool
+		wantModel  string
+		wantStatus string
+		wantCalls  int
+	}{
+		{name: "manual outside allow list", mode: ModelPolicyModeAllowOnly, models: []string{"allowed-model"}, requested: "blocked-model", wantModel: "blocked-model", wantStatus: "unsupported"},
+		{name: "manual deny listed", mode: ModelPolicyModeDenyOnly, models: []string{"blocked-model"}, requested: "blocked-model", wantModel: "blocked-model", wantStatus: "unsupported"},
+		{name: "manual allow listed", mode: ModelPolicyModeAllowOnly, models: []string{"allowed-model"}, requested: "allowed-model", wantModel: "allowed-model", wantStatus: "available", wantCalls: 1},
+		{name: "manual outside deny list", mode: ModelPolicyModeDenyOnly, models: []string{"blocked-model"}, requested: "allowed-model", wantModel: "allowed-model", wantStatus: "available", wantCalls: 1},
+		{name: "inspection selects allow list model", mode: ModelPolicyModeAllowOnly, models: []string{"allowed-model"}, requested: "blocked-model", inspection: true, wantModel: "allowed-model", wantStatus: "available", wantCalls: 1},
+		{name: "inspection bypasses deny listed model", mode: ModelPolicyModeDenyOnly, models: []string{defaultOpenAIProbeModel}, requested: defaultOpenAIProbeModel, inspection: true, wantModel: defaultCodexFallbackModel, wantStatus: "available", wantCalls: 1},
+		{name: "inspection safely skips exhausted deny list", mode: ModelPolicyModeDenyOnly, models: []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, "gpt-5.4", codexCompatibilityMiniModel}, requested: defaultOpenAIProbeModel, inspection: true, wantModel: defaultOpenAIProbeModel, wantStatus: "unsupported"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calls = 0
+			policy := storedModelPolicy{Schema: modelPolicySchema, Mode: test.mode, Models: test.models}
+			raw, errMarshal := json.Marshal(map[string]any{
+				"type": "openai", "api_key": "test-only-key",
+				"cpa_account_config_manager": map[string]any{"model_policy": policy},
+			})
+			if errMarshal != nil {
+				t.Fatalf("marshal auth fixture: %v", errMarshal)
+			}
+			host := &fakeAuthHost{
+				entries: []cpaapi.HostAuthFileEntry{{AuthIndex: "policy-auth", Name: "policy.json", Provider: "openai", Type: "openai", AccountType: "api_key", Source: "file", Path: "/auths/policy.json"}},
+				details: map[string]cpaapi.HostAuthGetResponse{"policy-auth": {AuthIndex: "policy-auth", Name: "policy.json", Path: "/auths/policy.json", JSON: raw}},
+			}
+			service := NewModelTestService(NewAccountService(host))
+			service.doer = server.Client()
+			result, errRun := service.Run(t.Context(), ModelTestRequest{
+				AccountID: "policy-auth", Model: test.requested, Inspection: test.inspection, SelectPolicyFallback: test.inspection,
+			}, server.URL, "management-secret")
+			if errRun != nil {
+				t.Fatalf("Run() error = %v", errRun)
+			}
+			if result.Model != test.wantModel || result.Status != test.wantStatus || calls != test.wantCalls {
+				t.Fatalf("result=%#v calls=%d, want model=%q status=%q calls=%d", result, calls, test.wantModel, test.wantStatus, test.wantCalls)
+			}
+			if test.wantStatus == "unsupported" && result.ReasonCode != "model_blocked_by_account_policy" {
+				t.Fatalf("blocked reason = %q", result.ReasonCode)
+			}
+		})
+	}
+}
+
+func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{
 			AuthIndex: "auth-fallback", Name: "fallback.json", Provider: "codex", Type: "codex",
@@ -120,13 +181,32 @@ func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedRespon
 			},
 		},
 	}
-	models := make([]string, 0, 2)
+	models := make([]string, 0, 3)
+	var modelPolicyPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v0/management/auth-files/models":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"models": []map[string]any{
+				{"id": defaultOpenAIProbeModel}, {"id": defaultCodexFallbackModel}, {"id": codexCompatibilityMiniModel}, {"id": "gpt-5.4"},
+			}})
+			return
+		case "/v0/management/auth-files/fields":
+			if errDecode := json.NewDecoder(request.Body).Decode(&modelPolicyPayload); errDecode != nil {
+				t.Errorf("decode model policy request: %v", errDecode)
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
+			return
+		case "/v0/management/api-call":
+		default:
+			t.Errorf("unexpected management path %q", request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
 		var received managementAPICallRequest
 		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
 			t.Errorf("decode management request: %v", errDecode)
 		}
-		writer.Header().Set("Content-Type", "application/json")
 		switch received.URL {
 		case "https://chatgpt.com/backend-api/wham/usage":
 			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
@@ -164,6 +244,9 @@ func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedRespon
 	app.modelTests.doer = server.Client()
 	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
 	defer app.Close()
+	if _, errSet := app.experiments.Set(ExperimentalSettings{AutoModelWhitelistEnabled: true}); errSet != nil {
+		t.Fatalf("enable auto model whitelist: %v", errSet)
+	}
 	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-fallback", Model: defaultOpenAIProbeModel})
 	response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
 		Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test",
@@ -176,7 +259,7 @@ func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedRespon
 	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
 		t.Fatalf("decode result: %v", errDecode)
 	}
-	if len(models) != 2 || models[0] != defaultOpenAIProbeModel || models[1] != defaultCodexFallbackModel {
+	if len(models) != 3 || models[0] != defaultOpenAIProbeModel || models[1] != defaultCodexFallbackModel || models[2] != codexCompatibilityMiniModel {
 		t.Fatalf("model attempt order = %#v", models)
 	}
 	if result.Status != "available" || result.ReasonCode != "model_response_ok" || result.Model != defaultCodexFallbackModel ||
@@ -184,18 +267,41 @@ func TestHandleCodexModelTestFallsBackToGPT55ForExplicitChatGPTUnsupportedRespon
 		result.SelectedModel != defaultCodexFallbackModel || !result.FallbackUsed {
 		t.Fatalf("fallback result = %#v", result)
 	}
-	if len(result.Attempts) != 2 || result.Attempts[0].Role != "primary" || result.Attempts[0].StatusCode != http.StatusBadRequest ||
+	if len(result.Attempts) != 3 || result.Attempts[0].Role != "primary" || result.Attempts[0].StatusCode != http.StatusBadRequest ||
 		result.Attempts[0].ReasonCode != "model_not_found" || result.Attempts[1].Role != "fallback" ||
-		result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].Status != "available" {
+		result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].Status != "available" ||
+		result.Attempts[2].Role != "compatibility" || result.Attempts[2].Model != codexCompatibilityMiniModel || result.Attempts[2].Status != "available" {
 		t.Fatalf("fallback attempts = %#v", result.Attempts)
+	}
+	if !reflect.DeepEqual(result.CompatibleModels, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}) {
+		t.Fatalf("compatible models = %#v", result.CompatibleModels)
+	}
+	if result.ModelPolicy == nil || result.ModelPolicy.Status != "applied" || result.ModelPolicy.Mode != ModelPolicyModeAllowOnly ||
+		!reflect.DeepEqual(result.ModelPolicy.Models, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}) {
+		t.Fatalf("model policy adjustment = %#v", result.ModelPolicy)
+	}
+	if modelPolicyPayload == nil {
+		t.Fatal("auto model whitelist was not written")
 	}
 	if result.Attempts[0].Response == nil || !strings.Contains(result.Attempts[0].Response.Body, "not supported") ||
 		result.Response == nil || result.Response.Format != "sse" || !strings.Contains(result.Response.Body, "event: response.completed") {
 		t.Fatalf("fallback response evidence = top %#v attempts %#v", result.Response, result.Attempts)
 	}
-	operation := app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations[0]
-	if operation.Status != OperationStatusSucceeded || operation.Model != defaultCodexFallbackModel {
-		t.Fatalf("fallback operation = %#v", operation)
+	operations := app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations
+	var modelTestOperation, policyOperation *OperationEntry
+	for index := range operations {
+		switch operations[index].Action {
+		case OperationActionModelTest:
+			modelTestOperation = &operations[index]
+		case OperationActionAutoModelWhitelist:
+			policyOperation = &operations[index]
+		}
+	}
+	if modelTestOperation == nil || modelTestOperation.Status != OperationStatusSucceeded || modelTestOperation.Model != defaultCodexFallbackModel {
+		t.Fatalf("fallback operation = %#v", modelTestOperation)
+	}
+	if policyOperation == nil || policyOperation.Status != OperationStatusSucceeded || policyOperation.ReasonCode != "model_compatibility_detected" {
+		t.Fatalf("policy operation = %#v", policyOperation)
 	}
 }
 
@@ -574,7 +680,8 @@ func TestClassifyModelProbeReturnsOnlyNormalizedOutcomes(t *testing.T) {
 		{name: "gemini success", kind: "gemini", statusCode: 200, body: `{"candidates":[{"finishReason":"STOP"}]}`, status: "available", reason: "model_response_ok"},
 		{name: "missing model", kind: "openai", statusCode: 404, body: `{"error":{"message":"model does not exist"}}`, status: "unavailable", reason: "model_not_found"},
 		{name: "bad credential", kind: "openai", statusCode: 401, body: `private upstream body`, status: "unavailable", reason: "authentication_failed"},
-		{name: "quota", kind: "openai", statusCode: 429, body: `private upstream body`, status: "review", reason: "quota_limited"},
+		{name: "rate limited", kind: "openai", statusCode: 429, body: `private upstream body`, status: "review", reason: "transient_failure"},
+		{name: "quota", kind: "openai", statusCode: 429, body: `{"error":{"type":"usage_limit_reached"}}`, status: "review", reason: "quota_limited"},
 		{name: "invalid success body", kind: "openai", statusCode: 200, body: `private upstream body`, status: "review", reason: "invalid_response"},
 	}
 	for _, test := range tests {

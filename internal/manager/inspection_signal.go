@@ -42,7 +42,7 @@ func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEv
 	text := normalizedFailureText(record.Failure.Body)
 	shouldRetry := safeShouldRetry(record.ResponseHeaders)
 
-	if status == http.StatusTooManyRequests || strings.Contains(text, "usage_limit_reached") || strings.Contains(text, "quota exhausted") {
+	if usageFailureHasQuotaEvidence(record, text) {
 		recoverAfter, quotaWindow := quotaRecoveryFromHeaders(record.ResponseHeaders, normalizeInspectionProvider(record.Provider), now)
 		return inspectionEvidence{
 			ReasonCode:          "quota_exhausted",
@@ -52,6 +52,9 @@ func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEv
 			RecoverAfter:        recoverAfter,
 			QuotaWindow:         quotaWindow,
 		}
+	}
+	if status == http.StatusTooManyRequests {
+		return inspectionEvidence{ReasonCode: "transient_failure", Confidence: InspectionConfidenceLow, StatusCode: status}
 	}
 	if status == http.StatusPaymentRequired && strings.Contains(text, "deactivated_workspace") {
 		return inspectionEvidence{
@@ -127,6 +130,18 @@ func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEv
 		Confidence: InspectionConfidenceMedium,
 		StatusCode: status,
 	}
+}
+
+func usageFailureHasQuotaEvidence(record cpaapi.UsageRecord, normalizedText string) bool {
+	if containsInspectionText(normalizedText, "usage_limit_reached", "usage limit has been reached", "quota exhausted", "weekly limit reached") {
+		return true
+	}
+	for _, header := range []string{"X-Codex-Primary-Used-Percent", "X-Codex-Secondary-Used-Percent"} {
+		if value := parseUsagePercent(record.ResponseHeaders.Get(header)); value != nil && *value >= 100 {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedFailureText(body string) string {
@@ -405,9 +420,9 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 	case "authentication_failed":
 		if probe.Kind != InspectionProbeKindCredential {
 			return inspectionDecision{
-				Health: InspectionHealthUnavailable, ReasonCode: probe.ReasonCode,
-				Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationDisable,
-				AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+				Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
+				Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationReview,
+				FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 			}, true
 		}
 		return inspectionDecision{
@@ -422,6 +437,13 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "quota_limited":
+		if probe.Kind != InspectionProbeKindCredential {
+			return inspectionDecision{
+				Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
+				Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview,
+				FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+			}, true
+		}
 		reasonCode := probe.ReasonCode
 		if probe.QuotaWindow != "" {
 			reasonCode = "quota_exhausted"
@@ -432,11 +454,17 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures,
 			SignalSource: InspectionSignalActiveProbe, QuotaWindow: probe.QuotaWindow,
 		}, true
-	case "model_not_found", "request_timeout", "upstream_unavailable", "invalid_response":
+	case "model_not_found":
+		return inspectionDecision{
+			Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
+			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview,
+			FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+		}, true
+	case "request_timeout", "upstream_unavailable", "invalid_response", "transient_failure":
 		return inspectionDecision{
 			Health: InspectionHealthUnavailable, ReasonCode: probe.ReasonCode,
-			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationDisable,
-			AutoDisableEligible: true, FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
+			Confidence: InspectionConfidenceLow, Recommendation: InspectionRecommendationReview,
+			FailureCount: probe.ConsecutiveFailures, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	default:
 		return inspectionDecision{}, false

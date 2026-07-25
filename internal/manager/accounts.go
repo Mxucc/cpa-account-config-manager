@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultPageSize          = 50
-	maxPageSize              = 200
+	maxPageSize              = 1000
 	maxAccountPlanTypeLength = 64
 )
 

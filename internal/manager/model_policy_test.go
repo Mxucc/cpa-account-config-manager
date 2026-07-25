@@ -39,6 +39,67 @@ func TestModelPolicyPatchValidatesAllAllowAndDenyModes(t *testing.T) {
 	}
 }
 
+func TestResolveAccountProbeModelRespectsAllowAndDenyPolicies(t *testing.T) {
+	tests := []struct {
+		name          string
+		requested     string
+		provider      string
+		policy        *AccountModelPolicySummary
+		allowFallback bool
+		wantModel     string
+		wantAllowed   bool
+		wantReplaced  bool
+	}{
+		{name: "no policy", requested: "gpt-5.6-sol", provider: "codex", wantModel: "gpt-5.6-sol", wantAllowed: true},
+		{name: "allow listed", requested: "gpt-5.5", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeAllowOnly, Models: []string{"gpt-5.5"}}, wantModel: "gpt-5.5", wantAllowed: true},
+		{name: "allow list blocks manual", requested: "gpt-5.6-sol", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeAllowOnly, Models: []string{"gpt-5.5"}}, wantModel: "gpt-5.6-sol"},
+		{name: "allow list selects first for inspection", requested: "gpt-5.6-sol", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeAllowOnly, Models: []string{"gpt-5.4-mini", "gpt-5.5"}}, allowFallback: true, wantModel: "gpt-5.4-mini", wantAllowed: true, wantReplaced: true},
+		{name: "deny list permits another model", requested: "gpt-5.5", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeDenyOnly, Models: []string{"gpt-5.6-sol"}}, wantModel: "gpt-5.5", wantAllowed: true},
+		{name: "deny list blocks manual", requested: "gpt-5.6-sol", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeDenyOnly, Models: []string{"gpt-5.6-sol"}}, wantModel: "gpt-5.6-sol"},
+		{name: "deny list selects safe inspection model", requested: "gpt-5.6-sol", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeDenyOnly, Models: []string{"gpt-5.6-sol"}}, allowFallback: true, wantModel: "gpt-5.5", wantAllowed: true, wantReplaced: true},
+		{name: "deny list can exhaust safe candidates", requested: "gpt-5.6-sol", provider: "codex", policy: &AccountModelPolicySummary{Mode: ModelPolicyModeDenyOnly, Models: []string{"gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"}}, allowFallback: true, wantModel: "gpt-5.6-sol"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := resolveAccountProbeModel(test.requested, test.provider, test.policy, test.allowFallback)
+			if got.Model != test.wantModel || got.Allowed != test.wantAllowed || got.Replaced != test.wantReplaced {
+				t.Fatalf("resolution = %#v, want model=%q allowed=%v replaced=%v", got, test.wantModel, test.wantAllowed, test.wantReplaced)
+			}
+		})
+	}
+}
+
+func TestDetectedModelWhitelistPreservesExistingManualPolicy(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "manual-policy", Name: "manual-policy.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/manual-policy.json"},
+			{AuthIndex: "native-exclusions", Name: "native-exclusions.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/native-exclusions.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"manual-policy": {
+				AuthIndex: "manual-policy", Name: "manual-policy.json", Path: "/auths/manual-policy.json",
+				JSON: json.RawMessage(`{"type":"codex","cpa_account_config_manager":{"model_policy":{"schema":1,"mode":"deny_only","models":["gpt-5.4"],"managed_excluded_models":["gpt-5.4"]}}}`),
+			},
+			"native-exclusions": {
+				AuthIndex: "native-exclusions", Name: "native-exclusions.json", Path: "/auths/native-exclusions.json",
+				JSON: json.RawMessage(`{"type":"codex","excluded_models":["gpt-5.4"]}`),
+			},
+		},
+	}
+	app := NewApp(host, nil)
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\n"))
+	defer app.Close()
+	for _, accountID := range []string{"manual-policy", "native-exclusions"} {
+		adjustment := app.applyDetectedModelWhitelist(t.Context(), accountID, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}, app.configSnapshot(), "management-secret")
+		if adjustment == nil || adjustment.Status != "skipped" || adjustment.ReasonCode != "existing_model_policy" {
+			t.Fatalf("existing policy adjustment for %s = %#v", accountID, adjustment)
+		}
+	}
+	if len(host.saves) != 0 {
+		t.Fatalf("existing policy was overwritten: %#v", host.saves)
+	}
+}
+
 func TestResolveModelPolicyFieldsPreservesUserExclusionsAcrossModes(t *testing.T) {
 	metadata := map[string]any{
 		"excluded_models": []any{"manual-model", "old-managed"},

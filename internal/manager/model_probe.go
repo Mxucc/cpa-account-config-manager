@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	modelTestTimeout          = 20 * time.Second
-	maxModelTestResponseBytes = 256 << 10
-	maxModelTestBodyBytes     = 128 << 10
-	maxModelIdentifierLength  = 128
-	defaultCodexFallbackModel = "gpt-5.5"
+	modelTestTimeout            = 20 * time.Second
+	maxModelTestResponseBytes   = 256 << 10
+	maxModelTestBodyBytes       = 128 << 10
+	maxModelIdentifierLength    = 128
+	defaultCodexFallbackModel   = "gpt-5.5"
+	codexCompatibilityMiniModel = "gpt-5.4-mini"
 )
 
 var (
@@ -37,26 +38,37 @@ type ModelTestRequest struct {
 	Model                       string `json:"model,omitempty"`
 	ExperimentalWeeklyOverdraft bool   `json:"experimental_weekly_overdraft,omitempty"`
 	Inspection                  bool   `json:"-"`
+	DetectRestrictedModels      bool   `json:"-"`
+	SelectPolicyFallback        bool   `json:"-"`
 }
 
 type ModelTestResult struct {
-	AccountID     string                    `json:"account_id"`
-	Provider      string                    `json:"provider"`
-	Model         string                    `json:"model"`
-	PrimaryModel  string                    `json:"primary_model,omitempty"`
-	FallbackModel string                    `json:"fallback_model,omitempty"`
-	SelectedModel string                    `json:"selected_model,omitempty"`
-	FallbackUsed  bool                      `json:"fallback_used,omitempty"`
-	Status        string                    `json:"status"`
-	ProbeKind     string                    `json:"probe_kind"`
-	ReasonCode    string                    `json:"reason_code"`
-	StatusCode    int                       `json:"status_code,omitempty"`
-	QuotaWindow   string                    `json:"quota_window,omitempty"`
-	LatencyMS     int64                     `json:"latency_ms"`
-	TestedAt      time.Time                 `json:"tested_at"`
-	Response      *ModelTestResponsePreview `json:"response,omitempty"`
-	Experiment    *ModelTestExperiment      `json:"experiment,omitempty"`
-	Attempts      []ModelTestAttempt        `json:"attempts,omitempty"`
+	AccountID        string                     `json:"account_id"`
+	Provider         string                     `json:"provider"`
+	Model            string                     `json:"model"`
+	PrimaryModel     string                     `json:"primary_model,omitempty"`
+	FallbackModel    string                     `json:"fallback_model,omitempty"`
+	SelectedModel    string                     `json:"selected_model,omitempty"`
+	FallbackUsed     bool                       `json:"fallback_used,omitempty"`
+	Status           string                     `json:"status"`
+	ProbeKind        string                     `json:"probe_kind"`
+	ReasonCode       string                     `json:"reason_code"`
+	StatusCode       int                        `json:"status_code,omitempty"`
+	QuotaWindow      string                     `json:"quota_window,omitempty"`
+	LatencyMS        int64                      `json:"latency_ms"`
+	TestedAt         time.Time                  `json:"tested_at"`
+	Response         *ModelTestResponsePreview  `json:"response,omitempty"`
+	Experiment       *ModelTestExperiment       `json:"experiment,omitempty"`
+	Attempts         []ModelTestAttempt         `json:"attempts,omitempty"`
+	CompatibleModels []string                   `json:"compatible_models,omitempty"`
+	ModelPolicy      *ModelTestPolicyAdjustment `json:"model_policy,omitempty"`
+}
+
+type ModelTestPolicyAdjustment struct {
+	Mode       string   `json:"mode"`
+	Models     []string `json:"models"`
+	Status     string   `json:"status"`
+	ReasonCode string   `json:"reason_code"`
 }
 
 type ModelTestAttempt struct {
@@ -316,6 +328,37 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	if request.ExperimentalWeeklyOverdraft && (probeProvider != "codex" || metadata.usesAPIKey()) {
 		return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment requires a Codex OAuth account")
 	}
+	probe, selectedModel, supported, errProbe := buildModelProbe(probeProvider, model, metadata)
+	if errProbe != nil {
+		return ModelTestResult{}, errProbe
+	}
+	result.Model = selectedModel
+	result.PrimaryModel = selectedModel
+	result.ProbeKind = InspectionProbeKindModel
+	if !supported {
+		result.Status = "unsupported"
+		result.ReasonCode = "unsupported_provider"
+		return result, nil
+	}
+	resolution := resolveAccountProbeModel(selectedModel, probeProvider, account.ModelPolicy, request.SelectPolicyFallback)
+	if !resolution.Allowed {
+		result.Status = "unsupported"
+		result.ReasonCode = "model_blocked_by_account_policy"
+		return result, nil
+	}
+	if resolution.Replaced {
+		probe, selectedModel, supported, errProbe = buildModelProbe(probeProvider, resolution.Model, metadata)
+		if errProbe != nil {
+			return ModelTestResult{}, errProbe
+		}
+		if !supported {
+			result.Status = "unsupported"
+			result.ReasonCode = "unsupported_provider"
+			return result, nil
+		}
+		result.Model = selectedModel
+		result.PrimaryModel = selectedModel
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, modelTestTimeout)
 	defer cancel()
 	callbackID := ""
@@ -355,18 +398,6 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		} else if errors.Is(probeCtx.Err(), context.Canceled) {
 			return ModelTestResult{}, probeCtx.Err()
 		}
-	}
-	probe, selectedModel, supported, errProbe := buildModelProbe(probeProvider, model, metadata)
-	if errProbe != nil {
-		return ModelTestResult{}, errProbe
-	}
-	result.Model = selectedModel
-	result.PrimaryModel = selectedModel
-	result.ProbeKind = InspectionProbeKindModel
-	if !supported {
-		result.Status = "unsupported"
-		result.ReasonCode = "unsupported_provider"
-		return result, nil
 	}
 	if request.ExperimentalWeeklyOverdraft {
 		if s.experimentalTransformer == nil {
@@ -433,13 +464,26 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	if errFallback != nil {
 		return ModelTestResult{}, errFallback
 	}
-	if !fallbackSupported {
+	if !fallbackSupported || !accountModelPolicyAllows(account.ModelPolicy, fallbackModel) {
 		return result, nil
 	}
 	result.FallbackModel = fallbackModel
 	fallbackAttempt, _, _ := runAttempt("fallback", fallbackModel, fallbackProbe, nil)
 	applyAttempt(fallbackAttempt)
 	result.FallbackUsed = fallbackAttempt.Status == "available"
+	if !request.DetectRestrictedModels || !result.FallbackUsed {
+		return result, nil
+	}
+	compatibilityProbe, compatibilityModel, compatibilitySupported, errCompatibility := buildModelProbe(probeProvider, codexCompatibilityMiniModel, metadata)
+	if errCompatibility != nil || !compatibilitySupported || !accountModelPolicyAllows(account.ModelPolicy, compatibilityModel) {
+		return result, nil
+	}
+	compatibilityAttempt, _, _ := runAttempt("compatibility", compatibilityModel, compatibilityProbe, nil)
+	result.Attempts = append(result.Attempts, compatibilityAttempt)
+	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
+	if compatibilityAttempt.Status == "available" {
+		result.CompatibleModels = []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}
+	}
 	return result, nil
 }
 
@@ -798,7 +842,10 @@ func classifyCredentialProbeDetails(statusCode int, body []byte) (string, string
 		}
 		return "review", "quota_limited", InspectionQuotaWindowMultiple
 	case http.StatusTooManyRequests:
-		return "review", "quota_limited", InspectionQuotaWindowMultiple
+		if modelProbeBodyHasQuotaEvidence(body) {
+			return "review", "quota_limited", InspectionQuotaWindowMultiple
+		}
+		return "review", "transient_failure", ""
 	default:
 		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
 			valid, limited, quotaWindow := codexUsageProbeState(body)
@@ -1017,7 +1064,10 @@ func classifyModelProbe(kind string, statusCode int, body []byte) (string, strin
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return "unavailable", "authentication_failed"
 	case http.StatusTooManyRequests:
-		return "review", "quota_limited"
+		if modelProbeBodyHasQuotaEvidence(body) {
+			return "review", "quota_limited"
+		}
+		return "review", "transient_failure"
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		return "review", "request_timeout"
 	case http.StatusBadRequest, http.StatusNotFound:
@@ -1031,6 +1081,11 @@ func classifyModelProbe(kind string, statusCode int, body []byte) (string, strin
 		}
 		return "review", "invalid_response"
 	}
+}
+
+func modelProbeBodyHasQuotaEvidence(body []byte) bool {
+	text := normalizedFailureText(string(body))
+	return containsInspectionText(text, "usage_limit_reached", "usage limit has been reached", "quota exhausted", "weekly limit reached")
 }
 
 func unsupportedChatGPTAccountModel(body []byte) string {

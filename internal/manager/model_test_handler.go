@@ -22,9 +22,10 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	config := a.configSnapshot()
+	request.DetectRestrictedModels = a.experiments.AutoModelWhitelistEnabled()
 	result, errTest := a.modelTests.Run(ctx, request, config.ManagementBaseURL, managementKey, req.HostCallbackID)
-	managementKey = ""
 	if errTest != nil {
+		managementKey = ""
 		switch {
 		case errors.Is(errTest, ErrModelTestAccountNotFound):
 			return jsonResponse(http.StatusNotFound, map[string]any{"error": ErrModelTestAccountNotFound.Error()})
@@ -36,6 +37,10 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errTest.Error()})
 		}
 	}
+	if request.DetectRestrictedModels && len(result.CompatibleModels) > 0 {
+		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey)
+	}
+	managementKey = ""
 	a.recordModelTest(result)
 	_ = a.inspection.RecordManualModelTest(ctx, result)
 	return jsonResponse(http.StatusOK, result)

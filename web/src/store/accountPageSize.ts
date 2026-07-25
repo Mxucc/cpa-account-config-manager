@@ -1,4 +1,4 @@
-export const ACCOUNT_PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const;
+export const ACCOUNT_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 1000] as const;
 export type AccountPageSize = typeof ACCOUNT_PAGE_SIZE_OPTIONS[number];
 
 export const DEFAULT_ACCOUNT_PAGE_SIZE: AccountPageSize = 50;

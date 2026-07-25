@@ -75,7 +75,7 @@ func runInspectionModelProbesObserved(
 			defer wait.Done()
 			for account := range jobs {
 				model := inspectionProbeModel(account, policy.ModelProbeModels)
-				result, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true}, managementBaseURL, managementKey)
+				result, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true, SelectPolicyFallback: true}, managementBaseURL, managementKey)
 				if errRun != nil {
 					result = ModelTestResult{
 						AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
@@ -218,7 +218,7 @@ func retryInspectionProbeResultsObserved(ctx context.Context, service *ModelTest
 		}
 		model := inspectionProbeModel(account, policy.ModelProbeModels)
 		completed++
-		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true}, managementBaseURL, managementKey)
+		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true, SelectPolicyFallback: true}, managementBaseURL, managementKey)
 		if errRun != nil {
 			next = ModelTestResult{
 				AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
@@ -293,12 +293,20 @@ func inspectionProbeModel(account Account, models ModelProbeModels) string {
 }
 
 func applyModelProbeToInspection(record *inspectionRecord, result ModelTestResult, policy InspectionPolicy) {
+	applyModelProbeToInspectionWithSource(record, result, policy, InspectionProbeSourceScan)
+}
+
+func applyModelProbeToInspectionWithSource(record *inspectionRecord, result ModelTestResult, policy InspectionPolicy, source string) {
 	if record == nil || strings.TrimSpace(result.AccountID) == "" {
+		return
+	}
+	if result.ReasonCode == "model_blocked_by_account_policy" {
 		return
 	}
 	previous := record.Probe
 	next := inspectionProbeSignal{
 		Status: normalizeModelProbeStatus(result.Status), Kind: normalizeInspectionProbeKind(result.ProbeKind),
+		Source:     normalizeInspectionProbeSource(source),
 		ReasonCode: safeModelProbeReason(result.ReasonCode), StatusCode: boundedHTTPStatus(result.StatusCode),
 		Model: safeModelIdentifier(result.Model), TestedAt: result.TestedAt.UTC(), LatencyMS: maxInt64(0, result.LatencyMS),
 		QuotaWindow: normalizeInspectionQuotaWindow(result.QuotaWindow),

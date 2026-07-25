@@ -3,6 +3,7 @@ import type {
   AccountDeletePreview,
   AccountDeleteResult,
   AccountDeduplicationPreview,
+  AccountDeduplicationOptions,
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
@@ -301,9 +302,10 @@ export async function createBatchDeletePreview(scope: TargetScope): Promise<Batc
   });
 }
 
-export async function scanAccountDuplicates(): Promise<AccountDeduplicationPreview> {
+export async function scanAccountDuplicates(options: AccountDeduplicationOptions): Promise<AccountDeduplicationPreview> {
   return request<AccountDeduplicationPreview>("/accounts/deduplicate/preview", {
     method: "POST",
+    body: JSON.stringify(options),
   });
 }
 

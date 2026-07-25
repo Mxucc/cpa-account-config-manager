@@ -105,6 +105,41 @@ func TestImportConvertReferenceFormats(t *testing.T) {
 	}
 }
 
+func TestImportConvertOrdinaryOAuthRecognizesJSONIDTokenPlanType(t *testing.T) {
+	idToken := `{"chatgpt_account_id":"json-account","chatgpt_account_user_id":"json-account-user","chatgpt_plan_type":"K12","chatgpt_user_id":"json-user"}`
+	accessToken := importTestJWT(map[string]any{
+		"https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": "edu"},
+	})
+	payload := map[string]any{
+		"access_token":  accessToken,
+		"refresh_token": "synthetic-oauth-refresh-token",
+		"id_token":      idToken,
+		"account_id":    "json-account",
+		"email":         "json-plan@example.com",
+		"plan_type":     "plus",
+		"type":          "codex",
+	}
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+
+	result, errParse := parseImportUpload(importUpload{Name: "ordinary-oauth.json", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if len(result.Candidates) != 1 || result.Candidates[0].CodexPAT {
+		t.Fatalf("ordinary OAuth candidate = %#v", result.Candidates)
+	}
+	document := decodeImportCandidate(t, result.Candidates[0])
+	if document["type"] != "codex" || document["plan_type"] != "K12" || document["chatgpt_plan_type"] != "K12" {
+		t.Fatalf("ordinary OAuth plan projection = %#v", document)
+	}
+	if document["id_token"] != idToken || document["refresh_token"] != "synthetic-oauth-refresh-token" {
+		t.Fatalf("ordinary OAuth credentials were not preserved: %#v", document)
+	}
+}
+
 func TestImportConvertSub2APIAgentIdentityAccounts(t *testing.T) {
 	now := time.Date(2026, time.July, 23, 9, 0, 0, 0, time.UTC)
 	firstIdentity := testAgentIdentityRecord(t, "agent-1", "task-1", "first@example.com")

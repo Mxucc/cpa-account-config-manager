@@ -68,6 +68,7 @@ import { clearSession, setSession } from "./store/session";
 import type {
   Account,
   AccountDeletePreview,
+  AccountDeduplicationOptions,
   AccountDeduplicationPreview,
   AccountExportFormat,
   AccountFilters,
@@ -133,6 +134,11 @@ const typeOptions = [
   "api_key",
 ];
 
+const defaultDeduplicationOptions: AccountDeduplicationOptions = {
+  ignore_account_id: false,
+  exclude_team_accounts: false,
+};
+
 type FilterState = PersistedAccountFilters;
 
 interface EditorContext {
@@ -187,6 +193,7 @@ function AccountManagerApp() {
   const [deduplicationLoading, setDeduplicationLoading] = useState(false);
   const [deduplicationReviewing, setDeduplicationReviewing] = useState(false);
   const [deduplicationError, setDeduplicationError] = useState("");
+  const deduplicationRequest = useRef(0);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -551,16 +558,27 @@ function AccountManagerApp() {
     }
   };
 
-  const openAccountDeduplication = async () => {
+  const loadAccountDeduplication = async (options: AccountDeduplicationOptions, keepDialogOpen: boolean) => {
+    const requestID = ++deduplicationRequest.current;
     setDeduplicationLoading(true);
     setDeduplicationError("");
     try {
-      setDeduplicationPreview(await api.scanAccountDuplicates());
+      const nextPreview = await api.scanAccountDuplicates(options);
+      if (deduplicationRequest.current === requestID) setDeduplicationPreview(nextPreview);
     } catch (error) {
-      handleAPIError(error);
+      if (deduplicationRequest.current !== requestID) return;
+      if (keepDialogOpen && !(error instanceof api.APIError && error.status === 401)) {
+        setDeduplicationError(errorText(error, locale));
+      } else {
+        handleAPIError(error);
+      }
     } finally {
-      setDeduplicationLoading(false);
+      if (deduplicationRequest.current === requestID) setDeduplicationLoading(false);
     }
+  };
+
+  const openAccountDeduplication = async () => {
+    await loadAccountDeduplication(defaultDeduplicationOptions, false);
   };
 
   const reviewDuplicateDeletions = async (accountIDs: string[]) => {
@@ -1200,7 +1218,7 @@ function AccountManagerApp() {
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
       {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
-      {deduplicationPreview ? <AccountDeduplicationDialog preview={deduplicationPreview} reviewing={deduplicationReviewing} error={deduplicationError} onClose={() => { setDeduplicationPreview(null); setDeduplicationError(""); }} onReview={(ids) => void reviewDuplicateDeletions(ids)} /> : null}
+      {deduplicationPreview ? <AccountDeduplicationDialog preview={deduplicationPreview} loading={deduplicationLoading} reviewing={deduplicationReviewing} error={deduplicationError} onClose={() => { deduplicationRequest.current++; setDeduplicationPreview(null); setDeduplicationError(""); setDeduplicationLoading(false); }} onOptionsChange={(options) => void loadAccountDeduplication(options, true)} onReview={(ids) => void reviewDuplicateDeletions(ids)} /> : null}
       {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} title={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} ariaLabel={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}

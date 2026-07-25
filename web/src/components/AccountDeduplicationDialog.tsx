@@ -1,16 +1,18 @@
 import { AlertCircle, CheckCircle2, FileJson2, LoaderCircle, ShieldCheck, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
-import type { AccountDeduplicationGroup, AccountDeduplicationPreview } from "../types";
+import type { AccountDeduplicationGroup, AccountDeduplicationOptions, AccountDeduplicationPreview } from "../types";
 import { Modal } from "./Modal";
 
 interface AccountDeduplicationDialogProps {
   preview: AccountDeduplicationPreview;
+  loading: boolean;
   reviewing: boolean;
   error?: string;
   onClose: () => void;
+  onOptionsChange: (options: AccountDeduplicationOptions) => void;
   onReview: (accountIDs: string[]) => void;
 }
 
@@ -29,11 +31,16 @@ const matchLabels: Record<AccountDeduplicationGroup["matched_by"], UIMessageKey>
   multiple: "ui.duplicate_match_multiple",
 };
 
-export function AccountDeduplicationDialog({ preview, reviewing, error = "", onClose, onReview }: AccountDeduplicationDialogProps) {
+export function AccountDeduplicationDialog({ preview, loading, reviewing, error = "", onClose, onOptionsChange, onReview }: AccountDeduplicationDialogProps) {
   const { locale, tx } = useI18n();
   const [keepByGroup, setKeepByGroup] = useState<Record<string, string>>(() => Object.fromEntries(preview.groups.map((group) => [group.id, group.keep_id])));
   const [selected, setSelected] = useState<Set<string>>(() => new Set(preview.groups.flatMap((group) => group.members.filter((member) => member.recommended_action === "delete").map((member) => member.id))));
   const selectedIDs = useMemo(() => Array.from(selected).sort(), [selected]);
+
+  useEffect(() => {
+    setKeepByGroup(Object.fromEntries(preview.groups.map((group) => [group.id, group.keep_id])));
+    setSelected(new Set(preview.groups.flatMap((group) => group.members.filter((member) => member.recommended_action === "delete").map((member) => member.id))));
+  }, [preview]);
 
   const chooseKeep = (group: AccountDeduplicationGroup, nextKeepID: string) => {
     const previousKeepID = keepByGroup[group.id] ?? group.keep_id;
@@ -65,7 +72,7 @@ export function AccountDeduplicationDialog({ preview, reviewing, error = "", onC
         <>
           <span className="modal-scope">{tx("ui.selected_duplicate_credentials", { count: selectedIDs.length })}</span>
           <button className="button" type="button" onClick={onClose}>{tx("ui.cancel")}</button>
-          <button className="button button-danger" type="button" disabled={reviewing || selectedIDs.length === 0} onClick={() => onReview(selectedIDs)}>
+          <button className="button button-danger" type="button" disabled={loading || reviewing || selectedIDs.length === 0} onClick={() => onReview(selectedIDs)}>
             {reviewing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
             {tx("ui.review_duplicate_deletions", { count: selectedIDs.length })}
           </button>
@@ -76,8 +83,21 @@ export function AccountDeduplicationDialog({ preview, reviewing, error = "", onC
         <ShieldCheck size={18} />
         <div><strong>{tx("ui.account_deduplication_description")}</strong><span>{tx("ui.account_deduplication_safety_note")}</span></div>
       </div>
+      <fieldset className="deduplication-options" disabled={loading} aria-busy={loading}>
+        <legend>{tx("ui.deduplication_rules")}</legend>
+        <label>
+          <input type="checkbox" checked={preview.options.ignore_account_id} onChange={(event) => onOptionsChange({ ...preview.options, ignore_account_id: event.target.checked })} />
+          <span><strong>{tx("ui.ignore_account_ids")}</strong><small>{tx("ui.ignore_account_ids_description")}</small></span>
+        </label>
+        <label>
+          <input type="checkbox" checked={preview.options.exclude_team_accounts} onChange={(event) => onOptionsChange({ ...preview.options, exclude_team_accounts: event.target.checked })} />
+          <span><strong>{tx("ui.exclude_team_accounts")}</strong><small>{tx("ui.exclude_team_accounts_description")}</small></span>
+        </label>
+        {loading ? <span className="deduplication-refresh" role="status"><LoaderCircle className="spin" size={14} />{tx("ui.refreshing_deduplication")}</span> : null}
+      </fieldset>
       <div className="deduplication-metrics">
         <DeduplicationMetric label={tx("ui.scanned_credentials")} value={preview.scanned_credentials} />
+        <DeduplicationMetric label={tx("ui.excluded_credentials")} value={preview.excluded_credentials} />
         <DeduplicationMetric label={tx("ui.duplicate_groups")} value={preview.duplicate_groups} tone={preview.duplicate_groups > 0 ? "warning" : "success"} />
         <DeduplicationMetric label={tx("ui.duplicate_credentials")} value={preview.duplicate_credentials} tone={preview.duplicate_credentials > 0 ? "warning" : ""} />
         <DeduplicationMetric label={tx("ui.proposed_deletions")} value={preview.proposed_deletions} tone={preview.proposed_deletions > 0 ? "danger" : ""} />

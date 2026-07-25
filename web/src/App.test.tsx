@@ -1074,9 +1074,11 @@ describe("account deduplication flow", () => {
       const url = String(input);
       requests.push({ url, init });
       if (url.endsWith("/accounts/deduplicate/preview")) {
+        const options = JSON.parse(String(init.body)) as { ignore_account_id: boolean; exclude_team_accounts: boolean };
         return jsonResponse({
           scanned_credentials: 2, identified_credentials: 2, duplicate_groups: 1,
-          duplicate_credentials: 1, proposed_deletions: 1, read_only_skipped: 0, missing_identity: 0,
+          excluded_credentials: options.exclude_team_accounts ? 1 : 0,
+          duplicate_credentials: 1, proposed_deletions: 1, read_only_skipped: 0, missing_identity: 0, options,
           groups: [{
             id: "duplicate-group", provider: "codex", matched_by: "email", identity_label: "operator@example.com",
             keep_id: "auth-1", keep_reason: "enabled_account",
@@ -1113,7 +1115,16 @@ describe("account deduplication flow", () => {
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
     await user.click(await screen.findByRole("button", { name: "账号去重" }));
 
-    const deduplication = await screen.findByRole("dialog", { name: "账号去重" });
+    let deduplication = await screen.findByRole("dialog", { name: "账号去重" });
+    expect(JSON.parse(String(requests.find(({ url }) => url.endsWith("/accounts/deduplicate/preview"))?.init.body))).toEqual({ ignore_account_id: false, exclude_team_accounts: false });
+    await user.click(within(deduplication).getByRole("checkbox", { name: /忽略账号 ID 判重/ }));
+    await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/accounts/deduplicate/preview"))).toHaveLength(2));
+    deduplication = await screen.findByRole("dialog", { name: "账号去重" });
+    await user.click(within(deduplication).getByRole("checkbox", { name: /排除 k12\/team 套餐账号/ }));
+    await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/accounts/deduplicate/preview"))).toHaveLength(3));
+    const deduplicationRequests = requests.filter(({ url }) => url.endsWith("/accounts/deduplicate/preview"));
+    expect(JSON.parse(String(deduplicationRequests[2].init.body))).toEqual({ ignore_account_id: true, exclude_team_accounts: true });
+    deduplication = await screen.findByRole("dialog", { name: "账号去重" });
     await user.click(within(deduplication).getByRole("button", { name: "复核删除（1）" }));
 
     const deletionPreview = await screen.findByRole("dialog", { name: "批量删除预览" });

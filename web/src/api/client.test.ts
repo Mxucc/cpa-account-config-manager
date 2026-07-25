@@ -347,17 +347,18 @@ describe("management API client", () => {
     const preview = {
       scanned_credentials: 2, identified_credentials: 2, duplicate_groups: 1,
       duplicate_credentials: 1, proposed_deletions: 1, read_only_skipped: 0,
-      missing_identity: 0, groups: [],
+      excluded_credentials: 0, missing_identity: 0,
+      options: { ignore_account_id: true, exclude_team_accounts: false }, groups: [],
     };
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(preview));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(scanAccountDuplicates()).resolves.toEqual(preview);
+    await expect(scanAccountDuplicates({ ignore_account_id: true, exclude_team_accounts: false })).resolves.toEqual(preview);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/accounts/deduplicate/preview");
     expect(init.method).toBe("POST");
-    expect(init.body).toBeUndefined();
+    expect(JSON.parse(String(init.body))).toEqual({ ignore_account_id: true, exclude_team_accounts: false });
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
   });
 

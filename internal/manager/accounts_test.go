@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -293,6 +294,58 @@ func TestAccountServicePlanTypeProjectionAndFilteringStayConsistent(t *testing.T
 	}
 	if bytes.Contains(encoded, []byte("secret-plan-value")) || bytes.Contains(encoded, []byte("secret-unsafe")) {
 		t.Fatalf("account projection leaked unsafe metadata: %s", encoded)
+	}
+}
+
+func TestAccountServicePlanTypeProjectionRecognizesCPAInfoAndIDTokenClaims(t *testing.T) {
+	var listed cpaapi.HostAuthListResponse
+	if errUnmarshal := json.Unmarshal([]byte(`{"files":[{
+		"auth_index":"cpa-info","name":"cpa-info.json","provider":"codex","type":"codex",
+		"account_type":"oauth","source":"file","path":"/auths/cpa-info.json",
+		"id_token":{"chatgpt_account_id":"account-info","plan_type":"K12"}
+	}]}`), &listed); errUnmarshal != nil {
+		t.Fatalf("Unmarshal() CPA info error = %v", errUnmarshal)
+	}
+
+	jsonClaims := `{"chatgpt_account_id":"account-json","chatgpt_plan_type":"team"}`
+	explicitClaims := `{"chatgpt_account_id":"account-explicit","chatgpt_plan_type":"enterprise"}`
+	jwtClaims := importTestJWT(map[string]any{
+		"https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": "edu"},
+	})
+	listed.Files = append(listed.Files,
+		cpaapi.HostAuthFileEntry{AuthIndex: "json-id", Name: "json-id.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/json-id.json"},
+		cpaapi.HostAuthFileEntry{AuthIndex: "jwt-id", Name: "jwt-id.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/jwt-id.json"},
+		cpaapi.HostAuthFileEntry{AuthIndex: "explicit", Name: "explicit.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/explicit.json"},
+	)
+	host := &fakeAuthHost{
+		entries: listed.Files,
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"cpa-info": {AuthIndex: "cpa-info", Name: "cpa-info.json", Path: "/auths/cpa-info.json", JSON: json.RawMessage(`{"type":"codex"}`)},
+			"json-id":  {AuthIndex: "json-id", Name: "json-id.json", Path: "/auths/json-id.json", JSON: json.RawMessage(`{"type":"codex","id_token":` + strconv.Quote(jsonClaims) + `}`)},
+			"jwt-id":   {AuthIndex: "jwt-id", Name: "jwt-id.json", Path: "/auths/jwt-id.json", JSON: json.RawMessage(`{"type":"codex","id_token":` + strconv.Quote(jwtClaims) + `}`)},
+			"explicit": {AuthIndex: "explicit", Name: "explicit.json", Path: "/auths/explicit.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"plus","id_token":` + strconv.Quote(explicitClaims) + `}`)},
+		},
+	}
+	service := NewAccountService(host)
+
+	for planType, wantID := range map[string]string{"k12": "cpa-info", "team": "json-id", "edu": "jwt-id", "enterprise": "explicit"} {
+		response, errList := service.List(t.Context(), ListQuery{Page: 1, PageSize: 20, Filters: AccountFilters{Type: planType}})
+		if errList != nil {
+			t.Fatalf("List(type=%q) error = %v", planType, errList)
+		}
+		if response.Total != 1 || len(response.Accounts) != 1 || response.Accounts[0].ID != wantID || response.Accounts[0].PlanType != planType {
+			t.Fatalf("List(type=%q) = %#v, want account %q", planType, response, wantID)
+		}
+	}
+
+	encoded, errMarshal := json.Marshal(listed)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() CPA info error = %v", errMarshal)
+	}
+	for _, forbidden := range []string{"account-info", jsonClaims, explicitClaims, jwtClaims} {
+		if bytes.Contains(encoded, []byte(forbidden)) {
+			t.Fatalf("sanitized CPA info retained identity material %q: %s", forbidden, encoded)
+		}
 	}
 }
 

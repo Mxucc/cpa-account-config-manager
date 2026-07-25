@@ -473,7 +473,7 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 		[]string{"credentials", "idToken"}, []string{"credentials", "id_token"},
 		[]string{"credential", "idToken"}, []string{"credential", "id_token"},
 	)
-	idPayload := parseImportJWTPayload(idTokenInput)
+	idPayload := parseImportIdentityPayload(idTokenInput)
 	accessAuth := importObjectAt(accessPayload, "https://api.openai.com/auth")
 	idAuth := importObjectAt(idPayload, "https://api.openai.com/auth")
 	accessProfile := importObjectAt(accessPayload, "https://api.openai.com/profile")
@@ -519,14 +519,17 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 		[]string{"token", "sessionToken"}, []string{"token", "session_token"},
 		[]string{"credentials", "session_token"}, []string{"credential", "session_token"},
 	)
-	planType := firstImportString(record,
-		[]string{"account", "planType"}, []string{"account", "plan_type"},
-		[]string{"planType"}, []string{"plan_type"}, []string{"chatgpt_plan_type"},
-		[]string{"providerSpecificData", "chatgptPlanType"}, []string{"providerSpecificData", "chatgpt_plan_type"},
-		[]string{"credentials", "plan_type"},
-	)
+	planType := firstStringFromMaps([]map[string]any{idAuth, idPayload}, "chatgpt_plan_type", "plan_type")
 	if planType == "" {
-		planType = firstStringFromMaps([]map[string]any{accessAuth, idAuth}, "chatgpt_plan_type", "plan_type")
+		planType = firstImportString(record,
+			[]string{"account", "planType"}, []string{"account", "plan_type"},
+			[]string{"planType"}, []string{"plan_type"}, []string{"chatgpt_plan_type"},
+			[]string{"providerSpecificData", "chatgptPlanType"}, []string{"providerSpecificData", "chatgpt_plan_type"},
+			[]string{"credentials", "plan_type"},
+		)
+	}
+	if planType == "" {
+		planType = firstStringFromMaps([]map[string]any{accessAuth, accessPayload}, "chatgpt_plan_type", "plan_type")
 	}
 	userID := firstImportString(record,
 		[]string{"user", "id"}, []string{"user_id"}, []string{"chatgptUserId"}, []string{"chatgpt_user_id"},

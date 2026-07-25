@@ -47,14 +47,21 @@ type AccountDeduplicationGroup struct {
 	Members       []AccountDeduplicationMember `json:"members"`
 }
 
+type AccountDeduplicationOptions struct {
+	IgnoreAccountID     bool `json:"ignore_account_id"`
+	ExcludeTeamAccounts bool `json:"exclude_team_accounts"`
+}
+
 type AccountDeduplicationPreview struct {
 	ScannedCredentials    int                         `json:"scanned_credentials"`
 	IdentifiedCredentials int                         `json:"identified_credentials"`
+	ExcludedCredentials   int                         `json:"excluded_credentials"`
 	DuplicateGroups       int                         `json:"duplicate_groups"`
 	DuplicateCredentials  int                         `json:"duplicate_credentials"`
 	ProposedDeletions     int                         `json:"proposed_deletions"`
 	ReadOnlySkipped       int                         `json:"read_only_skipped"`
 	MissingIdentity       int                         `json:"missing_identity"`
+	Options               AccountDeduplicationOptions `json:"options"`
 	Groups                []AccountDeduplicationGroup `json:"groups"`
 }
 
@@ -74,7 +81,7 @@ func NewAccountDeduplicationService(accounts *AccountService) *AccountDeduplicat
 	return &AccountDeduplicationService{accounts: accounts}
 }
 
-func (s *AccountDeduplicationService) Preview(ctx context.Context) (AccountDeduplicationPreview, error) {
+func (s *AccountDeduplicationService) Preview(ctx context.Context, requested ...AccountDeduplicationOptions) (AccountDeduplicationPreview, error) {
 	if s == nil || s.accounts == nil || s.accounts.host == nil {
 		return AccountDeduplicationPreview{}, fmt.Errorf("account service is unavailable")
 	}
@@ -86,13 +93,17 @@ func (s *AccountDeduplicationService) Preview(ctx context.Context) (AccountDedup
 		return AccountDeduplicationPreview{}, ErrDeduplicationTooLarge
 	}
 
+	options := AccountDeduplicationOptions{}
+	if len(requested) > 0 {
+		options = requested[0]
+	}
 	identities, errLoad := s.loadIdentities(ctx, accounts)
 	if errLoad != nil {
 		return AccountDeduplicationPreview{}, errLoad
 	}
-	preview := buildDeduplicationPreview(identities)
+	preview := buildDeduplicationPreview(identities, options)
 	preview.ScannedCredentials = len(accounts)
-	preview.MissingIdentity = len(accounts) - preview.IdentifiedCredentials
+	preview.MissingIdentity = len(accounts) - preview.IdentifiedCredentials - preview.ExcludedCredentials
 	return preview, nil
 }
 
@@ -154,14 +165,17 @@ func (s *AccountDeduplicationService) loadIdentity(ctx context.Context, account 
 	)); family != "" {
 		identity.provider = family
 	}
+	if planType := accountPlanTypeFromMetadata(object); planType != "" {
+		identity.account.PlanType = planType
+	}
 	identity.accountIDs = deduplicationAccountIDs(object)
 	identity.emails = uniqueDeduplicationValues(append(identity.emails, deduplicationEmails(object)...)...)
 	identity.completeness = deduplicationCredentialCompleteness(object)
 	return identity
 }
 
-func buildDeduplicationPreview(identities []deduplicationIdentity) AccountDeduplicationPreview {
-	preview := AccountDeduplicationPreview{Groups: make([]AccountDeduplicationGroup, 0)}
+func buildDeduplicationPreview(identities []deduplicationIdentity, options AccountDeduplicationOptions) AccountDeduplicationPreview {
+	preview := AccountDeduplicationPreview{Options: options, Groups: make([]AccountDeduplicationGroup, 0)}
 	parents := make([]int, len(identities))
 	for index := range parents {
 		parents[index] = index
@@ -182,12 +196,20 @@ func buildDeduplicationPreview(identities []deduplicationIdentity) AccountDedupl
 	seen := make(map[string]int)
 	identified := make([]bool, len(identities))
 	for index, identity := range identities {
-		if identity.provider == "" || len(identity.accountIDs)+len(identity.emails) == 0 {
+		if options.ExcludeTeamAccounts && deduplicationTeamPlan(identity.account.PlanType) {
+			preview.ExcludedCredentials++
+			continue
+		}
+		accountIDs := identity.accountIDs
+		if options.IgnoreAccountID {
+			accountIDs = nil
+		}
+		if identity.provider == "" || len(accountIDs)+len(identity.emails) == 0 {
 			continue
 		}
 		identified[index] = true
 		preview.IdentifiedCredentials++
-		for _, accountID := range identity.accountIDs {
+		for _, accountID := range accountIDs {
 			key := identity.provider + "\x00id:" + accountID
 			if previous, exists := seen[key]; exists {
 				union(index, previous)
@@ -216,7 +238,7 @@ func buildDeduplicationPreview(identities []deduplicationIdentity) AccountDedupl
 		if len(indexes) < 2 {
 			continue
 		}
-		group := buildDeduplicationGroup(identities, indexes)
+		group := buildDeduplicationGroup(identities, indexes, options)
 		preview.Groups = append(preview.Groups, group)
 		preview.DuplicateCredentials += len(group.Members) - 1
 		for _, member := range group.Members {
@@ -238,7 +260,7 @@ func buildDeduplicationPreview(identities []deduplicationIdentity) AccountDedupl
 	return preview
 }
 
-func buildDeduplicationGroup(identities []deduplicationIdentity, indexes []int) AccountDeduplicationGroup {
+func buildDeduplicationGroup(identities []deduplicationIdentity, indexes []int, options AccountDeduplicationOptions) AccountDeduplicationGroup {
 	sort.Slice(indexes, func(i, j int) bool {
 		return identities[indexes[i]].account.ID < identities[indexes[j]].account.ID
 	})
@@ -248,7 +270,7 @@ func buildDeduplicationGroup(identities []deduplicationIdentity, indexes []int) 
 			keep = index
 		}
 	}
-	matchedBy, identityLabel := deduplicationMatchSummary(identities, indexes)
+	matchedBy, identityLabel := deduplicationMatchSummary(identities, indexes, options)
 	memberIDs := make([]string, 0, len(indexes))
 	members := make([]AccountDeduplicationMember, 0, len(indexes))
 	for _, index := range indexes {
@@ -321,12 +343,14 @@ func deduplicationKeepReason(keep deduplicationIdentity, identities []deduplicat
 	return "deterministic_order"
 }
 
-func deduplicationMatchSummary(identities []deduplicationIdentity, indexes []int) (string, string) {
+func deduplicationMatchSummary(identities []deduplicationIdentity, indexes []int, options AccountDeduplicationOptions) (string, string) {
 	idCounts := make(map[string]int)
 	emailCounts := make(map[string]int)
 	for _, index := range indexes {
-		for _, value := range identities[index].accountIDs {
-			idCounts[value]++
+		if !options.IgnoreAccountID {
+			for _, value := range identities[index].accountIDs {
+				idCounts[value]++
+			}
 		}
 		for _, value := range identities[index].emails {
 			emailCounts[value]++
@@ -350,6 +374,15 @@ func deduplicationMatchSummary(identities []deduplicationIdentity, indexes []int
 		return "account_id", "ID #" + deduplicationFingerprint(sharedID)
 	default:
 		return "email", sharedEmail
+	}
+}
+
+func deduplicationTeamPlan(planType string) bool {
+	switch strings.ToLower(strings.TrimSpace(planType)) {
+	case "k12", "team":
+		return true
+	default:
+		return false
 	}
 }
 

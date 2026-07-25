@@ -89,6 +89,44 @@ func TestAccountDeduplicationUsesDeterministicIDFingerprintWithoutEmail(t *testi
 	}
 }
 
+func TestAccountDeduplicationOptionsAvoidSharedTeamAccountIDs(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "team-a", Name: "team-a.json", Provider: "codex", Email: "team-a@example.com", Source: "file", Path: "/auths/team-a.json"},
+			{AuthIndex: "team-b", Name: "team-b.json", Provider: "codex", Email: "team-b@example.com", Source: "file", Path: "/auths/team-b.json"},
+			{AuthIndex: "plus-a", Name: "plus-a.json", Provider: "codex", Email: "plus-a@example.com", Source: "file", Path: "/auths/plus-a.json"},
+			{AuthIndex: "plus-b", Name: "plus-b.json", Provider: "codex", Email: "plus-b@example.com", Source: "file", Path: "/auths/plus-b.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"team-a": {AuthIndex: "team-a", Name: "team-a.json", Path: "/auths/team-a.json", JSON: json.RawMessage(`{"type":"codex","account_id":"shared-team","email":"team-a@example.com","plan_type":"plus","id_token":"{\"chatgpt_plan_type\":\"k12\"}"}`)},
+			"team-b": {AuthIndex: "team-b", Name: "team-b.json", Path: "/auths/team-b.json", JSON: json.RawMessage(`{"type":"codex","account_id":"shared-team","email":"team-b@example.com","id_token":"{\"chatgpt_plan_type\":\"team\"}"}`)},
+			"plus-a": {AuthIndex: "plus-a", Name: "plus-a.json", Path: "/auths/plus-a.json", JSON: json.RawMessage(`{"type":"codex","account_id":"shared-plus","email":"plus-a@example.com","plan_type":"plus"}`)},
+			"plus-b": {AuthIndex: "plus-b", Name: "plus-b.json", Path: "/auths/plus-b.json", JSON: json.RawMessage(`{"type":"codex","account_id":"shared-plus","email":"plus-b@example.com","plan_type":"plus"}`)},
+		},
+	}
+	service := NewAccountDeduplicationService(NewAccountService(host))
+
+	standard, errStandard := service.Preview(t.Context())
+	if errStandard != nil || standard.DuplicateGroups != 2 || standard.ExcludedCredentials != 0 {
+		t.Fatalf("standard Preview() = %#v, error = %v", standard, errStandard)
+	}
+	ignored, errIgnored := service.Preview(t.Context(), AccountDeduplicationOptions{IgnoreAccountID: true})
+	if errIgnored != nil || ignored.DuplicateGroups != 0 || ignored.IdentifiedCredentials != 4 || ignored.MissingIdentity != 0 || !ignored.Options.IgnoreAccountID {
+		t.Fatalf("ignore-account-ID Preview() = %#v, error = %v", ignored, errIgnored)
+	}
+	excluded, errExcluded := service.Preview(t.Context(), AccountDeduplicationOptions{ExcludeTeamAccounts: true})
+	if errExcluded != nil || excluded.DuplicateGroups != 1 || excluded.ExcludedCredentials != 2 || !excluded.Options.ExcludeTeamAccounts {
+		t.Fatalf("exclude-team Preview() = %#v, error = %v", excluded, errExcluded)
+	}
+	if len(excluded.Groups) != 1 || excluded.Groups[0].KeepID != "plus-a" {
+		t.Fatalf("exclude-team groups = %#v", excluded.Groups)
+	}
+	combined, errCombined := service.Preview(t.Context(), AccountDeduplicationOptions{IgnoreAccountID: true, ExcludeTeamAccounts: true})
+	if errCombined != nil || combined.DuplicateGroups != 0 || combined.ExcludedCredentials != 2 || !combined.Options.IgnoreAccountID || !combined.Options.ExcludeTeamAccounts {
+		t.Fatalf("combined Preview() = %#v, error = %v", combined, errCombined)
+	}
+}
+
 func TestAccountDeduplicationAllowsTenThousandAndRejectsMore(t *testing.T) {
 	entries := make([]cpaapi.HostAuthFileEntry, maxDeduplicationAccounts)
 	for index := range entries {
@@ -124,11 +162,24 @@ func TestAccountDeduplicationPreviewRouteIsRedacted(t *testing.T) {
 	defer app.Close()
 	response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
 		Method: http.MethodPost, Path: "/v0/management/plugins/cpa-account-config-manager/accounts/deduplicate/preview",
+		Body: []byte(`{"ignore_account_id":false,"exclude_team_accounts":false}`),
 	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("response = %d %s", response.StatusCode, response.Body)
 	}
 	if strings.Contains(string(response.Body), "route-secret") || !strings.Contains(string(response.Body), `"duplicate_groups":1`) {
 		t.Fatalf("response is invalid or leaked a secret: %s", response.Body)
+	}
+
+	for _, body := range [][]byte{
+		[]byte(`{"ignore_account_id":true,"unknown":true}`),
+		[]byte(`{"ignore_account_id":true} {}`),
+	} {
+		invalid := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+			Method: http.MethodPost, Path: "/v0/management/plugins/cpa-account-config-manager/accounts/deduplicate/preview", Body: body,
+		})
+		if invalid.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid body %q status = %d body = %s", body, invalid.StatusCode, invalid.Body)
+		}
 	}
 }

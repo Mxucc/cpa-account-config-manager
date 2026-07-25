@@ -1,9 +1,11 @@
 package cpaapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -377,36 +379,78 @@ type HostRecentRequestEntry struct {
 	Failed  int64  `json:"failed"`
 }
 
+// HostIDTokenInfo retains only non-secret plan metadata from CPA auth-list
+// responses. Unknown identity claims and opaque token strings are discarded.
+type HostIDTokenInfo struct {
+	PlanType        string `json:"plan_type,omitempty"`
+	ChatGPTPlanType string `json:"chatgpt_plan_type,omitempty"`
+}
+
+func (i *HostIDTokenInfo) UnmarshalJSON(raw []byte) error {
+	if i == nil {
+		return nil
+	}
+	*i = HostIDTokenInfo{}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var encoded string
+		if errDecode := json.Unmarshal(trimmed, &encoded); errDecode != nil {
+			return errDecode
+		}
+		encoded = strings.TrimSpace(encoded)
+		if len(encoded) < 2 || len(encoded) > 64<<10 || encoded[0] != '{' {
+			return nil
+		}
+		trimmed = []byte(encoded)
+	}
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil
+	}
+	type planFields HostIDTokenInfo
+	var decoded planFields
+	if errDecode := json.Unmarshal(trimmed, &decoded); errDecode != nil {
+		return errDecode
+	}
+	*i = HostIDTokenInfo(decoded)
+	return nil
+}
+
 type HostAuthFileEntry struct {
-	ID             string                   `json:"id,omitempty"`
-	AuthIndex      string                   `json:"auth_index,omitempty"`
-	Name           string                   `json:"name"`
-	Type           string                   `json:"type,omitempty"`
-	Provider       string                   `json:"provider,omitempty"`
-	Label          string                   `json:"label,omitempty"`
-	Status         string                   `json:"status,omitempty"`
-	StatusMessage  string                   `json:"status_message,omitempty"`
-	Disabled       bool                     `json:"disabled,omitempty"`
-	Unavailable    bool                     `json:"unavailable,omitempty"`
-	RuntimeOnly    bool                     `json:"runtime_only,omitempty"`
-	Source         string                   `json:"source,omitempty"`
-	Path           string                   `json:"path,omitempty"`
-	Size           int64                    `json:"size,omitempty"`
-	ModTime        time.Time                `json:"modtime,omitempty"`
-	UpdatedAt      time.Time                `json:"updated_at,omitempty"`
-	CreatedAt      time.Time                `json:"created_at,omitempty"`
-	LastRefresh    time.Time                `json:"last_refresh,omitempty"`
-	NextRetryAfter time.Time                `json:"next_retry_after,omitempty"`
-	Email          string                   `json:"email,omitempty"`
-	ProjectID      string                   `json:"project_id,omitempty"`
-	AccountType    string                   `json:"account_type,omitempty"`
-	Account        string                   `json:"account,omitempty"`
-	Priority       int                      `json:"priority,omitempty"`
-	Note           string                   `json:"note,omitempty"`
-	Websockets     bool                     `json:"websockets,omitempty"`
-	Success        int64                    `json:"success,omitempty"`
-	Failed         int64                    `json:"failed,omitempty"`
-	RecentRequests []HostRecentRequestEntry `json:"recent_requests,omitempty"`
+	ID              string                   `json:"id,omitempty"`
+	AuthIndex       string                   `json:"auth_index,omitempty"`
+	Name            string                   `json:"name"`
+	Type            string                   `json:"type,omitempty"`
+	Provider        string                   `json:"provider,omitempty"`
+	Label           string                   `json:"label,omitempty"`
+	Status          string                   `json:"status,omitempty"`
+	StatusMessage   string                   `json:"status_message,omitempty"`
+	Disabled        bool                     `json:"disabled,omitempty"`
+	Unavailable     bool                     `json:"unavailable,omitempty"`
+	RuntimeOnly     bool                     `json:"runtime_only,omitempty"`
+	Source          string                   `json:"source,omitempty"`
+	Path            string                   `json:"path,omitempty"`
+	Size            int64                    `json:"size,omitempty"`
+	ModTime         time.Time                `json:"modtime,omitempty"`
+	UpdatedAt       time.Time                `json:"updated_at,omitempty"`
+	CreatedAt       time.Time                `json:"created_at,omitempty"`
+	LastRefresh     time.Time                `json:"last_refresh,omitempty"`
+	NextRetryAfter  time.Time                `json:"next_retry_after,omitempty"`
+	Email           string                   `json:"email,omitempty"`
+	ProjectID       string                   `json:"project_id,omitempty"`
+	AccountType     string                   `json:"account_type,omitempty"`
+	PlanType        string                   `json:"plan_type,omitempty"`
+	ChatGPTPlanType string                   `json:"chatgpt_plan_type,omitempty"`
+	IDToken         HostIDTokenInfo          `json:"id_token,omitempty"`
+	Account         string                   `json:"account,omitempty"`
+	Priority        int                      `json:"priority,omitempty"`
+	Note            string                   `json:"note,omitempty"`
+	Websockets      bool                     `json:"websockets,omitempty"`
+	Success         int64                    `json:"success,omitempty"`
+	Failed          int64                    `json:"failed,omitempty"`
+	RecentRequests  []HostRecentRequestEntry `json:"recent_requests,omitempty"`
 }
 
 type HostAuthListResponse struct {

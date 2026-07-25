@@ -977,6 +977,11 @@ const server = http.createServer(async (request, response) => {
     return json(response, 200, listFromURL(url));
   }
   if (request.method === "POST" && url.pathname.endsWith("/accounts/deduplicate/preview")) {
+    const requested = await readJSON(request);
+    const options = {
+      ignore_account_id: Boolean(requested.ignore_account_id),
+      exclude_team_accounts: Boolean(requested.exclude_team_accounts),
+    };
     const member = (account, recommendedAction) => ({
       id: account.id,
       name: account.name,
@@ -994,12 +999,14 @@ const server = http.createServer(async (request, response) => {
     });
     return json(response, 200, {
       scanned_credentials: accounts.length,
-      identified_credentials: accounts.length - 1,
+      identified_credentials: accounts.length - 1 - (options.exclude_team_accounts ? 2 : 0),
+      excluded_credentials: options.exclude_team_accounts ? 2 : 0,
       duplicate_groups: 2,
       duplicate_credentials: 3,
       proposed_deletions: 2,
       read_only_skipped: 1,
       missing_identity: 1,
+      options,
       groups: [
         {
           id: "mock-codex-identity",

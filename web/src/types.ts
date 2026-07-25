@@ -156,6 +156,11 @@ export interface AccountListResponse {
 export type AccountDeduplicationMatch = "account_id" | "email" | "multiple";
 export type AccountDeduplicationAction = "keep" | "delete" | "skip";
 
+export interface AccountDeduplicationOptions {
+  ignore_account_id: boolean;
+  exclude_team_accounts: boolean;
+}
+
 export interface AccountDeduplicationMember {
   id: string;
   name?: string;
@@ -186,11 +191,13 @@ export interface AccountDeduplicationGroup {
 export interface AccountDeduplicationPreview {
   scanned_credentials: number;
   identified_credentials: number;
+  excluded_credentials: number;
   duplicate_groups: number;
   duplicate_credentials: number;
   proposed_deletions: number;
   read_only_skipped: number;
   missing_identity: number;
+  options: AccountDeduplicationOptions;
   groups: AccountDeduplicationGroup[];
 }
 

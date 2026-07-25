@@ -407,7 +407,7 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/models":
 		return a.handleAccountModels(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/deduplicate/preview":
-		return a.handleAccountDeduplicationPreview(ctx)
+		return a.handleAccountDeduplicationPreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/model-test":
 		return a.handleAccountModelTest(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/preview":
@@ -536,8 +536,12 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	}
 }
 
-func (a *App) handleAccountDeduplicationPreview(ctx context.Context) cpaapi.ManagementResponse {
-	preview, errPreview := a.deduplication.Preview(ctx)
+func (a *App) handleAccountDeduplicationPreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var options AccountDeduplicationOptions
+	if errDecode := decodeJSONRequest(req.Body, &options); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	preview, errPreview := a.deduplication.Preview(ctx, options)
 	if errPreview != nil {
 		switch {
 		case errors.Is(errPreview, ErrDeduplicationTooLarge):

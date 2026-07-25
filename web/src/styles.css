@@ -498,7 +498,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .deduplication-intro > div { min-width: 0; display: grid; gap: 3px; }
 .deduplication-intro strong { font-size: 11px; }
 .deduplication-intro span { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.deduplication-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 13px; border: 1px solid var(--line); overflow: hidden; }
+.deduplication-options { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 0 0 12px; padding: 9px 0; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.deduplication-options legend { padding: 0 6px 0 0; color: var(--muted); font-size: 9px; font-weight: 700; }
+.deduplication-options > label { min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 7px; cursor: pointer; }
+.deduplication-options > label input { width: 14px; height: 14px; margin: 1px 0 0; accent-color: var(--accent); }
+.deduplication-options > label span { min-width: 0; display: grid; gap: 2px; }
+.deduplication-options > label strong { font-size: 10px; }
+.deduplication-options > label small { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.deduplication-options:disabled > label { cursor: wait; opacity: .65; }
+.deduplication-refresh { position: absolute; top: -20px; right: 0; display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; }
+.deduplication-metrics { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); margin-bottom: 13px; border: 1px solid var(--line); overflow: hidden; }
 .deduplication-metrics > div { min-width: 0; min-height: 58px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 10px; border-right: 1px solid var(--line); background: var(--surface-2); }
 .deduplication-metrics > div:last-child { border-right: none; }
 .deduplication-metrics span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1277,11 +1286,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .header-row { grid-template-columns: 76px 1fr 32px; }
   .header-row input:nth-of-type(2) { grid-column: 1 / span 2; }
   .preview-metrics { grid-template-columns: repeat(3, 1fr); }
-  .deduplication-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .deduplication-metrics > div:nth-child(3n) { border-right: none; }
-  .deduplication-metrics > div:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
-  .deduplication-member { grid-template-columns: minmax(150px, 1fr) 90px 90px; }
-  .deduplication-delete-control { grid-column: 2 / -1; justify-content: flex-start; }
+  .deduplication-options { grid-template-columns: 1fr; gap: 9px; }
+  .deduplication-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .deduplication-metrics > div:nth-child(2n) { border-right: none; }
+  .deduplication-metrics > div:not(:nth-last-child(-n+2)) { border-bottom: 1px solid var(--line); }
+  .deduplication-member { grid-template-columns: minmax(0, 1fr) auto; }
+  .deduplication-keep-control { grid-column: 1 / -1; }
+  .deduplication-delete-control { grid-column: 1 / -1; justify-content: flex-start; }
   .preview-metric { border-bottom: 1px solid var(--line); }
   .preview-target { grid-template-columns: 18px minmax(100px, 1fr) 80px; }
   .preview-target .eligibility { grid-column: 2 / -1; text-align: left; }

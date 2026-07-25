@@ -9,11 +9,13 @@ import { AccountDeduplicationDialog } from "./AccountDeduplicationDialog";
 const preview: AccountDeduplicationPreview = {
   scanned_credentials: 6,
   identified_credentials: 5,
+  excluded_credentials: 0,
   duplicate_groups: 2,
   duplicate_credentials: 3,
   proposed_deletions: 2,
   read_only_skipped: 1,
   missing_identity: 1,
+  options: { ignore_account_id: false, exclude_team_accounts: false },
   groups: [
     {
       id: "group-one",
@@ -51,7 +53,7 @@ beforeEach(() => {
 it("lets the operator override retained credentials and sends only reviewed deletions", async () => {
   const user = userEvent.setup();
   const onReview = vi.fn();
-  render(<I18nProvider><AccountDeduplicationDialog preview={preview} reviewing={false} onClose={vi.fn()} onReview={onReview} /></I18nProvider>);
+  render(<I18nProvider><AccountDeduplicationDialog preview={preview} loading={false} reviewing={false} onClose={vi.fn()} onOptionsChange={vi.fn()} onReview={onReview} /></I18nProvider>);
 
   const dialog = screen.getByRole("dialog", { name: "账号去重" });
   expect(within(dialog).getByText("只读跳过")).toBeInTheDocument();
@@ -60,7 +62,7 @@ it("lets the operator override retained credentials and sends only reviewed dele
   const radios = within(dialog).getAllByRole("radio");
   expect(radios[2]).toBeDisabled();
   await user.click(radios[1]);
-  const deletionCheckboxes = within(dialog).getAllByRole("checkbox").filter((input) => !input.hasAttribute("disabled"));
+  const deletionCheckboxes = within(dialog).getAllByRole("checkbox", { name: "删除重复凭证" });
   await user.click(deletionCheckboxes[1]);
 
   await user.click(within(dialog).getByRole("button", { name: "复核删除（1）" }));
@@ -68,7 +70,21 @@ it("lets the operator override retained credentials and sends only reviewed dele
 });
 
 it("does not offer a destructive next step when no duplicates are found", () => {
-  render(<I18nProvider><AccountDeduplicationDialog preview={{ ...preview, duplicate_groups: 0, duplicate_credentials: 0, proposed_deletions: 0, groups: [] }} reviewing={false} onClose={vi.fn()} onReview={vi.fn()} /></I18nProvider>);
+  render(<I18nProvider><AccountDeduplicationDialog preview={{ ...preview, duplicate_groups: 0, duplicate_credentials: 0, proposed_deletions: 0, groups: [] }} loading={false} reviewing={false} onClose={vi.fn()} onOptionsChange={vi.fn()} onReview={vi.fn()} /></I18nProvider>);
   expect(screen.getByText("未发现重复账号")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "复核删除（0）" })).toBeDisabled();
+});
+
+it("requests authoritative rescans with combinable identity exclusions", async () => {
+  const user = userEvent.setup();
+  const onOptionsChange = vi.fn();
+  const { rerender } = render(<I18nProvider><AccountDeduplicationDialog preview={preview} loading={false} reviewing={false} onClose={vi.fn()} onOptionsChange={onOptionsChange} onReview={vi.fn()} /></I18nProvider>);
+
+  await user.click(screen.getByRole("checkbox", { name: /忽略账号 ID 判重/ }));
+  expect(onOptionsChange).toHaveBeenLastCalledWith({ ignore_account_id: true, exclude_team_accounts: false });
+
+  rerender(<I18nProvider><AccountDeduplicationDialog preview={{ ...preview, excluded_credentials: 2, options: { ignore_account_id: true, exclude_team_accounts: false } }} loading={false} reviewing={false} onClose={vi.fn()} onOptionsChange={onOptionsChange} onReview={vi.fn()} /></I18nProvider>);
+  await user.click(screen.getByRole("checkbox", { name: /排除 k12\/team 套餐账号/ }));
+  expect(onOptionsChange).toHaveBeenLastCalledWith({ ignore_account_id: true, exclude_team_accounts: true });
+  expect(screen.getByText("已排除凭证").nextSibling).toHaveTextContent("2");
 });

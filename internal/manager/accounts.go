@@ -296,6 +296,7 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 		Email:         strings.TrimSpace(entry.Email),
 		ProjectID:     strings.TrimSpace(entry.ProjectID),
 		AccountType:   strings.TrimSpace(entry.AccountType),
+		PlanType:      safeAccountPlanType(entry.IDToken.PlanType, entry.IDToken.ChatGPTPlanType, entry.PlanType, entry.ChatGPTPlanType),
 		Status:        strings.TrimSpace(entry.Status),
 		StatusMessage: safeStatusMessage(entry.StatusMessage),
 		Disabled:      entry.Disabled,
@@ -432,7 +433,7 @@ func enrichAccount(account *Account, detail cpaapi.HostAuthGetResponse) error {
 	if websockets, ok := boolValue(metadata["websockets"]); ok {
 		account.Websockets = &websockets
 	}
-	if planType := safeAccountPlanType(metadata["plan_type"], metadata["chatgpt_plan_type"]); planType != "" {
+	if planType := accountPlanTypeFromMetadata(metadata); planType != "" {
 		account.PlanType = planType
 	}
 	account.HeaderNames = safeHeaderNames(metadata["headers"])
@@ -609,6 +610,50 @@ func safeAccountPlanType(values ...any) string {
 		}
 	}
 	return ""
+}
+
+func accountPlanTypeFromMetadata(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	for _, key := range []string{"id_token", "idToken"} {
+		claims := accountIdentityClaims(metadata[key])
+		if planType := accountPlanTypeFromClaims(claims); planType != "" {
+			return planType
+		}
+	}
+	if planType := safeAccountPlanType(metadata["plan_type"], metadata["chatgpt_plan_type"]); planType != "" {
+		return planType
+	}
+	for _, key := range []string{"access_token", "accessToken"} {
+		claims := accountIdentityClaims(metadata[key])
+		if planType := accountPlanTypeFromClaims(claims); planType != "" {
+			return planType
+		}
+	}
+	return ""
+}
+
+func accountIdentityClaims(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case string:
+		return parseImportIdentityPayload(typed)
+	default:
+		return nil
+	}
+}
+
+func accountPlanTypeFromClaims(claims map[string]any) string {
+	if len(claims) == 0 {
+		return ""
+	}
+	if planType := safeAccountPlanType(claims["plan_type"], claims["chatgpt_plan_type"]); planType != "" {
+		return planType
+	}
+	authClaims, _ := claims["https://api.openai.com/auth"].(map[string]any)
+	return safeAccountPlanType(authClaims["plan_type"], authClaims["chatgpt_plan_type"])
 }
 
 func validHeaderName(name string) bool {

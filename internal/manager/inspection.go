@@ -1068,11 +1068,13 @@ func (e *InspectionEngine) RecordModelTest(ctx context.Context, result ModelTest
 	}
 	e.records[accountID] = record
 	requestEnable := policy.AutoEnable && account.Disabled && record.Result.OwnedDisable && decision.Health == InspectionHealthHealthy
+	requestDisable := shouldAutoDisableInspection(policy, account, record)
+	remediationResult := record.Result
 	e.dirty = true
 	e.generation++
 	e.mu.Unlock()
 	e.persist()
-	if requestEnable {
+	if requestEnable || requestDisable && e.inspectionAutoDisableAllowed(remediationResult) {
 		e.RequestScan()
 	}
 	return nil

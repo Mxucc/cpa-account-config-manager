@@ -89,7 +89,7 @@ func TestInspectionProbeEligibilityRespectsManualDisablePolicyAndOwnership(t *te
 	}
 }
 
-func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
+func TestInspectionCredentialFailuresAndCurrentQuotaOverrideOrdinaryProbeState(t *testing.T) {
 	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
 	resetAt := now.Add(6 * time.Hour)
 	account := Account{
@@ -105,6 +105,7 @@ func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
 		wantHealth         string
 		wantReason         string
 		wantRecommendation string
+		wantSource         string
 	}{
 		{
 			name: "deactivated workspace is deleted",
@@ -113,14 +114,16 @@ func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
 				ReasonCode: "workspace_deactivated", StatusCode: http.StatusPaymentRequired, TestedAt: now,
 			},
 			wantHealth: InspectionHealthDeactivated, wantReason: "workspace_deactivated", wantRecommendation: InspectionRecommendationDelete,
+			wantSource: InspectionSignalActiveProbe,
 		},
 		{
-			name: "successful model probe is healthy",
+			name: "successful model probe cannot mask current quota exhaustion",
 			probe: inspectionProbeSignal{
 				Status: "available", Kind: InspectionProbeKindModel,
 				ReasonCode: "model_response_ok", StatusCode: http.StatusOK, TestedAt: now,
 			},
-			wantHealth: InspectionHealthHealthy, wantReason: "model_response_ok", wantRecommendation: InspectionRecommendationKeep,
+			wantHealth: InspectionHealthQuotaLimited, wantReason: "quota_exhausted", wantRecommendation: InspectionRecommendationDisable,
+			wantSource: InspectionSignalNative,
 		},
 		{
 			name: "credential failure requires reauthentication",
@@ -129,6 +132,7 @@ func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
 				ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now,
 			},
 			wantHealth: InspectionHealthInvalidCredentials, wantReason: "authentication_failed", wantRecommendation: InspectionRecommendationReauth,
+			wantSource: InspectionSignalActiveProbe,
 		},
 		{
 			name: "current quota response remains quota limited",
@@ -136,13 +140,15 @@ func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
 				Status: "review", Kind: InspectionProbeKindCredential,
 				ReasonCode: "quota_limited", StatusCode: http.StatusPaymentRequired, TestedAt: now,
 			},
-			wantHealth: InspectionHealthQuotaLimited, wantReason: "quota_limited", wantRecommendation: InspectionRecommendationDisable,
+			wantHealth: InspectionHealthQuotaLimited, wantReason: "quota_exhausted", wantRecommendation: InspectionRecommendationDisable,
+			wantSource: InspectionSignalNative,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			decision := decideInspection(account, inspectionRecord{Probe: test.probe}, now)
-			if decision.Health != test.wantHealth || decision.ReasonCode != test.wantReason || decision.Recommendation != test.wantRecommendation || decision.SignalSource != InspectionSignalActiveProbe {
+			if decision.Health != test.wantHealth || decision.ReasonCode != test.wantReason ||
+				decision.Recommendation != test.wantRecommendation || decision.SignalSource != test.wantSource {
 				t.Fatalf("fresh probe decision = %#v", decision)
 			}
 		})
@@ -155,6 +161,67 @@ func TestInspectionFreshProbeOverridesCachedState(t *testing.T) {
 	staleDecision := decideInspection(account, inspectionRecord{Probe: staleProbe}, now)
 	if staleDecision.Health != InspectionHealthQuotaLimited || staleDecision.ReasonCode != "quota_exhausted" || staleDecision.SignalSource != InspectionSignalNative {
 		t.Fatalf("stale probe overrode cached quota: %#v", staleDecision)
+	}
+}
+
+func TestRecordedModelSuccessQueuesCurrentQuotaForAutomaticDisable(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 10, 0, 0, 0, time.UTC)
+	resetAt := now.Add(5 * time.Hour)
+	host := inspectionEditableHost(false)
+	usage := NewUsageTracker()
+	defer usage.Close()
+	usage.now = func() time.Time { return now }
+	usage.ObserveCredentialUsage("inspection-account", &CodexUsageSnapshot{
+		FiveHour:   &UsageWindowSnapshot{UsedPercent: 100, ResetAt: &resetAt, WindowMinutes: 300},
+		ObservedAt: now,
+	})
+	engine := NewInspectionEngine(NewAccountService(host, usage), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.mu.Lock()
+	engine.started = true
+	engine.policy = defaultInspectionPolicy()
+	engine.policy.Enabled = true
+	engine.policy.AutoDisable = true
+	engine.policy.AutoEnable = true
+	engine.mu.Unlock()
+
+	errRecord := engine.RecordManualModelTest(context.Background(), ModelTestResult{
+		AccountID: "inspection-account", Model: "gpt-5.6-sol", Status: "available",
+		ProbeKind: InspectionProbeKindModel, ReasonCode: "model_response_ok", StatusCode: http.StatusOK, TestedAt: now,
+	})
+	if errRecord != nil {
+		t.Fatalf("record model test: %v", errRecord)
+	}
+	result := engine.records["inspection-account"].Result
+	if result.Health != InspectionHealthQuotaLimited || result.ReasonCode != "quota_exhausted" ||
+		result.Recommendation != InspectionRecommendationDisable || result.RecoverAfter == nil || !result.RecoverAfter.Equal(resetAt) {
+		t.Fatalf("recorded quota result = %#v", result)
+	}
+	if !engine.pending || len(engine.scanWake) != 1 {
+		t.Fatalf("automatic disable was not queued: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+	}
+
+	engine.scan(context.Background())
+	disabled := engine.records["inspection-account"].Result
+	if !disabled.Disabled || !disabled.OwnedDisable || disabled.AutoAction != InspectionActionDisable ||
+		disabled.AutoActionStatus != InspectionActionSucceeded || disabled.RecoverAfter == nil || !disabled.RecoverAfter.Equal(resetAt) {
+		t.Fatalf("automatic quota disable result = %#v", disabled)
+	}
+
+	host.mu.Lock()
+	host.entries[0].Disabled = true
+	host.mu.Unlock()
+	now = resetAt.Add(time.Minute)
+	engine.scan(context.Background())
+	enabled := engine.records["inspection-account"].Result
+	if enabled.Disabled || enabled.OwnedDisable || enabled.AutoAction != InspectionActionEnable ||
+		enabled.AutoActionStatus != InspectionActionSucceeded || enabled.Health != InspectionHealthHealthy {
+		t.Fatalf("automatic quota recovery result = %#v", enabled)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.saves) != 2 {
+		t.Fatalf("quota lifecycle auth writes = %d, want disable and enable", len(host.saves))
 	}
 }
 

@@ -3,7 +3,7 @@ import type { Account, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
 
 export function AccountUsageCell({ account }: { account: Account }) {
-  const { locale, tx, formatDateTime, formatNumber } = useI18n();
+  const { locale, t, tx, formatDateTime, formatNumber } = useI18n();
   const usage = account.usage;
   const agentIdentity = String(account.provider || account.type).trim().toLowerCase() === "codex-agent-identity";
   const recentTotal = (account.recent_requests ?? []).reduce(
@@ -32,9 +32,15 @@ export function AccountUsageCell({ account }: { account: Account }) {
     : String(account.provider || account.type).toLowerCase() === "codex"
       ? tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")
       : tx("ui.no_cpa_usage_data_received");
-  const exhaustedAction = quotaExhausted && !account.disabled
-    ? tx("ui.suggested_disable")
-    : tx("ui.waiting_for_quota_recovery");
+  const exhaustedAction = account.disabled
+    ? tx("ui.waiting_for_quota_recovery")
+    : account.automation?.auto_action === "disable" && account.automation.auto_action_status === "failed"
+      ? t("automation.disable_failed")
+      : account.automation?.auto_disable_enabled
+        ? t("automation.waiting_disable")
+        : account.automation
+          ? t("automation.disable_off")
+          : tx("ui.suggested_disable");
 
   return (
     <div className="account-usage-cell">

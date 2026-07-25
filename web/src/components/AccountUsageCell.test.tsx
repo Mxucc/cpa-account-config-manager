@@ -17,6 +17,23 @@ const baseAccount: Account = {
   failed: 2,
 };
 
+const quotaAutomation: NonNullable<Account["automation"]> = {
+  health: "quota_limited",
+  reason_code: "quota_exhausted",
+  recommendation: "disable",
+  last_checked_at: "2026-07-21T12:00:00Z",
+  owned_disable: false,
+  auto_disable_eligible: true,
+  inspection_enabled: true,
+  auto_disable_enabled: true,
+  auto_enable_enabled: true,
+  auto_delete_enabled: false,
+  failure_threshold: 3,
+  failure_streak: 1,
+  recovery_threshold: 2,
+  healthy_streak: 0,
+};
+
 describe("AccountUsageCell", () => {
   it("renders token and request activity with clamped Codex quota tracks", () => {
     render(<AccountUsageCell account={{
@@ -95,17 +112,30 @@ describe("AccountUsageCell", () => {
   it("makes exhausted quota and the next action visible", () => {
     const { rerender } = render(<AccountUsageCell account={{
       ...baseAccount,
+      automation: quotaAutomation,
       usage: {
         input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
         cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
         codex: { observed_at: "2026-07-21T12:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
       },
     }} />);
-    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽建议禁用");
+    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽等待自动禁用");
+
+    rerender(<AccountUsageCell account={{
+      ...baseAccount,
+      automation: { ...quotaAutomation, auto_disable_enabled: false },
+      usage: {
+        input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
+        cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
+        codex: { observed_at: "2026-07-21T12:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
+      },
+    }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽自动禁用未开启");
 
     rerender(<AccountUsageCell account={{
       ...baseAccount,
       disabled: true,
+      automation: { ...quotaAutomation, owned_disable: true },
       usage: {
         input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
         cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,

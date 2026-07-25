@@ -298,8 +298,13 @@ func applyUsageRecordToInspection(record *inspectionRecord, usage cpaapi.UsageRe
 
 func decideInspection(account Account, record inspectionRecord, now time.Time) inspectionDecision {
 	now = now.UTC()
-	if decision, ok := decisionFromModelProbe(record.Probe, now); ok {
-		return decision
+	probeDecision, hasProbeDecision := decisionFromModelProbe(record.Probe, now)
+	// Definitive credential and account-lifecycle failures remain the highest
+	// priority. Ordinary model success or inconclusive probe output must not
+	// hide a current CPA quota window, because routing can keep failing until
+	// that window resets even when one isolated model probe succeeds.
+	if hasProbeDecision && inspectionProbeDecisionOutranksQuota(probeDecision) {
+		return probeDecision
 	}
 	if limited, recoverAfter, quotaWindow := accountQuotaLimited(account, now); limited {
 		return inspectionDecision{
@@ -312,6 +317,9 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 			SignalSource:        InspectionSignalNative,
 			QuotaWindow:         quotaWindow,
 		}
+	}
+	if hasProbeDecision {
+		return probeDecision
 	}
 	if account.Disabled && !record.Result.OwnedDisable {
 		return inspectionDecision{
@@ -404,6 +412,10 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 		Recommendation: InspectionRecommendationReview,
 		SignalSource:   InspectionSignalNative,
 	}
+}
+
+func inspectionProbeDecisionOutranksQuota(decision inspectionDecision) bool {
+	return decision.Health == InspectionHealthInvalidCredentials || decision.Health == InspectionHealthDeactivated
 }
 
 func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspectionDecision, bool) {

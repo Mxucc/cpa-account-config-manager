@@ -97,12 +97,12 @@ func TestWeeklyOverdraftExperimentFailsOpenForUnsupportedRequests(t *testing.T) 
 	}
 }
 
-func TestWeeklyOverdraftExperimentSuppressesOnlyWeeklyQuotaAutoDisable(t *testing.T) {
+func TestWeeklyOverdraftExperimentQueuesWeeklyVerificationWithoutWeakeningOtherRemediation(t *testing.T) {
 	now := time.Date(2026, time.July, 22, 10, 0, 0, 0, time.UTC)
 	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
 	weeklyUsage := cpaapi.UsageRecord{ResponseHeaders: codexUsageObservationHeaders(now, 20, 100)}
-	if experiment.AllowUsageAutoDisable(weeklyUsage, now) {
-		t.Fatal("weekly exhaustion was allowed to wake auto-disable")
+	if !experiment.AllowUsageAutoDisable(weeklyUsage, now) {
+		t.Fatal("weekly exhaustion did not wake the verification scan")
 	}
 	if !experiment.AllowUsageAutoDisable(cpaapi.UsageRecord{ResponseHeaders: codexUsageObservationHeaders(now, 100, 20)}, now) {
 		t.Fatal("five-hour exhaustion was incorrectly treated as weekly overdraft")
@@ -135,8 +135,8 @@ func TestWeeklyOverdraftExperimentSuppressesOnlyWeeklyQuotaAutoDisable(t *testin
 	engine.policy.AutoDisable = true
 	engine.RegisterAutomaticDisableGuard(experiment)
 	engine.Observe(weeklyUsageWithAuth(weeklyUsage, "weekly"))
-	if engine.pending || len(engine.scanWake) != 0 {
-		t.Fatalf("weekly experiment still queued automatic disable: pending=%t wake=%d", engine.pending, len(engine.scanWake))
+	if !engine.pending || len(engine.scanWake) != 1 {
+		t.Fatalf("weekly experiment did not queue verification: pending=%t wake=%d", engine.pending, len(engine.scanWake))
 	}
 }
 
@@ -159,6 +159,143 @@ func TestWeeklyOverdraftExperimentVetoesAutomaticQuotaMutation(t *testing.T) {
 	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, time.Now().UTC(), "", "")
 	if summary.AutoDisabled != 0 || summary.Failed != 0 || len(actions) != 0 || len(host.saves) != 0 {
 		t.Fatalf("weekly quota guard result summary=%#v actions=%#v saves=%d", summary, actions, len(host.saves))
+	}
+}
+
+func TestWeeklyOverdraftExperimentKeepsAccountEnabledWhenAnyGateProbeSucceeds(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(6 * 24 * time.Hour)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	probeCalls := 0
+	engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
+		probeCalls++
+		status := "review"
+		reason := "quota_limited"
+		statusCode := http.StatusTooManyRequests
+		if probeCalls == 3 {
+			status = "available"
+			reason = "model_response_ok"
+			statusCode = http.StatusOK
+		}
+		return ModelTestResult{
+			AccountID: request.AccountID, Model: request.Model, Status: status, ReasonCode: reason,
+			StatusCode: statusCode, TestedAt: now.Add(time.Duration(probeCalls) * time.Second),
+			Experiment: &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: "call_gate"},
+		}, nil
+	}
+	records := weeklyOverdraftActionRecords(resetAt)
+	accounts := weeklyOverdraftActionAccounts()
+	policy := defaultInspectionPolicy()
+	policy.AutoDisable = true
+
+	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, now, "", "")
+	record := records["inspection-account"]
+	if probeCalls != 3 || summary.AutoDisabled != 0 || summary.Failed != 0 || len(actions) != 0 || len(host.saves) != 0 {
+		t.Fatalf("successful gate summary=%#v actions=%#v calls=%d saves=%d", summary, actions, probeCalls, len(host.saves))
+	}
+	if record.Result.AutoDisableProbeStatus != InspectionAutoDisableProbePassed || record.Result.AutoDisableProbeAttempts != 3 ||
+		record.Result.AutoDisableProbeLimit != weeklyOverdraftProbeAttempts || record.Result.AutoDisableProbeReasonCode != "model_response_ok" ||
+		record.Result.AutoDisableProbeTestedAt == nil {
+		t.Fatalf("successful gate state = %#v", record.Result)
+	}
+}
+
+func TestWeeklyOverdraftExperimentDisablesAfterFiveFailedGateProbes(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(6 * 24 * time.Hour)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	probeCalls := 0
+	engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
+		probeCalls++
+		return ModelTestResult{
+			AccountID: request.AccountID, Model: request.Model, Status: "review", ReasonCode: "quota_limited",
+			StatusCode: http.StatusTooManyRequests, TestedAt: now.Add(time.Duration(probeCalls) * time.Second),
+			Experiment: &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: "call_gate"},
+		}, nil
+	}
+	records := weeklyOverdraftActionRecords(resetAt)
+	accounts := weeklyOverdraftActionAccounts()
+	policy := defaultInspectionPolicy()
+	policy.AutoDisable = true
+	policy.AutoEnable = true
+
+	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, now, "", "")
+	record := records["inspection-account"]
+	if probeCalls != weeklyOverdraftProbeAttempts || summary.AutoDisabled != 1 || summary.Failed != 0 || len(actions) != 1 || len(host.saves) != 1 {
+		t.Fatalf("failed gate summary=%#v actions=%#v calls=%d saves=%d", summary, actions, probeCalls, len(host.saves))
+	}
+	if !record.Result.Disabled || !record.Result.OwnedDisable || record.Result.AutoDisableProbeStatus != InspectionAutoDisableProbeFailed ||
+		record.Result.AutoDisableProbeAttempts != weeklyOverdraftProbeAttempts || record.Result.AutoDisableProbeReasonCode != "quota_limited" ||
+		record.DisabledRecoverAfter.IsZero() || !record.DisabledRecoverAfter.Equal(resetAt) {
+		t.Fatalf("failed gate state = %#v", record)
+	}
+
+	account := accounts["inspection-account"]
+	account.Disabled = true
+	accounts["inspection-account"] = account
+	record.Result.Disabled = true
+	record.Result.Health = InspectionHealthHealthy
+	record.Result.ReasonCode = "healthy_recent_success"
+	record.Result.Recommendation = InspectionRecommendationEnable
+	record.Result.AutoDisableEligible = false
+	records["inspection-account"] = record
+	recovery, recoveryActions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, resetAt, "", "")
+	recovered := records["inspection-account"]
+	if recovery.AutoEnabled != 1 || recovery.Failed != 0 || len(recoveryActions) != 1 || len(host.saves) != 2 ||
+		recovered.Result.Disabled || recovered.Result.OwnedDisable || recovered.Result.AutoDisableProbeStatus != "" || !recovered.DisabledRecoverAfter.IsZero() {
+		t.Fatalf("weekly reset recovery=%#v actions=%#v saves=%d record=%#v", recovery, recoveryActions, len(host.saves), recovered)
+	}
+}
+
+func TestWeeklyOverdraftProbeDecisionPersistsWithoutDiagnosticPayloads(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	path := inspectionStorePath(t.TempDir())
+	state := persistedInspectionState{
+		Version: inspectionStoreVersion,
+		Policy:  defaultInspectionPolicy(),
+		Records: map[string]inspectionRecord{"inspection-account": {Result: InspectionResult{
+			ID: "inspection-account", Health: InspectionHealthQuotaLimited, ReasonCode: "quota_exhausted",
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDisable,
+			AutoDisableProbeName: "weekly_overdraft", AutoDisableProbeStatus: InspectionAutoDisableProbeFailed,
+			AutoDisableProbeAttempts: weeklyOverdraftProbeAttempts, AutoDisableProbeLimit: weeklyOverdraftProbeAttempts,
+			AutoDisableProbeReasonCode: "quota_limited", AutoDisableProbeModel: defaultCodexFallbackModel,
+			AutoDisableProbeTestedAt: timePointer(now),
+		}}},
+	}
+	if errSave := saveInspectionState(path, state); errSave != nil {
+		t.Fatalf("save inspection state: %v", errSave)
+	}
+	loaded, errLoad := loadInspectionState(path)
+	if errLoad != nil {
+		t.Fatalf("load inspection state: %v", errLoad)
+	}
+	result := loaded.Records["inspection-account"].Result
+	if result.AutoDisableProbeName != "weekly_overdraft" || result.AutoDisableProbeStatus != InspectionAutoDisableProbeFailed ||
+		result.AutoDisableProbeAttempts != weeklyOverdraftProbeAttempts || result.AutoDisableProbeLimit != weeklyOverdraftProbeAttempts ||
+		result.AutoDisableProbeReasonCode != "quota_limited" || result.AutoDisableProbeModel != defaultCodexFallbackModel ||
+		result.AutoDisableProbeTestedAt == nil || !result.AutoDisableProbeTestedAt.Equal(now) {
+		t.Fatalf("persisted probe decision = %#v", result)
+	}
+}
+
+func weeklyOverdraftActionRecords(resetAt time.Time) map[string]inspectionRecord {
+	return map[string]inspectionRecord{
+		"inspection-account": {Result: InspectionResult{
+			ID: "inspection-account", Name: "inspection.json", Provider: "codex", Health: InspectionHealthQuotaLimited,
+			ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowSevenDay, Confidence: InspectionConfidenceHigh,
+			Recommendation: InspectionRecommendationDisable, Editable: true, AutoDisableEligible: true,
+			SignalSource: InspectionSignalNative, RecoverAfter: timePointer(resetAt),
+		}},
+	}
+}
+
+func weeklyOverdraftActionAccounts() map[string]Account {
+	return map[string]Account{
+		"inspection-account": {ID: "inspection-account", Name: "inspection.json", Provider: "codex", Editable: true, path: "/auths/inspection.json"},
 	}
 }
 

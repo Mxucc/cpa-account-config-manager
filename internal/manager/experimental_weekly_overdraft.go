@@ -13,6 +13,7 @@ import (
 const (
 	defaultExperimentalRequestBodyLimit = 32 * 1024 * 1024
 	experimentalExecInput               = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
+	weeklyOverdraftProbeAttempts        = 5
 )
 
 type WeeklyOverdraftExperiment struct {
@@ -79,29 +80,39 @@ func (e *WeeklyOverdraftExperiment) InterceptRequest(request cpaapi.RequestInter
 	return cpaapi.RequestInterceptResponse{Body: updated}, true
 }
 
-func (e *WeeklyOverdraftExperiment) AllowUsageAutoDisable(usage cpaapi.UsageRecord, now time.Time) bool {
-	if e == nil || e.enabled == nil || !e.enabled() {
-		return true
-	}
-	usageSnapshot := parseCodexUsageHeaders(usage.ResponseHeaders, now)
-	if usageSnapshot == nil {
-		return true
-	}
-	if quotaWindowExhausted(usageSnapshot.FiveHour, now) {
-		return true
-	}
-	return !quotaWindowExhausted(usageSnapshot.SevenDay, now)
+func (e *WeeklyOverdraftExperiment) AllowUsageAutoDisable(_ cpaapi.UsageRecord, _ time.Time) bool {
+	return true
 }
 
 func (e *WeeklyOverdraftExperiment) AllowInspectionAutoDisable(result InspectionResult) bool {
 	if e == nil || e.enabled == nil || !e.enabled() || result.ReasonCode != "quota_exhausted" && result.ReasonCode != "quota_limited" {
 		return true
 	}
-	return result.QuotaWindow != InspectionQuotaWindowSevenDay
+	if result.QuotaWindow != InspectionQuotaWindowSevenDay {
+		return true
+	}
+	return result.AutoDisableProbeStatus == InspectionAutoDisableProbeFailed &&
+		result.AutoDisableProbeAttempts >= weeklyOverdraftProbeAttempts
 }
 
-func quotaWindowExhausted(window *UsageWindowSnapshot, now time.Time) bool {
-	return window != nil && window.UsedPercent >= 100 && (window.ResetAt == nil || window.ResetAt.After(now))
+func (e *WeeklyOverdraftExperiment) AutomaticDisableProbePlan(account Account, result InspectionResult, preferredModel string) (AutomaticDisableProbePlan, bool) {
+	if e == nil || e.enabled == nil || !e.enabled() ||
+		(result.ReasonCode != "quota_exhausted" && result.ReasonCode != "quota_limited") ||
+		result.QuotaWindow != InspectionQuotaWindowSevenDay ||
+		!strings.EqualFold(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)), "codex") &&
+			!isAgentIdentityProvider(firstNonEmpty(account.Provider, account.Type)) {
+		return AutomaticDisableProbePlan{}, false
+	}
+	return AutomaticDisableProbePlan{
+		Name:         "weekly_overdraft",
+		AttemptLimit: weeklyOverdraftProbeAttempts,
+		Models:       []string{preferredModel, defaultCodexFallbackModel, codexCompatibilityMiniModel},
+		Request: ModelTestRequest{
+			ExperimentalWeeklyOverdraft: true,
+			Inspection:                  true,
+			SelectPolicyFallback:        true,
+		},
+	}, true
 }
 
 func (e *WeeklyOverdraftExperiment) bodyLimit() int {

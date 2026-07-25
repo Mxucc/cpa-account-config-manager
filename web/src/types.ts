@@ -95,6 +95,13 @@ export interface AccountAutomationSummary {
   passive_failure_streak?: number;
   circuit_open?: boolean;
   circuit_reason_code?: string;
+  auto_disable_probe_name?: string;
+  auto_disable_probe_status?: "pending" | "passed" | "failed" | "inconclusive";
+  auto_disable_probe_attempts?: number;
+  auto_disable_probe_limit?: number;
+  auto_disable_probe_reason_code?: string;
+  auto_disable_probe_model?: string;
+  auto_disable_probe_tested_at?: string;
 }
 
 export interface RecentRequestEntry {
@@ -753,6 +760,13 @@ export interface InspectionResult {
   run_phase?: "listing" | "primary" | "retry" | "stopped" | "completed";
   run_observed_at?: string;
   manual_delete_eligible: boolean;
+  auto_disable_probe_name?: string;
+  auto_disable_probe_status?: "pending" | "passed" | "failed" | "inconclusive";
+  auto_disable_probe_attempts?: number;
+  auto_disable_probe_limit?: number;
+  auto_disable_probe_reason_code?: string;
+  auto_disable_probe_model?: string;
+  auto_disable_probe_tested_at?: string;
 }
 
 export interface InspectionResultList {

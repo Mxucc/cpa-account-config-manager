@@ -245,6 +245,18 @@ func sanitizeInspectionRecords(records map[string]inspectionRecord) map[string]i
 		}
 		record.Result.CircuitReasonCode = safeOptionalInspectionReason(record.Result.CircuitReasonCode)
 		record.Result.QuotaWindow = normalizeInspectionQuotaWindow(record.Result.QuotaWindow)
+		record.Result.AutoDisableProbeName = safeOperationIdentifier(record.Result.AutoDisableProbeName, 64)
+		record.Result.AutoDisableProbeStatus = normalizeInspectionAutoDisableProbeStatus(record.Result.AutoDisableProbeStatus)
+		record.Result.AutoDisableProbeAttempts = boundedAutoDisableProbeCount(record.Result.AutoDisableProbeAttempts)
+		record.Result.AutoDisableProbeLimit = boundedAutoDisableProbeCount(record.Result.AutoDisableProbeLimit)
+		record.Result.AutoDisableProbeReasonCode = safeOptionalInspectionReason(record.Result.AutoDisableProbeReasonCode)
+		record.Result.AutoDisableProbeModel = safeModelIdentifier(record.Result.AutoDisableProbeModel)
+		if record.Result.AutoDisableProbeName == "" || record.Result.AutoDisableProbeStatus == "" || record.Result.AutoDisableProbeLimit == 0 ||
+			record.Result.AutoDisableProbeAttempts > record.Result.AutoDisableProbeLimit ||
+			(record.Result.AutoDisableProbeStatus == InspectionAutoDisableProbePassed && record.Result.AutoDisableProbeAttempts == 0) ||
+			(record.Result.AutoDisableProbeStatus == InspectionAutoDisableProbeFailed && record.Result.AutoDisableProbeAttempts < record.Result.AutoDisableProbeLimit) {
+			clearAutomaticDisableProbeState(&record.Result)
+		}
 		record.Result.CodexUsage = cloneCodexUsage(record.Result.CodexUsage)
 		record.Result.RunID = safeOperationIdentifier(record.Result.RunID, 128)
 		record.Result.RunPhase = normalizeInspectionProbePhase(record.Result.RunPhase)
@@ -314,6 +326,7 @@ func cloneInspectionResult(result InspectionResult) InspectionResult {
 	clone.UsageLastRequestAt = cloneTimePointer(result.UsageLastRequestAt)
 	clone.CodexUsage = cloneCodexUsage(result.CodexUsage)
 	clone.RunObservedAt = cloneTimePointer(result.RunObservedAt)
+	clone.AutoDisableProbeTestedAt = cloneTimePointer(result.AutoDisableProbeTestedAt)
 	return clone
 }
 

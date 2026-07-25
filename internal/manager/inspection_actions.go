@@ -55,6 +55,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 	if !policy.AutoDisable && !policy.AutoEnable && !policy.AutoDelete {
 		return summary, nil
 	}
+	e.applyAutomaticDisableProbeGates(ctx, policy, accounts, records, managementBaseURL, managementKey)
 	if e.mutations == nil || !e.mutations.TryAcquire(inspectionMutationOwner) {
 		summary.Error = "another account mutation is running"
 		return summary, nil
@@ -749,6 +750,7 @@ func clearInspectionDisableOwnership(record *inspectionRecord) {
 	record.Result.CircuitOpen = false
 	record.Result.CircuitReasonCode = ""
 	record.Result.RecoverAfter = nil
+	clearAutomaticDisableProbeState(&record.Result)
 	record.DisableReason = ""
 	record.DisabledAt = time.Time{}
 	record.DisabledName = ""

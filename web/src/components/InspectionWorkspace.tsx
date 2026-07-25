@@ -948,6 +948,7 @@ function InspectionActionDialog({ result, reviewing, onClose, onModelTest, onDis
           <div><dt>{tx("ui.recommendation")}</dt><dd>{recommendationLabel(result.recommendation, locale)}</dd></div>
           <div><dt>{tx("ui.review_state")}</dt><dd>{reviewStatusLabel(reviewStatus, locale)}{result.reviewed_at ? ` · ${formatDateTime(result.reviewed_at)}` : ""}</dd></div>
           {result.quota_window ? <div><dt>{tx("ui.quota_and_usage")}</dt><dd>{quotaWindowLabel(result.quota_window, locale)}{result.recover_after ? ` · ${tx("ui.quota_reset_at", { time: formatDateTime(result.recover_after) })}` : ""}</dd></div> : null}
+          {result.auto_disable_probe_name ? <div><dt>{tx("ui.weekly_overdraft_probe_gate")}</dt><dd>{autoDisableProbeStatusLabel(result, locale)} · {result.auto_disable_probe_attempts ?? 0}/{result.auto_disable_probe_limit ?? 0}{result.auto_disable_probe_model ? ` · ${result.auto_disable_probe_model}` : ""}</dd></div> : null}
         </dl>
         {(result.status_code === 401 || result.status_code === 402 || result.health === "review") ? <p className="inspection-safety-note"><ShieldAlert size={17} />{tx("ui.review_safety_note")}</p> : null}
         <div className="inspection-action-grid">
@@ -1059,6 +1060,16 @@ function quotaWindowLabel(value: NonNullable<InspectionResult["quota_window"]>, 
     multiple: "ui.quota_window_multiple",
     five_hour_fallback: "ui.quota_window_five_hour_fallback",
   } satisfies Record<NonNullable<InspectionResult["quota_window"]>, UIMessageKey>)[value]);
+}
+
+function autoDisableProbeStatusLabel(result: InspectionResult, locale: Locale): string {
+  const key = ({
+    pending: "ui.weekly_overdraft_probe_running_short",
+    passed: "ui.weekly_overdraft_probe_passed",
+    failed: "ui.weekly_overdraft_probe_failed",
+    inconclusive: "ui.weekly_overdraft_probe_inconclusive",
+  } satisfies Record<NonNullable<InspectionResult["auto_disable_probe_status"]>, UIMessageKey>)[result.auto_disable_probe_status ?? "inconclusive"];
+  return translateUI(locale, key);
 }
 
 function recommendationLabel(value: InspectionResult["recommendation"], locale: Locale): string {

@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
@@ -12,6 +13,21 @@ type AutomaticDisableGuard interface {
 	AllowUsageAutoDisable(cpaapi.UsageRecord, time.Time) bool
 	AllowInspectionAutoDisable(InspectionResult) bool
 }
+
+// AutomaticDisableProbePlanner lets an optional feature require bounded real
+// probes before its conservative disable veto can be released.
+type AutomaticDisableProbePlanner interface {
+	AutomaticDisableProbePlan(Account, InspectionResult, string) (AutomaticDisableProbePlan, bool)
+}
+
+type AutomaticDisableProbePlan struct {
+	Name         string
+	AttemptLimit int
+	Models       []string
+	Request      ModelTestRequest
+}
+
+type automaticDisableProbeRunner func(context.Context, ModelTestRequest, string, string) (ModelTestResult, error)
 
 func (e *InspectionEngine) RegisterAutomaticDisableGuard(guard AutomaticDisableGuard) {
 	if e == nil || guard == nil {

@@ -25,6 +25,7 @@ type InspectionEngine struct {
 	mutations              *MutationCoordinator
 	backgroundOwner        BackgroundWorkOwner
 	modelTests             *ModelTestService
+	automaticDisableProbe  automaticDisableProbeRunner
 	deletions              *AccountDeleteService
 	operations             *OperationJournal
 	notificationDoer       HTTPDoer
@@ -110,6 +111,13 @@ func (e *InspectionEngine) SetModelTestService(service *ModelTestService) {
 	}
 	e.mu.Lock()
 	e.modelTests = service
+	if service == nil {
+		e.automaticDisableProbe = nil
+	} else {
+		e.automaticDisableProbe = func(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string) (ModelTestResult, error) {
+			return service.Run(ctx, request, managementBaseURL, managementKey)
+		}
+	}
 	e.mu.Unlock()
 }
 
@@ -898,27 +906,34 @@ func (e *InspectionEngine) AccountAutomationSummaries(accounts []Account) map[st
 		record = refreshUnsupportedAgentIdentityNativeResult(account, record, e.currentTime())
 		ownedDisable := record.Result.OwnedDisable && account.Disabled
 		summary := AccountAutomationSummary{
-			Health:                  normalizeInspectionHealth(record.Result.Health),
-			ReasonCode:              safeInspectionReason(record.Result.ReasonCode),
-			Recommendation:          normalizeInspectionRecommendation(record.Result.Recommendation),
-			LastCheckedAt:           record.Result.LastCheckedAt.UTC(),
-			OwnedDisable:            ownedDisable,
-			AutoAction:              normalizeInspectionAction(record.Result.AutoAction),
-			AutoActionStatus:        normalizeInspectionActionStatus(record.Result.AutoActionStatus),
-			AutoDisableEligible:     record.Result.AutoDisableEligible,
-			InspectionEnabled:       policy.Enabled,
-			AutoDisableEnabled:      policy.AutoDisable,
-			AutoEnableEnabled:       policy.AutoEnable,
-			AutoDeleteEnabled:       policy.AutoDelete,
-			FailureThreshold:        policy.FailureThreshold,
-			FailureStreak:           boundedCounter(record.Result.FailureStreak),
-			RecoveryThreshold:       policy.RecoveryThreshold,
-			HealthyStreak:           boundedCounter(record.Result.HealthyStreak),
-			PassiveCircuitEnabled:   policy.PassiveCircuitEnabled,
-			PassiveFailureThreshold: policy.PassiveFailureThreshold,
-			PassiveFailureStreak:    max(record.Signal.ConsecutiveFailures, record.Probe.ConsecutiveFailures),
-			CircuitOpen:             ownedDisable && record.DisableReason == "passive_circuit_open",
-			CircuitReasonCode:       safeOptionalInspectionReason(record.Result.CircuitReasonCode),
+			Health:                     normalizeInspectionHealth(record.Result.Health),
+			ReasonCode:                 safeInspectionReason(record.Result.ReasonCode),
+			Recommendation:             normalizeInspectionRecommendation(record.Result.Recommendation),
+			LastCheckedAt:              record.Result.LastCheckedAt.UTC(),
+			OwnedDisable:               ownedDisable,
+			AutoAction:                 normalizeInspectionAction(record.Result.AutoAction),
+			AutoActionStatus:           normalizeInspectionActionStatus(record.Result.AutoActionStatus),
+			AutoDisableEligible:        record.Result.AutoDisableEligible,
+			InspectionEnabled:          policy.Enabled,
+			AutoDisableEnabled:         policy.AutoDisable,
+			AutoEnableEnabled:          policy.AutoEnable,
+			AutoDeleteEnabled:          policy.AutoDelete,
+			FailureThreshold:           policy.FailureThreshold,
+			FailureStreak:              boundedCounter(record.Result.FailureStreak),
+			RecoveryThreshold:          policy.RecoveryThreshold,
+			HealthyStreak:              boundedCounter(record.Result.HealthyStreak),
+			PassiveCircuitEnabled:      policy.PassiveCircuitEnabled,
+			PassiveFailureThreshold:    policy.PassiveFailureThreshold,
+			PassiveFailureStreak:       max(record.Signal.ConsecutiveFailures, record.Probe.ConsecutiveFailures),
+			CircuitOpen:                ownedDisable && record.DisableReason == "passive_circuit_open",
+			CircuitReasonCode:          safeOptionalInspectionReason(record.Result.CircuitReasonCode),
+			AutoDisableProbeName:       safeOperationIdentifier(record.Result.AutoDisableProbeName, 64),
+			AutoDisableProbeStatus:     normalizeInspectionAutoDisableProbeStatus(record.Result.AutoDisableProbeStatus),
+			AutoDisableProbeAttempts:   boundedAutoDisableProbeCount(record.Result.AutoDisableProbeAttempts),
+			AutoDisableProbeLimit:      boundedAutoDisableProbeCount(record.Result.AutoDisableProbeLimit),
+			AutoDisableProbeReasonCode: safeOptionalInspectionReason(record.Result.AutoDisableProbeReasonCode),
+			AutoDisableProbeModel:      safeModelIdentifier(record.Result.AutoDisableProbeModel),
+			AutoDisableProbeTestedAt:   cloneTimePointer(record.Result.AutoDisableProbeTestedAt),
 		}
 		if ownedDisable {
 			if strings.TrimSpace(record.DisableReason) != "" {

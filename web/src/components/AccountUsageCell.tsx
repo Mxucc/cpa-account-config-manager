@@ -32,15 +32,28 @@ export function AccountUsageCell({ account }: { account: Account }) {
     : String(account.provider || account.type).toLowerCase() === "codex"
       ? tx("ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers")
       : tx("ui.no_cpa_usage_data_received");
-  const exhaustedAction = account.disabled
-    ? tx("ui.waiting_for_quota_recovery")
-    : account.automation?.auto_action === "disable" && account.automation.auto_action_status === "failed"
-      ? t("automation.disable_failed")
-      : account.automation?.auto_disable_enabled
-        ? t("automation.waiting_disable")
-        : account.automation
-          ? t("automation.disable_off")
-          : tx("ui.suggested_disable");
+  let exhaustedAction = tx("ui.suggested_disable");
+  const gateStatus = account.automation?.auto_disable_probe_status;
+  if (account.disabled) {
+    exhaustedAction = tx("ui.waiting_for_quota_recovery");
+  } else if (account.automation?.auto_action === "disable" && account.automation.auto_action_status === "failed") {
+    exhaustedAction = t("automation.disable_failed");
+  } else if (longWindowExhausted && gateStatus === "passed") {
+    exhaustedAction = tx("ui.weekly_overdraft_probe_passed");
+  } else if (longWindowExhausted && gateStatus === "pending") {
+    exhaustedAction = tx("ui.weekly_overdraft_probe_running", {
+      current: account.automation?.auto_disable_probe_attempts ?? 0,
+      total: account.automation?.auto_disable_probe_limit ?? 5,
+    });
+  } else if (longWindowExhausted && gateStatus === "inconclusive") {
+    exhaustedAction = tx("ui.weekly_overdraft_probe_inconclusive");
+  } else if (longWindowExhausted && gateStatus === "failed") {
+    exhaustedAction = tx("ui.weekly_overdraft_probe_failed");
+  } else if (account.automation?.auto_disable_enabled) {
+    exhaustedAction = t("automation.waiting_disable");
+  } else if (account.automation) {
+    exhaustedAction = t("automation.disable_off");
+  }
 
   return (
     <div className="account-usage-cell">

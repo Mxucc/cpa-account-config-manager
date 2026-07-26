@@ -238,7 +238,9 @@ func shouldAutoDisableInspection(policy InspectionPolicy, account Account, recor
 		return false
 	}
 	if record.Result.SignalSource == InspectionSignalActiveProbe {
-		return record.Probe.Kind == InspectionProbeKindCredential && record.Probe.ReasonCode != "" &&
+		credentialEvidence := record.Probe.Kind == InspectionProbeKindCredential ||
+			inspectionProbeConfirmsCredentialFailure(record.Probe.Kind, record.Probe.ReasonCode, record.Probe.StatusCode)
+		return credentialEvidence && record.Probe.ReasonCode != "" &&
 			record.Probe.ReasonCode != "credential_response_ok" && record.Probe.Status != "unsupported"
 	}
 	if record.Result.SignalSource == InspectionSignalNative && record.Result.Confidence == InspectionConfidenceHigh {
@@ -475,7 +477,8 @@ func inspectionManualDeleteAllowed(result InspectionResult) bool {
 		return reason == "account_deactivated" || reason == "workspace_deactivated"
 	}
 	if recommendation != InspectionRecommendationReauth || health != InspectionHealthInvalidCredentials ||
-		(result.SignalSource == InspectionSignalActiveProbe && result.ProbeKind != InspectionProbeKindCredential) {
+		(result.SignalSource == InspectionSignalActiveProbe &&
+			!inspectionProbeConfirmsCredentialFailure(result.ProbeKind, result.ReasonCode, result.StatusCode)) {
 		return false
 	}
 	return reason == "invalid_credentials" || reason == "token_revoked" || reason == "authentication_failed"

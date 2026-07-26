@@ -98,8 +98,8 @@ func TestInspectionAuthenticationFailuresHaveExecutableProbeKindSpecificRemediat
 	}
 
 	summary := summarizeInspectionRemediation(results)
-	if summary.Reauth != 1 || summary.DeletableReauth != 1 || summary.SuggestedDisable != 0 ||
-		summary.Actionable != 1 || summary.Review != 1 || summary.Keep != 0 || summary.Handled != 0 {
+	if summary.Reauth != 2 || summary.DeletableReauth != 2 || summary.SuggestedDisable != 0 ||
+		summary.Actionable != 2 || summary.Review != 0 || summary.Keep != 0 || summary.Handled != 0 {
 		t.Fatalf("probe-kind remediation summary = %#v; results = %#v", summary, results)
 	}
 }
@@ -491,6 +491,11 @@ func TestCredentialProbeReauthCanBeConfirmedForDeletionButModelFailureCannot(t *
 	model.ProbeKind = InspectionProbeKindModel
 	if inspectionManualDeleteAllowed(model) {
 		t.Fatal("generic model failure became deletion evidence")
+	}
+	model401 := model
+	model401.StatusCode = http.StatusUnauthorized
+	if !inspectionManualDeleteAllowed(model401) {
+		t.Fatal("explicit model HTTP 401 was not eligible for manual deletion")
 	}
 }
 

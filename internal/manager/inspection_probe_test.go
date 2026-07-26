@@ -350,12 +350,104 @@ func TestInspectionProbeAuthenticationFailureUsesProbeKindForActionability(t *te
 		t.Fatalf("credential authentication decision = %#v, ok=%v", credential, okCredential)
 	}
 
-	model, okModel := decisionFromModelProbe(inspectionProbeSignal{
+	modelWithout401, okModelWithout401 := decisionFromModelProbe(inspectionProbeSignal{
+		Kind: InspectionProbeKindModel, ReasonCode: "authentication_failed", TestedAt: now,
+	}, now)
+	if !okModelWithout401 || modelWithout401.Health != InspectionHealthReview ||
+		modelWithout401.Recommendation != InspectionRecommendationReview || modelWithout401.AutoDisableEligible {
+		t.Fatalf("unconfirmed model authentication decision = %#v, ok=%v", modelWithout401, okModelWithout401)
+	}
+	model403, okModel403 := decisionFromModelProbe(inspectionProbeSignal{
+		Kind: InspectionProbeKindModel, ReasonCode: "authentication_failed", StatusCode: http.StatusForbidden, TestedAt: now,
+	}, now)
+	if !okModel403 || model403.Health != InspectionHealthReview ||
+		model403.Recommendation != InspectionRecommendationReview || model403.AutoDisableEligible {
+		t.Fatalf("model HTTP 403 decision = %#v, ok=%v", model403, okModel403)
+	}
+
+	model401, okModel401 := decisionFromModelProbe(inspectionProbeSignal{
 		Kind: InspectionProbeKindModel, ReasonCode: "authentication_failed", StatusCode: http.StatusUnauthorized, TestedAt: now,
 	}, now)
-	if !okModel || model.Health != InspectionHealthReview ||
-		model.Recommendation != InspectionRecommendationReview || model.AutoDisableEligible {
-		t.Fatalf("model authentication decision = %#v, ok=%v", model, okModel)
+	if !okModel401 || model401.Health != InspectionHealthInvalidCredentials ||
+		model401.Recommendation != InspectionRecommendationReauth || !model401.AutoDisableEligible {
+		t.Fatalf("model HTTP 401 decision = %#v, ok=%v", model401, okModel401)
+	}
+}
+
+func TestRecordedModelHTTP401QueuesAndCompletesAutomaticCredentialDisable(t *testing.T) {
+	now := time.Date(2026, time.July, 26, 1, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	defer engine.Shutdown()
+	engine.now = func() time.Time { return now }
+	engine.mu.Lock()
+	engine.started = true
+	engine.policy = defaultInspectionPolicy()
+	engine.policy.Enabled = true
+	engine.policy.AutoDisable = true
+	engine.mu.Unlock()
+
+	errRecord := engine.RecordManualModelTest(context.Background(), ModelTestResult{
+		AccountID: "inspection-account", Model: "gpt-5.6-sol", Status: "unavailable",
+		ProbeKind: InspectionProbeKindModel, ReasonCode: "authentication_failed",
+		StatusCode: http.StatusUnauthorized, TestedAt: now,
+	})
+	if errRecord != nil {
+		t.Fatalf("record model HTTP 401: %v", errRecord)
+	}
+	listed := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50})
+	if len(listed.Results) != 1 {
+		t.Fatalf("listed HTTP 401 results = %#v", listed.Results)
+	}
+	result := listed.Results[0]
+	if result.Health != InspectionHealthInvalidCredentials || result.Recommendation != InspectionRecommendationReauth ||
+		!result.ManualDeleteEligible || !result.AutoDisableEligible || !engine.pending || len(engine.scanWake) != 1 {
+		t.Fatalf("recorded HTTP 401 result=%#v pending=%t wake=%d", result, engine.pending, len(engine.scanWake))
+	}
+
+	engine.scan(context.Background())
+	disabled := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]
+	if !disabled.Disabled || !disabled.OwnedDisable || disabled.AutoAction != InspectionActionDisable ||
+		disabled.AutoActionStatus != InspectionActionSucceeded || disabled.ReasonCode != "authentication_failed" ||
+		engine.records["inspection-account"].DisableReason != "authentication_failed" {
+		t.Fatalf("disabled HTTP 401 result = %#v", disabled)
+	}
+}
+
+func TestRecordedModelHTTP401DoesNotDisableWhenAutomaticDisableIsOff(t *testing.T) {
+	now := time.Date(2026, time.July, 26, 1, 30, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	defer engine.Shutdown()
+	engine.now = func() time.Time { return now }
+	engine.mu.Lock()
+	engine.started = true
+	engine.policy = defaultInspectionPolicy()
+	engine.policy.Enabled = true
+	engine.policy.AutoDisable = false
+	engine.mu.Unlock()
+
+	errRecord := engine.RecordManualModelTest(context.Background(), ModelTestResult{
+		AccountID: "inspection-account", Model: "gpt-5.6-sol", Status: "unavailable",
+		ProbeKind: InspectionProbeKindModel, ReasonCode: "authentication_failed",
+		StatusCode: http.StatusUnauthorized, TestedAt: now,
+	})
+	if errRecord != nil {
+		t.Fatalf("record model HTTP 401: %v", errRecord)
+	}
+	listed := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50})
+	if len(listed.Results) != 1 {
+		t.Fatalf("listed HTTP 401 results = %#v", listed.Results)
+	}
+	result := listed.Results[0]
+	if result.Health != InspectionHealthInvalidCredentials || result.Recommendation != InspectionRecommendationReauth ||
+		!result.ManualDeleteEligible || !result.AutoDisableEligible {
+		t.Fatalf("recorded HTTP 401 result = %#v", result)
+	}
+	if engine.pending || len(engine.scanWake) != 0 || result.Disabled || result.OwnedDisable ||
+		result.AutoAction == InspectionActionDisable || len(host.saves) != 0 || host.entries[0].Disabled {
+		t.Fatalf("automatic disable off still mutated state: result=%#v pending=%t wake=%d saves=%d host_disabled=%t",
+			result, engine.pending, len(engine.scanWake), len(host.saves), host.entries[0].Disabled)
 	}
 }
 

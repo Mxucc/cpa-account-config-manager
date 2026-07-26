@@ -807,6 +807,51 @@ func TestClassifyModelProbeReturnsOnlyNormalizedOutcomes(t *testing.T) {
 	}
 }
 
+func TestModelProbeHTTP401PromotesToCredentialEvidenceAfterInconclusivePreflight(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "model-401", Name: "model-401.json", Provider: "codex", Type: "oauth",
+			Source: "file", Path: "/auths/model-401.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"model-401": {
+				AuthIndex: "model-401", Name: "model-401.json", Path: "/auths/model-401.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-401"}`),
+			},
+		},
+	}
+	credentialCalls := 0
+	modelCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var call managementAPICallRequest
+		_ = json.NewDecoder(request.Body).Decode(&call)
+		writer.Header().Set("Content-Type", "application/json")
+		if call.Method == http.MethodGet && call.URL == "https://chatgpt.com/backend-api/wham/usage" {
+			credentialCalls++
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{}`})
+			return
+		}
+		modelCalls++
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+			StatusCode: http.StatusUnauthorized, Body: `{"detail":"Unauthorized"}`,
+		})
+	}))
+	defer server.Close()
+
+	service := NewModelTestService(NewAccountService(host))
+	service.doer = server.Client()
+	result, errRun := service.Run(t.Context(), ModelTestRequest{
+		AccountID: "model-401", Model: "gpt-5.6-sol", Inspection: true,
+	}, server.URL, "management-secret")
+	if errRun != nil {
+		t.Fatalf("Run() error = %v", errRun)
+	}
+	if credentialCalls != 1 || modelCalls != 1 || result.StatusCode != http.StatusUnauthorized ||
+		result.ReasonCode != "authentication_failed" || result.ProbeKind != InspectionProbeKindCredential {
+		t.Fatalf("result=%#v credential_calls=%d model_calls=%d", result, credentialCalls, modelCalls)
+	}
+}
+
 func TestModelIdentifierRejectsURLsControlsAndOversizedValues(t *testing.T) {
 	for _, invalid := range []string{"https://evil.example/model", "model name", "model\nname", strings.Repeat("m", maxModelIdentifierLength+1)} {
 		if safeModelIdentifier(invalid) != "" {

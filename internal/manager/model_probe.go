@@ -434,6 +434,11 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		}
 		attempt.Status, attempt.ReasonCode = classifyModelProbe(attemptProbe.kind, upstreamResponse.StatusCode, upstreamResponse.Body)
 		attempt.StatusCode = boundedHTTPStatus(upstreamResponse.StatusCode)
+		// HTTP 401 is account authentication evidence even when it was observed
+		// while calling a model endpoint. Other model failures remain model-scoped.
+		if attempt.StatusCode == http.StatusUnauthorized && attempt.ReasonCode == "authentication_failed" {
+			attempt.ProbeKind = InspectionProbeKindCredential
+		}
 		if !request.Inspection {
 			attempt.Response = sanitizeModelTestResponsePreview(upstreamResponse)
 		}

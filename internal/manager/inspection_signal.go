@@ -431,7 +431,7 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 			HealthyCount: probe.ConsecutiveSuccess, SignalSource: InspectionSignalActiveProbe,
 		}, true
 	case "authentication_failed":
-		if probe.Kind != InspectionProbeKindCredential {
+		if !inspectionProbeConfirmsCredentialFailure(probe.Kind, probe.ReasonCode, probe.StatusCode) {
 			return inspectionDecision{
 				Health: InspectionHealthReview, ReasonCode: probe.ReasonCode,
 				Confidence: InspectionConfidenceMedium, Recommendation: InspectionRecommendationReview,
@@ -482,6 +482,13 @@ func decisionFromModelProbe(probe inspectionProbeSignal, now time.Time) (inspect
 	default:
 		return inspectionDecision{}, false
 	}
+}
+
+func inspectionProbeConfirmsCredentialFailure(kind, reason string, statusCode int) bool {
+	if safeModelProbeReason(reason) != "authentication_failed" {
+		return false
+	}
+	return normalizeInspectionProbeKind(kind) == InspectionProbeKindCredential || statusCode == http.StatusUnauthorized
 }
 
 func activeInspectionSignal(signal inspectionSignal, now time.Time) bool {

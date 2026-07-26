@@ -57,6 +57,8 @@ type importUpload struct {
 type importCandidate struct {
 	SourceName       string
 	SourcePath       string
+	Provider         string
+	CredentialType   string
 	Email            string
 	AccountID        string
 	Name             string
@@ -453,6 +455,9 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 	if isCodexPATImportRecord(record) {
 		return convertCodexPATImportRecord(record, sourceName, sourcePath)
 	}
+	if candidate, matched, errNative := convertNativeCPAImportRecord(record, sourceName, sourcePath); matched || errNative != nil {
+		return candidate, errNative
+	}
 	accessToken := firstImportString(record,
 		[]string{"accessToken"}, []string{"access_token"},
 		[]string{"tokens", "accessToken"}, []string{"tokens", "access_token"},
@@ -594,6 +599,8 @@ func convertImportRecord(record map[string]any, sourceName, sourcePath string, n
 	return importCandidate{
 		SourceName:       sourceName,
 		SourcePath:       sourcePath,
+		Provider:         "codex",
+		CredentialType:   "codex",
 		Email:            email,
 		AccountID:        accountID,
 		Name:             name,
@@ -679,6 +686,7 @@ func convertCodexPATImportRecord(record map[string]any, sourceName, sourcePath s
 	fingerprint := sha256.Sum256([]byte(parsed.accessToken + "\x00" + parsed.accountID))
 	return importCandidate{
 		SourceName: sourceName, SourcePath: sourcePath, Email: email, AccountID: accountID, Name: name,
+		Provider: "codex", CredentialType: codexPATAccountType,
 		Warnings: []string{"Codex personal access token authentication is experimental"},
 		AuthJSON: raw, CodexPAT: true, fingerprint: base64.RawURLEncoding.EncodeToString(fingerprint[:]),
 	}, nil
@@ -725,6 +733,7 @@ func convertAgentIdentityImportRecord(record map[string]any, sourceName, sourceP
 	}
 	return importCandidate{
 		SourceName: sourceName, SourcePath: sourcePath,
+		Provider: "codex", CredentialType: "agent_identity",
 		Email: parsed.claims.Email, AccountID: parsed.claims.AccountID, Name: name,
 		Warnings: []string{"Agent Identity authentication is experimental"},
 		AuthJSON: raw, AgentIdentity: true, fingerprint: parsed.fingerprint,

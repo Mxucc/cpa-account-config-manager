@@ -458,7 +458,7 @@ export interface ImportPreviewItem {
   label: string;
   synthetic_id_token: boolean;
   warnings?: string[];
-  credential_type?: "agent_identity" | "personal_access_token";
+  credential_type?: "agent_identity" | "personal_access_token" | string;
 }
 
 export interface ImportPreview {

@@ -212,6 +212,7 @@ func (s *ImportService) previewParsed(ctx context.Context, parsed importParseRes
 			Label:            firstNonEmpty(candidate.Email, candidate.Name, candidate.AccountID, targetName),
 			SyntheticIDToken: candidate.SyntheticIDToken,
 			Warnings:         warnings,
+			CredentialType:   candidate.CredentialType,
 		}
 		if candidate.AgentIdentity {
 			public.CredentialType = "agent_identity"
@@ -444,7 +445,15 @@ func importTargetFilename(candidate importCandidate, index int) string {
 		}
 		token = fmt.Sprintf("import-%03d-%s", index+1, strings.ToLower(fingerprint))
 	}
-	return "codex-" + token + ".json"
+	prefix := candidate.Provider
+	if prefix == "" {
+		prefix = "codex"
+	}
+	prefix = sanitizeImportFilenameToken(prefix)
+	if prefix == "" {
+		prefix = "codex"
+	}
+	return prefix + "-" + token + ".json"
 }
 
 func sanitizeImportFilenameToken(value string) string {

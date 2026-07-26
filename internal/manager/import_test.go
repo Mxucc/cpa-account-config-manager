@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -137,6 +138,205 @@ func TestImportConvertOrdinaryOAuthRecognizesJSONIDTokenPlanType(t *testing.T) {
 	}
 	if document["id_token"] != idToken || document["refresh_token"] != "synthetic-oauth-refresh-token" {
 		t.Fatalf("ordinary OAuth credentials were not preserved: %#v", document)
+	}
+}
+
+func TestImportConvertCPANativeProviderFormats(t *testing.T) {
+	now := time.Date(2026, time.July, 26, 11, 30, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		input        map[string]any
+		wantType     string
+		wantProvider string
+		wantFields   map[string]any
+	}{
+		{
+			name: "claude oauth",
+			input: map[string]any{
+				"type": "claude", "email": "claude@example.com", "access_token": "claude-access",
+				"refresh_token": "claude-refresh", "id_token": "", "last_refresh": "2026-07-26T08:00:00+08:00",
+				"expired": "2026-07-27T08:00:00+08:00", "websockets": true,
+			},
+			wantType: "claude", wantProvider: "claude",
+			wantFields: map[string]any{
+				"email": "claude@example.com", "access_token": "claude-access", "refresh_token": "claude-refresh",
+				"last_refresh": "2026-07-26T08:00:00+08:00", "expired": "2026-07-27T08:00:00+08:00", "websockets": true,
+			},
+		},
+		{
+			name: "antigravity oauth",
+			input: map[string]any{
+				"type": "antigravity", "email": "antigravity@example.com", "access_token": "antigravity-access",
+				"refresh_token": "antigravity-refresh", "project_id": "gcp-project", "expires_in": json.Number("3600"),
+				"timestamp": json.Number("1785046200000"), "expired": "2026-07-26T12:30:00Z",
+			},
+			wantType: "antigravity", wantProvider: "antigravity",
+			wantFields: map[string]any{
+				"email": "antigravity@example.com", "project_id": "gcp-project", "expires_in": float64(3600),
+				"timestamp": float64(1785046200000), "expired": "2026-07-26T12:30:00Z",
+			},
+		},
+		{
+			name: "kimi oauth",
+			input: map[string]any{
+				"type": "kimi", "access_token": "kimi-access", "refresh_token": "kimi-refresh", "token_type": "Bearer",
+				"scope": "openid profile", "device_id": "device-1", "expired": "2026-07-27T00:00:00Z",
+			},
+			wantType: "kimi", wantProvider: "kimi",
+			wantFields: map[string]any{
+				"token_type": "Bearer", "scope": "openid profile", "device_id": "device-1", "expired": "2026-07-27T00:00:00Z",
+			},
+		},
+		{
+			name: "xai oauth",
+			input: map[string]any{
+				"type": "xai", "email": "xai@example.com", "access_token": "xai-access", "refresh_token": "xai-refresh",
+				"id_token": "xai-id", "sub": "subject-1", "base_url": "https://api.x.ai", "redirect_uri": "http://localhost/callback",
+				"token_endpoint": "https://accounts.x.ai/token", "auth_kind": "oauth", "last_refresh": "2026-07-26T10:00:00Z",
+			},
+			wantType: "xai", wantProvider: "xai",
+			wantFields: map[string]any{
+				"email": "xai@example.com", "id_token": "xai-id", "sub": "subject-1", "base_url": "https://api.x.ai",
+				"redirect_uri": "http://localhost/callback", "token_endpoint": "https://accounts.x.ai/token", "auth_kind": "oauth",
+			},
+		},
+		{
+			name: "vertex service account",
+			input: map[string]any{
+				"type": "vertex", "project_id": "vertex-project", "email": "svc@vertex-project.iam.gserviceaccount.com",
+				"location": "us-central1", "prefix": "team-a",
+				"service_account": map[string]any{
+					"type": "service_account", "project_id": "vertex-project", "private_key_id": "key-id",
+					"private_key":  "-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----\n",
+					"client_email": "svc@vertex-project.iam.gserviceaccount.com", "token_uri": "https://oauth2.googleapis.com/token",
+				},
+			},
+			wantType: "vertex", wantProvider: "vertex",
+			wantFields: map[string]any{
+				"project_id": "vertex-project", "email": "svc@vertex-project.iam.gserviceaccount.com", "location": "us-central1", "prefix": "team-a",
+			},
+		},
+		{
+			name: "gemini cli current",
+			input: map[string]any{
+				"type": "gemini-cli", "email": "gemini@example.com", "project_id": "project-a",
+				"project_ids": []any{"project-a", "project-b"}, "access_token": "gemini-access", "refresh_token": "gemini-refresh",
+				"token_type": "Bearer", "expiry": "2026-07-27T00:00:00Z",
+			},
+			wantType: "gemini-cli", wantProvider: "gemini-cli",
+			wantFields: map[string]any{
+				"email": "gemini@example.com", "project_id": "project-a", "project_ids": []any{"project-a", "project-b"},
+				"token_type": "Bearer", "expiry": "2026-07-27T00:00:00Z",
+			},
+		},
+		{
+			name: "gemini cli legacy nested token",
+			input: map[string]any{
+				"type": "gemini", "email": "legacy-gemini@example.com", "project_id": "legacy-project",
+				"token": map[string]any{
+					"access_token": "legacy-access", "refresh_token": "legacy-refresh", "token_type": "Bearer",
+					"expiry": "2026-07-27T00:00:00Z",
+				},
+			},
+			wantType: "gemini", wantProvider: "gemini-cli",
+			wantFields: map[string]any{"email": "legacy-gemini@example.com", "project_id": "legacy-project"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, errMarshal := json.Marshal(test.input)
+			if errMarshal != nil {
+				t.Fatalf("marshal fixture: %v", errMarshal)
+			}
+			result, errParse := parseImportUpload(importUpload{Name: test.name + ".json", Data: raw}, defaultImportLimits(), now)
+			if errParse != nil {
+				t.Fatalf("parseImportUpload() error = %v", errParse)
+			}
+			if len(result.Candidates) != 1 {
+				t.Fatalf("candidates = %#v", result.Candidates)
+			}
+			candidate := result.Candidates[0]
+			if candidate.Provider != test.wantProvider || candidate.CredentialType != test.wantProvider {
+				t.Fatalf("candidate provider/type = %q/%q, want %q", candidate.Provider, candidate.CredentialType, test.wantProvider)
+			}
+			document := decodeImportCandidate(t, candidate)
+			if document["type"] != test.wantType {
+				t.Fatalf("document type = %#v, want %q", document["type"], test.wantType)
+			}
+			for key, want := range test.wantFields {
+				if got := document[key]; !reflect.DeepEqual(got, want) {
+					t.Errorf("field %s = %#v, want %#v", key, got, want)
+				}
+			}
+			if test.wantType != "vertex" && test.wantType != "gemini" && document["access_token"] == nil {
+				t.Error("top-level access token was not preserved")
+			}
+			if test.wantType == "vertex" {
+				serviceAccount, ok := document["service_account"].(map[string]any)
+				if !ok || serviceAccount["private_key_id"] != "key-id" || serviceAccount["client_email"] != "svc@vertex-project.iam.gserviceaccount.com" {
+					t.Fatalf("vertex service account = %#v", document["service_account"])
+				}
+			}
+			if test.wantType == "gemini" {
+				token, ok := document["token"].(map[string]any)
+				if !ok || token["access_token"] != "legacy-access" || token["refresh_token"] != "legacy-refresh" {
+					t.Fatalf("legacy Gemini token = %#v", document["token"])
+				}
+			}
+		})
+	}
+}
+
+func TestImportConvertProviderAliasesAndNestedCredentials(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{provider: "anthropic", want: "claude"},
+		{provider: "grok", want: "xai"},
+	}
+	for _, test := range tests {
+		t.Run(test.provider, func(t *testing.T) {
+			payload := map[string]any{
+				"provider": test.provider, "type": "oauth", "email": test.provider + "@example.com",
+				"credentials": map[string]any{"access_token": test.provider + "-access", "refresh_token": test.provider + "-refresh"},
+			}
+			raw, _ := json.Marshal(payload)
+			result, errParse := parseImportUpload(importUpload{Name: test.provider + ".json", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+			if errParse != nil || len(result.Candidates) != 1 {
+				t.Fatalf("result=%#v error=%v", result, errParse)
+			}
+			document := decodeImportCandidate(t, result.Candidates[0])
+			if result.Candidates[0].Provider != test.want || document["type"] != test.want ||
+				document["access_token"] != test.provider+"-access" || document["refresh_token"] != test.provider+"-refresh" {
+				t.Fatalf("converted alias = candidate %#v document %#v", result.Candidates[0], document)
+			}
+		})
+	}
+}
+
+func TestImportExplicitUnknownProviderIsSkippedInsteadOfCoercedToCodex(t *testing.T) {
+	raw := []byte(`{"type":"future-provider","provider":"future-provider","email":"future@example.com","access_token":"future-secret"}`)
+	result, errParse := parseImportUpload(importUpload{Name: "future.json", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse != nil {
+		t.Fatalf("parseImportUpload() error = %v", errParse)
+	}
+	if len(result.Candidates) != 0 || len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0].Reason, "unsupported CPA Auth provider") {
+		t.Fatalf("unknown provider result = %#v", result)
+	}
+}
+
+func TestImportConvertVertexServiceAccountOnly(t *testing.T) {
+	raw := []byte(`{"type":"vertex","service_account":{"type":"service_account","project_id":"vertex-project","private_key":"-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----\n","client_email":"svc@vertex-project.iam.gserviceaccount.com"}}`)
+	result, errParse := parseImportUpload(importUpload{Name: "vertex.json", Data: raw}, defaultImportLimits(), time.Unix(0, 0).UTC())
+	if errParse != nil || len(result.Candidates) != 1 {
+		t.Fatalf("vertex result=%#v error=%v", result, errParse)
+	}
+	candidate := result.Candidates[0]
+	document := decodeImportCandidate(t, candidate)
+	if candidate.Provider != "vertex" || document["type"] != "vertex" || document["email"] != "svc@vertex-project.iam.gserviceaccount.com" || document["project_id"] != "vertex-project" {
+		t.Fatalf("vertex candidate=%#v document=%#v", candidate, document)
 	}
 }
 

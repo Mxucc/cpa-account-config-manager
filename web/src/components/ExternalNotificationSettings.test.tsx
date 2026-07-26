@@ -55,13 +55,19 @@ describe("ExternalNotificationSettings", () => {
 
     await user.click(within(second).getByRole("button", { name: "预览" }));
     await waitFor(() => expect(preview).toHaveBeenCalledWith(expect.objectContaining({
-      endpoint_name: "备用通知", url_template: "https://backup.example/hook?rate=${available_percent}",
+      endpoint_name: "备用通知", url_template: "https://backup.example/hook?rate=${available_percent}", scenario: "manual_test",
     })));
     expect(within(second).getByText("https://backup.example/hook?rate=8%")).toBeInTheDocument();
     await user.click(within(second).getByRole("button", { name: "发送测试" }));
     await waitFor(() => expect(test).toHaveBeenCalledTimes(1));
     expect(within(second).getByText("外部通知发送成功")).toBeInTheDocument();
     expect(within(second).getByText("204")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "通知测试场景" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "手动测试" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "异常占比" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "可用账号数" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "账号可用率" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "组合场景" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));

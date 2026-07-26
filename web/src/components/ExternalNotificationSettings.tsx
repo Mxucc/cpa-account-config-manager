@@ -8,7 +8,6 @@ import type {
   InspectionNotificationEndpoint,
   InspectionNotificationPreview,
   InspectionNotificationRequest,
-  InspectionNotificationScenario,
   InspectionNotificationTestResult,
   InspectionPolicy,
 } from "../types";
@@ -46,14 +45,6 @@ const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
   { name: "triggered_at", label: "ui.notification_parameter_triggered_at" },
 ];
 
-const notificationScenarios: Array<{ value: InspectionNotificationScenario; label: UIMessageKey }> = [
-  { value: "manual_test", label: "ui.notification_scenario_manual" },
-  { value: "anomaly_threshold", label: "ui.notification_scenario_anomaly" },
-  { value: "available_accounts_low", label: "ui.notification_scenario_available_accounts" },
-  { value: "availability_percent_low", label: "ui.notification_scenario_availability_percent" },
-  { value: "combined", label: "ui.notification_scenario_combined" },
-];
-
 function normalizedEndpoints(policy: InspectionPolicy): InspectionNotificationEndpoint[] {
   if (Array.isArray(policy.notification_endpoints) && policy.notification_endpoints.length > 0) {
     return policy.notification_endpoints.map((endpoint) => ({ ...endpoint }));
@@ -73,7 +64,6 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   const [percentEnabled, setPercentEnabled] = useState(false);
   const [percentThreshold, setPercentThreshold] = useState("20");
   const [cooldown, setCooldown] = useState("60");
-  const [scenario, setScenario] = useState<InspectionNotificationScenario>("manual_test");
   const [results, setResults] = useState<Record<string, NotificationResult>>({});
   const [action, setAction] = useState<{ endpointID: string; kind: "preview" | "test" } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -196,7 +186,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
       endpoint_id: endpoint.id,
       endpoint_name: endpoint.name?.trim(),
       url_template: endpoint.url.trim(),
-      scenario,
+      scenario: "manual_test",
       threshold_percent: policy?.anomaly_threshold_percent || 50,
       available_accounts_threshold: values.available,
       availability_percent_threshold: values.percent,
@@ -283,10 +273,6 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
         <NotificationToggle label="ui.notify_when_availability_low" checked={percentEnabled} disabled={loading || saving} onChange={setPercentEnabled} />
         <NotificationNumber label="ui.availability_percent_threshold" suffix="ui.percent" value={percentThreshold} min={1} max={100} disabled={!percentEnabled || loading || saving} onChange={setPercentThreshold} />
         <NotificationNumber label="ui.notification_cooldown" suffix="ui.minutes" value={cooldown} min={5} max={1440} disabled={!notificationActive || loading || saving} onChange={setCooldown} />
-      </div>
-
-      <div className="notification-scenario-tabs" role="tablist" aria-label={tx("ui.notification_test_scenario")}>
-        {notificationScenarios.map((item) => <button key={item.value} type="button" role="tab" aria-selected={scenario === item.value} className={scenario === item.value ? "is-active" : ""} onClick={() => { setScenario(item.value); setResults({}); }}>{tx(item.label)}</button>)}
       </div>
 
       {error ? <div className="automation-error notification-settings-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -31,12 +32,13 @@ const (
 var ErrPolicyStorageUnavailable = errors.New("default policy storage is unavailable; configure data_dir to a writable directory")
 
 type DefaultPolicy struct {
-	Enabled                     bool   `json:"enabled" yaml:"enabled"`
-	NewAccountModelProbeEnabled bool   `json:"new_account_model_probe_enabled" yaml:"new_account_model_probe_enabled"`
-	ApplyMode                   string `json:"apply_mode" yaml:"apply_mode"`
-	ScanIntervalSeconds         int    `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
-	Priority                    *int   `json:"priority" yaml:"priority"`
-	Websockets                  *bool  `json:"websockets" yaml:"websockets"`
+	Enabled                     bool                    `json:"enabled" yaml:"enabled"`
+	NewAccountModelProbeEnabled bool                    `json:"new_account_model_probe_enabled" yaml:"new_account_model_probe_enabled"`
+	ApplyMode                   string                  `json:"apply_mode" yaml:"apply_mode"`
+	ScanIntervalSeconds         int                     `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
+	Priority                    *int                    `json:"priority" yaml:"priority"`
+	Websockets                  *bool                   `json:"websockets" yaml:"websockets"`
+	ConditionalRules            []ConditionalPolicyRule `json:"conditional_rules,omitempty" yaml:"conditional_rules,omitempty"`
 }
 
 type PolicyScanSummary struct {
@@ -74,25 +76,53 @@ type authFingerprint struct {
 }
 
 type PolicyEngine struct {
-	mu              sync.RWMutex
-	operationMu     sync.Mutex
-	wait            sync.WaitGroup
-	host            AuthHost
-	mutations       *MutationCoordinator
-	observer        interface{ ObserveAccounts([]Account) }
-	backgroundOwner BackgroundWorkOwner
-	config          Config
-	store           string
-	policy          DefaultPolicy
-	lastScan        PolicyScanSummary
-	running         bool
-	scanStarted     time.Time
-	fingerprints    map[string]authFingerprint
-	wake            chan struct{}
-	cancel          context.CancelFunc
-	started         bool
-	closed          bool
-	now             func() time.Time
+	mu                 sync.RWMutex
+	operationMu        sync.Mutex
+	wait               sync.WaitGroup
+	host               AuthHost
+	mutations          *MutationCoordinator
+	observer           interface{ ObserveAccounts([]Account) }
+	modelPolicyApplier func(context.Context, Account, ModelPolicyPatch, string) (bool, error)
+	managementKey      string
+	backgroundOwner    BackgroundWorkOwner
+	config             Config
+	store              string
+	policy             DefaultPolicy
+	lastScan           PolicyScanSummary
+	running            bool
+	scanStarted        time.Time
+	fingerprints       map[string]authFingerprint
+	wake               chan struct{}
+	cancel             context.CancelFunc
+	started            bool
+	closed             bool
+	now                func() time.Time
+}
+
+func (e *PolicyEngine) SetModelPolicyApplier(applier func(context.Context, Account, ModelPolicyPatch, string) (bool, error)) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.modelPolicyApplier = applier
+	e.mu.Unlock()
+}
+
+func (e *PolicyEngine) Arm(managementKey string) {
+	if e == nil {
+		return
+	}
+	managementKey = strings.TrimSpace(managementKey)
+	if managementKey == "" {
+		return
+	}
+	e.mu.Lock()
+	if !e.closed {
+		e.managementKey = managementKey
+	}
+	e.mu.Unlock()
+	managementKey = ""
+	e.requestScan()
 }
 
 func (e *PolicyEngine) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
@@ -289,6 +319,7 @@ func (e *PolicyEngine) Shutdown() {
 		return
 	}
 	e.closed = true
+	e.managementKey = ""
 	cancel := e.cancel
 	e.mu.Unlock()
 	if cancel != nil {
@@ -365,8 +396,8 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	e.mu.RLock()
 	policy := cloneDefaultPolicy(e.policy)
 	e.mu.RUnlock()
-	applyDefaults := policy.Enabled && policy.ManagesFields()
-	if !applyDefaults && !policy.NewAccountModelProbeEnabled {
+	applyDefaults := policy.ManagesFields()
+	if !applyDefaults && !policy.ManagesNewAccountProbe() {
 		return false
 	}
 	if applyDefaults {
@@ -446,7 +477,7 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 	for _, entry := range entries {
 		observedAccounts = append(observedAccounts, projectHostEntry(entry, pathCounts, indexCounts, nil))
 	}
-	if !policy.Enabled || !policy.ManagesFields() {
+	if !policy.ManagesFields() {
 		summary.Skipped = len(entries)
 		summary.FinishedAt = e.now().UTC()
 		return summary, nextFingerprints, observedAccounts
@@ -513,17 +544,59 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 		return false, fmt.Errorf("auth filename changed")
 	}
 
-	updated, _, changed, errApply := applyDefaultPolicy(detail.JSON, policy, applyMissing)
+	account := projectHostEntry(entry, map[string]int{normalizedPath(entry.Path): 1}, map[string]int{strings.TrimSpace(entry.AuthIndex): 1}, nil)
+	if errEnrich := enrichAccount(&account, detail); errEnrich != nil {
+		return false, fmt.Errorf("project auth account: %w", errEnrich)
+	}
+	resolved := resolveConditionalPolicy(policy, account)
+	basePolicy := policy
+	basePolicy.ConditionalRules = nil
+	if !policy.Enabled {
+		basePolicy.Priority = nil
+		basePolicy.Websockets = nil
+	}
+	updated, _, changed, errApply := applyDefaultPolicy(detail.JSON, basePolicy, applyMissing)
 	if errApply != nil {
 		return false, errApply
 	}
-	if !changed {
-		return false, nil
+	if resolved.PriorityFromRule || resolved.WebsocketsFromRule {
+		override := DefaultPolicy{}
+		if resolved.PriorityFromRule {
+			override.Priority = resolved.Priority
+		}
+		if resolved.WebsocketsFromRule {
+			override.Websockets = resolved.Websockets
+		}
+		var conditionalChanged bool
+		updated, _, conditionalChanged, errApply = applyDefaultPolicy(updated, override, applyForce)
+		if errApply != nil {
+			return false, errApply
+		}
+		changed = changed || conditionalChanged
 	}
-	if _, errSave := e.host.SaveAuth(ctx, name, updated); errSave != nil {
+	if !changed {
+		if resolved.ModelPolicy == nil {
+			return false, nil
+		}
+	} else if _, errSave := e.host.SaveAuth(ctx, name, updated); errSave != nil {
 		return false, fmt.Errorf("save auth file: %w", errSave)
 	}
-	return true, nil
+	if resolved.ModelPolicy != nil {
+		e.mu.RLock()
+		applier := e.modelPolicyApplier
+		managementKey := e.managementKey
+		e.mu.RUnlock()
+		if applier == nil || strings.TrimSpace(managementKey) == "" {
+			return changed, fmt.Errorf("conditional model policy is not armed")
+		}
+		modelChanged, errModelPolicy := applier(ctx, account, *resolved.ModelPolicy, managementKey)
+		managementKey = ""
+		if errModelPolicy != nil {
+			return changed, fmt.Errorf("apply conditional model policy: %w", errModelPolicy)
+		}
+		changed = changed || modelChanged
+	}
+	return changed, nil
 }
 
 func normalizeDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
@@ -537,15 +610,40 @@ func validateDefaultPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	if mode != "" && mode != policyApplyModeMissing {
 		return DefaultPolicy{}, fmt.Errorf("apply_mode must be missing")
 	}
+	rules, errRules := validateConditionalPolicyRules(policy.ConditionalRules)
+	if errRules != nil {
+		return DefaultPolicy{}, errRules
+	}
+	policy.ConditionalRules = rules
 	policy = normalizeDefaultPolicy(policy)
 	if policy.Enabled && !policy.ManagesFields() {
-		return DefaultPolicy{}, fmt.Errorf("enabled policy requires priority or websockets")
+		return DefaultPolicy{}, fmt.Errorf("enabled policy requires priority, websockets, or conditional actions")
 	}
 	return policy, nil
 }
 
 func (policy DefaultPolicy) ManagesFields() bool {
-	return policy.Priority != nil || policy.Websockets != nil
+	if policy.Enabled && (policy.Priority != nil || policy.Websockets != nil) {
+		return true
+	}
+	for _, rule := range policy.ConditionalRules {
+		if rule.Enabled && (rule.Actions.Priority != nil || rule.Actions.Websockets != nil || rule.Actions.ModelPolicy != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func (policy DefaultPolicy) ManagesNewAccountProbe() bool {
+	if policy.NewAccountModelProbeEnabled {
+		return true
+	}
+	for _, rule := range policy.ConditionalRules {
+		if rule.Enabled && rule.Actions.NewAccountModelProbe != nil && *rule.Actions.NewAccountModelProbe {
+			return true
+		}
+	}
+	return false
 }
 
 func (policy DefaultPolicy) Fields() []string {
@@ -561,14 +659,9 @@ func (policy DefaultPolicy) Fields() []string {
 
 func cloneDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
 	clone := policy
-	if policy.Priority != nil {
-		value := *policy.Priority
-		clone.Priority = &value
-	}
-	if policy.Websockets != nil {
-		value := *policy.Websockets
-		clone.Websockets = &value
-	}
+	clone.Priority = cloneIntPointer(policy.Priority)
+	clone.Websockets = cloneBoolPointer(policy.Websockets)
+	clone.ConditionalRules = cloneConditionalPolicyRules(policy.ConditionalRules)
 	return clone
 }
 
@@ -577,7 +670,8 @@ func defaultPolicyEqual(left, right DefaultPolicy) bool {
 	right = normalizeDefaultPolicy(right)
 	return left.Enabled == right.Enabled && left.ApplyMode == right.ApplyMode &&
 		left.NewAccountModelProbeEnabled == right.NewAccountModelProbeEnabled &&
-		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right)
+		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right) &&
+		reflect.DeepEqual(left.ConditionalRules, right.ConditionalRules)
 }
 
 func clampPolicyScanInterval(seconds int) int {

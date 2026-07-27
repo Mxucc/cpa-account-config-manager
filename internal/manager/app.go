@@ -90,7 +90,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	operations := NewOperationJournal()
 	experiments := NewExperimentalSettingsService()
 	newAccountProbe := NewAccountModelProbeEngine(func() bool {
-		return policies.Snapshot().Policy.NewAccountModelProbeEnabled
+		return policies.Snapshot().Policy.ManagesNewAccountProbe()
 	})
 	quotaBootstrap := NewAccountQuotaMetadataBootstrap()
 	var identityTransport AgentIdentityTransport
@@ -141,6 +141,11 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	}
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
+	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
+	newAccountProbe.SetEligibility(func(account Account) bool {
+		resolved := resolveConditionalPolicy(policies.Snapshot().Policy, account)
+		return resolved.NewAccountModelProbe != nil && *resolved.NewAccountModelProbe
+	})
 	newAccountProbe.SetHandler(app.runNewAccountModelProbe)
 	quotaBootstrap.SetHandler(app.runNewAccountQuotaMetadata)
 	runtime.SetOnSuperseded(app.quiesceRetiredInstance)
@@ -403,6 +408,12 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	path := normalizedRequestPath(req.Path)
 	if strings.HasPrefix(path, "/v0/management"+managementRoutePrefix) {
 		a.reconcileOperationSources()
+		managementKey := resolveManagementKey(req.Headers)
+		a.policies.Arm(managementKey)
+		if a.policies.Snapshot().Policy.ManagesNewAccountProbe() {
+			a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
+		}
+		managementKey = ""
 	}
 
 	switch {
@@ -792,7 +803,7 @@ func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.Manage
 	a.recordPolicyChange(OperationCategoryDefaultPolicy, OperationActionPolicySave, OperationSourceManual, OperationStatusSucceeded)
 	snapshot := a.defaultPolicySnapshot()
 	snapshot.Policy = saved
-	if saved.NewAccountModelProbeEnabled {
+	if saved.ManagesNewAccountProbe() {
 		managementKey := resolveManagementKey(req.Headers)
 		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
 		managementKey = ""

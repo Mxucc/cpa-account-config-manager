@@ -11,6 +11,7 @@ import {
   Server,
   ShieldCheck,
   UploadCloud,
+  Workflow,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
@@ -18,19 +19,23 @@ import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { CPAServerVersionSnapshot, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
+import { AutomationPolicySettings } from "./AutomationPolicySettings";
 
 interface OtherSettingsWorkspaceProps {
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
+  forceLoading?: boolean;
+  onForcePreview?: () => void;
 }
 
-export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWorkspaceProps) {
+export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined }: OtherSettingsWorkspaceProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<"notifications" | "updates" | "experimental">("notifications");
+  const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">("automation");
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
+  const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -78,7 +83,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     setError("");
     try {
       const [nextUpdates] = await Promise.all([refreshPlugin(), refreshServer(), refreshExperiments()]);
-      if (nextUpdates.policy.check_enabled && !nextUpdates.checked_at && !nextUpdates.checking && !nextUpdates.pending) {
+      if (nextUpdates.policy?.check_enabled && !nextUpdates.checked_at && !nextUpdates.checking && !nextUpdates.pending) {
         await refreshPlugin(true);
       }
     } catch (caught) {
@@ -91,15 +96,15 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   useEffect(() => { void refreshAll(); }, [refreshAll]);
 
   useEffect(() => {
-    if (!updates) return;
+    if (!updates?.policy) return;
     setCheckEnabled(updates.policy.check_enabled);
     setCheckInterval(String(updates.policy.check_interval_hours || 24));
     setAutoUpdate(updates.policy.auto_update);
     if (updates.policy.auto_update) setConfirmAutoUpdate(false);
-  }, [updates?.policy.auto_update, updates?.policy.check_enabled, updates?.policy.check_interval_hours]);
+  }, [updates?.policy?.auto_update, updates?.policy?.check_enabled, updates?.policy?.check_interval_hours]);
 
   useEffect(() => {
-    if (!experiments) return;
+    if (!experiments?.settings) return;
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
     setAutoModelWhitelistEnabled(experiments.settings.auto_model_whitelist_enabled === true);
@@ -149,20 +154,20 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
   }, [handleError, installing, onNotice, tx, updates?.latest_version]);
 
   useEffect(() => {
-    if (!updates?.policy.auto_update || !updates.update_available || !updates.latest_version || attemptedUpdate.current === updates.latest_version) return;
+    if (!updates?.policy?.auto_update || !updates.update_available || !updates.latest_version || attemptedUpdate.current === updates.latest_version) return;
     attemptedUpdate.current = updates.latest_version;
     void installUpdate(true);
   }, [installUpdate, updates]);
 
   useEffect(() => {
-    if (!updates?.policy.check_enabled || !updates.checked_at) return;
+    if (!updates?.policy?.check_enabled || !updates.checked_at) return;
     const checkedAt = Date.parse(updates.checked_at);
     if (!Number.isFinite(checkedAt)) return;
     const intervalHours = Math.min(168, Math.max(1, updates.policy.check_interval_hours || 24));
     const dueAt = checkedAt + intervalHours * 60 * 60 * 1000;
     const timer = window.setTimeout(() => void checkPluginUpdates(), Math.max(1_000, dueAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [updates?.checked_at, updates?.policy.check_enabled, updates?.policy.check_interval_hours]);
+  }, [updates?.checked_at, updates?.policy?.check_enabled, updates?.policy?.check_interval_hours]);
 
   const checkPluginUpdates = async () => {
     setCheckingPlugin(true);
@@ -199,7 +204,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
       setError(tx("ui.auto_update_requires_update_checks"));
       return;
     }
-    if (autoUpdate && !updates?.policy.auto_update && !confirmAutoUpdate) {
+    if (autoUpdate && !updates?.policy?.auto_update && !confirmAutoUpdate) {
       setError(tx("ui.confirm_the_risk_before_enabling_auto_update"));
       return;
     }
@@ -237,12 +242,15 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
         <div><strong>{tx("ui.other_settings")}</strong><span>{tx("ui.other_settings_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); void refreshAll(); }}>
+        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); void refreshAll(); }}>
           <RefreshCw className={loading ? "spin" : ""} size={16} />{tx("ui.refresh")}
         </button>
       </header>
 
       <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
+        <button type="button" role="tab" aria-selected={activeSection === "automation"} className={activeSection === "automation" ? "active" : ""} onClick={() => setActiveSection("automation")}>
+          <Workflow size={15} />{tx("ui.automation_policy")}
+        </button>
         <button type="button" role="tab" aria-selected={activeSection === "notifications"} className={activeSection === "notifications" ? "active" : ""} onClick={() => setActiveSection("notifications")}>
           <BellRing size={15} />{tx("ui.external_notifications")}
         </button>
@@ -256,7 +264,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
 
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
-      {activeSection === "notifications" ? (
+      {activeSection === "automation" ? (
+        <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
+      ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : activeSection === "updates" ? <div className="other-settings-grid" role="tabpanel" aria-label={tx("ui.version_updates")}>
         <section className="settings-section server-version-section" aria-label={tx("ui.cpa_server_version")}>
@@ -295,7 +305,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice }: OtherSettingsWo
             <label><span>{tx("ui.check_interval")}</span><span className="number-suffix"><input type="number" min="1" max="168" value={checkInterval} disabled={!checkEnabled || saving} onChange={(event) => setCheckInterval(event.target.value)} /><b>{tx("ui.hours")}</b></span></label>
             <label><span>{tx("ui.auto_update")}</span><input type="checkbox" checked={autoUpdate} disabled={saving} onChange={(event) => { setAutoUpdate(event.target.checked); if (event.target.checked) setCheckEnabled(true); }} /></label>
           </div>
-          {autoUpdate && !updates?.policy.auto_update ? (
+          {autoUpdate && !updates?.policy?.auto_update ? (
             <label className="destructive-confirmation update-confirmation other-settings-confirmation">
               <input type="checkbox" checked={confirmAutoUpdate} disabled={saving} onChange={(event) => setConfirmAutoUpdate(event.target.checked)} aria-label={tx("ui.confirm_auto_update")} />
               <ShieldCheck size={15} /><span>{tx("ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open")}</span>

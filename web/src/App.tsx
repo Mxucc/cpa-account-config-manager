@@ -43,7 +43,6 @@ import { JobPanel, jobStateLabel } from "./components/JobPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { ModelTestDialog } from "./components/ModelTestDialog";
 import { Modal } from "./components/Modal";
-import { PolicyDialog } from "./components/PolicyDialog";
 import { PreviewDialog } from "./components/PreviewDialog";
 import { DeleteAccountDialog } from "./components/DeleteAccountDialog";
 import { operatorMessage } from "./format/operatorMessage";
@@ -76,7 +75,6 @@ import type {
   AccountListResponse,
   BatchPatch,
   BatchPreview,
-  DefaultPolicy,
   ForceSyncJobSnapshot,
   ForceSyncPreview,
   ExportFormat,
@@ -84,7 +82,6 @@ import type {
   ImportResult,
   JobSnapshot,
   ModelTestResult,
-  PolicySnapshot,
   ResultExportFormat,
   TargetScope,
 } from "./types";
@@ -204,12 +201,6 @@ function AccountManagerApp() {
   const [job, setJob] = useState<JobSnapshot | null>(null);
   const [jobOpen, setJobOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [policyOpen, setPolicyOpen] = useState(false);
-  const [policySnapshot, setPolicySnapshot] = useState<PolicySnapshot | null>(null);
-  const [policyLoading, setPolicyLoading] = useState(false);
-  const [policySaving, setPolicySaving] = useState(false);
-  const [policyScanning, setPolicyScanning] = useState(false);
-  const [policyError, setPolicyError] = useState("");
   const [forcePreview, setForcePreview] = useState<ForceSyncPreview | null>(null);
   const [forcePreviewLoading, setForcePreviewLoading] = useState(false);
   const [forcePreviewError, setForcePreviewError] = useState("");
@@ -468,7 +459,6 @@ function AccountManagerApp() {
         if (!cancelled) {
           setForceJob(full);
           void refreshAccounts();
-          void api.getDefaultPolicy().then(setPolicySnapshot).catch(() => undefined);
         }
       } catch (error) {
         if (!cancelled) handleAPIError(error);
@@ -480,29 +470,6 @@ function AccountManagerApp() {
       window.clearTimeout(timer);
     };
   }, [forceJob?.id, forceJob?.running, handleAPIError, refreshAccounts]);
-
-  useEffect(() => {
-    if (!policyOpen || authState !== "ready" || !policySnapshot) return;
-    let cancelled = false;
-    let polling = false;
-    const refresh = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const snapshot = await api.getDefaultPolicy();
-        if (!cancelled) setPolicySnapshot(snapshot);
-      } catch (error) {
-        if (!cancelled && error instanceof api.APIError && error.status === 401) handleAPIError(error);
-      } finally {
-        polling = false;
-      }
-    };
-    const timer = window.setInterval(() => void refresh(), 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [authState, handleAPIError, policyOpen, policySnapshot !== null]);
 
   const login = async (baseURL: string, managementKey: string) => {
     setAuthLoading(true);
@@ -811,66 +778,14 @@ function AccountManagerApp() {
     }
   };
 
-  const openPolicy = async () => {
-    setPolicyOpen(true);
-    setPolicyLoading(true);
-    setPolicyError("");
-    try {
-      const [snapshot, lastForceJob] = await Promise.all([
-        api.getDefaultPolicy(),
-        api.getForceSyncStatus(true),
-      ]);
-      setPolicySnapshot(snapshot);
-      if (lastForceJob.id) setForceJob(lastForceJob);
-    } catch (error) {
-      if (error instanceof api.APIError && error.status === 401) {
-        setPolicyOpen(false);
-        handleAPIError(error);
-      } else {
-        setPolicyError(errorText(error, locale));
-      }
-    } finally {
-      setPolicyLoading(false);
-    }
-  };
-
-  const savePolicy = async (policy: DefaultPolicy) => {
-    setPolicySaving(true);
-    setPolicyError("");
-    try {
-      setPolicySnapshot(await api.saveDefaultPolicy(policy));
-    } catch (error) {
-      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
-      else setPolicyError(errorText(error, locale));
-    } finally {
-      setPolicySaving(false);
-    }
-  };
-
-  const scanPolicy = async () => {
-    setPolicyScanning(true);
-    setPolicyError("");
-    try {
-      const accepted = await api.scanDefaultPolicy();
-      setPolicySnapshot({ ...accepted, running: true });
-    } catch (error) {
-      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
-      else setPolicyError(errorText(error, locale));
-    } finally {
-      setPolicyScanning(false);
-    }
-  };
-
   const previewForceSync = async () => {
     setForcePreviewLoading(true);
-    setPolicyError("");
     setForcePreviewError("");
     try {
       setForcePreview(await api.createForceSyncPreview());
-      setPolicyOpen(false);
     } catch (error) {
       if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
-      else setPolicyError(errorText(error, locale));
+      else setNotice(errorText(error, locale));
     } finally {
       setForcePreviewLoading(false);
     }
@@ -1048,7 +963,6 @@ function AccountManagerApp() {
               {activeView === "accounts" ? <>
                 <button className="button button-primary header-add-account" type="button" title={tx("ui.add_accounts")} aria-label={tx("ui.add_accounts")} onClick={openImport}><UserPlus size={16} /><span>{tx("ui.add_accounts")}</span></button>
                 <button className="button header-deduplicate-account" type="button" title={tx("ui.deduplicate_accounts")} aria-label={tx("ui.deduplicate_accounts")} disabled={deduplicationLoading} onClick={() => void openAccountDeduplication()}>{deduplicationLoading ? <LoaderCircle className="spin" size={16} /> : <CopyCheck size={16} />}<span>{tx("ui.deduplicate_accounts")}</span></button>
-                <IconButton label={tx("ui.default_policy")} onClick={() => void openPolicy()}><Settings2 size={17} /></IconButton>
                 <IconButton className="export-action" label={tx("ui.download_filtered_credentials")} onClick={() => openExport("accounts")}><Download size={17} /></IconButton>
                 <IconButton label={tx("ui.refresh_accounts")} onClick={() => void refreshAccounts()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={17} /></IconButton>
               </> : null}
@@ -1221,7 +1135,7 @@ function AccountManagerApp() {
             }}
           />
         ) : (
-          <OtherSettingsWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
+          <OtherSettingsWorkspace onAPIError={handleAPIError} onNotice={setNotice} forceLoading={forcePreviewLoading} onForcePreview={() => void previewForceSync()} />
         )}
       </div>
 
@@ -1281,13 +1195,7 @@ function AccountManagerApp() {
       {jobOpen && job ? <JobPanel job={job} title={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} ariaLabel={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
       {exportTarget ? <ExportDialog kind={exportTarget} count={exportCount} scopeLabel={exportScopeLabel} exporting={exporting} error={exportError} onClose={closeExport} onExport={(format) => void confirmExport(format)} /> : null}
-      {policyOpen && policySnapshot ? <PolicyDialog key={`${policySnapshot.policy.enabled}:${policySnapshot.policy.new_account_model_probe_enabled}:${policySnapshot.policy.priority}:${policySnapshot.policy.websockets}:${policySnapshot.policy.scan_interval_seconds}`} snapshot={policySnapshot} saving={policySaving} scanning={policyScanning} forceLoading={forcePreviewLoading} error={policyError} onClose={() => setPolicyOpen(false)} onSave={(policy) => void savePolicy(policy)} onScan={() => void scanPolicy()} onForcePreview={() => void previewForceSync()} /> : null}
-      {policyOpen && !policySnapshot ? (
-        <Modal title={tx("ui.default_policy")} onClose={() => setPolicyOpen(false)} footer={<button className="button" type="button" onClick={() => setPolicyOpen(false)}>{tx("ui.close")}</button>}>
-          <div className="policy-loading">{policyLoading ? <><LoaderCircle className="spin" size={22} /><span>{tx("ui.loading_policy")}</span></> : <><span>{policyError || tx("ui.policy_unavailable")}</span><button className="button" type="button" onClick={() => void openPolicy()}>{tx("ui.retry")}</button></>}</div>
-        </Modal>
-      ) : null}
-      {forcePreview ? <ForceSyncPreviewDialog preview={forcePreview} starting={forceStarting} error={forcePreviewError} onClose={() => { setForcePreview(null); setForcePreviewError(""); setPolicyOpen(true); }} onConfirm={() => void confirmForceSync()} /> : null}
+      {forcePreview ? <ForceSyncPreviewDialog preview={forcePreview} starting={forceStarting} error={forcePreviewError} onClose={() => { setForcePreview(null); setForcePreviewError(""); }} onConfirm={() => void confirmForceSync()} /> : null}
       {forceJobOpen && forceJob ? <JobPanel job={forceJob} title="ui.default_policy_sync" ariaLabel="ui.default_policy_force_sync" fields={forceJob.policy.fields} onClose={() => setForceJobOpen(false)} onRefresh={() => void refreshForceJob()} /> : null}
     </div>
   );

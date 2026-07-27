@@ -396,6 +396,37 @@ export interface DefaultPolicy {
   scan_interval_seconds: number;
   priority: number | null;
   websockets: boolean | null;
+  conditional_rules?: ConditionalPolicyRule[];
+}
+
+export type PolicyConditionField = "provider" | "account_type" | "email_suffix";
+export type PolicyConditionOperator = "all" | "any";
+
+export interface PolicyCondition {
+  field: PolicyConditionField;
+  value: string;
+}
+
+export interface PolicyConditionGroup {
+  operator: PolicyConditionOperator;
+  conditions?: PolicyCondition[];
+  groups?: PolicyConditionGroup[];
+}
+
+export interface ConditionalPolicyActions {
+  new_account_model_probe?: boolean;
+  priority?: number;
+  websockets?: boolean;
+  model_policy?: ModelPolicyPatch;
+}
+
+export interface ConditionalPolicyRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  conditions: PolicyConditionGroup;
+  actions: ConditionalPolicyActions;
 }
 
 export interface PolicyScanSummary {

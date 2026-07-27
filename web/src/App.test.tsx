@@ -991,17 +991,18 @@ describe("primary account batch flow", () => {
     render(<App />);
     await user.type(await screen.findByLabelText("Management Key"), "management-secret");
     await user.click(screen.getByRole("button", { name: "验证并进入" }));
-    await user.click(await screen.findByRole("button", { name: "默认策略" }));
-    expect(await screen.findByRole("dialog", { name: "默认策略" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "默认策略" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "其他配置" }));
+    const policyPanel = await screen.findByRole("tabpanel", { name: "自动策略" });
 
-    await user.click(screen.getByRole("checkbox", { name: "Priority" }));
-    const priority = screen.getByLabelText("默认 Priority");
+    await user.click(within(policyPanel).getByRole("checkbox", { name: "Priority" }));
+    const priority = within(policyPanel).getByLabelText("默认 Priority");
     await user.clear(priority);
     await user.type(priority, "0");
-    await user.click(screen.getByRole("button", { name: "保存策略" }));
+    await user.click(within(policyPanel).getByRole("button", { name: "保存策略" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT")).toBe(true));
 
-    await user.click(screen.getByRole("button", { name: "强制同步" }));
+    await user.click(within(policyPanel).getByRole("button", { name: "强制同步" }));
     expect(await screen.findByRole("dialog", { name: "强制同步预览" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "覆盖 1 个文件" }));
     expect(await screen.findByRole("complementary", { name: "默认策略强制同步" })).toBeInTheDocument();
@@ -1010,13 +1011,13 @@ describe("primary account batch flow", () => {
     expect(forceStatusCalls).toBeGreaterThanOrEqual(2);
 
     const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");
-    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false });
+    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] });
 		const configRequest = requests.find(({ url, init }) => {
 			if (!url.endsWith("/config") || init.method !== "PATCH") return false;
 			const body = JSON.parse(String(init.body)) as { default_policy?: { priority?: number | null } };
 			return body.default_policy?.priority === 0;
 		});
-    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false } });
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] } });
     expect(requests.indexOf(configRequest!)).toBeLessThan(requests.indexOf(putRequest!));
     expect(localStorage.length).toBe(0);
   });

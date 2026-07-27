@@ -11,11 +11,29 @@ const forcePreviews = new Map();
 let activeForceJob = null;
 let inspectionRunUntil = 0;
 let defaultPolicy = {
-  enabled: false,
+  enabled: true,
+  new_account_model_probe_enabled: true,
   apply_mode: "missing",
   scan_interval_seconds: 15,
   priority: null,
-  websockets: null,
+  websockets: true,
+  conditional_rules: [
+    {
+      id: "codex-free",
+      name: "Codex Free",
+      enabled: true,
+      priority: 100,
+      conditions: {
+        operator: "all",
+        conditions: [{ field: "provider", value: "codex" }],
+        groups: [{ operator: "all", conditions: [{ field: "account_type", value: "free" }] }],
+      },
+      actions: {
+        websockets: false,
+        model_policy: { mode: "allow_only", models: ["gpt-5.5", "gpt-5.4-mini"] },
+      },
+    },
+  ],
 };
 let lastPolicyScan = {
   scanned: 0,
@@ -1457,10 +1475,12 @@ const server = http.createServer(async (request, response) => {
     if (body.default_policy) {
       defaultPolicy = {
         enabled: Boolean(body.default_policy.enabled),
+        new_account_model_probe_enabled: Boolean(body.default_policy.new_account_model_probe_enabled),
         apply_mode: "missing",
         scan_interval_seconds: Math.min(300, Math.max(5, Number(body.default_policy.scan_interval_seconds) || 15)),
         priority: body.default_policy.priority === null ? null : Number(body.default_policy.priority),
         websockets: body.default_policy.websockets === null ? null : Boolean(body.default_policy.websockets),
+        conditional_rules: Array.isArray(body.default_policy.conditional_rules) ? body.default_policy.conditional_rules : [],
       };
     }
     return json(response, 200, { status: "ok" });
@@ -1469,10 +1489,12 @@ const server = http.createServer(async (request, response) => {
     const body = await readJSON(request);
     defaultPolicy = {
       enabled: Boolean(body.enabled),
+      new_account_model_probe_enabled: Boolean(body.new_account_model_probe_enabled),
       apply_mode: "missing",
       scan_interval_seconds: Math.min(300, Math.max(5, Number(body.scan_interval_seconds) || 15)),
       priority: body.priority === null ? null : Number(body.priority),
       websockets: body.websockets === null ? null : Boolean(body.websockets),
+      conditional_rules: Array.isArray(body.conditional_rules) ? body.conditional_rules : [],
     };
     return json(response, 200, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });
   }

@@ -53,6 +53,7 @@ type newAccountModelProbeEngine struct {
 	hostCallbackID  string
 	storageErr      string
 	enabled         func() bool
+	eligible        func(Account) bool
 	handler         newAccountModelProbeHandler
 	wake            chan struct{}
 	cancel          context.CancelFunc
@@ -86,6 +87,16 @@ func (e *newAccountModelProbeEngine) SetHandler(handler newAccountModelProbeHand
 	e.mu.Lock()
 	e.handler = handler
 	e.mu.Unlock()
+}
+
+func (e *newAccountModelProbeEngine) SetEligibility(eligible func(Account) bool) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.eligible = eligible
+	e.mu.Unlock()
+	e.requestRun()
 }
 
 func (e *newAccountModelProbeEngine) Configure(config Config) {
@@ -281,7 +292,7 @@ func (e *newAccountModelProbeEngine) reconcile(ctx context.Context) time.Duratio
 	}
 	e.known = current
 	state, storePath := e.persistedStateLocked(), e.store
-	owner, key, callbackID, handler := e.backgroundOwner, e.managementKey, e.hostCallbackID, e.handler
+	owner, key, callbackID, handler, eligible := e.backgroundOwner, e.managementKey, e.hostCallbackID, e.handler, e.eligible
 	enabled := e.enabled != nil && e.enabled()
 	due := make([]string, 0, len(e.pending))
 	nextDelay := time.Hour
@@ -291,6 +302,9 @@ func (e *newAccountModelProbeEngine) reconcile(ctx context.Context) time.Duratio
 			continue
 		}
 		if retry.RetryAfter.IsZero() || !retry.RetryAfter.After(now) {
+			if eligible != nil && !eligible(latest[identity]) {
+				continue
+			}
 			due = append(due, identity)
 			continue
 		}
@@ -499,7 +513,7 @@ func newAccountModelProbeEligible(account Account) bool {
 func newAccountModelProbeSummary(account Account) Account {
 	return Account{
 		ID: account.ID, AuthID: account.AuthID, Name: account.Name, Provider: account.Provider, Type: account.Type,
-		Email: account.Email, AccountType: account.AccountType, Disabled: account.Disabled, RuntimeOnly: account.RuntimeOnly,
+		Email: account.Email, AccountType: account.AccountType, PlanType: account.PlanType, Disabled: account.Disabled, RuntimeOnly: account.RuntimeOnly,
 		ModelPolicy: cloneAccountModelPolicySummary(account.ModelPolicy),
 	}
 }

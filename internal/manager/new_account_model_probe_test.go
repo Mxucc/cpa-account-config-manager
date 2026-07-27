@@ -110,6 +110,37 @@ func TestNewAccountModelProbeWaitsForPolicyEnablement(t *testing.T) {
 	}
 }
 
+func TestNewAccountModelProbeUsesConditionalEligibility(t *testing.T) {
+	engine := newTestAccountModelProbeEngine(t)
+	engine.SetEligibility(func(account Account) bool { return account.PlanType == "plus" })
+	var mu sync.Mutex
+	calls := make([]string, 0, 1)
+	engine.SetHandler(func(_ context.Context, account Account, _ string, _ string) (ModelTestResult, error) {
+		mu.Lock()
+		calls = append(calls, account.ID)
+		mu.Unlock()
+		return ModelTestResult{AccountID: account.ID, Status: "available"}, nil
+	})
+	engine.Arm("management-secret")
+	engine.ObserveAccounts(nil)
+	engine.reconcile(context.Background())
+	free := testProbeAccount("free-account", "free@example.com")
+	free.PlanType = "free"
+	plus := testProbeAccount("plus-account", "plus@example.com")
+	plus.PlanType = "plus"
+	engine.ObserveAccounts([]Account{free, plus})
+	engine.reconcile(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 1 || calls[0] != plus.ID {
+		t.Fatalf("conditional probe calls = %#v, want only %q", calls, plus.ID)
+	}
+	if len(engine.pending) != 1 {
+		t.Fatalf("pending conditional accounts = %d, want 1", len(engine.pending))
+	}
+}
+
 func TestNewAccountModelProbePersistsHashesWithoutSecrets(t *testing.T) {
 	engine := newTestAccountModelProbeEngine(t)
 	engine.SetHandler(func(_ context.Context, account Account, _ string, _ string) (ModelTestResult, error) {

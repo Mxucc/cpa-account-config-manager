@@ -461,7 +461,7 @@ func safeInspectionReason(value string) string {
 		"model_response_ok", "credential_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
 		"model_blocked_by_account_policy",
 		"request_timeout", "upstream_unavailable", "invalid_response", "unconfirmed_upstream_response",
-		"passive_circuit_open":
+		"passive_circuit_open", "quota_reset", "passive_circuit_recovered", "health_recovered", "credential_refreshed":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "no_recent_evidence"

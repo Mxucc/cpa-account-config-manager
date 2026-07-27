@@ -104,7 +104,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 
 		if shouldAutoEnableInspection(policy, account, record, now) {
 			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, false, writer)
-			action := newInspectionAction(record.Result, InspectionActionEnable, record.DisableReason, now)
+			action := newInspectionAction(record.Result, InspectionActionEnable, inspectionAutoEnableReason(account, record, now), now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
 				record.Result.AutoAction = InspectionActionEnable
@@ -275,6 +275,22 @@ func shouldAutoEnableInspection(policy InspectionPolicy, account Account, record
 		return true
 	}
 	return account.LastRefresh != nil && account.LastRefresh.After(record.DisabledAt) && !inspectionResultIsStrongFailure(record.Result)
+}
+
+func inspectionAutoEnableReason(account Account, record inspectionRecord, now time.Time) string {
+	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) {
+		return "quota_reset"
+	}
+	if record.DisableReason == "passive_circuit_open" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) {
+		return "passive_circuit_recovered"
+	}
+	if record.Result.Health == InspectionHealthHealthy && inspectionRecoveryEvidenceAfter(record, record.DisabledAt) {
+		return "health_recovered"
+	}
+	if account.LastRefresh != nil && account.LastRefresh.After(record.DisabledAt) {
+		return "credential_refreshed"
+	}
+	return "health_recovered"
 }
 
 func inspectionRecoveryEvidenceAfter(record inspectionRecord, disabledAt time.Time) bool {

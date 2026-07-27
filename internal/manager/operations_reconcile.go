@@ -16,7 +16,7 @@ func (a *App) reconcileOperationSources() {
 		a.operations.Upsert("force:"+snapshot.ID, operationFromForceSync(snapshot))
 	}
 	policy := a.policies.Snapshot()
-	if !policy.LastScan.StartedAt.IsZero() {
+	if !policy.LastScan.StartedAt.IsZero() && policyScanHasJournalValue(policy.LastScan) {
 		entry := operationFromPolicyScan(policy.LastScan)
 		a.operations.Upsert(operationTimestampEvent("policy-scan", policy.LastScan.StartedAt), entry)
 	}
@@ -36,6 +36,11 @@ func (a *App) reconcileOperationSources() {
 		entry := operationFromUpdateCheck(update)
 		a.operations.Upsert(operationTimestampEvent("update-check", update.CheckedAt), entry)
 	}
+}
+
+func policyScanHasJournalValue(summary PolicyScanSummary) bool {
+	return summary.Changed > 0 || summary.Failed > 0 || summary.QuotaMetadataUpdated > 0 ||
+		summary.QuotaMetadataFailed > 0 || summary.Error != ""
 }
 
 func operationFromJob(snapshot JobSnapshot) OperationEntry {

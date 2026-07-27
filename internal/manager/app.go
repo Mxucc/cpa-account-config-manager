@@ -409,7 +409,6 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	}
 	path := normalizedRequestPath(req.Path)
 	if strings.HasPrefix(path, "/v0/management"+managementRoutePrefix) {
-		a.reconcileOperationSources()
 		managementKey := resolveManagementKey(req.Headers)
 		a.policies.Arm(managementKey)
 		if a.policies.Snapshot().Policy.ManagesNewAccountProbe() {
@@ -521,7 +520,7 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/stop":
 		return jsonResponse(http.StatusAccepted, a.inspection.StopRun())
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/results":
-		return a.handleListInspectionResults(ctx, req)
+		return a.handleListInspectionResults(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/inspection/export":
 		return a.handleExportInspection(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/inspection/review":
@@ -610,11 +609,13 @@ func (a *App) handleExportInspection(req cpaapi.ManagementRequest) cpaapi.Manage
 }
 
 func (a *App) handleListOperations(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	a.reconcileOperationSources()
 	query := operationQueryFromRequest(req, operationPageSize)
 	return jsonResponse(http.StatusOK, a.operations.List(query))
 }
 
 func (a *App) handleExportOperations(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	a.reconcileOperationSources()
 	format := firstQuery(req.Query, "format")
 	if format == "" {
 		format = "json"
@@ -1303,8 +1304,7 @@ func (a *App) handleInspectionNotificationTest(ctx context.Context, req cpaapi.M
 	return jsonResponse(http.StatusOK, result)
 }
 
-func (a *App) handleListInspectionResults(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
-	_ = a.inspection.ReconcileAccountStates(ctx)
+func (a *App) handleListInspectionResults(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	query := InspectionResultQuery{
 		Page:     intQuery(req.Query, "page", 1),
 		PageSize: intQuery(req.Query, "page_size", 50),
@@ -1461,7 +1461,7 @@ func (a *App) handlePutExperimentalSettings(req cpaapi.ManagementRequest) cpaapi
 	if errSave != nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "experimental settings could not be persisted"})
 	}
-	if settings.AutoModelWhitelistEnabled && a.policies.Snapshot().Policy.NewAccountModelProbeEnabled {
+	if a.policies.Snapshot().Policy.NewAccountModelProbeEnabled {
 		managementKey := resolveManagementKey(req.Headers)
 		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
 		managementKey = ""

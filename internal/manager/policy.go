@@ -95,6 +95,7 @@ type policyQuotaMetadataProbeSummary struct {
 	attempted int
 	updated   int
 	failed    int
+	ready     bool
 }
 
 type PolicyEngine struct {
@@ -218,9 +219,12 @@ func (e *PolicyEngine) Configure(config Config) {
 	if sameStore {
 		e.mu.Lock()
 		e.config = config
+		policyChanged := false
 		if hasConfiguredPolicy {
 			if errConfiguredPolicy != nil {
-				e.policy = normalizeDefaultPolicy(DefaultPolicy{})
+				fallback := normalizeDefaultPolicy(DefaultPolicy{})
+				policyChanged = !defaultPolicyEqual(e.policy, fallback) || e.lastScan.Error != configuredPolicyError
+				e.policy = fallback
 				e.lastScan.Error = configuredPolicyError
 				e.fingerprints = make(map[string]authFingerprint)
 				e.failures = make(map[string]policyFailureBackoff)
@@ -229,6 +233,7 @@ func (e *PolicyEngine) Configure(config Config) {
 					e.lastScan.Error = ""
 				}
 				if !defaultPolicyEqual(e.policy, configuredPolicy) {
+					policyChanged = true
 					e.policy = configuredPolicy
 					e.fingerprints = make(map[string]authFingerprint)
 					e.failures = make(map[string]policyFailureBackoff)
@@ -237,26 +242,33 @@ func (e *PolicyEngine) Configure(config Config) {
 		}
 		e.mu.Unlock()
 		e.operationMu.Unlock()
-		e.requestScan()
+		if policyChanged {
+			e.requestScan()
+		}
 		return
 	}
 
 	policy := normalizeDefaultPolicy(DefaultPolicy{})
 	lastScan := PolicyScanSummary{}
+	fingerprints := make(map[string]authFingerprint)
 	if hasConfiguredPolicy {
 		if errConfiguredPolicy != nil {
 			lastScan.Error = configuredPolicyError
 		} else {
 			policy = configuredPolicy
-			if _, loadedScan, errLoad := loadPolicyState(storePath); errLoad == nil {
+			if loadedPolicy, loadedScan, loadedFingerprints, errLoad := loadPolicyRuntimeState(storePath); errLoad == nil {
 				lastScan = loadedScan
+				if defaultPolicyEqual(loadedPolicy, policy) {
+					fingerprints = loadedFingerprints
+				}
 			}
 		}
 	} else {
-		loadedPolicy, loadedScan, errLoad := loadPolicyState(storePath)
+		loadedPolicy, loadedScan, loadedFingerprints, errLoad := loadPolicyRuntimeState(storePath)
 		if errLoad == nil {
 			policy = loadedPolicy
 			lastScan = loadedScan
+			fingerprints = loadedFingerprints
 		} else if !errors.Is(errLoad, os.ErrNotExist) {
 			lastScan.Error = "stored default policy could not be loaded"
 		}
@@ -267,7 +279,7 @@ func (e *PolicyEngine) Configure(config Config) {
 	e.store = storePath
 	e.policy = policy
 	e.lastScan = lastScan
-	e.fingerprints = make(map[string]authFingerprint)
+	e.fingerprints = fingerprints
 	e.failures = make(map[string]policyFailureBackoff)
 	start := !e.started && !e.closed
 	if start {
@@ -283,6 +295,21 @@ func (e *PolicyEngine) Configure(config Config) {
 	if !start {
 		e.requestScan()
 	}
+}
+
+func (e *PolicyEngine) AccountMetadataUpdated(authIndex string) {
+	if e == nil {
+		return
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return
+	}
+	e.mu.Lock()
+	delete(e.fingerprints, authIndex)
+	delete(e.failures, authIndex)
+	e.mu.Unlock()
+	e.requestScan()
 }
 
 func policyFromConfig(config Config) (DefaultPolicy, bool, error) {
@@ -324,16 +351,23 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	storePath := e.store
 	lastScan := e.lastScan
 	closed := e.closed
+	changed := !defaultPolicyEqual(e.policy, normalized)
+	fingerprints := clonePolicyFingerprints(e.fingerprints)
 	e.mu.RUnlock()
 	if closed || strings.TrimSpace(storePath) == "" {
 		e.operationMu.Unlock()
 		return DefaultPolicy{}, ErrPolicyStorageUnavailable
 	}
-	errSave := savePolicyState(storePath, normalized, lastScan)
+	if changed {
+		fingerprints = nil
+	}
+	errSave := savePolicyRuntimeState(storePath, normalized, lastScan, fingerprints)
 	e.mu.Lock()
 	e.policy = normalized
-	e.fingerprints = make(map[string]authFingerprint)
-	e.failures = make(map[string]policyFailureBackoff)
+	if changed {
+		e.fingerprints = make(map[string]authFingerprint)
+		e.failures = make(map[string]policyFailureBackoff)
+	}
 	if errSave != nil {
 		e.lastScan.Error = policyLocalStoreError
 	} else if e.lastScan.Error == policyLocalStoreError {
@@ -342,7 +376,9 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	e.mu.Unlock()
 	e.operationMu.Unlock()
 
-	e.requestScan()
+	if changed {
+		e.requestScan()
+	}
 	return cloneDefaultPolicy(normalized), nil
 }
 
@@ -447,7 +483,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	policy := cloneDefaultPolicy(e.policy)
 	e.mu.RUnlock()
 	applyDefaults := policy.ManagesFields()
-	if !applyDefaults && !policy.ManagesNewAccountProbe() && !policy.CodexQuotaMetadataProbeEnabled {
+	if !applyDefaults && !policy.ManagesNewAccountProbe() {
 		return false
 	}
 	if applyDefaults {
@@ -475,6 +511,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	storePath := e.store
 	currentPolicy := cloneDefaultPolicy(e.policy)
 	lastScan := e.lastScan
+	currentFingerprints := clonePolicyFingerprints(e.fingerprints)
 	e.mu.Unlock()
 	if ctx.Err() != nil {
 		return false
@@ -485,7 +522,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	if observer != nil && observedAccounts != nil {
 		observer.ObserveAccounts(observedAccounts)
 	}
-	if errSave := savePolicyState(storePath, currentPolicy, lastScan); errSave != nil {
+	if errSave := savePolicyRuntimeState(storePath, currentPolicy, lastScan, currentFingerprints); errSave != nil {
 		e.mu.Lock()
 		e.lastScan.Error = policyLocalStoreError
 		e.mu.Unlock()
@@ -529,60 +566,82 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 		}
 	}
 	observedAccounts := make([]Account, 0, len(entries))
+	accountsByID := make(map[string]*Account, len(entries))
 	for _, entry := range entries {
 		observedAccounts = append(observedAccounts, projectHostEntry(entry, pathCounts, indexCounts, nil))
 	}
-	if policy.CodexQuotaMetadataProbeEnabled {
-		quotaSummary := e.probeQuotaMetadata(ctx, observedAccounts)
-		summary.QuotaMetadataProbed = quotaSummary.attempted
-		summary.QuotaMetadataUpdated = quotaSummary.updated
-		summary.QuotaMetadataFailed = quotaSummary.failed
-		summary.Failed += quotaSummary.failed
-		for index := range observedAccounts {
-			if planType := quotaSummary.planTypes[observedAccounts[index].ID]; planType != "" {
-				observedAccounts[index].PlanType = planType
-			}
-		}
-	}
-	planTypes := make(map[string]string, len(observedAccounts))
-	for _, account := range observedAccounts {
-		planTypes[account.ID] = account.PlanType
-	}
-	if !policy.ManagesFields() {
-		summary.Skipped = len(entries)
-		summary.FinishedAt = e.now().UTC()
-		return summary, nextFingerprints, nextFailures, observedAccounts
+	for index := range observedAccounts {
+		accountsByID[observedAccounts[index].ID] = &observedAccounts[index]
 	}
 
 	e.mu.RLock()
-	previousFingerprints := make(map[string]authFingerprint, len(e.fingerprints))
-	for authIndex, fingerprint := range e.fingerprints {
-		previousFingerprints[authIndex] = fingerprint
-	}
+	previousFingerprints := clonePolicyFingerprints(e.fingerprints)
 	previousFailures := make(map[string]policyFailureBackoff, len(e.failures))
 	for authIndex, failure := range e.failures {
 		previousFailures[authIndex] = failure
 	}
 	e.mu.RUnlock()
 
+	type policyCandidate struct {
+		entry       cpaapi.HostAuthFileEntry
+		authIndex   string
+		fingerprint authFingerprint
+	}
+	candidates := make([]policyCandidate, 0)
 	for _, entry := range entries {
-		if ctx.Err() != nil {
-			break
-		}
 		if !eligiblePolicyEntry(entry, pathCounts, indexCounts) {
 			summary.Skipped++
 			continue
 		}
 		summary.Eligible++
 		authIndex := strings.TrimSpace(entry.AuthIndex)
-		fingerprint := fingerprintForEntry(entry, planTypes[authIndex])
-		if previous, exists := previousFingerprints[authIndex]; exists && previous == fingerprint {
+		planType := ""
+		if account := accountsByID[authIndex]; account != nil {
+			planType = account.PlanType
+		}
+		fingerprint := fingerprintForEntry(entry, planType)
+		if previous, exists := previousFingerprints[authIndex]; exists && samePolicyAccount(previous, fingerprint) {
 			nextFingerprints[authIndex] = fingerprint
 			summary.Skipped++
 			continue
 		}
 		if failure, exists := previousFailures[authIndex]; exists && failure.Fingerprint == fingerprint && startedAt.Before(failure.RetryAt) {
 			nextFailures[authIndex] = failure
+			summary.Skipped++
+			continue
+		}
+		candidates = append(candidates, policyCandidate{entry: entry, authIndex: authIndex, fingerprint: fingerprint})
+	}
+
+	quotaCandidates := make([]Account, 0, len(candidates))
+	for _, candidate := range candidates {
+		if account := accountsByID[candidate.authIndex]; account != nil && quotaMetadataBootstrapEligible(*account) {
+			quotaCandidates = append(quotaCandidates, *account)
+		}
+	}
+	quotaSummary := e.probeQuotaMetadata(ctx, quotaCandidates)
+	summary.QuotaMetadataProbed = quotaSummary.attempted
+	summary.QuotaMetadataUpdated = quotaSummary.updated
+	summary.QuotaMetadataFailed = quotaSummary.failed
+	for authIndex, planType := range quotaSummary.planTypes {
+		if account := accountsByID[authIndex]; account != nil && planType != "" {
+			account.PlanType = planType
+		}
+	}
+
+	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		account := accountsByID[candidate.authIndex]
+		quotaDeferred := account != nil && quotaMetadataBootstrapEligible(*account) && !quotaSummary.ready
+		if account != nil {
+			candidate.fingerprint.PlanType = safeAccountPlanType(account.PlanType)
+		}
+		if !policy.ManagesFields() {
+			if !quotaDeferred {
+				nextFingerprints[candidate.authIndex] = candidate.fingerprint
+			}
 			summary.Skipped++
 			continue
 		}
@@ -593,14 +652,16 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 
 		changed, errApply := func() (bool, error) {
 			defer e.mutations.Release(policyMutationOwner)
-			return e.reconcileEntry(ctx, entry, policy, planTypes[authIndex])
+			return e.reconcileEntry(ctx, candidate.entry, policy, candidate.fingerprint.PlanType)
 		}()
 		if errApply != nil {
 			summary.Failed++
-			nextFailures[authIndex] = policyFailureBackoff{Fingerprint: fingerprint, RetryAt: startedAt.Add(policyFailureRetryInterval)}
+			nextFailures[candidate.authIndex] = policyFailureBackoff{Fingerprint: candidate.fingerprint, RetryAt: startedAt.Add(policyFailureRetryInterval)}
 			continue
 		}
-		nextFingerprints[authIndex] = fingerprint
+		if !quotaDeferred {
+			nextFingerprints[candidate.authIndex] = candidate.fingerprint
+		}
 		if changed {
 			summary.Changed++
 		} else {
@@ -612,7 +673,7 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 }
 
 func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Account) policyQuotaMetadataProbeSummary {
-	result := policyQuotaMetadataProbeSummary{planTypes: make(map[string]string)}
+	result := policyQuotaMetadataProbeSummary{planTypes: make(map[string]string), ready: true}
 	eligible := make(map[string]Account, min(len(accounts), maxInspectionAccounts))
 	for _, account := range accounts {
 		if !quotaMetadataBootstrapEligible(account) || len(eligible) >= maxInspectionAccounts {
@@ -630,12 +691,12 @@ func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Accoun
 	probe := e.quotaMetadataProbe
 	managementKey := e.managementKey
 	e.mu.RUnlock()
-	result.attempted = len(eligible)
 	if probe == nil || strings.TrimSpace(managementKey) == "" {
-		result.failed = len(eligible)
+		result.ready = false
 		managementKey = ""
 		return result
 	}
+	result.attempted = len(eligible)
 
 	ids := mapKeys(eligible)
 	sort.Strings(ids)
@@ -688,6 +749,10 @@ func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Accoun
 	}
 	managementKey = ""
 	return result
+}
+
+func samePolicyAccount(left, right authFingerprint) bool {
+	return left.Name == right.Name && left.Path == right.Path
 }
 
 func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuthFileEntry, policy DefaultPolicy, refreshedPlanType string) (bool, error) {
@@ -770,6 +835,7 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 }
 
 func normalizeDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
+	policy.CodexQuotaMetadataProbeEnabled = true
 	policy.ApplyMode = policyApplyModeMissing
 	policy.ScanIntervalSeconds = clampPolicyScanInterval(policy.ScanIntervalSeconds)
 	return cloneDefaultPolicy(policy)
@@ -785,10 +851,10 @@ func validateDefaultPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 		return DefaultPolicy{}, errRules
 	}
 	policy.ConditionalRules = rules
-	policy = normalizeDefaultPolicy(policy)
-	if policy.Enabled && !policy.ManagesFields() && !policy.ManagesNewAccountProbe() && !policy.CodexQuotaMetadataProbeEnabled {
+	if policy.Enabled && !policy.ManagesFields() && !policy.ManagesNewAccountProbe() {
 		return DefaultPolicy{}, fmt.Errorf("enabled policy requires at least one automation action")
 	}
+	policy = normalizeDefaultPolicy(policy)
 	return policy, nil
 }
 

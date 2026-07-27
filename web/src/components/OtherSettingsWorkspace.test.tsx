@@ -121,7 +121,7 @@ describe("OtherSettingsWorkspace", () => {
     expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*刷新页面/));
   });
 
-  it("persists independent weekly-overdraft, Agent Identity, and automatic model whitelist experiments", async () => {
+  it("persists independent weekly-overdraft and Agent Identity experiments while model discovery stays built in", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -154,11 +154,10 @@ describe("OtherSettingsWorkspace", () => {
     expect(within(panel).getByText("实验性行为")).toBeInTheDocument();
     expect(within(panel).getByText("Codex 周额度透支续用")).toBeInTheDocument();
     expect(within(panel).getByText("Codex Agent Identity / PAT")).toBeInTheDocument();
-    expect(within(panel).getByText("Codex 自动模型白名单")).toBeInTheDocument();
+    expect(within(panel).queryByText("Codex 自动模型白名单")).not.toBeInTheDocument();
 
     await user.click(within(panel).getByRole("checkbox", { name: "Codex 周额度透支续用" }));
     await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity / PAT" }));
-    await user.click(within(panel).getByRole("checkbox", { name: "Codex 自动模型白名单" }));
     await user.click(within(panel).getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));

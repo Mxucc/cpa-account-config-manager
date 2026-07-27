@@ -32,6 +32,18 @@ var (
 	ErrActiveResetUnavailable       = errors.New("no active reset credit is available")
 )
 
+type quotaMetadataHTTPError struct {
+	StatusCode int
+}
+
+func (e quotaMetadataHTTPError) Error() string {
+	return ErrQuotaMetadataUnavailable.Error()
+}
+
+func (e quotaMetadataHTTPError) Unwrap() error {
+	return ErrQuotaMetadataUnavailable
+}
+
 type QuotaMetadataRequest struct {
 	AccountID string `json:"account_id"`
 	Confirm   bool   `json:"confirm,omitempty"`
@@ -221,28 +233,51 @@ func (a *App) persistQuotaMetadata(account Account, metadata quotaMetadata, cons
 }
 
 func (a *App) runNewAccountQuotaMetadata(ctx context.Context, account Account, managementKey string) error {
+	_, errRefresh := a.refreshAccountQuotaMetadata(ctx, account, managementKey, true)
+	return errRefresh
+}
+
+func (a *App) refreshAccountQuotaMetadata(ctx context.Context, account Account, managementKey string, reevaluatePolicy bool) (quotaMetadata, error) {
 	client, errClient := newManagementClient(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer)
 	if errClient != nil {
-		return ErrQuotaMetadataUnavailable
+		return quotaMetadata{}, ErrQuotaMetadataUnavailable
 	}
 	defer client.clearSecrets()
 	metadata, errFetch := fetchQuotaMetadata(ctx, client, account, a.quotaAccountID(ctx, account))
 	if errFetch != nil {
-		return errFetch
+		a.observeQuotaMetadataFailure(account, errFetch)
+		return quotaMetadata{}, errFetch
 	}
 	a.persistQuotaMetadata(account, metadata, false)
-	return nil
+	if reevaluatePolicy {
+		a.policies.AccountMetadataUpdated(account.ID)
+	}
+	return metadata, nil
+}
+
+func (a *App) observeQuotaMetadataFailure(account Account, errProbe error) {
+	var upstream quotaMetadataHTTPError
+	if !errors.As(errProbe, &upstream) || upstream.StatusCode < 400 {
+		return
+	}
+	failureBody := http.StatusText(upstream.StatusCode)
+	if upstream.StatusCode == http.StatusUnauthorized {
+		failureBody = "invalid_token"
+	}
+	a.inspection.Observe(cpaapi.UsageRecord{
+		Provider: account.Provider, AuthID: account.AuthID, AuthIndex: account.ID,
+		RequestedAt: time.Now().UTC(), Failed: true,
+		Failure: cpaapi.UsageFailure{StatusCode: upstream.StatusCode, Body: failureBody},
+	})
 }
 
 func (a *App) runPolicyQuotaMetadataProbe(ctx context.Context, account Account, managementKey string) (string, error) {
-	if errProbe := a.runNewAccountQuotaMetadata(ctx, account, managementKey); errProbe != nil {
+	metadata, errProbe := a.refreshAccountQuotaMetadata(ctx, account, managementKey, false)
+	if errProbe != nil {
 		return "", errProbe
 	}
-	usage := a.usage.Snapshot(account.ID)
-	if usage != nil && usage.Codex != nil {
-		if planType := safeAccountPlanType(usage.Codex.PlanType); planType != "" {
-			return planType, nil
-		}
+	if planType := safeAccountPlanType(metadata.planType); planType != "" {
+		return planType, nil
 	}
 	return safeAccountPlanType(account.PlanType), nil
 }
@@ -262,8 +297,11 @@ func fetchQuotaMetadata(ctx context.Context, client *managementClient, account A
 	usageResponse, errUsage := client.APICall(ctx, managementAPICallRequest{
 		AuthIndex: account.ID, Method: http.MethodGet, URL: codexQuotaUsageURL, Header: headers,
 	})
-	if errUsage != nil || usageResponse.StatusCode < http.StatusOK || usageResponse.StatusCode >= http.StatusMultipleChoices {
+	if errUsage != nil {
 		return quotaMetadata{}, ErrQuotaMetadataUnavailable
+	}
+	if usageResponse.StatusCode < http.StatusOK || usageResponse.StatusCode >= http.StatusMultipleChoices {
+		return quotaMetadata{}, quotaMetadataHTTPError{StatusCode: boundedHTTPStatus(usageResponse.StatusCode)}
 	}
 	planType, usageCount, validUsage := parseQuotaUsageMetadata(usageResponse.Body)
 	if !validUsage {

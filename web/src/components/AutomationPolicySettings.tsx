@@ -78,7 +78,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   const save = async () => {
     if (!draft) return;
     setError("");
-    if (draft.enabled && !draft.new_account_model_probe_enabled && !draft.codex_quota_metadata_probe_enabled && draft.priority === null && draft.websockets === null && rules.length === 0) {
+    if (draft.enabled && !draft.new_account_model_probe_enabled && draft.priority === null && draft.websockets === null && rules.length === 0) {
       setError(tx("ui.select_at_least_one_default_field_before_enabling_the_policy"));
       return;
     }
@@ -149,14 +149,14 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
             <span><strong>{tx("ui.new_account_model_probe")}</strong><small>{tx("ui.new_account_model_probe_description")}</small></span>
             <span className="switch-control"><input type="checkbox" checked={draft.new_account_model_probe_enabled} disabled={controlsLocked} onChange={(event) => updateDraft({ new_account_model_probe_enabled: event.target.checked })} aria-label={tx("ui.enable_new_account_model_probe")} /><b>{tx(draft.new_account_model_probe_enabled ? "ui.on_2" : "ui.off_2")}</b></span>
           </label>
-          <label className={`policy-row ${draft.codex_quota_metadata_probe_enabled ? "is-enabled" : ""}`}>
+          <div className="policy-row is-enabled">
             <span>
               <strong>{tx("ui.codex_quota_metadata_probe")}</strong>
               <small>{tx("ui.codex_quota_metadata_probe_description")}</small>
               <small>{tx("ui.quota_metadata_probe_summary", { updated: lastScan.quota_metadata_updated ?? 0, probed: lastScan.quota_metadata_probed ?? 0, failed: lastScan.quota_metadata_failed ?? 0 })}</small>
             </span>
-            <span className="switch-control"><input type="checkbox" checked={draft.codex_quota_metadata_probe_enabled} disabled={controlsLocked} onChange={(event) => updateDraft({ codex_quota_metadata_probe_enabled: event.target.checked })} aria-label={tx("ui.enable_codex_quota_metadata_probe")} /><b>{tx(draft.codex_quota_metadata_probe_enabled ? "ui.on_2" : "ui.off_2")}</b></span>
-          </label>
+            <b>{tx("ui.always_enabled")}</b>
+          </div>
           <OptionalNumberRow label="Priority" ariaLabel={tx("ui.default_priority")} value={draft.priority} disabled={controlsLocked} onChange={(priority) => updateDraft({ priority })} />
           <OptionalBooleanRow label="WebSockets" ariaLabel={tx("ui.default_websockets")} value={draft.websockets} disabled={controlsLocked} onChange={(websockets) => updateDraft({ websockets })} />
           <label className="policy-row policy-interval"><span className="edit-optin">{tx("ui.scan_interval")}</span><span className="number-suffix"><input type="number" min="5" max="300" value={draft.scan_interval_seconds} disabled={controlsLocked} onChange={(event) => updateDraft({ scan_interval_seconds: Number(event.target.value) })} aria-label={tx("ui.scan_interval")} /><b>{tx("ui.seconds")}</b></span></label>
@@ -289,7 +289,7 @@ function PolicyMetric({ label, value, tone = "" }: { label: string; value: numbe
 }
 
 function clonePolicy(policy: DefaultPolicy): DefaultPolicy {
-  return JSON.parse(JSON.stringify({ ...policy, codex_quota_metadata_probe_enabled: policy.codex_quota_metadata_probe_enabled ?? false, conditional_rules: policy.conditional_rules ?? [] })) as DefaultPolicy;
+  return JSON.parse(JSON.stringify({ ...policy, codex_quota_metadata_probe_enabled: true, conditional_rules: policy.conditional_rules ?? [] })) as DefaultPolicy;
 }
 
 function newConditionalRule(index: number): ConditionalPolicyRule {

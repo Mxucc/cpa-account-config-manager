@@ -73,7 +73,7 @@ export function PolicyDialog({
     onSave({
       enabled,
       new_account_model_probe_enabled: probeNewAccounts,
-      codex_quota_metadata_probe_enabled: initial.codex_quota_metadata_probe_enabled ?? false,
+      codex_quota_metadata_probe_enabled: true,
       apply_mode: "missing",
       scan_interval_seconds: scanInterval,
       priority: managePriority ? Number(priority) : null,

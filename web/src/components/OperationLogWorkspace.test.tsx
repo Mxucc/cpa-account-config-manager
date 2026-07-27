@@ -58,7 +58,7 @@ describe("OperationLogWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "查看操作详情" }));
     const details = screen.getByRole("dialog", { name: "操作详情" });
     expect(details).toBeInTheDocument();
-    expect(screen.getByText("部分操作失败")).toBeInTheDocument();
+    expect(within(details).getByText("部分操作失败")).toBeInTheDocument();
     expect(screen.queryByText("partial_failure")).not.toBeInTheDocument();
     await user.click(within(details).getByRole("button", { name: "打开关联任务" }));
     expect(onOpenRelatedJob).toHaveBeenCalledWith(operationResponse.operations[0]);

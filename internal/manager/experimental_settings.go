@@ -25,13 +25,12 @@ func (s *ExperimentalSettingsService) AgentIdentityEnabled() bool {
 }
 
 func (s *ExperimentalSettingsService) AutoModelWhitelistEnabled() bool {
-	if s == nil {
-		return false
-	}
-	s.mu.RLock()
-	enabled := s.settings.AutoModelWhitelistEnabled
-	s.mu.RUnlock()
-	return enabled
+	return true
+}
+
+func normalizeExperimentalSettings(settings ExperimentalSettings) ExperimentalSettings {
+	settings.AutoModelWhitelistEnabled = true
+	return settings
 }
 
 type ExperimentalSettingsSnapshot struct {
@@ -72,16 +71,16 @@ func (s *ExperimentalSettingsService) Configure(config Config) {
 		}
 		return
 	}
-	settings := ExperimentalSettings{}
+	settings := normalizeExperimentalSettings(ExperimentalSettings{})
 	storageErr := ""
 	loaded, errLoad := loadExperimentalSettings(storePath)
 	if errLoad == nil {
-		settings = loaded
+		settings = normalizeExperimentalSettings(loaded)
 	} else if !errors.Is(errLoad, os.ErrNotExist) {
 		storageErr = "experimental settings could not be loaded"
 	}
 	if config.ExperimentalSettings != nil {
-		settings = *config.ExperimentalSettings
+		settings = normalizeExperimentalSettings(*config.ExperimentalSettings)
 		s.storeMu.Lock()
 		if errSave := saveExperimentalSettings(storePath, settings); errSave != nil {
 			storageErr = "experimental settings could not be persisted"
@@ -102,7 +101,7 @@ func (s *ExperimentalSettingsService) Snapshot() ExperimentalSettingsSnapshot {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return ExperimentalSettingsSnapshot{Settings: s.settings, StorageError: s.storageErr}
+	return ExperimentalSettingsSnapshot{Settings: normalizeExperimentalSettings(s.settings), StorageError: s.storageErr}
 }
 
 func (s *ExperimentalSettingsService) WeeklyOverdraftEnabled() bool {
@@ -126,6 +125,7 @@ func (s *ExperimentalSettingsService) Set(settings ExperimentalSettings) (Experi
 	if !configured || strings.TrimSpace(storePath) == "" {
 		return ExperimentalSettingsSnapshot{}, fmt.Errorf("experimental settings storage is unavailable")
 	}
+	settings = normalizeExperimentalSettings(settings)
 	s.storeMu.Lock()
 	errSave := saveExperimentalSettings(storePath, settings)
 	s.storeMu.Unlock()

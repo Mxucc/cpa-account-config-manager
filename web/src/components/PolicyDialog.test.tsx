@@ -38,7 +38,7 @@ describe("PolicyDialog", () => {
     expect(onSave).toHaveBeenCalledWith({
       enabled: true,
       new_account_model_probe_enabled: false,
-      codex_quota_metadata_probe_enabled: false,
+      codex_quota_metadata_probe_enabled: true,
       apply_mode: "missing",
       scan_interval_seconds: 15,
       priority: null,

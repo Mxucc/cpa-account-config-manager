@@ -168,6 +168,11 @@ const reasonLabels: Record<string, UIMessageKey> = {
   notification_rejected: "ui.notification_rejected",
   notification_queue_full: "ui.notification_queue_full",
   notification_superseded: "ui.notification_superseded",
+  passive_circuit_open: "ui.passive_circuit_open_reason",
+  quota_reset: "ui.quota_reset_reason",
+  passive_circuit_recovered: "ui.passive_circuit_recovered_reason",
+  health_recovered: "ui.health_recovered_reason",
+  credential_refreshed: "ui.credential_refreshed_reason",
 };
 
 const scopeLabels: Record<string, UIMessageKey> = {
@@ -377,7 +382,7 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
               return (
                 <tr key={operation.id}>
                   <td><OperationStatusBadge status={operation.status} /></td>
-                  <td><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span></div></td>
+                  <td><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{reasonLabelForOperation(operation.reason_code, locale)}</span> : null}</div></td>
                   <td><span className={`operation-source source-${operation.source}`}>{sourceLabel(operation.source, locale)}</span></td>
                   <td><OperationCounts operation={operation} /></td>
                   <td><div className="operation-target"><code>{operation.target_id || operation.related_job_id || "-"}</code><span>{scopeLabel(operation.scope, locale)}</span></div></td>

@@ -103,6 +103,34 @@ function formatLabel(format: ExportFormat): string {
   return exportFormatLabels[format];
 }
 
+function applyCompletedAccountPatch(current: AccountListResponse, job: JobSnapshot, patch: BatchPatch | null): AccountListResponse {
+  if (!patch || job.operation === "delete") return current;
+  const succeeded = new Set((job.results ?? []).filter((result) => result.status === "succeeded").map((result) => result.id));
+  if (succeeded.size === 0) return current;
+  return {
+    ...current,
+    accounts: current.accounts.map((account) => {
+      if (!succeeded.has(account.id)) return account;
+      return {
+        ...account,
+        ...(patch.disabled !== undefined ? { disabled: patch.disabled } : {}),
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+        ...(patch.note !== undefined ? { note: patch.note } : {}),
+        ...(patch.prefix !== undefined ? { prefix: patch.prefix } : {}),
+        ...(patch.proxy_url !== undefined ? { proxy_configured: patch.proxy_url.trim() !== "" } : {}),
+        ...(patch.websockets !== undefined ? { websockets: patch.websockets } : {}),
+        ...(patch.model_policy !== undefined ? {
+          model_policy: {
+            mode: patch.model_policy.mode,
+            models: patch.model_policy.models,
+            excluded_count: account.model_policy?.excluded_count ?? 0,
+          },
+        } : {}),
+      };
+    }),
+  };
+}
+
 const providerOptions = [
   "antigravity",
   "aistudio",
@@ -222,6 +250,9 @@ function AccountManagerApp() {
   const [exportError, setExportError] = useState("");
   const [notice, setNotice] = useState("");
   const accountRequest = useRef(0);
+  const skipInitialAccountRefresh = useRef(false);
+  const previewPatches = useRef(new Map<string, BatchPatch>());
+  const activeJobPatch = useRef<BatchPatch | null>(null);
   const deleteRequest = useRef(0);
 
   const apiFilters = useMemo<AccountFilters>(() => ({
@@ -249,6 +280,7 @@ function AccountManagerApp() {
 
   useEffect(() => {
     let active = true;
+    let settingsTimer = 0;
     const bootstrap = async () => {
       const panelAuth = readPanelAuth();
       if (!panelAuth) {
@@ -257,21 +289,33 @@ function AccountManagerApp() {
       }
       setSession(panelAuth.apiBase, panelAuth.managementKey);
       try {
-        await api.verifySession();
-        try {
-          await api.persistCurrentSettings();
-        } catch (error) {
-          if (error instanceof api.APIError && error.status === 401) throw error;
-          if (active) setNotice(operatorMessage(error instanceof Error ? error.message : "ui.settings_persistence_failed", locale));
-        }
-        if (active) setAuthState("ready");
+        const response = await api.listAccounts(1, pageSize, apiFilters);
+        if (!active) return;
+        setData(response);
+        skipInitialAccountRefresh.current = true;
+        setAuthState("ready");
+        settingsTimer = window.setTimeout(() => {
+          void api.persistCurrentSettings().catch((error) => {
+            if (!active) return;
+            if (error instanceof api.APIError && error.status === 401) {
+              clearSession();
+              setAuthState("login");
+              setAuthError(operatorMessage(error.message, locale));
+              return;
+            }
+            setNotice(operatorMessage(error instanceof Error ? error.message : "ui.settings_persistence_failed", locale));
+          });
+        }, 0);
       } catch {
         clearSession();
         if (active) setAuthState("login");
       }
     };
     void bootstrap();
-    return () => { active = false; };
+    return () => {
+      active = false;
+      window.clearTimeout(settingsTimer);
+    };
   }, []);
 
   const handleAPIError = useCallback((error: unknown) => {
@@ -346,7 +390,12 @@ function AccountManagerApp() {
   }, [refreshAccounts]);
 
   useEffect(() => {
-    if (activeView === "accounts") void refreshAccounts();
+    if (activeView !== "accounts") return;
+    if (skipInitialAccountRefresh.current) {
+      skipInitialAccountRefresh.current = false;
+      return;
+    }
+    void refreshAccounts();
   }, [activeView, refreshAccounts]);
 
   useEffect(() => {
@@ -430,7 +479,7 @@ function AccountManagerApp() {
         const full = await api.getJobStatus(true);
         if (!cancelled) {
           setJob(full);
-          void refreshAccounts();
+          setData((current) => applyCompletedAccountPatch(current, full, activeJobPatch.current));
         }
       } catch (error) {
         if (!cancelled) handleAPIError(error);
@@ -477,14 +526,13 @@ function AccountManagerApp() {
     setAuthError("");
     setSession(baseURL, managementKey);
     try {
-      await api.verifySession();
-      try {
-        await api.persistCurrentSettings();
-      } catch (error) {
-        if (error instanceof api.APIError && error.status === 401) throw error;
-        setNotice(operatorMessage(error instanceof Error ? error.message : "ui.settings_persistence_failed", locale));
-      }
+      const response = await api.listAccounts(1, pageSize, apiFilters);
+      setData(response);
+      skipInitialAccountRefresh.current = true;
       setAuthState("ready");
+      window.setTimeout(() => {
+        void api.persistCurrentSettings().catch(handleAPIError);
+      }, 0);
     } catch (error) {
       clearSession();
       setAuthError(error instanceof Error ? operatorMessage(error.message, locale) : tx("ui.authentication_failed"));
@@ -542,6 +590,7 @@ function AccountManagerApp() {
     setPreviewError("");
     try {
       const response = await api.createPreview(explicitScope ?? targetScope(), patch);
+      previewPatches.current.set(response.id, patch);
       setPreview(response);
     } catch (error) {
       handleAPIError(error);
@@ -736,15 +785,19 @@ function AccountManagerApp() {
     setPreviewError("");
     try {
       const deletingBatch = preview.operation === "delete";
+      const submittedPatch = deletingBatch ? null : previewPatches.current.get(preview.id) ?? null;
       const snapshot = deletingBatch
         ? await api.startBatchDelete(preview.id)
         : await api.startBatch(preview.id);
+      previewPatches.current.delete(preview.id);
+      activeJobPatch.current = submittedPatch;
       setPreview(null);
       if (deletingBatch) {
         setSelected(new Set());
         setScopeMode("filtered");
       }
       setJob(snapshot);
+      if (!snapshot.running) setData((current) => applyCompletedAccountPatch(current, snapshot, activeJobPatch.current));
       setForceJobOpen(false);
       setJobOpen(true);
     } catch (error) {
@@ -763,6 +816,7 @@ function AccountManagerApp() {
     try {
       const snapshot = await api.retryBatch();
       setJob(snapshot);
+      if (!snapshot.running) setData((current) => applyCompletedAccountPatch(current, snapshot, activeJobPatch.current));
       setForceJobOpen(false);
       setJobOpen(true);
     } catch (error) {
@@ -1193,7 +1247,7 @@ function AccountManagerApp() {
       {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
       {deduplicationPreview ? <AccountDeduplicationDialog preview={deduplicationPreview} loading={deduplicationLoading} reviewing={deduplicationReviewing} error={deduplicationError} onClose={() => { deduplicationRequest.current++; setDeduplicationPreview(null); setDeduplicationError(""); setDeduplicationLoading(false); }} onOptionsChange={(options) => void loadAccountDeduplication(options, true)} onReview={(ids) => void reviewDuplicateDeletions(ids)} /> : null}
-      {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
+      {preview ? <PreviewDialog preview={preview} starting={starting} error={previewError} onClose={() => { previewPatches.current.delete(preview.id); setPreview(null); setPreviewError(""); }} onConfirm={() => void confirmPreview()} /> : null}
       {jobOpen && job ? <JobPanel job={job} title={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} ariaLabel={job.operation === "delete" ? "ui.batch_delete_job" : "ui.batch_job"} retrying={retrying} onClose={() => setJobOpen(false)} onRetry={() => void retryJob()} onExport={() => openExport("results")} onRefresh={() => void refreshJob()} /> : null}
       {importOpen ? <ImportDialog preview={importPreview} result={importResult} previewing={importPreviewing} importing={importStarting} error={importError} onClose={closeImport} onPreview={(files) => void previewImport(files)} onImport={() => void confirmImport()} onReset={resetImport} /> : null}
       {exportTarget ? <ExportDialog kind={exportTarget} count={exportCount} scopeLabel={exportScopeLabel} exporting={exporting} error={exportError} onClose={closeExport} onExport={(format) => void confirmExport(format)} /> : null}

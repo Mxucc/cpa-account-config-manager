@@ -641,7 +641,8 @@ func safeOperationReason(value string) string {
 	case "notification_delivered", "notification_failed", "notification_rejected", "notification_queue_full", "notification_superseded":
 		return value
 	case "model_response_ok", "model_not_found", "account_unavailable", "authentication_failed",
-		"quota_limited", "request_timeout", "upstream_unavailable", "invalid_response", "unsupported_provider":
+		"quota_limited", "request_timeout", "upstream_unavailable", "invalid_response", "unsupported_provider",
+		"passive_circuit_open", "quota_reset", "passive_circuit_recovered", "health_recovered", "credential_refreshed":
 		return value
 	default:
 		return "operation_failed"

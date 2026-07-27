@@ -488,6 +488,51 @@ func TestOperationFromInspectionActionPreservesAutomaticDeleteSource(t *testing.
 	}
 }
 
+func TestOperationSourcesDoNotJournalNoOpScheduledPolicyScans(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	now := time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC)
+	app.policies.mu.Lock()
+	app.policies.lastScan = PolicyScanSummary{
+		StartedAt: now.Add(-time.Second), FinishedAt: now, Scanned: 272, Eligible: 272, Skipped: 272,
+	}
+	app.policies.mu.Unlock()
+
+	app.reconcileOperationSources()
+	if listed := app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize}); listed.Total != 0 {
+		t.Fatalf("no-op policy scan produced journal entries: %#v", listed.Operations)
+	}
+}
+
+func TestInspectionEnableActionsExplainRecoveryReason(t *testing.T) {
+	now := time.Date(2026, 7, 28, 2, 0, 0, 0, time.UTC)
+	result := InspectionResult{ID: "auth-1", Health: InspectionHealthHealthy}
+	quota := inspectionRecord{
+		Result:               result,
+		DisableReason:        "quota_exhausted",
+		DisabledRecoverAfter: now,
+	}
+	if reason := inspectionAutoEnableReason(Account{}, quota, now); reason != "quota_reset" {
+		t.Fatalf("quota recovery reason = %q", reason)
+	}
+	circuit := quota
+	circuit.DisableReason = "passive_circuit_open"
+	if reason := inspectionAutoEnableReason(Account{}, circuit, now); reason != "passive_circuit_recovered" {
+		t.Fatalf("circuit recovery reason = %q", reason)
+	}
+	refreshedAt := now.Add(time.Minute)
+	credential := inspectionRecord{Result: result, DisabledAt: now}
+	if reason := inspectionAutoEnableReason(Account{LastRefresh: &refreshedAt}, credential, refreshedAt); reason != "credential_refreshed" {
+		t.Fatalf("credential recovery reason = %q", reason)
+	}
+	action := newInspectionAction(result, InspectionActionEnable, "quota_reset", now)
+	action.Status = InspectionActionSucceeded
+	entry, ok := operationFromInspectionAction(action)
+	if !ok || entry.Action != OperationActionAutoEnable || entry.ReasonCode != "quota_reset" {
+		t.Fatalf("enable operation = %#v ok=%t", entry, ok)
+	}
+}
+
 func TestManualInspectionDeleteRecordsOneTruthfulBatchOperation(t *testing.T) {
 	host := editableAccountDeleteHost()
 	deleteCalls := 0

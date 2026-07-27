@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"cpa-account-config-manager/internal/cpaapi"
@@ -20,6 +21,7 @@ import (
 const (
 	defaultPageSize          = 50
 	maxPageSize              = 1000
+	accountDetailWorkers     = 8
 	maxAccountPlanTypeLength = 64
 )
 
@@ -230,39 +232,61 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 }
 
 func (s *AccountService) enrichAccountDetails(ctx context.Context, accounts []Account) {
+	if s == nil || s.host == nil || len(accounts) == 0 {
+		return
+	}
+	workers := accountDetailWorkers
+	if workers > len(accounts) {
+		workers = len(accounts)
+	}
+	indexes := make(chan int, workers)
+	var group sync.WaitGroup
+	group.Add(workers)
+	for range workers {
+		go func() {
+			defer group.Done()
+			for index := range indexes {
+				if ctx.Err() != nil {
+					continue
+				}
+				s.enrichAccountDetail(ctx, &accounts[index])
+			}
+		}()
+	}
 	for index := range accounts {
-		account := &accounts[index]
-		if account.detailAuthIndex == "" || account.revision != "" {
+		if accounts[index].detailAuthIndex == "" || accounts[index].revision != "" {
 			continue
 		}
-		detail, errGet := s.host.GetAuth(ctx, account.detailAuthIndex)
-		if errGet != nil {
-			if account.Editable {
-				account.Editable = false
-				account.ReadOnlyReason = "physical auth file is unavailable"
-			}
-			continue
-		}
-		if returnedIndex := strings.TrimSpace(detail.AuthIndex); returnedIndex != "" && returnedIndex != account.detailAuthIndex {
-			if account.Editable {
-				account.Editable = false
-				account.ReadOnlyReason = "physical auth file is unavailable"
-			}
-			continue
-		}
-		if detailPath := normalizedPath(detail.Path); account.path != "" && detailPath != "" && detailPath != account.path {
-			if account.Editable {
-				account.Editable = false
-				account.ReadOnlyReason = "physical auth file is unavailable"
-			}
-			continue
-		}
-		if errEnrich := enrichAccount(account, detail); errEnrich != nil {
-			if account.Editable {
-				account.Editable = false
-				account.ReadOnlyReason = "physical auth file is invalid"
-			}
-		}
+		indexes <- index
+	}
+	close(indexes)
+	group.Wait()
+}
+
+func (s *AccountService) enrichAccountDetail(ctx context.Context, account *Account) {
+	detail, errGet := s.host.GetAuth(ctx, account.detailAuthIndex)
+	if errGet != nil {
+		markAccountDetailUnavailable(account)
+		return
+	}
+	if returnedIndex := strings.TrimSpace(detail.AuthIndex); returnedIndex != "" && returnedIndex != account.detailAuthIndex {
+		markAccountDetailUnavailable(account)
+		return
+	}
+	if detailPath := normalizedPath(detail.Path); account.path != "" && detailPath != "" && detailPath != account.path {
+		markAccountDetailUnavailable(account)
+		return
+	}
+	if errEnrich := enrichAccount(account, detail); errEnrich != nil && account.Editable {
+		account.Editable = false
+		account.ReadOnlyReason = "physical auth file is invalid"
+	}
+}
+
+func markAccountDetailUnavailable(account *Account) {
+	if account.Editable {
+		account.Editable = false
+		account.ReadOnlyReason = "physical auth file is unavailable"
 	}
 }
 

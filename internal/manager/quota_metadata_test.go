@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -181,6 +182,41 @@ func TestQuotaMetadataBootstrapRunsWhenAccountListIsFirstOpened(t *testing.T) {
 	defer mu.Unlock()
 	if len(requests) != 2 || requests[0].URL != codexQuotaUsageURL || requests[1].URL != codexQuotaResetCreditsURL {
 		t.Fatalf("bootstrap API calls = %#v", requests)
+	}
+}
+
+func TestQuotaMetadataHTTP401BecomesSanitizedInspectionEvidence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"status_code": http.StatusUnauthorized,
+			"header":      map[string][]string{},
+			"body":        `{"detail":"upstream-secret-must-not-be-retained"}`,
+		})
+	}))
+	defer server.Close()
+
+	app := NewApp(quotaMetadataHost(), []byte("index"))
+	defer app.Close()
+	app.Configure([]byte(fmt.Sprintf("data_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), server.URL)))
+	account := Account{ID: "auth-1", AuthID: "auth-1", Provider: "codex", Type: "codex"}
+	errRefresh := app.runNewAccountQuotaMetadata(t.Context(), account, "management-secret")
+	var upstream quotaMetadataHTTPError
+	if !errors.As(errRefresh, &upstream) || upstream.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("quota metadata error = %v", errRefresh)
+	}
+	app.inspection.mu.RLock()
+	record := app.inspection.records["auth-1"]
+	app.inspection.mu.RUnlock()
+	if record.Signal.StatusCode != http.StatusUnauthorized || record.Signal.ReasonCode != "invalid_credentials" ||
+		!record.Signal.AutoDisableEligible {
+		t.Fatalf("inspection signal = %#v", record.Signal)
+	}
+	encoded, errMarshal := json.Marshal(record)
+	if errMarshal != nil {
+		t.Fatalf("marshal inspection results: %v", errMarshal)
+	}
+	if bytes.Contains(encoded, []byte("upstream-secret")) || bytes.Contains(encoded, []byte("management-secret")) {
+		t.Fatalf("inspection evidence retained a secret: %s", encoded)
 	}
 }
 

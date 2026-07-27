@@ -4,8 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
+import { readPanelAuth } from "./store/panelAuth";
 import { _resetSessionForTest } from "./store/session";
 import type { BatchPatch } from "./types";
+
+vi.mock("./store/panelAuth", () => ({ readPanelAuth: vi.fn(() => null) }));
 
 const account = {
   id: "auth-1",
@@ -37,11 +40,72 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+function persistedSettingsResponse(url: string): Response {
+  if (url.endsWith("/defaults")) return jsonResponse({ policy: {} });
+  if (url.endsWith("/inspection")) return jsonResponse({ policy: {} });
+  if (url.endsWith("/updates")) return jsonResponse({ policy: {} });
+  if (url.endsWith("/operations/settings")) return jsonResponse({ extended_history: false });
+  if (url.endsWith("/experiments")) return jsonResponse({ settings: {} });
+  if (url.endsWith("/config")) return jsonResponse({ status: "ok" });
+  return jsonResponse({});
+}
+
 describe("primary account batch flow", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
     vi.restoreAllMocks();
+    vi.mocked(readPanelAuth).mockReturnValue(null);
+  });
+
+  it.each([
+    { mode: "manual", panelAuth: null },
+    { mode: "embedded", panelAuth: { apiBase: "http://localhost:8317", managementKey: "management-secret" } },
+  ])("renders the first account page after one request while $mode settings persistence remains pending", async ({ panelAuth }) => {
+    const user = userEvent.setup();
+    let releaseSettings: (() => void) | undefined;
+    const settingsGate = new Promise<void>((resolve) => { releaseSettings = resolve; });
+    const accountRequests: string[] = [];
+    let settingsRequests = 0;
+    let settingsPersisted = false;
+    vi.mocked(readPanelAuth).mockReturnValue(panelAuth);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/accounts")) {
+        accountRequests.push(url);
+        return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      if (url.endsWith("/defaults") || url.endsWith("/inspection") || url.endsWith("/updates") || url.endsWith("/operations/settings") || url.endsWith("/experiments")) {
+        settingsRequests += 1;
+        await settingsGate;
+        return persistedSettingsResponse(url);
+      }
+      if (url.endsWith("/config")) {
+        settingsPersisted = true;
+        return persistedSettingsResponse(url);
+      }
+      return jsonResponse({});
+    }));
+
+    render(<App />);
+    if (!panelAuth) {
+      await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+      await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    }
+
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+    await waitFor(() => expect(settingsRequests).toBe(5));
+    expect(settingsPersisted).toBe(false);
+    expect(accountRequests).toHaveLength(1);
+    expect(accountRequests[0]).toContain("page=1");
+    expect(accountRequests[0]).toContain("page_size=50");
+    expect(accountRequests[0]).not.toContain("page_size=1");
+
+    releaseSettings?.();
+    await waitFor(() => expect(settingsPersisted).toBe(true));
   });
 
   it("renders automatic disable reason and expected recovery in the account row", async () => {
@@ -720,6 +784,66 @@ describe("primary account batch flow", () => {
     await user.click(within(preview).getByLabelText("关闭"));
   });
 
+  it("merges a completed account edit without reloading the full account page", async () => {
+    const user = userEvent.setup();
+    let started = false;
+    let accountRequests = 0;
+    const completedJob = {
+      operation: "patch",
+      id: "job-disable",
+      state: "completed",
+      running: false,
+      total: 1,
+      eligible: 1,
+      done: 1,
+      succeeded: 1,
+      failed: 0,
+      conflicts: 0,
+      skipped: 0,
+      workers: 1,
+      patch: { fields: ["disabled"], proxy_mutation: false },
+      retry_available: false,
+      persisted: true,
+      results: [{ id: account.id, status: "succeeded", applied_fields: ["disabled"], retryable: false }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/accounts")) {
+        accountRequests += 1;
+        return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      if (url.includes("/batch/preview")) {
+        return jsonResponse({
+          operation: "patch", id: "preview-disable", created_at: "2026-07-28T00:00:00Z", expires_at: "2026-07-28T00:05:00Z",
+          scope_mode: "selected", total: 1, eligible: 1, read_only: 0, missing: 0, physical_files: 1,
+          providers: { codex: 1 }, patch: { fields: ["disabled"], proxy_mutation: false },
+          targets: [{ id: account.id, eligible: true }],
+        });
+      }
+      if (url.includes("/batch/start")) {
+        started = true;
+        return jsonResponse({ ...completedJob, state: "running", running: true, done: 0, succeeded: 0, persisted: false, results: [{ id: account.id, status: "running", retryable: false }] }, 202);
+      }
+      if (url.includes("/batch/status")) {
+        if (started) return jsonResponse(completedJob);
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      return jsonResponse({});
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    const row = (await screen.findByText("operator@example.com")).closest("tr") as HTMLTableRowElement;
+    const requestsBeforeEdit = accountRequests;
+    await user.click(within(row).getByRole("button", { name: "禁用 operator@example.com" }));
+    const preview = await screen.findByRole("dialog", { name: "变更预览" });
+    await user.click(within(preview).getByRole("button", { name: "执行 1 个账号" }));
+
+    await waitFor(() => expect(within(row).getByRole("button", { name: "启用 operator@example.com" })).toBeEnabled(), { timeout: 2500 });
+    expect(accountRequests).toBe(requestsBeforeEdit);
+  });
+
 	it("refreshes CPA quota metadata and confirms an available active reset", async () => {
 		const user = userEvent.setup();
 		let planType = "k12";
@@ -1025,13 +1149,13 @@ describe("primary account batch flow", () => {
     expect(forceStatusCalls).toBeGreaterThanOrEqual(2);
 
     const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");
-    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] });
+    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] });
 		const configRequest = requests.find(({ url, init }) => {
 			if (!url.endsWith("/config") || init.method !== "PATCH") return false;
 			const body = JSON.parse(String(init.body)) as { default_policy?: { priority?: number | null } };
 			return body.default_policy?.priority === 0;
 		});
-    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] } });
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: true, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] } });
     expect(requests.indexOf(configRequest!)).toBeLessThan(requests.indexOf(putRequest!));
     expect(localStorage.length).toBe(0);
   });
@@ -1214,6 +1338,7 @@ describe("Agent Identity Session login mode", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     vi.restoreAllMocks();
+    vi.mocked(readPanelAuth).mockReturnValue(null);
   });
 
   afterEach(() => {

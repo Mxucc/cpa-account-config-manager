@@ -19,6 +19,7 @@ type fakeAuthHost struct {
 	mu         sync.Mutex
 	entries    []cpaapi.HostAuthFileEntry
 	details    map[string]cpaapi.HostAuthGetResponse
+	listCalls  int
 	listError  error
 	errors     map[string]error
 	saveErrors map[string]error
@@ -29,6 +30,7 @@ type fakeAuthHost struct {
 func (f *fakeAuthHost) ListAuth(context.Context) ([]cpaapi.HostAuthFileEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listCalls++
 	if f.listError != nil {
 		return nil, f.listError
 	}

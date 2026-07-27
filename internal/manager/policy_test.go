@@ -211,19 +211,64 @@ func TestPolicyEngineProbesQuotaMetadataBeforeMatchingConditionalRules(t *testin
 	}
 }
 
-func TestPolicyEngineDoesNotProbeQuotaMetadataWhenPolicySwitchIsOff(t *testing.T) {
+func TestPolicyEngineDefersAlwaysOnQuotaMetadataUntilArmed(t *testing.T) {
 	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
 		AuthIndex: "codex-account", Name: "codex-account.json", Provider: "codex", Type: "codex",
 		Source: "file", Path: "/auths/codex-account.json",
 	}}}
 	engine := NewPolicyEngine(host)
 	engine.SetQuotaMetadataProbe(func(context.Context, Account, string) (string, error) {
-		t.Fatal("quota metadata probe ran while disabled")
+		t.Fatal("quota metadata probe ran before a management credential was available")
 		return "", nil
 	})
 	summary, _, _ := engine.scan(t.Context(), normalizeDefaultPolicy(DefaultPolicy{}), time.Now().UTC())
-	if summary.QuotaMetadataProbed != 0 || summary.QuotaMetadataUpdated != 0 || summary.QuotaMetadataFailed != 0 {
+	if summary.QuotaMetadataProbed != 0 || summary.QuotaMetadataUpdated != 0 || summary.QuotaMetadataFailed != 0 || summary.Skipped != 1 {
 		t.Fatalf("scan summary = %#v", summary)
+	}
+}
+
+func TestPolicyEngineSameStoreUnchangedConfigureDoesNotWakeScan(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{})
+	engine.mu.Lock()
+	engine.started = true
+	engine.store = policyStorePath(dataDir)
+	engine.config = normalizeConfig(Config{DataDir: dataDir})
+	engine.policy = normalizeDefaultPolicy(DefaultPolicy{})
+	engine.mu.Unlock()
+
+	configured := normalizeDefaultPolicy(DefaultPolicy{})
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &configured})
+	select {
+	case <-engine.wake:
+		t.Fatal("an unchanged same-store configuration woke a default-policy scan")
+	default:
+	}
+}
+
+func TestPolicyEngineUnchangedPolicySavePreservesFingerprintsAndDoesNotWakeScan(t *testing.T) {
+	dataDir := t.TempDir()
+	priority := 4
+	policy := normalizeDefaultPolicy(DefaultPolicy{Enabled: true, Priority: &priority})
+	engine := NewPolicyEngine(&fakeAuthHost{})
+	engine.mu.Lock()
+	engine.started = true
+	engine.store = policyStorePath(dataDir)
+	engine.policy = policy
+	engine.fingerprints["stable"] = authFingerprint{Name: "stable.json", Path: "/auths/stable.json"}
+	engine.mu.Unlock()
+
+	if _, errSet := engine.SetPolicy(policy); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	select {
+	case <-engine.wake:
+		t.Fatal("saving an unchanged policy woke a full scan")
+	default:
+	}
+	_, _, storedFingerprints, errLoad := loadPolicyRuntimeState(policyStorePath(dataDir))
+	if errLoad != nil || len(storedFingerprints) != 1 || storedFingerprints["stable"].Name != "stable.json" {
+		t.Fatalf("stored fingerprints = %#v, error = %v", storedFingerprints, errLoad)
 	}
 }
 
@@ -573,6 +618,64 @@ func TestPolicyEngineReloadsPersistedPolicyAndPerformsFullScan(t *testing.T) {
 	}
 	if document[policyFieldPriority] != float64(3) {
 		t.Fatalf("priority = %#v, want 3", document[policyFieldPriority])
+	}
+}
+
+func TestPolicyEngineRestoresProcessedAccountsAcrossRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	entry := cpaapi.HostAuthFileEntry{
+		AuthIndex: "stable", Name: "stable.json", Provider: "claude", Type: "claude",
+		Source: "file", Path: "/auths/stable.json", Size: 12, ModTime: time.Now().UTC(),
+	}
+	firstHost := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{entry},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"stable": {AuthIndex: "stable", Name: "stable.json", Path: "/auths/stable.json", JSON: json.RawMessage(`{"type":"claude"}`)},
+		},
+	}
+	firstEngine := NewPolicyEngine(firstHost)
+	firstEngine.Configure(Config{DataDir: dataDir})
+	priority := 6
+	if _, errSet := firstEngine.SetPolicy(DefaultPolicy{Enabled: true, Priority: &priority}); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	firstSnapshot := waitForPolicy(t, firstEngine, func(snapshot PolicySnapshot) bool {
+		firstHost.mu.Lock()
+		defer firstHost.mu.Unlock()
+		return !snapshot.Running && len(firstHost.saves) == 1
+	})
+	firstEngine.Shutdown()
+	_, _, storedFingerprints, errLoad := loadPolicyRuntimeState(policyStorePath(dataDir))
+	if errLoad != nil || len(storedFingerprints) != 1 {
+		t.Fatalf("persisted policy fingerprints = %#v, error = %v", storedFingerprints, errLoad)
+	}
+	firstHost.mu.Lock()
+	updatedJSON := append(json.RawMessage(nil), firstHost.details["stable"].JSON...)
+	firstHost.mu.Unlock()
+
+	entry.Size = 999
+	entry.ModTime = entry.ModTime.Add(time.Hour)
+	secondHost := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{entry},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"stable": {AuthIndex: "stable", Name: "stable.json", Path: "/auths/stable.json", JSON: updatedJSON},
+		},
+	}
+	secondEngine := NewPolicyEngine(secondHost)
+	secondEngine.Configure(Config{DataDir: dataDir})
+	defer secondEngine.Shutdown()
+	waitForPolicy(t, secondEngine, func(snapshot PolicySnapshot) bool {
+		secondHost.mu.Lock()
+		defer secondHost.mu.Unlock()
+		return secondHost.listCalls > 0 && snapshot.LastScan.FinishedAt.After(firstSnapshot.LastScan.FinishedAt)
+	})
+	secondHost.mu.Lock()
+	defer secondHost.mu.Unlock()
+	if len(secondHost.saves) != 0 {
+		t.Fatalf("a processed account was saved again after restart: %d", len(secondHost.saves))
+	}
+	if secondEngine.Snapshot().LastScan.Skipped != 1 {
+		t.Fatalf("restart scan = %#v, want one skipped account", secondEngine.Snapshot().LastScan)
 	}
 }
 

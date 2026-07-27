@@ -21,6 +21,7 @@ const (
 	minPolicyScanIntervalSeconds     = 5
 	maxPolicyScanIntervalSeconds     = 300
 	policyMutationRetryInterval      = time.Second
+	policyFailureRetryInterval       = 5 * time.Minute
 	policyApplyModeMissing           = "missing"
 
 	policyFieldPriority   = "priority"
@@ -82,6 +83,11 @@ type authFingerprint struct {
 	PlanType   string
 }
 
+type policyFailureBackoff struct {
+	Fingerprint authFingerprint
+	RetryAt     time.Time
+}
+
 type policyQuotaMetadataProbe func(context.Context, Account, string) (string, error)
 
 type policyQuotaMetadataProbeSummary struct {
@@ -109,6 +115,7 @@ type PolicyEngine struct {
 	running            bool
 	scanStarted        time.Time
 	fingerprints       map[string]authFingerprint
+	failures           map[string]policyFailureBackoff
 	wake               chan struct{}
 	cancel             context.CancelFunc
 	started            bool
@@ -143,12 +150,16 @@ func (e *PolicyEngine) Arm(managementKey string) {
 		return
 	}
 	e.mu.Lock()
+	changed := false
 	if !e.closed {
+		changed = e.managementKey != managementKey
 		e.managementKey = managementKey
 	}
 	e.mu.Unlock()
 	managementKey = ""
-	e.requestScan()
+	if changed {
+		e.requestScan()
+	}
 }
 
 func (e *PolicyEngine) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
@@ -176,6 +187,7 @@ func NewPolicyEngineWithCoordinator(host AuthHost, mutations *MutationCoordinato
 		store:        policyStorePath(config.DataDir),
 		policy:       normalizeDefaultPolicy(DefaultPolicy{}),
 		fingerprints: make(map[string]authFingerprint),
+		failures:     make(map[string]policyFailureBackoff),
 		wake:         make(chan struct{}, 1),
 		now:          time.Now,
 	}
@@ -211,6 +223,7 @@ func (e *PolicyEngine) Configure(config Config) {
 				e.policy = normalizeDefaultPolicy(DefaultPolicy{})
 				e.lastScan.Error = configuredPolicyError
 				e.fingerprints = make(map[string]authFingerprint)
+				e.failures = make(map[string]policyFailureBackoff)
 			} else {
 				if e.lastScan.Error == configuredPolicyError {
 					e.lastScan.Error = ""
@@ -218,6 +231,7 @@ func (e *PolicyEngine) Configure(config Config) {
 				if !defaultPolicyEqual(e.policy, configuredPolicy) {
 					e.policy = configuredPolicy
 					e.fingerprints = make(map[string]authFingerprint)
+					e.failures = make(map[string]policyFailureBackoff)
 				}
 			}
 		}
@@ -254,6 +268,7 @@ func (e *PolicyEngine) Configure(config Config) {
 	e.policy = policy
 	e.lastScan = lastScan
 	e.fingerprints = make(map[string]authFingerprint)
+	e.failures = make(map[string]policyFailureBackoff)
 	start := !e.started && !e.closed
 	if start {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -318,6 +333,7 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	e.mu.Lock()
 	e.policy = normalized
 	e.fingerprints = make(map[string]authFingerprint)
+	e.failures = make(map[string]policyFailureBackoff)
 	if errSave != nil {
 		e.lastScan.Error = policyLocalStoreError
 	} else if e.lastScan.Error == policyLocalStoreError {
@@ -331,6 +347,14 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 }
 
 func (e *PolicyEngine) RequestScan() PolicySnapshot {
+	if e == nil {
+		return PolicySnapshot{Policy: normalizeDefaultPolicy(DefaultPolicy{})}
+	}
+	e.operationMu.Lock()
+	e.mu.Lock()
+	e.failures = make(map[string]policyFailureBackoff)
+	e.mu.Unlock()
+	e.operationMu.Unlock()
 	e.requestScan()
 	return e.Snapshot()
 }
@@ -430,6 +454,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 		if !e.mutations.TryAcquire(policyMutationOwner) {
 			return true
 		}
+		e.mutations.Release(policyMutationOwner)
 	}
 
 	startedAt := e.now().UTC()
@@ -438,21 +463,19 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	e.scanStarted = startedAt
 	e.mu.Unlock()
 
-	summary, fingerprints, observedAccounts := e.scan(ctx, policy, startedAt)
+	summary, fingerprints, failures, observedAccounts := e.scanWithState(ctx, policy, startedAt)
 	e.mu.Lock()
 	e.running = false
 	e.scanStarted = time.Time{}
 	if ctx.Err() == nil {
 		e.lastScan = summary
 		e.fingerprints = fingerprints
+		e.failures = failures
 	}
 	storePath := e.store
 	currentPolicy := cloneDefaultPolicy(e.policy)
 	lastScan := e.lastScan
 	e.mu.Unlock()
-	if applyDefaults {
-		e.mutations.Release(policyMutationOwner)
-	}
 	if ctx.Err() != nil {
 		return false
 	}
@@ -471,20 +494,26 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 }
 
 func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt time.Time) (PolicyScanSummary, map[string]authFingerprint, []Account) {
+	summary, fingerprints, _, observedAccounts := e.scanWithState(ctx, policy, startedAt)
+	return summary, fingerprints, observedAccounts
+}
+
+func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, startedAt time.Time) (PolicyScanSummary, map[string]authFingerprint, map[string]policyFailureBackoff, []Account) {
 	summary := PolicyScanSummary{StartedAt: startedAt}
 	nextFingerprints := make(map[string]authFingerprint)
+	nextFailures := make(map[string]policyFailureBackoff)
 	if e.host == nil {
 		summary.Failed = 1
 		summary.Error = "auth file scan failed"
 		summary.FinishedAt = e.now().UTC()
-		return summary, nextFingerprints, nil
+		return summary, nextFingerprints, nextFailures, nil
 	}
 	entries, errList := e.host.ListAuth(ctx)
 	if errList != nil {
 		summary.Failed = 1
 		summary.Error = "auth file scan failed"
 		summary.FinishedAt = e.now().UTC()
-		return summary, nextFingerprints, nil
+		return summary, nextFingerprints, nextFailures, nil
 	}
 	summary.Scanned = len(entries)
 
@@ -522,13 +551,17 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 	if !policy.ManagesFields() {
 		summary.Skipped = len(entries)
 		summary.FinishedAt = e.now().UTC()
-		return summary, nextFingerprints, observedAccounts
+		return summary, nextFingerprints, nextFailures, observedAccounts
 	}
 
 	e.mu.RLock()
 	previousFingerprints := make(map[string]authFingerprint, len(e.fingerprints))
 	for authIndex, fingerprint := range e.fingerprints {
 		previousFingerprints[authIndex] = fingerprint
+	}
+	previousFailures := make(map[string]policyFailureBackoff, len(e.failures))
+	for authIndex, failure := range e.failures {
+		previousFailures[authIndex] = failure
 	}
 	e.mu.RUnlock()
 
@@ -548,10 +581,23 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 			summary.Skipped++
 			continue
 		}
+		if failure, exists := previousFailures[authIndex]; exists && failure.Fingerprint == fingerprint && startedAt.Before(failure.RetryAt) {
+			nextFailures[authIndex] = failure
+			summary.Skipped++
+			continue
+		}
+		if !e.mutations.TryAcquire(policyMutationOwner) {
+			summary.Skipped++
+			continue
+		}
 
-		changed, errApply := e.reconcileEntry(ctx, entry, policy, planTypes[authIndex])
+		changed, errApply := func() (bool, error) {
+			defer e.mutations.Release(policyMutationOwner)
+			return e.reconcileEntry(ctx, entry, policy, planTypes[authIndex])
+		}()
 		if errApply != nil {
 			summary.Failed++
+			nextFailures[authIndex] = policyFailureBackoff{Fingerprint: fingerprint, RetryAt: startedAt.Add(policyFailureRetryInterval)}
 			continue
 		}
 		nextFingerprints[authIndex] = fingerprint
@@ -562,7 +608,7 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 		}
 	}
 	summary.FinishedAt = e.now().UTC()
-	return summary, nextFingerprints, observedAccounts
+	return summary, nextFingerprints, nextFailures, observedAccounts
 }
 
 func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Account) policyQuotaMetadataProbeSummary {

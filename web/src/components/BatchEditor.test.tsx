@@ -20,6 +20,44 @@ describe("BatchEditor", () => {
     expect(submit).toHaveBeenCalledWith({ note: "batch-note" });
   });
 
+	it("loads current single-account values while keeping the patch explicitly opted in", async () => {
+		const user = userEvent.setup();
+		const submit = vi.fn();
+		let resolveConfig: ((value: {
+			account_id: string; disabled: boolean; priority: number; note: string; prefix: string; proxy: string;
+			proxy_configured: boolean; websockets: boolean; header_names: string[];
+			model_policy: { mode: "allow_only"; models: string[]; excluded_count: number };
+		}) => void) | undefined;
+		const loadCurrentConfig = vi.fn(() => new Promise<{
+			account_id: string; disabled: boolean; priority: number; note: string; prefix: string; proxy: string;
+			proxy_configured: boolean; websockets: boolean; header_names: string[];
+			model_policy: { mode: "allow_only"; models: string[]; excluded_count: number };
+		}>((resolve) => { resolveConfig = resolve; }));
+		render(<BatchEditor scopeLabel="operator@example.com" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
+
+		expect(screen.getByRole("status")).toHaveTextContent("正在加载当前账号配置");
+		resolveConfig?.({
+			account_id: "auth-1", disabled: true, priority: 8, note: "primary pool", prefix: "team-a",
+			proxy: "http://proxy.example", proxy_configured: true, websockets: false,
+			header_names: ["Authorization", "X-Team"],
+			model_policy: { mode: "allow_only", models: ["gpt-5.5"], excluded_count: 2 },
+		});
+
+		expect(await screen.findByText("当前账号配置")).toBeInTheDocument();
+		expect(screen.getByText("http://proxy.example")).toBeInTheDocument();
+		expect(screen.getByText("Authorization, X-Team")).toBeInTheDocument();
+		expect(screen.getByLabelText("Priority 值")).toHaveValue("8");
+		expect(screen.getByLabelText("Note 值")).toHaveValue("primary pool");
+		expect(screen.getByRole("button", { name: "生成预览" })).toBeDisabled();
+
+		await user.click(screen.getByLabelText("备注"));
+		await user.clear(screen.getByLabelText("Note 值"));
+		await user.type(screen.getByLabelText("Note 值"), "updated note");
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+		expect(submit).toHaveBeenCalledWith({ note: "updated note" });
+		expect(loadCurrentConfig).toHaveBeenCalledTimes(1);
+	});
+
   it("keeps header values in password inputs and validates duplicate names", async () => {
     const user = userEvent.setup();
     render(<BatchEditor scopeLabel="当前筛选 3 个账号" loadModels={loadModels} onClose={() => undefined} onSubmit={() => undefined} />);

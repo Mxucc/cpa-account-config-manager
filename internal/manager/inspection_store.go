@@ -486,7 +486,9 @@ func normalizeInspectionSignalSource(value string) string {
 
 func safeInspectionError(value string) string {
 	switch strings.TrimSpace(value) {
-	case "", "account inspection failed", "inspection state could not be persisted", "another account mutation is running":
+	case "another account mutation is running":
+		return ""
+	case "", "account inspection failed", "inspection state could not be persisted":
 		return strings.TrimSpace(value)
 	default:
 		return "account inspection failed"

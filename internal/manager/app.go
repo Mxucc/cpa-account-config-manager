@@ -333,6 +333,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/config", Description: "Read one editable account's current allow-listed configuration."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/refresh", Description: "Refresh one Codex account's CPA-native plan and active reset metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/reset", Description: "Consume one explicitly confirmed Codex active reset credit and refresh quota metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/models", Description: "Load the common effective model catalog for an editable account scope."},
@@ -426,6 +427,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		}
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/accounts":
 		return a.handleListAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/config":
+		return a.handleAccountConfig(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/refresh":
 		return a.handleAccountQuotaMetadata(ctx, req, false)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/reset":

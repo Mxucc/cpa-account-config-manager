@@ -44,6 +44,19 @@ export interface AccountModelPolicySummary {
 	excluded_count: number;
 }
 
+export interface AccountEditableConfig {
+	account_id: string;
+	disabled: boolean;
+	priority: number | null;
+	note: string;
+	prefix: string;
+	proxy: string;
+	proxy_configured: boolean;
+	websockets: boolean | null;
+	header_names: string[];
+	model_policy: AccountModelPolicySummary | null;
+}
+
 export interface ModelPolicyPatch {
 	mode: ModelPolicyMode;
 	models?: string[];

@@ -279,6 +279,7 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
     websockets: index % 3 === 0,
     header_names: index % 4 === 0 ? ["Authorization", "X-Team"] : [],
     header_count: index % 4 === 0 ? 2 : 0,
+		model_policy: index % 5 === 0 ? { mode: "allow_only", models: ["gpt-5.5", "gpt-5.4-mini"], excluded_count: 2 } : undefined,
     editable: !readOnly,
     read_only_reason: readOnly ? "runtime-only account has no physical auth file" : "",
     success: 80 + index * 3,
@@ -1103,6 +1104,24 @@ const server = http.createServer(async (request, response) => {
     };
     return json(response, 200, { settings: experimentalSettings });
   }
+	if (request.method === "POST" && url.pathname.endsWith("/accounts/config")) {
+		const body = await readJSON(request);
+		const account = accounts.find((candidate) => candidate.id === body.account_id);
+		if (!account) return json(response, 404, { error: "account was not found" });
+		if (!account.editable) return json(response, 409, { error: "account is read-only" });
+		return json(response, 200, {
+			account_id: account.id,
+			disabled: account.disabled,
+			priority: account.priority ?? null,
+			note: account.note || "",
+			prefix: account.prefix || "",
+			proxy: account.proxy || "",
+			proxy_configured: account.proxy_configured,
+			websockets: account.websockets ?? null,
+			header_names: account.header_names || [],
+			model_policy: account.model_policy || null,
+		});
+	}
   if (request.method === "POST" && url.pathname.endsWith("/accounts/models")) {
     const body = await readJSON(request);
     const targets = resolveScope(body.scope || {});

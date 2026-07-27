@@ -143,6 +143,7 @@ interface EditorContext {
   title: UIMessageKey;
   scopeLabel: string;
 	scope: TargetScope;
+	accountID?: string;
 }
 
 const agentIdentityLoginStatePattern = /^[A-Za-z0-9._-]{1,256}$/;
@@ -616,6 +617,7 @@ function AccountManagerApp() {
       title: "ui.edit_account",
       scopeLabel: account.label || account.email || account.name || account.id,
       scope: { mode: "selected", ids: [account.id] },
+		accountID: account.id,
     });
   };
 
@@ -1170,7 +1172,7 @@ function AccountManagerApp() {
 
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
-      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} loadModels={() => api.loadAccountModels(editorContext.scope)} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
+      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} loadModels={() => api.loadAccountModels(editorContext.scope)} loadCurrentConfig={editorContext.accountID ? () => api.loadAccountConfig(editorContext.accountID || "") : undefined} onLoadError={(error) => { if (error instanceof api.APIError && error.status === 401) { setEditorContext(null); handleAPIError(error); } }} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
 			{quotaResetTarget ? (
 				<Modal

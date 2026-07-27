@@ -503,6 +503,32 @@ func TestPolicyEngineSharesMutationCoordinatorWithExplicitJobs(t *testing.T) {
 	}
 }
 
+func TestPolicyEngineArmDoesNotWakeForEveryAuthenticatedPageRequest(t *testing.T) {
+	engine := NewPolicyEngine(&fakeAuthHost{})
+	engine.mu.Lock()
+	engine.started = true
+	engine.mu.Unlock()
+
+	engine.Arm("management-secret")
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("first management credential did not wake the policy engine")
+	}
+	engine.Arm("management-secret")
+	select {
+	case <-engine.wake:
+		t.Fatal("an unchanged management credential woke another policy scan")
+	default:
+	}
+	engine.Arm("rotated-management-secret")
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("a rotated management credential did not wake the policy engine")
+	}
+}
+
 func TestPolicyEngineReloadsPersistedPolicyAndPerformsFullScan(t *testing.T) {
 	dataDir := t.TempDir()
 	priority := 3
@@ -560,16 +586,26 @@ func TestPolicyEngineSanitizesSaveFailuresAndRetries(t *testing.T) {
 		},
 		saveErrors: map[string]error{"a.json": errors.New("callback failed: token=callback-secret")},
 	}
-	engine := NewPolicyEngine(host)
-	engine.Configure(Config{DataDir: t.TempDir()})
-	defer engine.Shutdown()
+	mutations := NewMutationCoordinator()
+	engine := NewPolicyEngineWithCoordinator(host, mutations)
 	websockets := true
-	if _, errSet := engine.SetPolicy(DefaultPolicy{Enabled: true, Websockets: &websockets}); errSet != nil {
-		t.Fatalf("SetPolicy() error = %v", errSet)
+	policy := normalizeDefaultPolicy(DefaultPolicy{Enabled: true, Websockets: &websockets})
+	firstStarted := time.Now().UTC()
+	firstSummary, firstFingerprints, firstFailures, _ := engine.scanWithState(t.Context(), policy, firstStarted)
+	engine.mu.Lock()
+	engine.policy = policy
+	engine.lastScan = firstSummary
+	engine.fingerprints = firstFingerprints
+	engine.failures = firstFailures
+	engine.mu.Unlock()
+	first := engine.Snapshot()
+	if first.LastScan.Failed != 1 || len(firstFailures) != 1 {
+		t.Fatalf("first failed scan = %#v failures=%#v", first.LastScan, firstFailures)
 	}
-	first := waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
-		return snapshot.LastScan.Failed == 1
-	})
+	if !mutations.TryAcquire("post-failure-check") {
+		t.Fatal("policy save failure retained the account mutation slot")
+	}
+	mutations.Release("post-failure-check")
 	encoded, errMarshal := json.Marshal(first)
 	if errMarshal != nil {
 		t.Fatalf("Marshal() error = %v", errMarshal)
@@ -579,11 +615,18 @@ func TestPolicyEngineSanitizesSaveFailuresAndRetries(t *testing.T) {
 			t.Fatalf("policy status leaked %q: %s", secret, encoded)
 		}
 	}
-	firstFinished := first.LastScan.FinishedAt
+	backedOff, _, backedOffFailures, _ := engine.scanWithState(t.Context(), policy, firstStarted.Add(time.Second))
+	host.mu.Lock()
+	backedOffCalls := host.saveCalls["a.json"]
+	host.mu.Unlock()
+	if backedOff.Failed != 0 || backedOff.Skipped != 1 || len(backedOffFailures) != 1 || backedOffCalls != 1 {
+		t.Fatalf("automatic retry ignored failure backoff: summary=%#v failures=%#v calls=%d", backedOff, backedOffFailures, backedOffCalls)
+	}
 	engine.RequestScan()
-	waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
-		return snapshot.LastScan.FinishedAt.After(firstFinished) && snapshot.LastScan.Failed == 1
-	})
+	retried, _, _, _ := engine.scanWithState(t.Context(), policy, firstStarted.Add(2*time.Second))
+	if retried.Failed != 1 {
+		t.Fatalf("manual scan did not clear failure backoff: %#v", retried)
+	}
 	host.mu.Lock()
 	defer host.mu.Unlock()
 	if host.saveCalls["a.json"] < 2 {

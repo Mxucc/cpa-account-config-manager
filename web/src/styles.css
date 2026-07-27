@@ -399,6 +399,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .delete-preview-loading { min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 10px; }
 
 .batch-editor { display: grid; gap: 8px; }
+.account-config-load-state { min-height: 220px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.account-config-load-state.is-error { flex-direction: column; color: var(--danger); }
+.current-account-config { min-width: 0; margin-bottom: 14px; padding: 13px 0; border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); }
+.current-account-config > header { min-width: 0; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 9px; padding: 0 2px 11px; }
+.current-account-config > header > span { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--success) 40%, var(--line)); border-radius: 6px; background: var(--success-soft); color: var(--success); }
+.current-account-config h3, .current-account-config p { margin: 0; }
+.current-account-config h3 { color: var(--ink); font-size: 12px; }
+.current-account-config p { margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.current-account-config dl { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--line); }
+.current-account-config dl > div { min-width: 0; min-height: 48px; display: grid; align-content: center; gap: 3px; padding: 7px 9px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.current-account-config dl > div:nth-child(3n) { border-right: none; }
+.current-account-config dl > div.is-wide { grid-column: 1 / -1; border-right: none; }
+.current-account-config dt { color: var(--faint); font-size: 8px; font-weight: 700; }
+.current-account-config dd { min-width: 0; margin: 0; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; }
+.current-account-config dd.is-mono { font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: 9px; }
+.account-config-security-notes { display: grid; gap: 4px; padding: 10px 2px 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .edit-row { min-height: 52px; display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); opacity: 0.72; }
 .edit-row.is-enabled { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); opacity: 1; }
 .edit-optin { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
@@ -1355,6 +1371,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .modal-body { padding: 16px; }
   .modal-footer { min-height: 62px; padding: 10px 16px; }
   .edit-row { grid-template-columns: 1fr; gap: 7px; }
+  .current-account-config dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .current-account-config dl > div:nth-child(3n) { border-right: 1px solid var(--line); }
+  .current-account-config dl > div:nth-child(2n) { border-right: none; }
+  .current-account-config dl > div.is-wide { grid-column: 1 / -1; border-right: none; }
   .edit-row-headers .edit-optin { padding-top: 0; }
 	.edit-row-models .edit-optin { padding-top: 0; }
 	.model-list-tools { grid-template-columns: minmax(0, 1fr) auto auto; }

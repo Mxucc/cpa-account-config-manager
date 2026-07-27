@@ -13,6 +13,7 @@ import {
   getCPAServerVersionStatus,
   installPluginUpdate,
   listAccounts,
+	loadAccountConfig,
   listInspectionActions,
   listInspectionResults,
   listOperations,
@@ -59,6 +60,25 @@ describe("management API client", () => {
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
+
+	it("loads one safe editable account configuration from the fixed authenticated route", async () => {
+		setSession("https://cpa.example", "management-secret");
+		const response = {
+			account_id: "auth-1", disabled: false, priority: 8, note: "primary pool", prefix: "team-a",
+			proxy: "http://proxy.example", proxy_configured: true, websockets: false,
+			header_names: null,
+			model_policy: { mode: "allow_only", models: ["gpt-5.5"], excluded_count: 2 },
+		};
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(response));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(loadAccountConfig("auth-1")).resolves.toMatchObject({ account_id: "auth-1", header_names: [] });
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(url).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/accounts/config");
+		expect(init.method).toBe("POST");
+		expect(JSON.parse(String(init.body))).toEqual({ account_id: "auth-1" });
+		expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
+	});
 
   it("submits Session JSON only to the authenticated Agent Identity login route", async () => {
     setSession("https://cpa.example", "management-secret");

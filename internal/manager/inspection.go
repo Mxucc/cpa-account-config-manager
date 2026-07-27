@@ -1119,6 +1119,7 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 	defer e.wait.Done()
 	timer := time.NewTimer(e.scanInterval())
 	defer timer.Stop()
+	retryAutomaticActions := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -1130,16 +1131,24 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 			e.pendingProbe = false
 			e.pendingProbeSweep = false
 			e.mu.Unlock()
-			e.scanWithMode(ctx, false, probe, sweep)
+			retryAutomaticActions = e.scanWithMode(ctx, false, probe, sweep)
 		case <-timer.C:
-			e.mu.RLock()
-			owner := e.backgroundOwner
-			e.mu.RUnlock()
-			if backgroundWorkAllowed(owner) && e.scheduledEnabled() {
-				e.scanWithMode(ctx, true, false, false)
+			if retryAutomaticActions {
+				retryAutomaticActions = e.scanWithMode(ctx, false, false, false)
+			} else {
+				e.mu.RLock()
+				owner := e.backgroundOwner
+				e.mu.RUnlock()
+				if backgroundWorkAllowed(owner) && e.scheduledEnabled() {
+					retryAutomaticActions = e.scanWithMode(ctx, true, false, false)
+				}
 			}
 		}
-		resetInspectionTimer(timer, e.scanInterval())
+		nextInterval := e.scanInterval()
+		if retryAutomaticActions {
+			nextInterval = inspectionMutationRetry
+		}
+		resetInspectionTimer(timer, nextInterval)
 	}
 }
 
@@ -1170,20 +1179,20 @@ func (e *InspectionEngine) scan(ctx context.Context) {
 	e.scanWithMode(ctx, false, false, false)
 }
 
-func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualProbe, requestedSweep bool) {
+func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualProbe, requestedSweep bool) bool {
 	e.scanMu.Lock()
 	defer e.scanMu.Unlock()
 	e.mu.RLock()
 	owner := e.backgroundOwner
 	e.mu.RUnlock()
 	if !backgroundWorkAllowed(owner) {
-		return
+		return false
 	}
 	ownedCtx, cancelOwnership := contextWithBackgroundOwnership(ctx, owner)
 	defer cancelOwnership()
 	ctx = ownedCtx
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 	startedAt := e.currentTime()
 	batchCtx, batchCancel := context.WithCancel(ctx)
@@ -1241,17 +1250,17 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		probeSweepStartedAt = startedAt
 	}
 	if !runNative && !runProbe {
-		return
+		return false
 	}
 	if stopRequested {
-		return
+		return false
 	}
 
 	summary := InspectionRunSummary{StartedAt: startedAt}
 	accounts, errAccounts := e.accounts.baseAccounts(ctx)
 	if errAccounts != nil {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		summary.Failed = 1
 		summary.Error = "account inspection failed"
@@ -1263,7 +1272,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 				Source: probeSweepSource, StartedAt: probeSweepStartedAt, Targets: probeSweepTargets,
 			}, true)
 		}
-		return
+		return false
 	}
 	if len(accounts) > maxInspectionAccounts {
 		summary.Truncated = len(accounts) - maxInspectionAccounts
@@ -1385,7 +1394,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	next := make(map[string]inspectionRecord, len(accounts))
 	for _, account := range accounts {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		id := strings.TrimSpace(account.ID)
 		if id == "" {
@@ -1439,7 +1448,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		e.pending = false
 		e.mu.Unlock()
 		e.requestPersist()
-		return
+		return false
 	}
 	actionSummary, actions := e.applyAutomaticActions(ctx, policy, accountsByID, next, now, config.ManagementBaseURL, managementKey)
 	summary.AutoDisabled += actionSummary.AutoDisabled
@@ -1473,6 +1482,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		e.ExecutePendingDeletes(ctx, deletions, config.ManagementBaseURL, managementKey)
 	}
 	managementKey = ""
+	return actionSummary.Deferred
 }
 
 func (e *InspectionEngine) clearScanRunning() {

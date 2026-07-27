@@ -1,6 +1,6 @@
-import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
-import type { AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
+import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import type { AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
@@ -19,8 +19,10 @@ interface BatchEditorProps {
   title?: UIMessageKey;
   scopeLabel: string;
   onClose: () => void;
-  onSubmit: (patch: BatchPatch) => void;
+	onSubmit: (patch: BatchPatch) => void;
 	loadModels: () => Promise<AccountModelCatalogResponse>;
+	loadCurrentConfig?: () => Promise<AccountEditableConfig>;
+	onLoadError?: (error: unknown) => void;
 }
 
 const initialEnabled: Record<FieldName, boolean> = {
@@ -34,8 +36,11 @@ const initialEnabled: Record<FieldName, boolean> = {
 	model_policy: false,
 };
 
-export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels }: BatchEditorProps) {
+export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError }: BatchEditorProps) {
   const { locale, tx } = useI18n();
+	const currentConfigLoader = useRef(loadCurrentConfig);
+	const loadErrorHandler = useRef(onLoadError);
+	loadErrorHandler.current = onLoadError;
   const [enabled, setEnabled] = useState(initialEnabled);
   const [disabled, setDisabled] = useState(false);
   const [priority, setPriority] = useState("0");
@@ -52,9 +57,38 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 	const [modelMode, setModelMode] = useState<ModelPolicyMode>("all");
 	const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
 	const [modelSearch, setModelSearch] = useState("");
+	const [currentConfig, setCurrentConfig] = useState<AccountEditableConfig | null>(null);
+	const [configLoading, setConfigLoading] = useState(Boolean(loadCurrentConfig));
+	const [configError, setConfigError] = useState(false);
 
   const anyEnabled = useMemo(() => Object.values(enabled).some(Boolean), [enabled]);
   const toggle = (field: FieldName) => setEnabled((current) => ({ ...current, [field]: !current[field] }));
+	const loadConfiguration = useCallback(async () => {
+		const loader = currentConfigLoader.current;
+		if (!loader) return;
+		setConfigLoading(true);
+		setConfigError(false);
+		try {
+			const config = await loader();
+			setCurrentConfig(config);
+			setDisabled(config.disabled);
+			setPriority(config.priority === null ? "" : String(config.priority));
+			setNote(config.note);
+			setPrefix(config.prefix);
+			setWebsockets(config.websockets ?? false);
+			setModelMode(config.model_policy?.mode ?? "all");
+			setSelectedModels(new Set(config.model_policy?.models ?? []));
+		} catch (caught) {
+			setConfigError(true);
+			loadErrorHandler.current?.(caught);
+		} finally {
+			setConfigLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		void loadConfiguration();
+	}, [loadConfiguration]);
 	const visibleModels = useMemo(() => {
 		const query = modelSearch.trim().toLowerCase();
 		if (!query) return modelCatalog?.models ?? [];
@@ -96,6 +130,10 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const updateHeader = (id: number, update: Partial<HeaderRow>) => {
     setHeaders((rows) => rows.map((row) => row.id === id ? { ...row, ...update } : row));
   };
+	const togglePriority = () => {
+		if (!enabled.priority && priority.trim() === "") setPriority("0");
+		toggle("priority");
+	};
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -165,18 +203,23 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         <>
           <span className="modal-scope">{scopeLabel}</span>
           <button className="button" type="button" onClick={onClose}>{tx("ui.cancel")}</button>
-          <button className="button button-primary" type="submit" form="batch-editor" disabled={!anyEnabled}>{tx("ui.generate_preview")}</button>
+          <button className="button button-primary" type="submit" form="batch-editor" disabled={!anyEnabled || configLoading || configError}>{tx("ui.generate_preview")}</button>
         </>
       )}
     >
-      <form id="batch-editor" className="batch-editor" onSubmit={submit}>
+      {configLoading ? (
+		<div className="account-config-load-state" role="status"><LoaderCircle className="spin" size={18} />{tx("ui.loading_account_configuration")}</div>
+	  ) : configError ? (
+		<div className="account-config-load-state is-error" role="alert"><span>{tx("ui.account_configuration_load_failed")}</span><button className="button button-quiet" type="button" onClick={() => void loadConfiguration()}><RefreshCw size={14} />{tx("ui.retry_loading_configuration")}</button></div>
+	  ) : currentConfig ? <CurrentAccountConfiguration config={currentConfig} /> : null}
+      {!configLoading && !configError ? <form id="batch-editor" className="batch-editor" onSubmit={submit}>
         <EditRow checked={enabled.disabled} label={tx("ui.enabled_state")} onToggle={() => toggle("disabled")}>
           <select value={disabled ? "disabled" : "enabled"} onChange={(event) => setDisabled(event.target.value === "disabled")} disabled={!enabled.disabled} aria-label={tx("ui.enabled_state_value")}>
             <option value="enabled">{tx("ui.enable")}</option>
             <option value="disabled">{tx("ui.disable")}</option>
           </select>
         </EditRow>
-        <EditRow checked={enabled.priority} label={tx("ui.priority")} onToggle={() => toggle("priority")}>
+        <EditRow checked={enabled.priority} label={tx("ui.priority")} onToggle={togglePriority}>
           <input value={priority} onChange={(event) => setPriority(event.target.value)} inputMode="numeric" disabled={!enabled.priority} aria-label={tx("ui.priority_value")} />
         </EditRow>
         <EditRow checked={enabled.note} label={tx("ui.note")} onToggle={() => toggle("note")}>
@@ -269,9 +312,46 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			</div>
 		</div>
         {error ? <div className="form-error" role="alert">{error}</div> : null}
-      </form>
+      </form> : null}
     </Modal>
   );
+}
+
+function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig }) {
+	const { tx } = useI18n();
+	const policy = config.model_policy;
+	const policyLabel = !policy
+		? tx("ui.not_managed_by_plugin")
+		: tx(policy.mode === "all" ? "ui.all_models" : policy.mode === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist");
+	const modelNames = policy?.models ?? [];
+	return (
+		<section className="current-account-config" aria-label={tx("ui.current_account_configuration")}>
+			<header>
+				<span><ShieldCheck size={16} /></span>
+				<div><h3>{tx("ui.current_account_configuration")}</h3><p>{tx("ui.current_account_configuration_description")}</p></div>
+			</header>
+			<dl>
+				<CurrentConfigItem label={tx("ui.enabled_state")} value={tx(config.disabled ? "ui.disable" : "ui.enable")} />
+				<CurrentConfigItem label={tx("ui.priority")} value={config.priority === null ? tx("ui.not_set") : String(config.priority)} mono />
+				<CurrentConfigItem label={tx("ui.websockets")} value={config.websockets === null ? tx("ui.not_set") : tx(config.websockets ? "ui.on_2" : "ui.off_2")} />
+				<CurrentConfigItem label={tx("ui.prefix")} value={config.prefix || tx("ui.default")} mono />
+				<CurrentConfigItem label={tx("ui.note")} value={config.note || "-"} wide />
+				<CurrentConfigItem label={tx("ui.proxy")} value={config.proxy || tx(config.proxy_configured ? "ui.configured_address_hidden" : "ui.not_configured")} mono wide />
+				<CurrentConfigItem label={tx("ui.headers")} value={config.header_names.length > 0 ? config.header_names.join(", ") : "-"} mono wide />
+				<CurrentConfigItem label={tx("ui.model_policy_mode")} value={policyLabel} />
+				<CurrentConfigItem label={tx("ui.managed_model_exclusions")} value={policy ? String(policy.excluded_count) : "-"} />
+				<CurrentConfigItem label={tx("ui.managed_models")} value={modelNames.length > 0 ? modelNames.join(", ") : "-"} mono wide />
+			</dl>
+			<div className="account-config-security-notes">
+				<span>{tx("ui.proxy_credentials_hidden")}</span>
+				<span>{tx("ui.header_values_hidden")}</span>
+			</div>
+		</section>
+	);
+}
+
+function CurrentConfigItem({ label, value, mono = false, wide = false }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
+	return <div className={wide ? "is-wide" : ""}><dt>{label}</dt><dd className={mono ? "is-mono" : ""} title={value}>{value}</dd></div>;
 }
 
 function EditRow({ checked, label, onToggle, children }: { checked: boolean; label: string; onToggle: () => void; children: React.ReactNode }) {

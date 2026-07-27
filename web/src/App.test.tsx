@@ -542,6 +542,13 @@ describe("primary account batch flow", () => {
           targets: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", eligible: true }],
         });
       }
+		if (url.includes("/accounts/config")) {
+			return jsonResponse({
+				account_id: "auth-1", disabled: false, priority: 5, note: "existing note", prefix: "team-a",
+				proxy: "", proxy_configured: false, websockets: false, header_names: ["X-Team"],
+				model_policy: { mode: "allow_only", models: ["gpt-5.5"], excluded_count: 1 },
+			});
+		}
       if (url.includes("/accounts/delete/preview")) {
         return jsonResponse({
           id: "delete-preview-1",
@@ -559,7 +566,7 @@ describe("primary account batch flow", () => {
         });
       }
       return jsonResponse({
-        accounts: deleted ? [] : [{ ...account, header_names: ["X-Team"], header_count: 1 }],
+        accounts: deleted ? [] : [{ ...account, header_names: ["X-Team"], header_count: 1, model_policy: { mode: "allow_only", models: ["gpt-5.5"], excluded_count: 1 } }],
         total: deleted ? 0 : 1,
         page: 1,
         page_size: url.includes("page_size=1") ? 1 : 50,
@@ -578,12 +585,17 @@ describe("primary account batch flow", () => {
     expect(within(details).getAllByText("operator.json").length).toBeGreaterThan(0);
     expect(within(details).getByText("k12")).toBeInTheDocument();
     expect(within(details).getByText("X-Team")).toBeInTheDocument();
+		expect(within(details).getByText("插件配置")).toBeInTheDocument();
+		expect(within(details).getByText("gpt-5.5")).toBeInTheDocument();
     await user.click(within(details).getByLabelText("关闭"));
 
     expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "编辑 operator@example.com" }));
     const editor = await screen.findByRole("dialog", { name: "编辑账号" });
+		expect(await within(editor).findByText("当前账号配置")).toBeInTheDocument();
+		expect(within(editor).getByLabelText("Note 值")).toHaveValue("existing note");
     await user.click(within(editor).getByLabelText("备注"));
+		await user.clear(within(editor).getByLabelText("Note 值"));
     await user.type(within(editor).getByLabelText("Note 值"), "single edit");
     await user.click(within(editor).getByRole("button", { name: "生成预览" }));
     const rowPreview = await screen.findByRole("dialog", { name: "变更预览" });
@@ -592,6 +604,8 @@ describe("primary account batch flow", () => {
       scope: { mode: "selected", ids: ["auth-1"] },
       patch: { note: "single edit" },
     });
+		const configRequest = requests.find(({ url }) => url.includes("/accounts/config"));
+		expect(JSON.parse(String(configRequest?.init.body))).toEqual({ account_id: "auth-1" });
     expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
     await user.click(within(rowPreview).getByLabelText("关闭"));
 

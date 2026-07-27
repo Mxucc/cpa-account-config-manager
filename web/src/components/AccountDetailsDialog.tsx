@@ -17,6 +17,10 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
   const usage = account.usage;
   const identity = account.label || account.email || account.name || account.id;
   const automation = accountAutomationPresentation(account, locale);
+	const modelPolicy = account.model_policy;
+	const modelPolicyMode = modelPolicy
+		? tx(modelPolicy.mode === "all" ? "ui.all_models" : modelPolicy.mode === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist")
+		: tx("ui.not_managed_by_plugin");
 
   return (
     <Modal
@@ -76,7 +80,7 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
           <DetailItem label={tx("ui.route_prefix")} value={account.prefix || tx("ui.default")} mono />
           <DetailItem label={tx("ui.proxy")} value={account.proxy || tx(account.proxy_configured ? "ui.configured_address_hidden" : "ui.not_configured")} mono />
           <DetailItem label="WebSocket" value={tx(account.websockets === undefined ? "ui.not_set" : account.websockets ? "ui.on_2" : "ui.off_2")} />
-          <DetailItem label={tx("ui.headers")} value={`${account.header_count || 0} ${tx("ui.accounts_2")}`} />
+          <DetailItem label={tx("ui.headers")} value={account.header_count || 0} mono />
           <DetailItem label={tx("ui.note")} value={account.note} wide />
           {account.header_names?.length ? (
             <div className="detail-item detail-item-wide">
@@ -85,6 +89,16 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
             </div>
           ) : null}
         </DetailSection>
+
+		<DetailSection title={tx("ui.plugin_configuration")}>
+			<DetailItem label={tx("ui.plugin_configuration_state")} value={tx(modelPolicy ? "ui.managed_by_plugin" : "ui.not_managed_by_plugin")} />
+			<DetailItem label={tx("ui.model_policy_mode")} value={modelPolicyMode} />
+			<DetailItem label={tx("ui.managed_model_exclusions")} value={modelPolicy?.excluded_count ?? 0} mono />
+			<div className="detail-item detail-item-wide">
+				<span>{tx("ui.managed_models")}</span>
+				{modelPolicy?.models?.length ? <div className="detail-chips">{modelPolicy.models.map((model) => <code key={model}>{model}</code>)}</div> : <strong>-</strong>}
+			</div>
+		</DetailSection>
 
         <DetailSection title={tx("ui.usage_and_activity")}>
           <DetailItem label={tx("ui.successful_requests")} value={formatNumber(account.success, locale)} mono />

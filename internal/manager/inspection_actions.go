@@ -13,9 +13,15 @@ import (
 
 const (
 	inspectionMutationOwner    = "account-inspection"
+	inspectionMutationRetry    = time.Second
 	inspectionDeleteRetry      = 5 * time.Minute
 	maxManualInspectionDeletes = 100
 )
+
+type inspectionAutomaticActionSummary struct {
+	InspectionRunSummary
+	Deferred bool
+}
 
 var (
 	ErrInspectionDeleteConfirmation = errors.New("inspection deletion requires explicit confirmation")
@@ -44,8 +50,8 @@ func (e *InspectionEngine) applyAutomaticActions(
 	now time.Time,
 	managementBaseURL string,
 	managementKey string,
-) (InspectionRunSummary, []InspectionAction) {
-	summary := InspectionRunSummary{}
+) (inspectionAutomaticActionSummary, []InspectionAction) {
+	summary := inspectionAutomaticActionSummary{}
 	e.mu.RLock()
 	owner := e.backgroundOwner
 	e.mu.RUnlock()
@@ -57,7 +63,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 	}
 	e.applyAutomaticDisableProbeGates(ctx, policy, accounts, records, managementBaseURL, managementKey)
 	if e.mutations == nil || !e.mutations.TryAcquire(inspectionMutationOwner) {
-		summary.Error = "another account mutation is running"
+		summary.Deferred = true
 		return summary, nil
 	}
 	defer e.mutations.Release(inspectionMutationOwner)

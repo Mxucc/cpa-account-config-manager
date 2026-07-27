@@ -4,6 +4,7 @@ import type {
   AccountDeleteResult,
   AccountDeduplicationPreview,
   AccountDeduplicationOptions,
+	AccountEditableConfig,
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
@@ -254,6 +255,14 @@ export async function listAccounts(
   query.set("page_size", String(pageSize));
   const response = await request<AccountListResponse>("/accounts", {}, query);
   return { ...response, accounts: arrayOrEmpty(response.accounts) };
+}
+
+export async function loadAccountConfig(accountID: string): Promise<AccountEditableConfig> {
+	const response = await request<AccountEditableConfig>("/accounts/config", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID }),
+	});
+	return { ...response, header_names: arrayOrEmpty(response.header_names) };
 }
 
 export async function refreshAccountQuotaMetadata(accountID: string): Promise<QuotaMetadataResponse> {

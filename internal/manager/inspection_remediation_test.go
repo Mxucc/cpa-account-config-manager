@@ -76,6 +76,42 @@ func TestAutomaticInspectionUsesCPAStatusAPIWhenManagementCredentialIsArmed(t *t
 	}
 }
 
+func TestAutomaticInspectionDefersTransientMutationConflictWithoutStickyError(t *testing.T) {
+	host := inspectionEditableHost(false)
+	mutations := NewMutationCoordinator()
+	if !mutations.TryAcquire("batch-job") {
+		t.Fatal("failed to reserve mutation coordinator")
+	}
+	engine := NewInspectionEngine(NewAccountService(host), host, mutations)
+	records := map[string]inspectionRecord{
+		"inspection-account": {Result: InspectionResult{
+			ID: "inspection-account", Name: "inspection.json", Provider: "codex",
+			Health: InspectionHealthQuotaLimited, ReasonCode: "quota_exhausted",
+			Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDisable,
+			Editable: true, AutoDisableEligible: true, SignalSource: InspectionSignalNative,
+		}},
+	}
+	accounts := map[string]Account{
+		"inspection-account": {ID: "inspection-account", Name: "inspection.json", Provider: "codex", Editable: true, path: "/auths/inspection.json"},
+	}
+	policy := defaultInspectionPolicy()
+	policy.AutoDisable = true
+
+	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, time.Now().UTC(), "", "")
+	if !summary.Deferred || summary.Error != "" || summary.Failed != 0 || len(actions) != 0 {
+		t.Fatalf("busy automatic action summary=%#v actions=%#v", summary, actions)
+	}
+	if safeInspectionError("another account mutation is running") != "" {
+		t.Fatal("legacy transient mutation conflict remained a persisted inspection error")
+	}
+	mutations.Release("batch-job")
+
+	retried, retryActions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, time.Now().UTC(), "", "")
+	if retried.Deferred || retried.Error != "" || retried.AutoDisabled != 1 || len(retryActions) != 1 || retryActions[0].Status != InspectionActionSucceeded {
+		t.Fatalf("retried automatic action summary=%#v actions=%#v", retried, retryActions)
+	}
+}
+
 func TestAutomaticInspectionRepairsStaleCPARuntimeDisabledState(t *testing.T) {
 	host := inspectionEditableHost(false)
 	host.details["inspection-account"] = cpaapi.HostAuthGetResponse{

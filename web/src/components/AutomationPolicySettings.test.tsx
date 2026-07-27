@@ -10,6 +10,7 @@ const snapshot: PolicySnapshot = {
   policy: {
     enabled: true,
     new_account_model_probe_enabled: false,
+    codex_quota_metadata_probe_enabled: false,
     apply_mode: "missing",
     scan_interval_seconds: 15,
     priority: null,
@@ -17,7 +18,7 @@ const snapshot: PolicySnapshot = {
     conditional_rules: [],
   },
   running: false,
-  last_scan: { scanned: 12, eligible: 12, changed: 1, skipped: 11, failed: 0 },
+  last_scan: { scanned: 12, eligible: 12, changed: 1, skipped: 11, failed: 0, quota_metadata_probed: 10, quota_metadata_updated: 9, quota_metadata_failed: 1 },
 };
 
 describe("AutomationPolicySettings", () => {
@@ -77,5 +78,22 @@ describe("AutomationPolicySettings", () => {
         model_policy: { mode: "allow_only", models: ["gpt-5.5", "gpt-5.4-mini"] },
       },
     });
+  });
+
+  it("persists the Codex quota metadata probe independently and shows its last result", async () => {
+    const user = userEvent.setup();
+    const save = vi.spyOn(api, "saveDefaultPolicy").mockImplementation(async (policy) => ({ ...snapshot, policy }));
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+    vi.spyOn(api, "scanDefaultPolicy").mockResolvedValue(snapshot);
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+    const probeSwitch = await screen.findByRole("checkbox", { name: "启用 Codex 套餐与重置次数探测" });
+    const panel = screen.getByRole("tabpanel", { name: "自动策略" });
+    expect(within(panel).getByText("最近探测：更新 9/10 · 失败 1")).toBeInTheDocument();
+
+    await user.click(probeSwitch);
+    await user.click(within(panel).getByRole("button", { name: "保存策略" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ codex_quota_metadata_probe_enabled: true })));
   });
 });

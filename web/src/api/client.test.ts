@@ -420,6 +420,7 @@ describe("management API client", () => {
 			policy: {
 				enabled: true,
 				new_account_model_probe_enabled: true,
+				codex_quota_metadata_probe_enabled: true,
 				apply_mode: "missing",
 				scan_interval_seconds: 15,
 				priority: 0,
@@ -436,6 +437,7 @@ describe("management API client", () => {
 		await saveDefaultPolicy({
 			enabled: true,
 			new_account_model_probe_enabled: true,
+			codex_quota_metadata_probe_enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
 			priority: 0,
@@ -445,9 +447,10 @@ describe("management API client", () => {
 		const [configURL, configInit] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(configURL).toContain("/plugins/cpa-account-config-manager/config");
 		expect(configInit.method).toBe("PATCH");
-		expect(JSON.parse(String(configInit.body))).toEqual({ default_policy: {
-			enabled: true,
-			new_account_model_probe_enabled: true,
+			expect(JSON.parse(String(configInit.body))).toEqual({ default_policy: {
+				enabled: true,
+				new_account_model_probe_enabled: true,
+				codex_quota_metadata_probe_enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
 			priority: 0,
@@ -460,6 +463,7 @@ describe("management API client", () => {
 		expect(JSON.parse(String(policyInit.body))).toEqual({
 			enabled: true,
 			new_account_model_probe_enabled: true,
+			codex_quota_metadata_probe_enabled: true,
 			apply_mode: "missing",
 			scan_interval_seconds: 15,
 			priority: 0,

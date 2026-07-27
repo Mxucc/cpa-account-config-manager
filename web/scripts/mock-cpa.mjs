@@ -13,6 +13,7 @@ let inspectionRunUntil = 0;
 let defaultPolicy = {
   enabled: true,
   new_account_model_probe_enabled: true,
+  codex_quota_metadata_probe_enabled: true,
   apply_mode: "missing",
   scan_interval_seconds: 15,
   priority: null,
@@ -41,6 +42,9 @@ let lastPolicyScan = {
   changed: 0,
   skipped: 0,
   failed: 0,
+  quota_metadata_probed: 0,
+  quota_metadata_updated: 0,
+  quota_metadata_failed: 0,
 };
 let inspectionPolicy = {
   enabled: true,
@@ -1476,6 +1480,7 @@ const server = http.createServer(async (request, response) => {
       defaultPolicy = {
         enabled: Boolean(body.default_policy.enabled),
         new_account_model_probe_enabled: Boolean(body.default_policy.new_account_model_probe_enabled),
+        codex_quota_metadata_probe_enabled: Boolean(body.default_policy.codex_quota_metadata_probe_enabled),
         apply_mode: "missing",
         scan_interval_seconds: Math.min(300, Math.max(5, Number(body.default_policy.scan_interval_seconds) || 15)),
         priority: body.default_policy.priority === null ? null : Number(body.default_policy.priority),
@@ -1490,6 +1495,7 @@ const server = http.createServer(async (request, response) => {
     defaultPolicy = {
       enabled: Boolean(body.enabled),
       new_account_model_probe_enabled: Boolean(body.new_account_model_probe_enabled),
+      codex_quota_metadata_probe_enabled: Boolean(body.codex_quota_metadata_probe_enabled),
       apply_mode: "missing",
       scan_interval_seconds: Math.min(300, Math.max(5, Number(body.scan_interval_seconds) || 15)),
       priority: body.priority === null ? null : Number(body.priority),
@@ -1508,6 +1514,9 @@ const server = http.createServer(async (request, response) => {
       changed: 0,
       skipped: accounts.length,
       failed: 0,
+      quota_metadata_probed: defaultPolicy.codex_quota_metadata_probe_enabled ? editable.filter((account) => account.provider === "codex").length : 0,
+      quota_metadata_updated: defaultPolicy.codex_quota_metadata_probe_enabled ? editable.filter((account) => account.provider === "codex").length : 0,
+      quota_metadata_failed: 0,
     };
     return json(response, 202, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });
   }

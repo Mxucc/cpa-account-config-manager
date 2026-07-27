@@ -234,6 +234,19 @@ func (a *App) runNewAccountQuotaMetadata(ctx context.Context, account Account, m
 	return nil
 }
 
+func (a *App) runPolicyQuotaMetadataProbe(ctx context.Context, account Account, managementKey string) (string, error) {
+	if errProbe := a.runNewAccountQuotaMetadata(ctx, account, managementKey); errProbe != nil {
+		return "", errProbe
+	}
+	usage := a.usage.Snapshot(account.ID)
+	if usage != nil && usage.Codex != nil {
+		if planType := safeAccountPlanType(usage.Codex.PlanType); planType != "" {
+			return planType, nil
+		}
+	}
+	return safeAccountPlanType(account.PlanType), nil
+}
+
 type accountObserverGroup []interface{ ObserveAccounts([]Account) }
 
 func (group accountObserverGroup) ObserveAccounts(accounts []Account) {

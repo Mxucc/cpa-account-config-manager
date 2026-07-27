@@ -392,6 +392,7 @@ export interface JobSnapshot {
 export interface DefaultPolicy {
   enabled: boolean;
   new_account_model_probe_enabled: boolean;
+  codex_quota_metadata_probe_enabled: boolean;
   apply_mode: "missing";
   scan_interval_seconds: number;
   priority: number | null;
@@ -437,6 +438,9 @@ export interface PolicyScanSummary {
   changed: number;
   skipped: number;
   failed: number;
+  quota_metadata_probed?: number;
+  quota_metadata_updated?: number;
+  quota_metadata_failed?: number;
   error?: string;
 }
 

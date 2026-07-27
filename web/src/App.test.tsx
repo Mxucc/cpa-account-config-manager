@@ -929,7 +929,7 @@ describe("primary account batch flow", () => {
     let forceStarted = false;
     let forceStatusCalls = 0;
     const policySnapshot = {
-      policy: { enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: null, websockets: false },
+      policy: { enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: null, websockets: false },
       running: false,
       last_scan: { scanned: 1, eligible: 1, changed: 0, skipped: 1, failed: 0, finished_at: "2026-07-15T10:00:00Z" },
     };
@@ -1011,13 +1011,13 @@ describe("primary account batch flow", () => {
     expect(forceStatusCalls).toBeGreaterThanOrEqual(2);
 
     const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");
-    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] });
+    expect(JSON.parse(String(putRequest?.init.body))).toEqual({ enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] });
 		const configRequest = requests.find(({ url, init }) => {
 			if (!url.endsWith("/config") || init.method !== "PATCH") return false;
 			const body = JSON.parse(String(init.body)) as { default_policy?: { priority?: number | null } };
 			return body.default_policy?.priority === 0;
 		});
-    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, new_account_model_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] } });
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ default_policy: { enabled: true, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: false, apply_mode: "missing", scan_interval_seconds: 15, priority: 0, websockets: false, conditional_rules: [] } });
     expect(requests.indexOf(configRequest!)).toBeLessThan(requests.indexOf(putRequest!));
     expect(localStorage.length).toBe(0);
   });

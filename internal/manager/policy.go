@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ const (
 	policyFieldPriority   = "priority"
 	policyFieldWebsockets = "websockets"
 	policyMutationOwner   = "default-policy-scan"
+	policyQuotaWorkers    = 4
 	policyLocalStoreError = "default policy scan status could not be persisted locally"
 	configuredPolicyError = "configured default policy could not be loaded"
 )
@@ -32,24 +34,28 @@ const (
 var ErrPolicyStorageUnavailable = errors.New("default policy storage is unavailable; configure data_dir to a writable directory")
 
 type DefaultPolicy struct {
-	Enabled                     bool                    `json:"enabled" yaml:"enabled"`
-	NewAccountModelProbeEnabled bool                    `json:"new_account_model_probe_enabled" yaml:"new_account_model_probe_enabled"`
-	ApplyMode                   string                  `json:"apply_mode" yaml:"apply_mode"`
-	ScanIntervalSeconds         int                     `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
-	Priority                    *int                    `json:"priority" yaml:"priority"`
-	Websockets                  *bool                   `json:"websockets" yaml:"websockets"`
-	ConditionalRules            []ConditionalPolicyRule `json:"conditional_rules,omitempty" yaml:"conditional_rules,omitempty"`
+	Enabled                        bool                    `json:"enabled" yaml:"enabled"`
+	NewAccountModelProbeEnabled    bool                    `json:"new_account_model_probe_enabled" yaml:"new_account_model_probe_enabled"`
+	CodexQuotaMetadataProbeEnabled bool                    `json:"codex_quota_metadata_probe_enabled" yaml:"codex_quota_metadata_probe_enabled"`
+	ApplyMode                      string                  `json:"apply_mode" yaml:"apply_mode"`
+	ScanIntervalSeconds            int                     `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
+	Priority                       *int                    `json:"priority" yaml:"priority"`
+	Websockets                     *bool                   `json:"websockets" yaml:"websockets"`
+	ConditionalRules               []ConditionalPolicyRule `json:"conditional_rules,omitempty" yaml:"conditional_rules,omitempty"`
 }
 
 type PolicyScanSummary struct {
-	StartedAt  time.Time `json:"started_at,omitempty"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Scanned    int       `json:"scanned"`
-	Eligible   int       `json:"eligible"`
-	Changed    int       `json:"changed"`
-	Skipped    int       `json:"skipped"`
-	Failed     int       `json:"failed"`
-	Error      string    `json:"error,omitempty"`
+	StartedAt            time.Time `json:"started_at,omitempty"`
+	FinishedAt           time.Time `json:"finished_at,omitempty"`
+	Scanned              int       `json:"scanned"`
+	Eligible             int       `json:"eligible"`
+	Changed              int       `json:"changed"`
+	Skipped              int       `json:"skipped"`
+	Failed               int       `json:"failed"`
+	QuotaMetadataProbed  int       `json:"quota_metadata_probed"`
+	QuotaMetadataUpdated int       `json:"quota_metadata_updated"`
+	QuotaMetadataFailed  int       `json:"quota_metadata_failed"`
+	Error                string    `json:"error,omitempty"`
 }
 
 type PolicySnapshot struct {
@@ -73,6 +79,16 @@ type authFingerprint struct {
 	Size       int64
 	ModTimeNS  int64
 	ModTimeSet bool
+	PlanType   string
+}
+
+type policyQuotaMetadataProbe func(context.Context, Account, string) (string, error)
+
+type policyQuotaMetadataProbeSummary struct {
+	planTypes map[string]string
+	attempted int
+	updated   int
+	failed    int
 }
 
 type PolicyEngine struct {
@@ -83,6 +99,7 @@ type PolicyEngine struct {
 	mutations          *MutationCoordinator
 	observer           interface{ ObserveAccounts([]Account) }
 	modelPolicyApplier func(context.Context, Account, ModelPolicyPatch, string) (bool, error)
+	quotaMetadataProbe policyQuotaMetadataProbe
 	managementKey      string
 	backgroundOwner    BackgroundWorkOwner
 	config             Config
@@ -97,6 +114,15 @@ type PolicyEngine struct {
 	started            bool
 	closed             bool
 	now                func() time.Time
+}
+
+func (e *PolicyEngine) SetQuotaMetadataProbe(probe policyQuotaMetadataProbe) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.quotaMetadataProbe = probe
+	e.mu.Unlock()
 }
 
 func (e *PolicyEngine) SetModelPolicyApplier(applier func(context.Context, Account, ModelPolicyPatch, string) (bool, error)) {
@@ -397,7 +423,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	policy := cloneDefaultPolicy(e.policy)
 	e.mu.RUnlock()
 	applyDefaults := policy.ManagesFields()
-	if !applyDefaults && !policy.ManagesNewAccountProbe() {
+	if !applyDefaults && !policy.ManagesNewAccountProbe() && !policy.CodexQuotaMetadataProbeEnabled {
 		return false
 	}
 	if applyDefaults {
@@ -477,6 +503,22 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 	for _, entry := range entries {
 		observedAccounts = append(observedAccounts, projectHostEntry(entry, pathCounts, indexCounts, nil))
 	}
+	if policy.CodexQuotaMetadataProbeEnabled {
+		quotaSummary := e.probeQuotaMetadata(ctx, observedAccounts)
+		summary.QuotaMetadataProbed = quotaSummary.attempted
+		summary.QuotaMetadataUpdated = quotaSummary.updated
+		summary.QuotaMetadataFailed = quotaSummary.failed
+		summary.Failed += quotaSummary.failed
+		for index := range observedAccounts {
+			if planType := quotaSummary.planTypes[observedAccounts[index].ID]; planType != "" {
+				observedAccounts[index].PlanType = planType
+			}
+		}
+	}
+	planTypes := make(map[string]string, len(observedAccounts))
+	for _, account := range observedAccounts {
+		planTypes[account.ID] = account.PlanType
+	}
 	if !policy.ManagesFields() {
 		summary.Skipped = len(entries)
 		summary.FinishedAt = e.now().UTC()
@@ -500,14 +542,14 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 		}
 		summary.Eligible++
 		authIndex := strings.TrimSpace(entry.AuthIndex)
-		fingerprint := fingerprintForEntry(entry)
+		fingerprint := fingerprintForEntry(entry, planTypes[authIndex])
 		if previous, exists := previousFingerprints[authIndex]; exists && previous == fingerprint {
 			nextFingerprints[authIndex] = fingerprint
 			summary.Skipped++
 			continue
 		}
 
-		changed, errApply := e.reconcileEntry(ctx, entry, policy)
+		changed, errApply := e.reconcileEntry(ctx, entry, policy, planTypes[authIndex])
 		if errApply != nil {
 			summary.Failed++
 			continue
@@ -523,7 +565,86 @@ func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt
 	return summary, nextFingerprints, observedAccounts
 }
 
-func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuthFileEntry, policy DefaultPolicy) (bool, error) {
+func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Account) policyQuotaMetadataProbeSummary {
+	result := policyQuotaMetadataProbeSummary{planTypes: make(map[string]string)}
+	eligible := make(map[string]Account, min(len(accounts), maxInspectionAccounts))
+	for _, account := range accounts {
+		if !quotaMetadataBootstrapEligible(account) || len(eligible) >= maxInspectionAccounts {
+			continue
+		}
+		if _, exists := eligible[account.ID]; !exists {
+			eligible[account.ID] = quotaMetadataBootstrapAccount(account)
+		}
+	}
+	if len(eligible) == 0 {
+		return result
+	}
+
+	e.mu.RLock()
+	probe := e.quotaMetadataProbe
+	managementKey := e.managementKey
+	e.mu.RUnlock()
+	result.attempted = len(eligible)
+	if probe == nil || strings.TrimSpace(managementKey) == "" {
+		result.failed = len(eligible)
+		managementKey = ""
+		return result
+	}
+
+	ids := mapKeys(eligible)
+	sort.Strings(ids)
+	type outcome struct {
+		id       string
+		planType string
+		err      error
+	}
+	jobs := make(chan string)
+	outcomes := make(chan outcome, len(ids))
+	workers := min(policyQuotaWorkers, len(ids))
+	var wait sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for id := range jobs {
+				planType, errProbe := probe(ctx, eligible[id], managementKey)
+				select {
+				case outcomes <- outcome{id: id, planType: safeAccountPlanType(planType), err: errProbe}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, id := range ids {
+			select {
+			case jobs <- id:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wait.Wait()
+		close(outcomes)
+	}()
+	for item := range outcomes {
+		if item.err != nil {
+			result.failed++
+			continue
+		}
+		result.updated++
+		if item.planType != "" {
+			result.planTypes[item.id] = item.planType
+		}
+	}
+	managementKey = ""
+	return result
+}
+
+func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuthFileEntry, policy DefaultPolicy, refreshedPlanType string) (bool, error) {
 	detail, errGet := e.host.GetAuth(ctx, strings.TrimSpace(entry.AuthIndex))
 	if errGet != nil {
 		return false, fmt.Errorf("get auth file: %w", errGet)
@@ -548,7 +669,9 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 	if errEnrich := enrichAccount(&account, detail); errEnrich != nil {
 		return false, fmt.Errorf("project auth account: %w", errEnrich)
 	}
-	resolved := resolveConditionalPolicy(policy, account)
+	if planType := safeAccountPlanType(refreshedPlanType); planType != "" {
+		account.PlanType = planType
+	}
 	basePolicy := policy
 	basePolicy.ConditionalRules = nil
 	if !policy.Enabled {
@@ -559,6 +682,7 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 	if errApply != nil {
 		return false, errApply
 	}
+	resolved := resolveConditionalPolicy(policy, account)
 	if resolved.PriorityFromRule || resolved.WebsocketsFromRule {
 		override := DefaultPolicy{}
 		if resolved.PriorityFromRule {
@@ -616,8 +740,8 @@ func validateDefaultPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	}
 	policy.ConditionalRules = rules
 	policy = normalizeDefaultPolicy(policy)
-	if policy.Enabled && !policy.ManagesFields() {
-		return DefaultPolicy{}, fmt.Errorf("enabled policy requires priority, websockets, or conditional actions")
+	if policy.Enabled && !policy.ManagesFields() && !policy.ManagesNewAccountProbe() && !policy.CodexQuotaMetadataProbeEnabled {
+		return DefaultPolicy{}, fmt.Errorf("enabled policy requires at least one automation action")
 	}
 	return policy, nil
 }
@@ -670,6 +794,7 @@ func defaultPolicyEqual(left, right DefaultPolicy) bool {
 	right = normalizeDefaultPolicy(right)
 	return left.Enabled == right.Enabled && left.ApplyMode == right.ApplyMode &&
 		left.NewAccountModelProbeEnabled == right.NewAccountModelProbeEnabled &&
+		left.CodexQuotaMetadataProbeEnabled == right.CodexQuotaMetadataProbeEnabled &&
 		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right) &&
 		reflect.DeepEqual(left.ConditionalRules, right.ConditionalRules)
 }
@@ -696,11 +821,12 @@ func eligiblePolicyEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts
 		path != "" && pathCounts[path] == 1 && safeAuthJSONName(name)
 }
 
-func fingerprintForEntry(entry cpaapi.HostAuthFileEntry) authFingerprint {
+func fingerprintForEntry(entry cpaapi.HostAuthFileEntry, planType string) authFingerprint {
 	fingerprint := authFingerprint{
-		Name: strings.TrimSpace(entry.Name),
-		Path: normalizedPath(entry.Path),
-		Size: entry.Size,
+		Name:     strings.TrimSpace(entry.Name),
+		Path:     normalizedPath(entry.Path),
+		Size:     entry.Size,
+		PlanType: safeAccountPlanType(planType),
 	}
 	if !entry.ModTime.IsZero() {
 		fingerprint.ModTimeSet = true

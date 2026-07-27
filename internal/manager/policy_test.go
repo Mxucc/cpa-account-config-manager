@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -87,11 +88,12 @@ func TestPolicyStatePersistsReloadsAndUsesPrivatePermissions(t *testing.T) {
 	priority := 0
 	websockets := false
 	policy := normalizeDefaultPolicy(DefaultPolicy{
-		Enabled:                     true,
-		NewAccountModelProbeEnabled: true,
-		ScanIntervalSeconds:         1,
-		Priority:                    &priority,
-		Websockets:                  &websockets,
+		Enabled:                        true,
+		NewAccountModelProbeEnabled:    true,
+		CodexQuotaMetadataProbeEnabled: true,
+		ScanIntervalSeconds:            1,
+		Priority:                       &priority,
+		Websockets:                     &websockets,
 	})
 	lastScan := PolicyScanSummary{Scanned: 3, Changed: 2, FinishedAt: time.Now().UTC()}
 	if errSave := savePolicyState(path, policy, lastScan); errSave != nil {
@@ -102,7 +104,7 @@ func TestPolicyStatePersistsReloadsAndUsesPrivatePermissions(t *testing.T) {
 	if errLoad != nil {
 		t.Fatalf("loadPolicyState() error = %v", errLoad)
 	}
-	if !loaded.Enabled || !loaded.NewAccountModelProbeEnabled || loaded.Priority == nil || *loaded.Priority != 0 || loaded.Websockets == nil || *loaded.Websockets || loaded.ScanIntervalSeconds != minPolicyScanIntervalSeconds {
+	if !loaded.Enabled || !loaded.NewAccountModelProbeEnabled || !loaded.CodexQuotaMetadataProbeEnabled || loaded.Priority == nil || *loaded.Priority != 0 || loaded.Websockets == nil || *loaded.Websockets || loaded.ScanIntervalSeconds != minPolicyScanIntervalSeconds {
 		t.Fatalf("loaded policy = %#v", loaded)
 	}
 	if loadedScan.Scanned != 3 || loadedScan.Changed != 2 {
@@ -135,9 +137,9 @@ func TestConfiguredPolicyOverridesStaleFileAndSurvivesFreshEngine(t *testing.T) 
 
 	configuredPriority := 7
 	configuredWebsockets := false
-	config := ParseConfig([]byte("data_dir: " + dataDir + "\ndefault_policy:\n  enabled: true\n  new_account_model_probe_enabled: true\n  scan_interval_seconds: 30\n  priority: 7\n  websockets: false\n"))
+	config := ParseConfig([]byte("data_dir: " + dataDir + "\ndefault_policy:\n  enabled: true\n  new_account_model_probe_enabled: true\n  codex_quota_metadata_probe_enabled: true\n  scan_interval_seconds: 30\n  priority: 7\n  websockets: false\n"))
 	if config.DefaultPolicy == nil || config.DefaultPolicy.Priority == nil || *config.DefaultPolicy.Priority != configuredPriority ||
-		config.DefaultPolicy.Websockets == nil || *config.DefaultPolicy.Websockets != configuredWebsockets || !config.DefaultPolicy.NewAccountModelProbeEnabled {
+		config.DefaultPolicy.Websockets == nil || *config.DefaultPolicy.Websockets != configuredWebsockets || !config.DefaultPolicy.NewAccountModelProbeEnabled || !config.DefaultPolicy.CodexQuotaMetadataProbeEnabled {
 		t.Fatalf("parsed default policy = %#v", config.DefaultPolicy)
 	}
 
@@ -145,9 +147,83 @@ func TestConfiguredPolicyOverridesStaleFileAndSurvivesFreshEngine(t *testing.T) 
 	engine.Configure(config)
 	defer engine.Shutdown()
 	snapshot := engine.Snapshot()
-	if !snapshot.Policy.Enabled || !snapshot.Policy.NewAccountModelProbeEnabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != configuredPriority ||
+	if !snapshot.Policy.Enabled || !snapshot.Policy.NewAccountModelProbeEnabled || !snapshot.Policy.CodexQuotaMetadataProbeEnabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != configuredPriority ||
 		snapshot.Policy.Websockets == nil || *snapshot.Policy.Websockets != configuredWebsockets || snapshot.Policy.ScanIntervalSeconds != 30 {
 		t.Fatalf("configured snapshot = %#v", snapshot)
+	}
+}
+
+func TestPolicyEngineProbesQuotaMetadataBeforeMatchingConditionalRules(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "codex-account", Name: "codex-account.json", Provider: "codex", Type: "codex",
+			PlanType: "free", Source: "file", Path: "/auths/codex-account.json", Size: 32, ModTime: time.Now().UTC(),
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"codex-account": {
+				AuthIndex: "codex-account", Name: "codex-account.json", Path: "/auths/codex-account.json",
+				JSON: json.RawMessage(`{"type":"codex","plan_type":"free","access_token":"account-secret"}`),
+			},
+		},
+	}
+	websockets := false
+	policy := normalizeDefaultPolicy(DefaultPolicy{
+		CodexQuotaMetadataProbeEnabled: true,
+		ConditionalRules: []ConditionalPolicyRule{{
+			ID: "codex-plus", Name: "Codex Plus", Enabled: true, Priority: 100,
+			Conditions: PolicyConditionGroup{Operator: PolicyConditionAll, Conditions: []PolicyCondition{{Field: PolicyConditionProvider, Value: "codex"}, {Field: PolicyConditionAccountType, Value: "plus"}}},
+			Actions:    ConditionalPolicyActions{Websockets: &websockets},
+		}},
+	})
+	engine := NewPolicyEngine(host)
+	engine.Arm("management-secret")
+	engine.SetQuotaMetadataProbe(func(_ context.Context, account Account, managementKey string) (string, error) {
+		if account.ID != "codex-account" || managementKey != "management-secret" {
+			return "", fmt.Errorf("unexpected quota probe input for account %q", account.ID)
+		}
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		if len(host.saves) != 0 {
+			return "", errors.New("conditional action ran before quota metadata probing")
+		}
+		return "plus", nil
+	})
+
+	summary, fingerprints, observed := engine.scan(t.Context(), policy, time.Now().UTC())
+	if summary.QuotaMetadataProbed != 1 || summary.QuotaMetadataUpdated != 1 || summary.QuotaMetadataFailed != 0 || summary.Failed != 0 || summary.Changed != 1 {
+		t.Fatalf("scan summary = %#v", summary)
+	}
+	if len(observed) != 1 || observed[0].PlanType != "plus" {
+		t.Fatalf("observed accounts = %#v", observed)
+	}
+	if fingerprint := fingerprints["codex-account"]; fingerprint.PlanType != "plus" {
+		t.Fatalf("fingerprint = %#v", fingerprint)
+	}
+	host.mu.Lock()
+	updated := append(json.RawMessage(nil), host.details["codex-account"].JSON...)
+	host.mu.Unlock()
+	var document map[string]any
+	if errDecode := json.Unmarshal(updated, &document); errDecode != nil {
+		t.Fatalf("decode updated auth: %v", errDecode)
+	}
+	if document["websockets"] != false || document["plan_type"] != "free" || !bytes.Contains(updated, []byte("account-secret")) {
+		t.Fatalf("updated auth = %s", updated)
+	}
+}
+
+func TestPolicyEngineDoesNotProbeQuotaMetadataWhenPolicySwitchIsOff(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "codex-account", Name: "codex-account.json", Provider: "codex", Type: "codex",
+		Source: "file", Path: "/auths/codex-account.json",
+	}}}
+	engine := NewPolicyEngine(host)
+	engine.SetQuotaMetadataProbe(func(context.Context, Account, string) (string, error) {
+		t.Fatal("quota metadata probe ran while disabled")
+		return "", nil
+	})
+	summary, _, _ := engine.scan(t.Context(), normalizeDefaultPolicy(DefaultPolicy{}), time.Now().UTC())
+	if summary.QuotaMetadataProbed != 0 || summary.QuotaMetadataUpdated != 0 || summary.QuotaMetadataFailed != 0 {
+		t.Fatalf("scan summary = %#v", summary)
 	}
 }
 

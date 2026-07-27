@@ -220,6 +220,30 @@ func (a *App) persistQuotaMetadata(account Account, metadata quotaMetadata, cons
 	}
 }
 
+func (a *App) runNewAccountQuotaMetadata(ctx context.Context, account Account, managementKey string) error {
+	client, errClient := newManagementClient(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer)
+	if errClient != nil {
+		return ErrQuotaMetadataUnavailable
+	}
+	defer client.clearSecrets()
+	metadata, errFetch := fetchQuotaMetadata(ctx, client, account, a.quotaAccountID(ctx, account))
+	if errFetch != nil {
+		return errFetch
+	}
+	a.persistQuotaMetadata(account, metadata, false)
+	return nil
+}
+
+type accountObserverGroup []interface{ ObserveAccounts([]Account) }
+
+func (group accountObserverGroup) ObserveAccounts(accounts []Account) {
+	for _, observer := range group {
+		if observer != nil {
+			observer.ObserveAccounts(accounts)
+		}
+	}
+}
+
 func fetchQuotaMetadata(ctx context.Context, client *managementClient, account Account, chatGPTAccountID string) (quotaMetadata, error) {
 	headers := codexQuotaHeaders(chatGPTAccountID)
 	usageResponse, errUsage := client.APICall(ctx, managementAPICallRequest{

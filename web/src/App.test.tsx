@@ -710,6 +710,8 @@ describe("primary account batch flow", () => {
 		const user = userEvent.setup();
 		let planType = "k12";
 		let activeResetCount = 1;
+		let metadataObservedAt = "2026-07-27T04:00:00Z";
+		const unsupportedAccount = { ...account, id: "gemini-1", auth_id: "gemini-auth", label: "gemini@example.com", email: "gemini@example.com", name: "gemini.json", provider: "gemini", type: "gemini", usage: undefined };
 		const requests: Array<{ url: string; init: RequestInit }> = [];
 		vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
 			const url = String(input);
@@ -719,15 +721,16 @@ describe("primary account batch flow", () => {
 			}
 			if (url.includes("/accounts/quota-metadata/refresh")) {
 				planType = "free";
-				return jsonResponse({ account_id: account.id, plan_type: planType, active_reset_count: activeResetCount, observed_at: "2026-07-27T04:00:00Z" });
+				return jsonResponse({ account_id: account.id, plan_type: planType, active_reset_count: activeResetCount, observed_at: metadataObservedAt });
 			}
 			if (url.includes("/accounts/quota-metadata/reset")) {
 				activeResetCount = 0;
-				return jsonResponse({ account_id: account.id, plan_type: planType, active_reset_count: activeResetCount, observed_at: "2026-07-27T04:01:00Z", reset_credit_used: true });
+				metadataObservedAt = "2026-07-27T04:01:00Z";
+				return jsonResponse({ account_id: account.id, plan_type: planType, active_reset_count: activeResetCount, observed_at: metadataObservedAt, reset_credit_used: true });
 			}
 			return jsonResponse({
-				accounts: [{ ...account, plan_type: planType, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, codex: { active_reset_count: activeResetCount, metadata_observed_at: "2026-07-27T04:00:00Z", observed_at: "0001-01-01T00:00:00Z" } } }],
-				total: 1, page: 1, page_size: 50, pages: 1,
+				accounts: [{ ...account, plan_type: planType, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, codex: { active_reset_count: activeResetCount, metadata_observed_at: metadataObservedAt, observed_at: "0001-01-01T00:00:00Z" } } }, unsupportedAccount],
+				total: 2, page: 1, page_size: 50, pages: 1,
 			});
 		}));
 
@@ -736,6 +739,11 @@ describe("primary account batch flow", () => {
 		await user.click(screen.getByRole("button", { name: "验证并进入" }));
 		const row = (await screen.findByText("operator@example.com")).closest("tr") as HTMLTableRowElement;
 		expect(row.querySelector(".quota-metadata-value strong")).toHaveTextContent("1");
+		expect(within(row).getByText(/获取于/)).toBeInTheDocument();
+		const unsupportedRow = screen.getByText("gemini@example.com").closest("tr") as HTMLTableRowElement;
+		const unsupportedCell = unsupportedRow.querySelectorAll("td")[5] as HTMLTableCellElement;
+		expect(unsupportedCell.textContent?.trim()).toBe("-");
+		expect(within(unsupportedCell).queryByRole("button")).not.toBeInTheDocument();
 		await user.click(within(row).getByRole("button", { name: "刷新 operator@example.com 的套餐和主动重置次数" }));
 		await waitFor(() => expect(within(row).getByText("free", { selector: ".account-plan-type" })).toBeInTheDocument());
 		expect(JSON.parse(String(requests.find(({ url }) => url.includes("/quota-metadata/refresh"))?.init.body))).toEqual({ account_id: "auth-1" });
@@ -748,6 +756,7 @@ describe("primary account batch flow", () => {
 		const updatedRow = screen.getByText("operator@example.com").closest("tr") as HTMLTableRowElement;
 		expect(updatedRow.querySelector(".quota-metadata-value strong")).toHaveTextContent("0");
 		expect(within(updatedRow).queryByRole("button", { name: "主动重置" })).not.toBeInTheDocument();
+		expect(within(updatedRow).getByText(/获取于/)).toBeInTheDocument();
 		expect(JSON.parse(String(requests.find(({ url }) => url.includes("/quota-metadata/reset"))?.init.body))).toEqual({ account_id: "auth-1", confirm: true });
 	});
 

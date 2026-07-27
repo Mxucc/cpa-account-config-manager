@@ -205,7 +205,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
 	"ui.quota_metadata_refreshed": "已刷新 {account} 的套餐和主动重置次数",
 	"ui.quota_metadata_refreshed_with_warning": "已刷新 {account} 的套餐，但当前无法获取主动重置次数",
 	"ui.not_collected": "尚未采集",
-	"ui.no_active_resets": "暂无重置次数",
+	"ui.quota_metadata_collected_at": "获取于 {time}",
 	"ui.use_active_reset": "主动重置",
 	"ui.confirm_active_reset": "确认主动重置",
 	"ui.confirm_active_reset_description": "确定要为 {account} 消耗 1 次主动重置机会吗？这会立即重置对应的 Codex 额度，操作无法撤销。",

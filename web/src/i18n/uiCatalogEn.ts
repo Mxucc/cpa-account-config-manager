@@ -203,7 +203,7 @@ export const enUI = {
 	"ui.quota_metadata_refreshed": "Refreshed plan and active resets for {account}",
 	"ui.quota_metadata_refreshed_with_warning": "Refreshed the plan for {account}, but the active reset count is currently unavailable",
 	"ui.not_collected": "Not collected",
-	"ui.no_active_resets": "No resets available",
+	"ui.quota_metadata_collected_at": "Fetched {time}",
 	"ui.use_active_reset": "Active reset",
 	"ui.confirm_active_reset": "Confirm active reset",
 	"ui.confirm_active_reset_description": "Consume one active reset credit for {account}? This immediately resets the applicable Codex quota and cannot be undone.",

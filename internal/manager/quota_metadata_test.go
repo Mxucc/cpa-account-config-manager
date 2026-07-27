@@ -128,6 +128,62 @@ func TestQuotaMetadataRefreshUsesCPAAPIAndPersistsPlanFirstType(t *testing.T) {
 	}
 }
 
+func TestQuotaMetadataBootstrapRunsWhenAccountListIsFirstOpened(t *testing.T) {
+	var mu sync.Mutex
+	requests := make([]managementAPICallRequest, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var call managementAPICallRequest
+		if errDecode := json.NewDecoder(request.Body).Decode(&call); errDecode != nil {
+			t.Errorf("decode API call: %v", errDecode)
+		}
+		mu.Lock()
+		requests = append(requests, call)
+		mu.Unlock()
+		body := `{"available_count":0,"credits":[]}`
+		if call.URL == codexQuotaUsageURL {
+			body = `{"plan_type":"Free"}`
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"status_code": 200, "header": map[string][]string{}, "body": body})
+	}))
+	defer server.Close()
+
+	app := NewApp(quotaMetadataHost(), []byte("index"))
+	defer app.Close()
+	app.Configure([]byte(fmt.Sprintf("data_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), server.URL)))
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management/plugins/cpa-account-config-manager/accounts",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Query:   map[string][]string{"page": {"1"}, "page_size": {"50"}},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list accounts = %d %s", response.StatusCode, response.Body)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		snapshot := app.usage.Snapshot("auth-1")
+		if snapshot != nil && snapshot.Codex != nil && !snapshot.Codex.MetadataObservedAt.IsZero() &&
+			snapshot.Codex.ActiveResetCount != nil && *snapshot.Codex.ActiveResetCount == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("quota metadata was not collected after opening the account list: %#v", snapshot)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management/plugins/cpa-account-config-manager/accounts",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 2 || requests[0].URL != codexQuotaUsageURL || requests[1].URL != codexQuotaResetCreditsURL {
+		t.Fatalf("bootstrap API calls = %#v", requests)
+	}
+}
+
 func TestQuotaMetadataResetRequiresConfirmationAndRefreshesRemainingCount(t *testing.T) {
 	host := quotaMetadataHost()
 	var mu sync.Mutex

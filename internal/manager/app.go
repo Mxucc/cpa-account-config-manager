@@ -67,6 +67,7 @@ type App struct {
 	operations      *OperationJournal
 	modelTests      *ModelTestService
 	newAccountProbe *newAccountModelProbeEngine
+	quotaBootstrap  *accountQuotaMetadataBootstrap
 	managementDoer  HTTPDoer
 	requestHooks    *RequestHook
 	runtime         *RuntimeOwnership
@@ -91,6 +92,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	newAccountProbe := NewAccountModelProbeEngine(func() bool {
 		return policies.Snapshot().Policy.NewAccountModelProbeEnabled
 	})
+	quotaBootstrap := NewAccountQuotaMetadataBootstrap()
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -130,15 +132,17 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		operations:      operations,
 		modelTests:      modelTests,
 		newAccountProbe: newAccountProbe,
+		quotaBootstrap:  quotaBootstrap,
 		requestHooks:    requestHooks,
 		runtime:         runtime,
 		experiments:     experiments,
 		agentIdentity:   agentIdentity,
 		indexHTML:       append([]byte(nil), indexHTML...),
 	}
-	accounts.SetObserver(newAccountProbe)
+	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	newAccountProbe.SetHandler(app.runNewAccountModelProbe)
+	quotaBootstrap.SetHandler(app.runNewAccountQuotaMetadata)
 	runtime.SetOnSuperseded(app.quiesceRetiredInstance)
 	return app
 }
@@ -160,10 +164,12 @@ func (a *App) Configure(raw []byte) {
 	a.policies.SetBackgroundWorkOwner(a.runtime)
 	a.inspection.SetBackgroundWorkOwner(a.runtime)
 	a.newAccountProbe.SetBackgroundWorkOwner(a.runtime)
+	a.quotaBootstrap.SetBackgroundWorkOwner(a.runtime)
 	a.force.SetBackgroundWorkOwner(a.runtime)
 	a.operations.Configure(config)
 	a.experiments.Configure(config)
 	a.newAccountProbe.Configure(config)
+	a.quotaBootstrap.Start()
 	a.jobs.Configure(config)
 	a.policies.Configure(config)
 	a.inspection.Configure(config)
@@ -208,6 +214,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.force.Shutdown()
 		a.inspection.Shutdown()
 		a.newAccountProbe.Shutdown()
+		a.quotaBootstrap.Shutdown()
 		a.updates.Shutdown()
 		a.policies.Shutdown()
 		a.jobs.Shutdown()
@@ -841,11 +848,12 @@ func (a *App) handleForceStart(req cpaapi.ManagementRequest) cpaapi.ManagementRe
 }
 
 func (a *App) handleListAccounts(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	managementKey := resolveManagementKey(req.Headers)
+	a.quotaBootstrap.Arm(managementKey)
 	if a.policies.Snapshot().Policy.NewAccountModelProbeEnabled {
-		managementKey := resolveManagementKey(req.Headers)
 		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
-		managementKey = ""
 	}
+	managementKey = ""
 	query, errQuery := listQueryFromValues(req.Query)
 	if errQuery != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errQuery.Error()})

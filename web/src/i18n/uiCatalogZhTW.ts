@@ -205,7 +205,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
 	"ui.quota_metadata_refreshed": "已重新整理 {account} 的方案與主動重設次數",
 	"ui.quota_metadata_refreshed_with_warning": "已重新整理 {account} 的方案，但目前無法取得主動重設次數",
 	"ui.not_collected": "尚未收集",
-	"ui.no_active_resets": "暫無重設次數",
+	"ui.quota_metadata_collected_at": "取得於 {time}",
 	"ui.use_active_reset": "主動重設",
 	"ui.confirm_active_reset": "確認主動重設",
 	"ui.confirm_active_reset_description": "確定要為 {account} 使用 1 次主動重設機會嗎？這會立即重設對應的 Codex 額度，且無法復原。",

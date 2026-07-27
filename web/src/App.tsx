@@ -1308,16 +1308,18 @@ function AccountTypeCell({ account }: { account: Account }) {
 }
 
 function AccountQuotaMetadataCell({ account, busy, onRefresh, onReset }: { account: Account; busy?: "refresh" | "reset"; onRefresh: () => void; onReset: () => void }) {
-	const { tx, formatNumber } = useI18n();
+	const { tx, formatNumber, formatDateTime } = useI18n();
 	const provider = String(account.provider || account.type).trim().toLowerCase();
 	const supported = provider === "codex" || provider === "codex-agent-identity";
 	const count = account.usage?.codex?.active_reset_count;
 	const known = typeof count === "number" && Number.isFinite(count) && count >= 0;
+	const observedAt = account.usage?.codex?.metadata_observed_at;
 	if (!supported) return <span className="quota-metadata-unsupported">-</span>;
 	return (
 		<div className="quota-metadata-cell">
 			<div className="quota-metadata-value"><strong>{known ? formatNumber(count) : "-"}</strong><IconButton label={tx("ui.refresh_plan_and_active_reset", { account: account.label || account.email || account.name || account.id })} disabled={Boolean(busy)} onClick={onRefresh}>{busy === "refresh" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}</IconButton></div>
-			{known && count > 0 ? <button className="quota-reset-button" type="button" disabled={Boolean(busy)} onClick={onReset}>{busy === "reset" ? <LoaderCircle className="spin" size={12} /> : <RotateCcw size={12} />}{tx("ui.use_active_reset")}</button> : <small>{known ? tx("ui.no_active_resets") : tx("ui.not_collected")}</small>}
+			{known && count > 0 ? <button className="quota-reset-button" type="button" disabled={Boolean(busy)} onClick={onReset}>{busy === "reset" ? <LoaderCircle className="spin" size={12} /> : <RotateCcw size={12} />}{tx("ui.use_active_reset")}</button> : null}
+			<small>{observedAt ? tx("ui.quota_metadata_collected_at", { time: formatDateTime(observedAt) }) : tx("ui.not_collected")}</small>
 		</div>
 	);
 }

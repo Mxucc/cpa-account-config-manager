@@ -205,7 +205,7 @@ export const ruUI: Record<UIMessageKey, string> = {
 	"ui.quota_metadata_refreshed": "План и активные сбросы для {account} обновлены",
 	"ui.quota_metadata_refreshed_with_warning": "План для {account} обновлён, но число активных сбросов сейчас недоступно",
 	"ui.not_collected": "Не получено",
-	"ui.no_active_resets": "Сбросы недоступны",
+	"ui.quota_metadata_collected_at": "Получено {time}",
 	"ui.use_active_reset": "Активный сброс",
 	"ui.confirm_active_reset": "Подтвердить активный сброс",
 	"ui.confirm_active_reset_description": "Использовать один активный сброс для {account}? Соответствующая квота Codex будет сброшена немедленно; отменить действие нельзя.",

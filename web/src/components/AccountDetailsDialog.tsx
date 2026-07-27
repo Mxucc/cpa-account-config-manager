@@ -97,6 +97,7 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
           <DetailItem label={tx("ui.last_request")} value={formatDateTime(usage?.last_request_at)} />
           <DetailItem label={tx("ui.5_hour_usage")} value={usage?.codex?.five_hour ? `${formatPercent(usage.codex.five_hour.used_percent)} · ${formatDateTime(usage.codex.five_hour.reset_at)}` : tx("ui.no_data")} />
           <DetailItem label={tx("ui.7_day_usage")} value={usage?.codex?.seven_day ? `${formatPercent(usage.codex.seven_day.used_percent)} · ${formatDateTime(usage.codex.seven_day.reset_at)}` : tx("ui.no_data")} />
+						<DetailItem label={tx("ui.active_reset_count")} value={usage?.codex?.active_reset_count !== undefined ? formatNumber(usage.codex.active_reset_count, locale) : tx("ui.no_data")} mono />
         </DetailSection>
 
         <DetailSection title={tx("ui.time")}>

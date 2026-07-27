@@ -74,6 +74,7 @@ type App struct {
 	agentIdentity   *AgentIdentityExperiment
 	indexHTML       []byte
 	quiesceOnce     sync.Once
+	quotaResetLocks [64]sync.Mutex
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -319,6 +320,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/refresh", Description: "Refresh one Codex account's CPA-native plan and active reset metadata."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/reset", Description: "Consume one explicitly confirmed Codex active reset credit and refresh quota metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/models", Description: "Load the common effective model catalog for an editable account scope."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/deduplicate/preview", Description: "Find duplicate upstream accounts and return a redacted review plan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test", Description: "Run one bounded account-specific model availability probe through CLIProxyAPI."},
@@ -404,6 +407,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		}
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/accounts":
 		return a.handleListAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/refresh":
+		return a.handleAccountQuotaMetadata(ctx, req, false)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/reset":
+		return a.handleAccountQuotaMetadata(ctx, req, true)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/models":
 		return a.handleAccountModels(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/deduplicate/preview":

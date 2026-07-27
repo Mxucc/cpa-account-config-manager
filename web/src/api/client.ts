@@ -41,6 +41,7 @@ import type {
   PluginInstallResult,
   PluginStoreResponse,
   PolicySnapshot,
+	QuotaMetadataResponse,
   ResultExportFormat,
   TargetScope,
   UpdatePolicy,
@@ -253,6 +254,20 @@ export async function listAccounts(
   query.set("page_size", String(pageSize));
   const response = await request<AccountListResponse>("/accounts", {}, query);
   return { ...response, accounts: arrayOrEmpty(response.accounts) };
+}
+
+export async function refreshAccountQuotaMetadata(accountID: string): Promise<QuotaMetadataResponse> {
+	return request<QuotaMetadataResponse>("/accounts/quota-metadata/refresh", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID }),
+	});
+}
+
+export async function useAccountActiveReset(accountID: string): Promise<QuotaMetadataResponse> {
+	return request<QuotaMetadataResponse>("/accounts/quota-metadata/reset", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID, confirm: true }),
+	});
 }
 
 export async function testAccountModel(accountID: string, model: string, experimentalWeeklyOverdraft = false): Promise<ModelTestResult> {

@@ -260,7 +260,7 @@ describe("primary account batch flow", () => {
     expect(screen.getByText("账号列表")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "类型" })).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-      "", "账号", "提供方", "类型", "用量", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
+			"", "账号", "提供方", "类型", "用量", "主动重置次数", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
     ]);
     expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
     expect(screen.getByLabelText("每页账号数")).toHaveValue("50");
@@ -677,9 +677,9 @@ describe("primary account batch flow", () => {
     const disabledActions = within(disabledRow as HTMLTableRowElement);
     const readOnlyActions = within(readOnlyRow as HTMLTableRowElement);
 
-    expect(enabledActions.getAllByRole("button")).toHaveLength(6);
-    expect(disabledActions.getAllByRole("button")).toHaveLength(6);
-    expect(readOnlyActions.getAllByRole("button")).toHaveLength(6);
+		expect(enabledRow?.querySelectorAll(".row-actions button")).toHaveLength(6);
+		expect(disabledRow?.querySelectorAll(".row-actions button")).toHaveLength(6);
+		expect(readOnlyRow?.querySelectorAll(".row-actions button")).toHaveLength(6);
     expect(enabledActions.getByRole("button", { name: "启用 operator@example.com" })).toBeDisabled();
     expect(enabledActions.getByRole("button", { name: "禁用 operator@example.com" })).toBeEnabled();
     expect(disabledActions.getByRole("button", { name: "启用 disabled@example.com" })).toBeEnabled();
@@ -705,6 +705,51 @@ describe("primary account batch flow", () => {
     expect(screen.getByLabelText("选择 disabled@example.com")).not.toBeChecked();
     await user.click(within(preview).getByLabelText("关闭"));
   });
+
+	it("refreshes CPA quota metadata and confirms an available active reset", async () => {
+		const user = userEvent.setup();
+		let planType = "k12";
+		let activeResetCount = 1;
+		const requests: Array<{ url: string; init: RequestInit }> = [];
+		vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+			const url = String(input);
+			requests.push({ url, init });
+			if (url.includes("/batch/status")) {
+				return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+			}
+			if (url.includes("/accounts/quota-metadata/refresh")) {
+				planType = "free";
+				return jsonResponse({ account_id: account.id, plan_type: planType, active_reset_count: activeResetCount, observed_at: "2026-07-27T04:00:00Z" });
+			}
+			if (url.includes("/accounts/quota-metadata/reset")) {
+				activeResetCount = 0;
+				return jsonResponse({ account_id: account.id, plan_type: planType, active_reset_count: activeResetCount, observed_at: "2026-07-27T04:01:00Z", reset_credit_used: true });
+			}
+			return jsonResponse({
+				accounts: [{ ...account, plan_type: planType, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, codex: { active_reset_count: activeResetCount, metadata_observed_at: "2026-07-27T04:00:00Z", observed_at: "0001-01-01T00:00:00Z" } } }],
+				total: 1, page: 1, page_size: 50, pages: 1,
+			});
+		}));
+
+		render(<App />);
+		await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+		await user.click(screen.getByRole("button", { name: "验证并进入" }));
+		const row = (await screen.findByText("operator@example.com")).closest("tr") as HTMLTableRowElement;
+		expect(row.querySelector(".quota-metadata-value strong")).toHaveTextContent("1");
+		await user.click(within(row).getByRole("button", { name: "刷新 operator@example.com 的套餐和主动重置次数" }));
+		await waitFor(() => expect(within(row).getByText("free", { selector: ".account-plan-type" })).toBeInTheDocument());
+		expect(JSON.parse(String(requests.find(({ url }) => url.includes("/quota-metadata/refresh"))?.init.body))).toEqual({ account_id: "auth-1" });
+
+		await user.click(within(row).getByRole("button", { name: "主动重置" }));
+		const confirmation = await screen.findByRole("dialog", { name: "确认主动重置" });
+		expect(within(confirmation).getByText(/消耗 1 次主动重置机会/)).toBeInTheDocument();
+		await user.click(within(confirmation).getByRole("button", { name: "主动重置" }));
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "确认主动重置" })).not.toBeInTheDocument());
+		const updatedRow = screen.getByText("operator@example.com").closest("tr") as HTMLTableRowElement;
+		expect(updatedRow.querySelector(".quota-metadata-value strong")).toHaveTextContent("0");
+		expect(within(updatedRow).queryByRole("button", { name: "主动重置" })).not.toBeInTheDocument();
+		expect(JSON.parse(String(requests.find(({ url }) => url.includes("/quota-metadata/reset"))?.init.body))).toEqual({ account_id: "auth-1", confirm: true });
+	});
 
   it("keeps the newest account result when an older filter request finishes later", async () => {
     const user = userEvent.setup();

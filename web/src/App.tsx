@@ -13,6 +13,7 @@ import {
   PowerOff,
   Pencil,
   RefreshCw,
+	RotateCcw,
   Search,
   ScrollText,
   Settings2,
@@ -178,6 +179,8 @@ function AccountManagerApp() {
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
   const [editorContext, setEditorContext] = useState<EditorContext | null>(null);
   const [detailAccount, setDetailAccount] = useState<Account | null>(null);
+	const [quotaMetadataBusy, setQuotaMetadataBusy] = useState<Record<string, "refresh" | "reset">>({});
+	const [quotaResetTarget, setQuotaResetTarget] = useState<Account | null>(null);
   const [modelTestTarget, setModelTestTarget] = useState<Account | null>(null);
   const [modelTestResult, setModelTestResult] = useState<ModelTestResult | null>(null);
   const [modelTesting, setModelTesting] = useState(false);
@@ -306,6 +309,44 @@ function AccountManagerApp() {
       if (requestID === accountRequest.current) setLoading(false);
     }
   }, [apiFilters, authState, handleAPIError, page, pageSize]);
+
+	const setQuotaBusy = (accountID: string, action?: "refresh" | "reset") => {
+		setQuotaMetadataBusy((current) => {
+			const next = { ...current };
+			if (action) next[accountID] = action;
+			else delete next[accountID];
+			return next;
+		});
+	};
+
+	const refreshQuotaMetadata = async (account: Account) => {
+		setQuotaBusy(account.id, "refresh");
+		try {
+			const result = await api.refreshAccountQuotaMetadata(account.id);
+			await refreshAccounts(true);
+			setNotice(tx(result.warning ? "ui.quota_metadata_refreshed_with_warning" : "ui.quota_metadata_refreshed", { account: account.label || account.email || account.name || account.id }));
+		} catch (error) {
+			handleAPIError(error);
+		} finally {
+			setQuotaBusy(account.id);
+		}
+	};
+
+	const confirmQuotaReset = async () => {
+		if (!quotaResetTarget) return;
+		const account = quotaResetTarget;
+		setQuotaBusy(account.id, "reset");
+		try {
+			const result = await api.useAccountActiveReset(account.id);
+			await refreshAccounts(true);
+			setQuotaResetTarget(null);
+			setNotice(tx(result.warning ? "ui.active_reset_succeeded_with_warning" : "ui.active_reset_succeeded", { account: account.label || account.email || account.name || account.id }));
+		} catch (error) {
+			handleAPIError(error);
+		} finally {
+			setQuotaBusy(account.id);
+		}
+	};
 
   const requestInspectionAccountSync = useCallback(() => {
     setInspectionAccountSyncActive(true);
@@ -1088,13 +1129,13 @@ function AccountManagerApp() {
           <table className="account-table">
             <colgroup>
               <col className="col-select" /><col className="col-identity" /><col className="col-provider" />
-              <col className="col-type" /><col className="col-activity" /><col className="col-updated" /><col className="col-access" />
+								<col className="col-type" /><col className="col-activity" /><col className="col-active-reset" /><col className="col-updated" /><col className="col-access" />
               <col className="col-state" /><col className="col-priority" /><col className="col-routing" /><col className="col-actions" />
             </colgroup>
             <thead>
               <tr>
                 <th className="select-header"><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label={tx("ui.select_editable_accounts_on_this_page")} /></th>
-                <th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.updated")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
+								<th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.active_reset_count")}</th><th>{tx("ui.updated")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1114,6 +1155,7 @@ function AccountManagerApp() {
                   <td><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
                   <td><AccountTypeCell account={account} /></td>
                   <td><AccountUsageCell account={account} /></td>
+									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
                   <td><time>{formatDateTime(account.updated_at || account.last_refresh)}</time></td>
                   <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />{tx("ui.editable")}</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason, locale)}><LockKeyhole size={13} />{tx("ui.read_only")}</span>}</td>
                   <td><StateCell account={account} /></td>
@@ -1216,6 +1258,22 @@ function AccountManagerApp() {
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
       {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} loadModels={() => api.loadAccountModels(editorContext.scope)} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
+			{quotaResetTarget ? (
+				<Modal
+					title={tx("ui.confirm_active_reset")}
+					onClose={() => { if (!quotaMetadataBusy[quotaResetTarget.id]) setQuotaResetTarget(null); }}
+					footer={(
+						<>
+							<button className="button" type="button" disabled={Boolean(quotaMetadataBusy[quotaResetTarget.id])} onClick={() => setQuotaResetTarget(null)}>{tx("ui.cancel")}</button>
+							<button className="button button-primary" type="button" disabled={Boolean(quotaMetadataBusy[quotaResetTarget.id])} onClick={() => void confirmQuotaReset()}>
+								{quotaMetadataBusy[quotaResetTarget.id] ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}{tx("ui.use_active_reset")}
+							</button>
+						</>
+					)}
+				>
+					<p className="confirmation-copy">{tx("ui.confirm_active_reset_description", { account: quotaResetTarget.label || quotaResetTarget.email || quotaResetTarget.name || quotaResetTarget.id })}</p>
+				</Modal>
+			) : null}
       {modelTestTarget ? <ModelTestDialog key={modelTestTarget.id} account={modelTestTarget} result={modelTestResult} error={modelTestError} testing={modelTesting} experimentalAvailable={modelTestExperimentalAvailable} onClose={closeModelTest} onTest={(model, experimental) => void runModelTest(model, experimental)} /> : null}
       {deleteTarget ? <DeleteAccountDialog key={deleteTarget.id} account={deleteTarget} preview={deletePreview} previewing={deletePreviewing} deleting={deleting} error={deleteError} onClose={closeDelete} onConfirm={() => void confirmDelete()} /> : null}
       {deduplicationPreview ? <AccountDeduplicationDialog preview={deduplicationPreview} loading={deduplicationLoading} reviewing={deduplicationReviewing} error={deduplicationError} onClose={() => { deduplicationRequest.current++; setDeduplicationPreview(null); setDeduplicationError(""); setDeduplicationLoading(false); }} onOptionsChange={(options) => void loadAccountDeduplication(options, true)} onReview={(ids) => void reviewDuplicateDeletions(ids)} /> : null}
@@ -1247,6 +1305,21 @@ function AccountTypeCell({ account }: { account: Account }) {
       {secondaryLabel && secondaryLabel !== primaryLabel ? <span>{secondaryLabel}</span> : null}
     </div>
   );
+}
+
+function AccountQuotaMetadataCell({ account, busy, onRefresh, onReset }: { account: Account; busy?: "refresh" | "reset"; onRefresh: () => void; onReset: () => void }) {
+	const { tx, formatNumber } = useI18n();
+	const provider = String(account.provider || account.type).trim().toLowerCase();
+	const supported = provider === "codex" || provider === "codex-agent-identity";
+	const count = account.usage?.codex?.active_reset_count;
+	const known = typeof count === "number" && Number.isFinite(count) && count >= 0;
+	if (!supported) return <span className="quota-metadata-unsupported">-</span>;
+	return (
+		<div className="quota-metadata-cell">
+			<div className="quota-metadata-value"><strong>{known ? formatNumber(count) : "-"}</strong><IconButton label={tx("ui.refresh_plan_and_active_reset", { account: account.label || account.email || account.name || account.id })} disabled={Boolean(busy)} onClick={onRefresh}>{busy === "refresh" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}</IconButton></div>
+			{known && count > 0 ? <button className="quota-reset-button" type="button" disabled={Boolean(busy)} onClick={onReset}>{busy === "reset" ? <LoaderCircle className="spin" size={12} /> : <RotateCcw size={12} />}{tx("ui.use_active_reset")}</button> : <small>{known ? tx("ui.no_active_resets") : tx("ui.not_collected")}</small>}
+		</div>
+	);
 }
 
 function StateCell({ account }: { account: Account }) {
@@ -1281,7 +1354,7 @@ function RoutingCell({ account }: { account: Account }) {
 }
 
 function LoadingRows() {
-  return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={11}><span /></td></tr>)}</>;
+	return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={12}><span /></td></tr>)}</>;
 }
 
 function errorText(error: unknown, locale: Locale = "zh-CN"): string {

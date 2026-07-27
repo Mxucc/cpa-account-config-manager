@@ -91,6 +91,8 @@ const sourceLabels: Record<OperationSource, UIMessageKey> = {
 const actionLabels: Record<string, UIMessageKey> = {
   delete: "ui.delete_account",
   model_test: "ui.model_availability_test",
+	quota_metadata_refresh: "ui.refresh_quota_metadata_action",
+	active_reset: "ui.use_active_reset",
   auto_model_whitelist: "ui.auto_model_whitelist_applied",
   batch_edit: "ui.batch_edit_2",
   batch_retry: "ui.retry_failures",

@@ -217,6 +217,9 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
     ...(hasCodexQuota ? {
       codex: {
         observed_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+				plan_type: planTypes[Math.floor(index / providers.length) % planTypes.length],
+				active_reset_count: index % 12 === 4 ? 2 : 0,
+				metadata_observed_at: new Date(Date.now() - 2 * 60_000).toISOString(),
         five_hour: {
           used_percent: index === 12 ? 118 : 18 + (index % 6) * 12.5,
           reset_at: new Date(Date.now() + 38 * 60_000).toISOString(),
@@ -976,6 +979,29 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname.endsWith("/plugins/cpa-account-config-manager/accounts")) {
     return json(response, 200, listFromURL(url));
   }
+	if (request.method === "POST" && url.pathname.endsWith("/accounts/quota-metadata/refresh")) {
+		const body = await readJSON(request);
+		const account = accounts.find((candidate) => candidate.id === body.account_id);
+		if (!account) return json(response, 404, { error: "quota metadata account was not found" });
+		if (!String(account.provider).startsWith("codex")) return json(response, 422, { error: "quota metadata is only available for Codex accounts" });
+		account.usage ||= { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0 };
+		account.usage.codex ||= { observed_at: new Date().toISOString() };
+		account.usage.codex.plan_type = account.plan_type || "free";
+		account.usage.codex.active_reset_count ??= 0;
+		account.usage.codex.metadata_observed_at = new Date().toISOString();
+		return json(response, 200, { account_id: account.id, plan_type: account.usage.codex.plan_type, active_reset_count: account.usage.codex.active_reset_count, observed_at: account.usage.codex.metadata_observed_at });
+	}
+	if (request.method === "POST" && url.pathname.endsWith("/accounts/quota-metadata/reset")) {
+		const body = await readJSON(request);
+		const account = accounts.find((candidate) => candidate.id === body.account_id);
+		if (!account) return json(response, 404, { error: "quota metadata account was not found" });
+		if (body.confirm !== true) return json(response, 400, { error: "active reset confirmation is required" });
+		const count = account.usage?.codex?.active_reset_count;
+		if (!Number.isInteger(count) || count <= 0) return json(response, 409, { error: "no active reset credit is available" });
+		account.usage.codex.active_reset_count = count - 1;
+		account.usage.codex.metadata_observed_at = new Date().toISOString();
+		return json(response, 200, { account_id: account.id, plan_type: account.usage.codex.plan_type || account.plan_type, active_reset_count: account.usage.codex.active_reset_count, observed_at: account.usage.codex.metadata_observed_at, reset_credit_used: true });
+	}
   if (request.method === "POST" && url.pathname.endsWith("/accounts/deduplicate/preview")) {
     const requested = await readJSON(request);
     const options = {

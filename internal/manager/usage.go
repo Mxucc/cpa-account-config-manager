@@ -36,9 +36,12 @@ type AccountUsageSnapshot struct {
 }
 
 type CodexUsageSnapshot struct {
-	FiveHour   *UsageWindowSnapshot `json:"five_hour,omitempty"`
-	SevenDay   *UsageWindowSnapshot `json:"seven_day,omitempty"`
-	ObservedAt time.Time            `json:"observed_at"`
+	FiveHour           *UsageWindowSnapshot `json:"five_hour,omitempty"`
+	SevenDay           *UsageWindowSnapshot `json:"seven_day,omitempty"`
+	PlanType           string               `json:"plan_type,omitempty"`
+	ActiveResetCount   *int                 `json:"active_reset_count,omitempty"`
+	MetadataObservedAt time.Time            `json:"metadata_observed_at,omitempty"`
+	ObservedAt         time.Time            `json:"observed_at"`
 }
 
 type UsageWindowSnapshot struct {
@@ -306,7 +309,7 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 	}
 	now := t.currentTime()
 	cloned := cloneCodexUsage(snapshot)
-	if cloned == nil || cloned.FiveHour == nil && cloned.SevenDay == nil {
+	if cloned == nil || !hasCodexUsageData(cloned) {
 		return
 	}
 	cloned.ObservedAt = now
@@ -326,7 +329,15 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 	if cloned.SevenDay != nil {
 		aggregate.Codex.SevenDay = cloneUsageWindow(cloned.SevenDay)
 	}
-	aggregate.Codex.ObservedAt = now
+	if cloned.FiveHour != nil || cloned.SevenDay != nil {
+		aggregate.Codex.ObservedAt = now
+	}
+	metadataObserved := !cloned.MetadataObservedAt.IsZero() || cloned.PlanType != "" || cloned.ActiveResetCount != nil
+	if metadataObserved {
+		aggregate.Codex.PlanType = cloned.PlanType
+		aggregate.Codex.ActiveResetCount = cloneIntPointer(cloned.ActiveResetCount)
+		aggregate.Codex.MetadataObservedAt = now
+	}
 	aggregate.UpdatedAt = now
 	t.accounts[storageKey] = aggregate
 	t.dirty = true
@@ -483,7 +494,7 @@ func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageS
 	if codex != nil {
 		codex.FiveHour = currentUsageWindow(codex.FiveHour, codex.ObservedAt, now)
 		codex.SevenDay = currentUsageWindow(codex.SevenDay, codex.ObservedAt, now)
-		if codex.FiveHour == nil && codex.SevenDay == nil {
+		if !hasCodexUsageData(codex) {
 			codex = nil
 		}
 	}
@@ -676,7 +687,15 @@ func cloneCodexUsage(snapshot *CodexUsageSnapshot) *CodexUsageSnapshot {
 	cloned := *snapshot
 	cloned.FiveHour = cloneUsageWindow(snapshot.FiveHour)
 	cloned.SevenDay = cloneUsageWindow(snapshot.SevenDay)
+	if snapshot.ActiveResetCount != nil {
+		count := *snapshot.ActiveResetCount
+		cloned.ActiveResetCount = &count
+	}
 	return &cloned
+}
+
+func hasCodexUsageData(snapshot *CodexUsageSnapshot) bool {
+	return snapshot != nil && (snapshot.FiveHour != nil || snapshot.SevenDay != nil || snapshot.PlanType != "" || snapshot.ActiveResetCount != nil || !snapshot.MetadataObservedAt.IsZero())
 }
 
 func cloneUsageWindow(window *UsageWindowSnapshot) *UsageWindowSnapshot {

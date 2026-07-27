@@ -329,6 +329,7 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 	}
 	if usage != nil && authIndex != "" {
 		account.Usage = usage.Snapshot(authIndex)
+		applyQuotaPlanType(&account)
 		if identities, ok := usage.(UsageIdentityReader); ok {
 			account.usageIdentity = identities.UsageIdentity(authIndex)
 		}
@@ -446,7 +447,17 @@ func enrichAccount(account *Account, detail cpaapi.HostAuthGetResponse) error {
 	account.HeaderNames = safeHeaderNames(metadata["headers"])
 	account.HeaderCount = len(account.HeaderNames)
 	account.ModelPolicy = modelPolicySummary(metadata)
+	applyQuotaPlanType(account)
 	return nil
+}
+
+func applyQuotaPlanType(account *Account) {
+	if account == nil || account.Usage == nil || account.Usage.Codex == nil {
+		return
+	}
+	if planType := safeAccountPlanType(account.Usage.Codex.PlanType); planType != "" {
+		account.PlanType = planType
+	}
 }
 
 func matchesFilters(account Account, filters AccountFilters) bool {

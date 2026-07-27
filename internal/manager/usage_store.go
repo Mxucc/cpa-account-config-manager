@@ -254,15 +254,29 @@ func mergeCodexUsage(current, stored *CodexUsageSnapshot) *CodexUsageSnapshot {
 	if stored == nil {
 		return cloneCodexUsage(current)
 	}
-	if stored.ObservedAt.After(current.ObservedAt) {
-		return cloneCodexUsage(stored)
-	}
 	merged := cloneCodexUsage(current)
-	if merged.FiveHour == nil {
+	if stored.ObservedAt.After(merged.ObservedAt) {
+		merged.FiveHour = cloneUsageWindow(stored.FiveHour)
+		merged.SevenDay = cloneUsageWindow(stored.SevenDay)
+		merged.ObservedAt = stored.ObservedAt
+	} else if merged.FiveHour == nil {
 		merged.FiveHour = cloneUsageWindow(stored.FiveHour)
 	}
 	if merged.SevenDay == nil {
 		merged.SevenDay = cloneUsageWindow(stored.SevenDay)
+	}
+	if stored.MetadataObservedAt.After(merged.MetadataObservedAt) {
+		merged.PlanType = stored.PlanType
+		merged.ActiveResetCount = cloneIntPointer(stored.ActiveResetCount)
+		merged.MetadataObservedAt = stored.MetadataObservedAt
+	} else if merged.MetadataObservedAt.IsZero() {
+		if merged.PlanType == "" {
+			merged.PlanType = stored.PlanType
+		}
+		if merged.ActiveResetCount == nil && stored.ActiveResetCount != nil {
+			count := *stored.ActiveResetCount
+			merged.ActiveResetCount = &count
+		}
 	}
 	return merged
 }
@@ -287,9 +301,14 @@ func sanitizeCodexUsage(snapshot *CodexUsageSnapshot) *CodexUsageSnapshot {
 	}
 	snapshot = cloneCodexUsage(snapshot)
 	snapshot.ObservedAt = snapshot.ObservedAt.UTC()
+	snapshot.MetadataObservedAt = snapshot.MetadataObservedAt.UTC()
+	snapshot.PlanType = safeAccountPlanType(snapshot.PlanType)
+	if snapshot.ActiveResetCount != nil && (*snapshot.ActiveResetCount < 0 || *snapshot.ActiveResetCount > maxActiveResetCount) {
+		snapshot.ActiveResetCount = nil
+	}
 	snapshot.FiveHour = sanitizeUsageWindow(snapshot.FiveHour)
 	snapshot.SevenDay = sanitizeUsageWindow(snapshot.SevenDay)
-	if snapshot.FiveHour == nil && snapshot.SevenDay == nil {
+	if !hasCodexUsageData(snapshot) {
 		return nil
 	}
 	return snapshot

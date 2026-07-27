@@ -109,6 +109,22 @@ func (c *managementClient) DeleteAuthFile(ctx context.Context, name string) erro
 	return c.request(ctx, http.MethodDelete, "/v0/management/auth-files?"+query.Encode(), nil, "")
 }
 
+func (c *managementClient) APICall(ctx context.Context, request managementAPICallRequest) (modelProbeHTTPResponse, error) {
+	raw, errMarshal := json.Marshal(request)
+	if errMarshal != nil {
+		return modelProbeHTTPResponse{}, fmt.Errorf("encode management API-call request: %w", errMarshal)
+	}
+	var response managementAPICallResponse
+	if errRequest := c.requestJSON(ctx, http.MethodPost, "/v0/management/api-call", bytes.NewReader(raw), "application/json", &response); errRequest != nil {
+		return modelProbeHTTPResponse{}, errRequest
+	}
+	return modelProbeHTTPResponse{
+		StatusCode: response.StatusCode,
+		Header:     response.Header,
+		Body:       []byte(string(response.Body)),
+	}, nil
+}
+
 func (c *managementClient) patch(ctx context.Context, path string, payload any) error {
 	raw, errMarshal := json.Marshal(payload)
 	if errMarshal != nil {

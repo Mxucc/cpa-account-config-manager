@@ -119,7 +119,19 @@ export interface UsageWindowSnapshot {
 export interface CodexUsageSnapshot {
   five_hour?: UsageWindowSnapshot;
   seven_day?: UsageWindowSnapshot;
+	plan_type?: string;
+	active_reset_count?: number;
+	metadata_observed_at?: string;
   observed_at: string;
+}
+
+export interface QuotaMetadataResponse {
+	account_id: string;
+	plan_type?: string;
+	active_reset_count?: number;
+	observed_at: string;
+	warning?: "active_reset_count_unavailable" | "quota_metadata_refresh_after_reset_unavailable";
+	reset_credit_used?: boolean;
 }
 
 export interface AccountUsageSnapshot {

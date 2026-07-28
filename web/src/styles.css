@@ -983,10 +983,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .conditional-rule-body h4 { margin: 0 0 8px; color: var(--text-secondary); font-size: 9px; text-transform: uppercase; }
 .condition-group { min-width: 0; display: grid; gap: 7px; }
 .condition-group-toolbar { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.condition-operator { display: inline-flex; overflow: hidden; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
-.condition-operator button { min-height: 28px; padding: 0 8px; border: none; border-right: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); font-size: 8px; font-weight: 700; cursor: pointer; }
+.condition-operator { display: inline-flex; overflow: hidden; padding: 2px; gap: 2px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.condition-operator button { min-width: 88px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border: 1px solid transparent; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--text-secondary); font-size: 9px; font-weight: 700; cursor: pointer; }
 .condition-operator button:last-child { border-right: none; }
-.condition-operator button.active { color: var(--primary-active); background: var(--primary-light); }
+.condition-operator button.active { color: var(--primary-contrast); border-color: var(--primary-color); background: var(--primary-color); box-shadow: 0 1px 3px color-mix(in srgb, var(--primary-color) 28%, transparent); }
+.condition-operator button:not(.active):hover:not(:disabled) { color: var(--text-primary); background: var(--bg-tertiary); }
+.condition-operator-summary { min-width: 180px; flex: 1 1 220px; color: var(--text-secondary); font-size: 9px; line-height: 1.45; }
 .condition-items { min-width: 0; display: grid; gap: 6px; }
 .condition-row { min-width: 0; display: grid; grid-template-columns: minmax(120px, 0.42fr) minmax(120px, 1fr) auto; align-items: center; gap: 5px; }
 .condition-row select { padding-right: 24px; }
@@ -1021,6 +1023,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notification-endpoint-list { min-width: 0; display: grid; }
 .notification-endpoint-row { min-width: 0; border-bottom: 1px solid var(--border-primary); }
 .notification-endpoint-heading { min-width: 0; display: grid; grid-template-columns: auto minmax(160px, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; background: var(--bg-secondary); }
+.notification-endpoint-heading.is-policy-endpoint { grid-template-columns: auto minmax(0, 1fr); }
 .notification-endpoint-heading > label:not(.switch-control) { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text-secondary); font-size: 9px; }
 .notification-endpoint-heading input[type="text"], .notification-endpoint-heading select { min-width: 0; width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-size: 10px; }
 .notification-endpoint-heading .icon-button { justify-self: end; }

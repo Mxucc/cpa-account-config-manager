@@ -125,6 +125,7 @@ describe("ExternalNotificationSettings", () => {
     const accountConditions = within(firstPolicy).getByRole("group", { name: "条件关系" });
     await user.click(within(accountConditions).getByRole("button", { name: "任一满足" }));
     expect(within(accountConditions).getByRole("button", { name: "任一满足" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(firstPolicy).getByText("符合组内任意一个条件即可匹配账号")).toBeInTheDocument();
     await user.click(within(firstPolicy).getByRole("button", { name: "添加条件" }));
     const conditionFields = within(firstPolicy).getAllByLabelText("条件字段");
     await user.selectOptions(conditionFields[1], "account_type");
@@ -134,9 +135,11 @@ describe("ExternalNotificationSettings", () => {
     const thresholds = within(firstPolicy).getByRole("group", { name: "触发条件组合方式" });
     await user.click(within(thresholds).getByRole("button", { name: "任一满足" }));
     expect(within(thresholds).getByRole("button", { name: "任一满足" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(firstPolicy).getByText("任意一个已启用的阈值达到时触发通知")).toBeInTheDocument();
 
     const firstPolicyEndpoints = within(firstPolicy).getByRole("region", { name: "Free Codex 的策略通知链接" });
     const firstPolicyEndpoint = within(firstPolicyEndpoints).getByRole("region", { name: "通知链接 1" });
+    expect(within(firstPolicyEndpoint).queryByLabelText("通知链接 1 名称")).not.toBeInTheDocument();
     await user.type(within(firstPolicyEndpoint).getByLabelText("通知链接 1 URL 模板"), "https://free.example/hook?available=${available_accounts}");
     expect(within(firstPolicyEndpoint).queryByLabelText("通知链接 1 的触发策略")).not.toBeInTheDocument();
 
@@ -186,7 +189,7 @@ describe("ExternalNotificationSettings", () => {
     ];
     initial.notification_endpoints = [
       { id: "generic", url: "https://generic.example/hook", enabled: true },
-      { id: "free-a", url: "https://free-a.example/hook", enabled: true, notification_policy_id: "free" },
+      { id: "free-a", name: "旧策略链接名称", url: "https://free-a.example/hook", enabled: true, notification_policy_id: "free" },
       { id: "team-a", url: "https://team.example/hook", enabled: true, notification_policy_id: "team" },
       { id: "free-b", url: "https://free-b.example/hook", enabled: true, notification_policy_id: "free" },
     ];
@@ -202,6 +205,7 @@ describe("ExternalNotificationSettings", () => {
     const teamEndpoints = within(teamPolicy).getByRole("region", { name: "Team 的策略通知链接" });
     expect(within(freeEndpoints).getByDisplayValue("https://free-a.example/hook")).toBeInTheDocument();
     expect(within(freeEndpoints).getByDisplayValue("https://free-b.example/hook")).toBeInTheDocument();
+    expect(within(freeEndpoints).queryByLabelText("通知链接 1 名称")).not.toBeInTheDocument();
     expect(within(teamEndpoints).getByDisplayValue("https://team.example/hook")).toBeInTheDocument();
 
     const secondFreeEndpoint = within(freeEndpoints).getByRole("region", { name: "通知链接 2" });
@@ -209,5 +213,6 @@ describe("ExternalNotificationSettings", () => {
     await user.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save.mock.calls[0][0].notification_endpoints?.map((endpoint) => endpoint.id)).toEqual(["generic", "free-b", "team-a", "free-a"]);
+    expect(save.mock.calls[0][0].notification_endpoints?.find((endpoint) => endpoint.id === "free-a")?.name).toBe("");
   });
 });

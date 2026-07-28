@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, BellRing, Eye, GitBranch, LoaderCircle, Plus, Save, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, BellRing, Check, Eye, GitBranch, LoaderCircle, Plus, Save, Send, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
@@ -218,7 +218,8 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   };
 
   const removeEndpoint = (endpoint: InspectionNotificationEndpoint) => {
-    if (!window.confirm(tx("ui.confirm_remove_notification_endpoint", { name: endpoint.name || endpoint.id }))) return;
+    const label = endpoint.notification_policy_id ? endpoint.url || endpoint.id : endpoint.name || endpoint.id;
+    if (!window.confirm(tx("ui.confirm_remove_notification_endpoint", { name: label }))) return;
     setEndpoints((current) => current.filter((candidate) => candidate.id !== endpoint.id));
     setResults((current) => {
       const next = { ...current };
@@ -295,7 +296,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     }
     return {
       endpoint_id: endpoint.id,
-      endpoint_name: endpoint.name?.trim(),
+      endpoint_name: endpoint.notification_policy_id ? undefined : endpoint.name?.trim(),
       url_template: endpoint.url.trim(),
       scenario: "manual_test",
       threshold_percent: policy?.anomaly_threshold_percent || 50,
@@ -351,7 +352,11 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
         anomaly_notification_enabled: anomalyEnabled,
         anomaly_notification_only: anomalyEnabled ? notificationOnly : false,
         anomaly_notification_url: "",
-        notification_endpoints: endpoints.map((endpoint) => ({ ...endpoint, name: endpoint.name?.trim(), url: endpoint.url.trim() })),
+        notification_endpoints: endpoints.map((endpoint) => ({
+          ...endpoint,
+          name: endpoint.notification_policy_id ? "" : endpoint.name?.trim(),
+          url: endpoint.url.trim(),
+        })),
         notification_policies: notificationPolicies.map((item) => ({ ...item, name: item.name.trim() })),
         notification_available_accounts_enabled: availableEnabled,
         notification_available_accounts_threshold: values.available,
@@ -377,9 +382,9 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     const busy = action?.endpointID === endpoint.id;
     return (
       <section className="notification-endpoint-row" key={endpoint.id} aria-label={tx("ui.notification_endpoint_number", { number: index + 1 })}>
-        <div className="notification-endpoint-heading">
+        <div className={`notification-endpoint-heading ${endpoint.notification_policy_id ? "is-policy-endpoint" : ""}`}>
           <label className="switch-control"><input type="checkbox" checked={endpoint.enabled} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { enabled: event.target.checked })} aria-label={tx("ui.notification_endpoint_enabled_number", { number: index + 1 })} /><b>{tx(endpoint.enabled ? "ui.on_2" : "ui.off_2")}</b></label>
-          <label><span>{tx("ui.notification_endpoint_name")}</span><input type="text" maxLength={80} value={endpoint.name || ""} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { name: event.target.value })} aria-label={tx("ui.notification_endpoint_name_number", { number: index + 1 })} /></label>
+          {!endpoint.notification_policy_id ? <label><span>{tx("ui.notification_endpoint_name")}</span><input type="text" maxLength={80} value={endpoint.name || ""} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { name: event.target.value })} aria-label={tx("ui.notification_endpoint_name_number", { number: index + 1 })} /></label> : null}
           <div className="notification-endpoint-tools">
             <IconButton label={tx("ui.move_notification_endpoint_up")} disabled={saving || peerIndex === 0} onClick={() => moveEndpoint(endpoint.id, -1)}><ArrowUp size={15} /></IconButton>
             <IconButton label={tx("ui.move_notification_endpoint_down")} disabled={saving || peerIndex === peers.length - 1} onClick={() => moveEndpoint(endpoint.id, 1)}><ArrowDown size={15} /></IconButton>
@@ -454,7 +459,8 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
               <section><h4>{tx("ui.match_conditions")}</h4><PolicyConditionEditor group={item.conditions} disabled={saving} onChange={(conditions) => updateNotificationPolicy(item.id, { conditions })} /></section>
               <section className="notification-policy-thresholds">
                 <h4>{tx("ui.notification_threshold_conditions")}</h4>
-                <div className="condition-operator" role="group" aria-label={tx("ui.notification_threshold_operator")}><button type="button" className={item.threshold_operator === "all" ? "active" : ""} aria-pressed={item.threshold_operator === "all"} disabled={saving} onClick={() => updateNotificationPolicy(item.id, { threshold_operator: "all" })}>{tx("ui.match_all")}</button><button type="button" className={item.threshold_operator === "any" ? "active" : ""} aria-pressed={item.threshold_operator === "any"} disabled={saving} onClick={() => updateNotificationPolicy(item.id, { threshold_operator: "any" })}>{tx("ui.match_any")}</button></div>
+                <div className="condition-operator" role="group" aria-label={tx("ui.notification_threshold_operator")}><button type="button" className={item.threshold_operator === "all" ? "active" : ""} aria-pressed={item.threshold_operator === "all"} disabled={saving} onClick={() => updateNotificationPolicy(item.id, { threshold_operator: "all" })}>{item.threshold_operator === "all" ? <Check size={12} aria-hidden="true" /> : null}{tx("ui.match_all")}</button><button type="button" className={item.threshold_operator === "any" ? "active" : ""} aria-pressed={item.threshold_operator === "any"} disabled={saving} onClick={() => updateNotificationPolicy(item.id, { threshold_operator: "any" })}>{item.threshold_operator === "any" ? <Check size={12} aria-hidden="true" /> : null}{tx("ui.match_any")}</button></div>
+                <span className="condition-operator-summary" role="status">{tx(item.threshold_operator === "all" ? "ui.threshold_match_all_hint" : "ui.threshold_match_any_hint")}</span>
                 <label className={`automation-setting ${item.available_accounts_enabled ? "is-enabled" : ""}`}><span>{tx("ui.notify_when_available_accounts_low")}</span><input type="checkbox" checked={item.available_accounts_enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { available_accounts_enabled: event.target.checked })} /><span className="number-suffix"><input type="number" min="1" max="10000" value={item.available_accounts_below} disabled={saving || !item.available_accounts_enabled} onChange={(event) => updateNotificationPolicy(item.id, { available_accounts_below: Number(event.target.value) })} /><b>{tx("ui.accounts_2")}</b></span></label>
                 <label className={`automation-setting ${item.availability_percent_enabled ? "is-enabled" : ""}`}><span>{tx("ui.notify_when_availability_low")}</span><input type="checkbox" checked={item.availability_percent_enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { availability_percent_enabled: event.target.checked })} /><span className="number-suffix"><input type="number" min="1" max="100" value={item.availability_percent_below} disabled={saving || !item.availability_percent_enabled} onChange={(event) => updateNotificationPolicy(item.id, { availability_percent_below: Number(event.target.value) })} /><b>{tx("ui.percent")}</b></span></label>
               </section>

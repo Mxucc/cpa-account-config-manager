@@ -121,6 +121,8 @@ describe("ExternalNotificationSettings", () => {
     const policyWorkspace = screen.getByRole("region", { name: "策略通知" });
     await user.click(within(policyWorkspace).getAllByRole("button", { name: "添加策略通知" })[0]);
     const firstPolicy = screen.getByRole("article", { name: "通知策略 1" });
+    expect(within(firstPolicy).getByLabelText("通知策略 1 名称")).toHaveValue("策略通知 1");
+    await user.clear(within(firstPolicy).getByLabelText("通知策略 1 名称"));
     await user.type(within(firstPolicy).getByLabelText("通知策略 1 名称"), "Free Codex");
     const accountConditions = within(firstPolicy).getByRole("group", { name: "条件关系" });
     await user.click(within(accountConditions).getByRole("button", { name: "任一满足" }));
@@ -145,6 +147,8 @@ describe("ExternalNotificationSettings", () => {
 
     await user.click(within(policyWorkspace).getByRole("button", { name: "添加策略通知" }));
     const secondPolicy = screen.getByRole("article", { name: "通知策略 2" });
+    expect(within(secondPolicy).getByLabelText("通知策略 2 名称")).toHaveValue("策略通知 2");
+    await user.clear(within(secondPolicy).getByLabelText("通知策略 2 名称"));
     await user.type(within(secondPolicy).getByLabelText("通知策略 2 名称"), "Team Codex");
     await user.click(within(secondPolicy).getByRole("button", { name: "上移通知策略" }));
     await user.click(within(secondPolicy).getAllByRole("checkbox")[0]);
@@ -214,5 +218,56 @@ describe("ExternalNotificationSettings", () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save.mock.calls[0][0].notification_endpoints?.map((endpoint) => endpoint.id)).toEqual(["generic", "free-b", "team-a", "free-a"]);
     expect(save.mock.calls[0][0].notification_endpoints?.find((endpoint) => endpoint.id === "free-a")?.name).toBe("");
+  });
+
+  it("normalizes unnamed policies, rejects duplicate names, and never exposes internal IDs", async () => {
+    const user = userEvent.setup();
+    const initial = inspectionPolicy();
+    initial.notification_policies = [
+      {
+        id: "notify-policy-internal-1", name: "", enabled: true,
+        conditions: { operator: "all", conditions: [{ field: "provider", value: "codex" }], groups: [] },
+        threshold_operator: "all", available_accounts_enabled: true, available_accounts_below: 2,
+        availability_percent_enabled: false, availability_percent_below: 20,
+      },
+      {
+        id: "notify-policy-internal-2", name: "Operations", enabled: true,
+        conditions: { operator: "all", conditions: [{ field: "provider", value: "claude" }], groups: [] },
+        threshold_operator: "all", available_accounts_enabled: true, available_accounts_below: 1,
+        availability_percent_enabled: false, availability_percent_below: 20,
+      },
+    ];
+    initial.notification_endpoints = [
+      { id: "endpoint-internal-1", url: "https://codex.example/hook", enabled: true, notification_policy_id: "notify-policy-internal-1" },
+      { id: "endpoint-internal-2", url: "https://claude.example/hook", enabled: true, notification_policy_id: "notify-policy-internal-2" },
+    ];
+    initial.anomaly_notification_url = "";
+    initial.anomaly_notification_enabled = false;
+    initial.notification_available_accounts_enabled = false;
+    initial.notification_availability_percent_enabled = false;
+    vi.spyOn(api, "getInspection").mockResolvedValue({ policy: initial } as Awaited<ReturnType<typeof api.getInspection>>);
+    const save = vi.spyOn(api, "saveInspectionPolicy");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<ExternalNotificationSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const firstPolicy = await screen.findByRole("article", { name: "通知策略 1" });
+    const secondPolicy = screen.getByRole("article", { name: "通知策略 2" });
+    expect(within(firstPolicy).getByLabelText("通知策略 1 名称")).toHaveValue("策略通知 1");
+    expect(screen.queryByText(/notify-policy-internal/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /通知策略 ID/ })).not.toBeInTheDocument();
+
+    await user.click(within(firstPolicy).getByRole("button", { name: "删除通知策略" }));
+    expect(confirm).toHaveBeenLastCalledWith("确定删除策略通知 策略通知 1 及其全部通知链接？");
+    const firstEndpoint = within(firstPolicy).getByRole("region", { name: "通知链接 1" });
+    await user.click(within(firstEndpoint).getByRole("button", { name: "删除通知链接 1" }));
+    expect(confirm).toHaveBeenLastCalledWith("确定删除第 1 条通知链接？");
+
+    const secondName = within(secondPolicy).getByLabelText("通知策略 2 名称");
+    await user.clear(secondName);
+    await user.type(secondName, "策略通知 1");
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("策略名称“策略通知 1”已存在，请使用唯一名称");
+    expect(save).not.toHaveBeenCalled();
   });
 });

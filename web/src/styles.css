@@ -1530,6 +1530,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notification-global-settings { grid-template-columns: 1fr; }
   .notification-endpoint-heading { grid-template-columns: auto minmax(0, 1fr) auto; }
   .notification-endpoint-heading > label:not(.switch-control) { grid-template-columns: 1fr; gap: 4px; }
+  .notification-policy-row-header { grid-template-columns: auto minmax(0, 1fr); }
+  .notification-policy-row-header > label:not(.switch-control) { grid-column: 1 / -1; grid-row: 2; grid-template-columns: 1fr; gap: 4px; }
+  .notification-policy-row-header > .conditional-rule-tools { grid-column: 2; grid-row: 1; justify-self: end; }
   .notification-policy-row-body { grid-template-columns: 1fr; }
   .notification-policy-row-body > section + section { border-left: none; border-top: 1px solid var(--border-color); }
   .notification-policy-endpoints > header { align-items: stretch; flex-direction: column; }

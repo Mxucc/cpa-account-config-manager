@@ -37,6 +37,7 @@ export function AutomationSettingsDialog({
   const [passiveDuration, setPassiveDuration] = useState(String(inspection.passive_circuit_minutes ?? 15));
   const [autoDisable, setAutoDisable] = useState(inspection.auto_disable);
   const [autoEnable, setAutoEnable] = useState(inspection.auto_enable);
+  const [quotaRecoveryPriority, setQuotaRecoveryPriority] = useState(inspection.quota_recovery_priority_enabled ?? false);
   const [autoDelete, setAutoDelete] = useState(inspection.auto_delete);
   const [autoDeleteInvalid, setAutoDeleteInvalid] = useState(inspection.auto_delete_invalid_credentials);
   const [deleteGrace, setDeleteGrace] = useState(String(inspection.delete_grace_hours));
@@ -100,6 +101,7 @@ export function AutomationSettingsDialog({
       passive_circuit_minutes: passiveCircuitMinutes,
       auto_disable: autoDisable,
       auto_enable: autoEnable,
+      quota_recovery_priority_enabled: quotaRecoveryPriority,
       auto_delete: autoDelete,
       auto_delete_invalid_credentials: autoDeleteInvalid,
       delete_grace_hours: graceHours,
@@ -171,7 +173,8 @@ export function AutomationSettingsDialog({
           <header><AlertTriangle size={17} /><div><strong>{tx("ui.account_disposition")}</strong><span>{tx("ui.only_accounts_disabled_by_inspection_can_be_restored")}</span></div></header>
           <div className="automation-setting-grid">
             <SettingToggle label="ui.auto_disable" checked={autoDisable} disabled={saving} onChange={(checked) => { setAutoDisable(checked); if (checked) setScheduleEnabled(true); else { setAutoDelete(false); setPassiveCircuit(false); } }} />
-            <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={(checked) => { setAutoEnable(checked); if (checked) setScheduleEnabled(true); else setPassiveCircuit(false); }} />
+            <SettingToggle label="ui.auto_enable" checked={autoEnable} disabled={saving} onChange={(checked) => { setAutoEnable(checked); if (checked) setScheduleEnabled(true); else { setPassiveCircuit(false); setQuotaRecoveryPriority(false); } }} />
+            <SettingToggle label="ui.quota_recovery_priority" checked={quotaRecoveryPriority} disabled={saving} onChange={(checked) => { setQuotaRecoveryPriority(checked); if (checked) { setAutoEnable(true); setScheduleEnabled(true); } }} />
             <SettingToggle label="ui.passive_temporary_circuit" checked={passiveCircuit} disabled={saving} onChange={(checked) => { setPassiveCircuit(checked); if (checked) { setAutoDisable(true); setAutoEnable(true); setScheduleEnabled(true); } }} />
             <SettingNumber label="ui.passive_failure_threshold" suffix="ui.events" value={passiveThreshold} min={2} max={100} disabled={!passiveCircuit || saving} onChange={setPassiveThreshold} />
             <SettingNumber label="ui.passive_failure_window" suffix="ui.minutes" value={passiveWindow} min={1} max={1440} disabled={!passiveCircuit || saving} onChange={setPassiveWindow} />
@@ -182,6 +185,7 @@ export function AutomationSettingsDialog({
             <SettingNumber label="ui.deletes_per_run" suffix="ui.accounts_2" value={deleteBatch} min={1} max={100} disabled={!autoDelete || saving} onChange={setDeleteBatch} />
           </div>
           <p className="automation-setting-note">{tx("ui.passive_circuit_description")}</p>
+          <p className="automation-setting-note">{tx("ui.quota_recovery_priority_description")}</p>
           {autoDelete && !inspection.auto_delete ? (
             <label className="destructive-confirmation">
               <input type="checkbox" checked={confirmDelete} disabled={saving} onChange={(event) => setConfirmDelete(event.target.checked)} aria-label={tx("ui.confirm_auto_delete")} />

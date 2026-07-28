@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -76,6 +77,77 @@ func TestAutomaticInspectionUsesCPAStatusAPIWhenManagementCredentialIsArmed(t *t
 	}
 }
 
+func TestAutomaticQuotaRecoveryRaisesPriorityThroughCPAFieldsAPI(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 8, 0, 0, 0, time.UTC)
+	disabledAt := now.Add(-time.Hour)
+	host := inspectionEditableHost(true)
+	paths := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		paths = append(paths, request.URL.Path)
+		if request.Method != http.MethodPatch || request.Header.Get("Authorization") != "Bearer management-secret" {
+			t.Errorf("management request = %s %s auth=%q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
+		}
+		var payload map[string]any
+		if errDecode := json.NewDecoder(request.Body).Decode(&payload); errDecode != nil {
+			t.Errorf("decode management payload: %v", errDecode)
+		}
+		switch request.URL.Path {
+		case "/v0/management/auth-files/fields":
+			if payload["name"] != "inspection.json" || payload["priority"] != float64(quotaRecoveryPriorityFloor) {
+				t.Errorf("priority payload = %#v", payload)
+			}
+		case "/v0/management/auth-files/status":
+			if payload["name"] != "inspection.json" || payload["disabled"] != false {
+				t.Errorf("status payload = %#v", payload)
+			}
+		default:
+			t.Errorf("unexpected management path %q", request.URL.Path)
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	records := map[string]inspectionRecord{
+		"inspection-account": {
+			Result: InspectionResult{
+				ID: "inspection-account", Name: "inspection.json", Provider: "codex",
+				Health: InspectionHealthHealthy, ReasonCode: "quota_reset", Confidence: InspectionConfidenceHigh,
+				Recommendation: InspectionRecommendationEnable, Editable: true, Disabled: true, OwnedDisable: true,
+				QuotaWindow: InspectionQuotaWindowSevenDay,
+			},
+			DisableReason: "quota_exhausted", DisabledAt: disabledAt,
+			DisabledName: "inspection.json", DisabledPath: "/auths/inspection.json",
+		},
+	}
+	accounts := map[string]Account{
+		"inspection-account": {
+			ID: "inspection-account", Name: "inspection.json", Provider: "codex", Disabled: true, Editable: true,
+			path: "/auths/inspection.json",
+			Usage: &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{
+				ObservedAt: now.Add(-time.Minute), SevenDay: &UsageWindowSnapshot{UsedPercent: 0, WindowMinutes: 10080},
+			}},
+		},
+	}
+	policy := defaultInspectionPolicy()
+	policy.AutoEnable = true
+	policy.QuotaRecoveryPriorityEnabled = true
+	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, now, server.URL, "management-secret")
+	if summary.AutoEnabled != 1 || summary.Failed != 0 || len(actions) != 1 || actions[0].ReasonCode != "quota_reset" || actions[0].Status != InspectionActionSucceeded {
+		t.Fatalf("quota recovery summary=%#v actions=%#v", summary, actions)
+	}
+	wantPaths := []string{"/v0/management/auth-files/fields", "/v0/management/auth-files/status"}
+	if !reflect.DeepEqual(paths, wantPaths) {
+		t.Fatalf("management paths = %#v, want %#v", paths, wantPaths)
+	}
+	if records["inspection-account"].Result.Disabled || records["inspection-account"].Result.OwnedDisable {
+		t.Fatalf("quota recovery ownership was not cleared: %#v", records["inspection-account"])
+	}
+	if len(host.saves) != 0 {
+		t.Fatalf("quota recovery bypassed CPA management APIs with %d host saves", len(host.saves))
+	}
+}
+
 func TestAutomaticInspectionDefersTransientMutationConflictWithoutStickyError(t *testing.T) {
 	host := inspectionEditableHost(false)
 	mutations := NewMutationCoordinator()
@@ -126,7 +198,7 @@ func TestAutomaticInspectionRepairsStaleCPARuntimeDisabledState(t *testing.T) {
 		t.Fatalf("stale CPA account state = %#v error=%v", listed, errList)
 	}
 	engine := NewInspectionEngine(accounts, host, NewMutationCoordinator())
-	outcome, errDisable := engine.setInspectionDisabled(context.Background(), listed[0], inspectionRecord{}, true, nil)
+	outcome, errDisable := engine.setInspectionDisabled(context.Background(), listed[0], inspectionRecord{}, true, nil, nil)
 	if errDisable != nil {
 		t.Fatalf("repair stale CPA state: %v", errDisable)
 	}

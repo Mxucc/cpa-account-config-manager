@@ -699,6 +699,7 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 	applyUsageRecordToInspection(&inspection, record, e.policy, now)
 	e.records[authIndex] = inspection
 	wake := e.started && backgroundWorkAllowed(e.backgroundOwner) && (passiveCircuitThresholdReached(e.policy, inspection) ||
+		quotaUsageObservationRequiresImmediateScan(e.policy, record, inspection, now) ||
 		usageObservationRequiresImmediateScan(e.policy, record, inspection, now) && e.usageAutoDisableAllowedLocked(record, now))
 	if wake {
 		e.pending = true
@@ -715,6 +716,55 @@ func (e *InspectionEngine) Observe(record cpaapi.UsageRecord) {
 	}
 }
 
+func (e *InspectionEngine) ObserveCodexQuotaSnapshot(authIndex string, snapshot *CodexUsageSnapshot) {
+	if e == nil || snapshot == nil {
+		return
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return
+	}
+	now := e.currentTime()
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return
+	}
+	record, exists := e.records[authIndex]
+	wake := exists && e.started && backgroundWorkAllowed(e.backgroundOwner) &&
+		quotaSnapshotRequiresImmediateScan(e.policy, snapshot, record, now)
+	if wake {
+		e.pending = true
+	}
+	e.mu.Unlock()
+	if wake {
+		select {
+		case e.scanWake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func quotaSnapshotRequiresImmediateScan(policy InspectionPolicy, snapshot *CodexUsageSnapshot, record inspectionRecord, now time.Time) bool {
+	policy = normalizeInspectionPolicy(policy)
+	return policy.Enabled && policy.AutoEnable && record.Result.OwnedDisable && record.Result.Disabled &&
+		record.DisableReason == "quota_exhausted" && freshQuotaRecoverySnapshot(snapshot, record.DisabledAt, now) &&
+		codexQuotaWindowRecovered(snapshot, quotaRecoveryWindow(record)) && !quotaRecoveryBlockedByRecord(record, now)
+}
+
+func quotaRecoveryBlockedByRecord(record inspectionRecord, now time.Time) bool {
+	if decision, ok := decisionFromModelProbe(record.Probe, now); ok && inspectionProbeDecisionOutranksQuota(decision) &&
+		record.Probe.TestedAt.After(record.DisabledAt) {
+		return true
+	}
+	if activeInspectionSignal(record.Signal, now) && record.Signal.LastFailureAt.After(record.DisabledAt) {
+		decision := decisionFromSignal(record.Signal)
+		return decision.Health == InspectionHealthInvalidCredentials || decision.Health == InspectionHealthDeactivated
+	}
+	return record.Result.LastCheckedAt.After(record.DisabledAt) &&
+		(record.Result.Health == InspectionHealthInvalidCredentials || record.Result.Health == InspectionHealthDeactivated)
+}
+
 func usageObservationRequiresImmediateScan(policy InspectionPolicy, usage cpaapi.UsageRecord, inspection inspectionRecord, now time.Time) bool {
 	policy = normalizeInspectionPolicy(policy)
 	if !policy.Enabled || !policy.AutoDisable {
@@ -729,6 +779,21 @@ func usageObservationRequiresImmediateScan(policy InspectionPolicy, usage cpaapi
 	}
 	return usage.Failed && inspection.Signal.AutoDisableEligible &&
 		inspection.Signal.ConsecutiveFailures >= policy.FailureThreshold
+}
+
+func quotaUsageObservationRequiresImmediateScan(policy InspectionPolicy, usage cpaapi.UsageRecord, inspection inspectionRecord, now time.Time) bool {
+	policy = normalizeInspectionPolicy(policy)
+	if !policy.Enabled || !policy.AutoEnable || !inspection.Result.OwnedDisable || !inspection.Result.Disabled ||
+		inspection.DisableReason != "quota_exhausted" {
+		return false
+	}
+	codex := parseCodexUsageHeaders(usage.ResponseHeaders, now)
+	if codex == nil {
+		return false
+	}
+	codex.ObservedAt = now.UTC()
+	return freshQuotaRecoverySnapshot(codex, inspection.DisabledAt, now) &&
+		codexQuotaWindowRecovered(codex, quotaRecoveryWindow(inspection)) && !quotaRecoveryBlockedByRecord(inspection, now)
 }
 
 func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionResultList {

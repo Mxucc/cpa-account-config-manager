@@ -221,7 +221,11 @@ func (a *App) persistQuotaMetadata(account Account, metadata quotaMetadata, cons
 	snapshot.PlanType = metadata.planType
 	snapshot.ActiveResetCount = cloneIntPointer(metadata.activeResetCount)
 	snapshot.MetadataObservedAt = observedAt
+	if snapshot.FiveHour != nil || snapshot.SevenDay != nil {
+		snapshot.ObservedAt = observedAt
+	}
 	a.usage.ObserveCredentialUsage(account.ID, snapshot)
+	a.inspection.ObserveCodexQuotaSnapshot(account.ID, snapshot)
 	return QuotaMetadataResponse{
 		AccountID:        account.ID,
 		PlanType:         firstNonEmpty(metadata.planType, account.PlanType),

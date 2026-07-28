@@ -45,7 +45,6 @@ const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
   { name: "threshold_percent", label: "ui.notification_parameter_threshold_percent" },
   { name: "available_accounts_threshold", label: "ui.notification_parameter_available_accounts_threshold" },
   { name: "availability_percent_threshold", label: "ui.notification_parameter_availability_percent_threshold" },
-  { name: "notification_policy_id", label: "ui.notification_parameter_policy_id" },
   { name: "notification_policy_name", label: "ui.notification_parameter_policy_name" },
   { name: "triggered_at", label: "ui.notification_parameter_triggered_at" },
 ];
@@ -91,9 +90,24 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   }, [locale, onAPIError, tx]);
 
   const applyPolicy = useCallback((next: InspectionPolicy) => {
+    const nextNotificationPolicies = normalizedNotificationPolicies(next);
+    const usedNames = new Set(nextNotificationPolicies.map((item) => item.name.trim().toLocaleLowerCase()).filter(Boolean));
+    let defaultNameNumber = 1;
+    for (const item of nextNotificationPolicies) {
+      item.name = item.name.trim();
+      if (item.name) continue;
+      let candidate = tx("ui.default_notification_policy_name", { number: defaultNameNumber });
+      while (usedNames.has(candidate.toLocaleLowerCase())) {
+        defaultNameNumber += 1;
+        candidate = tx("ui.default_notification_policy_name", { number: defaultNameNumber });
+      }
+      item.name = candidate;
+      usedNames.add(candidate.toLocaleLowerCase());
+      defaultNameNumber += 1;
+    }
     setPolicy(next);
     setEndpoints(normalizedEndpoints(next));
-    setNotificationPolicies(normalizedNotificationPolicies(next));
+    setNotificationPolicies(nextNotificationPolicies);
     setAnomalyEnabled(next.anomaly_notification_enabled === true);
     setNotificationOnly(next.anomaly_notification_only === true);
     setAvailableEnabled(next.notification_available_accounts_enabled === true);
@@ -102,7 +116,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     setPercentThreshold(String(next.notification_availability_percent_threshold || 20));
     setCooldown(String(next.notification_cooldown_minutes || 60));
     setResults({});
-  }, []);
+  }, [tx]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,9 +188,16 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     }
     const index = notificationPolicies.length + 1;
     const id = `notify-policy-${Date.now().toString(36)}-${index}`;
+    const usedNames = new Set(notificationPolicies.map((item) => item.name.trim().toLocaleLowerCase()).filter(Boolean));
+    let defaultNameNumber = index;
+    let name = tx("ui.default_notification_policy_name", { number: defaultNameNumber });
+    while (usedNames.has(name.toLocaleLowerCase())) {
+      defaultNameNumber += 1;
+      name = tx("ui.default_notification_policy_name", { number: defaultNameNumber });
+    }
     setNotificationPolicies((current) => [...current, {
       id,
-      name: "",
+      name,
       enabled: true,
       conditions: { operator: "all", conditions: [{ field: "provider", value: "codex" }], groups: [] },
       threshold_operator: "all",
@@ -194,7 +215,9 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   };
 
   const removeNotificationPolicy = (item: InspectionNotificationPolicy) => {
-    if (!window.confirm(tx("ui.confirm_remove_notification_policy", { name: item.name || item.id }))) return;
+    const index = notificationPolicies.findIndex((candidate) => candidate.id === item.id);
+    const name = item.name.trim() || tx("ui.notification_policy_number", { number: Math.max(0, index) + 1 });
+    if (!window.confirm(tx("ui.confirm_remove_notification_policy", { name }))) return;
     setNotificationPolicies((current) => current.filter((candidate) => candidate.id !== item.id));
     setEndpoints((current) => current.filter((endpoint) => endpoint.notification_policy_id !== item.id));
     setResults((current) => {
@@ -218,8 +241,14 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   };
 
   const removeEndpoint = (endpoint: InspectionNotificationEndpoint) => {
-    const label = endpoint.notification_policy_id ? endpoint.url || endpoint.id : endpoint.name || endpoint.id;
-    if (!window.confirm(tx("ui.confirm_remove_notification_endpoint", { name: label }))) return;
+    const scope = endpoint.notification_policy_id || "";
+    const peers = endpoints.filter((item) => (item.notification_policy_id || "") === scope);
+    const number = Math.max(0, peers.findIndex((item) => item.id === endpoint.id)) + 1;
+    const name = endpoint.notification_policy_id ? "" : endpoint.name?.trim();
+    const prompt = name
+      ? tx("ui.confirm_remove_notification_endpoint", { name })
+      : tx("ui.confirm_remove_notification_endpoint_number", { number });
+    if (!window.confirm(prompt)) return;
     setEndpoints((current) => current.filter((candidate) => candidate.id !== endpoint.id));
     setResults((current) => {
       const next = { ...current };
@@ -269,16 +298,19 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     if ((anomalyEnabled || availableEnabled || percentEnabled) && !endpoints.some((endpoint) => endpoint.enabled && !endpoint.notification_policy_id)) {
       throw new Error(tx("ui.generic_notification_endpoint_required"));
     }
+    const policyNames = new Set<string>();
     for (const item of notificationPolicies) {
-      if (item.enabled && !endpoints.some((endpoint) => endpoint.enabled && endpoint.notification_policy_id === item.id)) {
-        throw new Error(tx("ui.policy_notification_endpoint_required_named", { name: item.name || item.id }));
-      }
-    }
-    for (const item of notificationPolicies) {
-      if (!item.name.trim()) throw new Error(tx("ui.notification_policy_name_required"));
+      const name = item.name.trim();
+      if (!name) throw new Error(tx("ui.notification_policy_name_required"));
+      const normalizedName = name.toLocaleLowerCase();
+      if (policyNames.has(normalizedName)) throw new Error(tx("ui.notification_policy_name_duplicate", { name }));
+      policyNames.add(normalizedName);
       if (!item.available_accounts_enabled && !item.availability_percent_enabled) throw new Error(tx("ui.notification_policy_threshold_required"));
       if (!Number.isInteger(item.available_accounts_below) || item.available_accounts_below < 1 || item.available_accounts_below > 10000) throw new Error(tx("ui.notification_available_accounts_must_be_between_1_and_10000"));
       if (!Number.isInteger(item.availability_percent_below) || item.availability_percent_below < 1 || item.availability_percent_below > 100) throw new Error(tx("ui.notification_availability_percent_must_be_between_1_and_100"));
+      if (item.enabled && !endpoints.some((endpoint) => endpoint.enabled && endpoint.notification_policy_id === item.id)) {
+        throw new Error(tx("ui.policy_notification_endpoint_required_named", { name }));
+      }
     }
   };
 

@@ -16,6 +16,7 @@ const (
 	inspectionMutationRetry    = time.Second
 	inspectionDeleteRetry      = 5 * time.Minute
 	maxManualInspectionDeletes = 100
+	quotaRecoveryPriorityFloor = 100
 )
 
 type inspectionAutomaticActionSummary struct {
@@ -103,7 +104,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 		}
 
 		if shouldAutoEnableInspection(policy, account, record, now) {
-			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, false, writer)
+			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, false, quotaRecoveryPriority(policy, account, record, now), writer)
 			action := newInspectionAction(record.Result, InspectionActionEnable, inspectionAutoEnableReason(account, record, now), now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
@@ -135,7 +136,7 @@ func (e *InspectionEngine) applyAutomaticActions(
 			if openCircuit {
 				disableReason = "passive_circuit_open"
 			}
-			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, true, writer)
+			outcome, errMutation := e.setInspectionDisabled(ctx, account, record, true, nil, writer)
 			action := newInspectionAction(record.Result, InspectionActionDisable, disableReason, now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
@@ -262,6 +263,9 @@ func shouldAutoEnableInspection(policy InspectionPolicy, account Account, record
 	if !policy.AutoEnable || !record.Result.OwnedDisable || !account.Disabled || !account.Editable {
 		return false
 	}
+	if _, recovered := accountQuotaRecoveredAfterDisable(account, record, now); recovered {
+		return true
+	}
 	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) &&
 		!inspectionResultIsStrongFailure(record.Result) {
 		return true
@@ -278,6 +282,9 @@ func shouldAutoEnableInspection(policy InspectionPolicy, account Account, record
 }
 
 func inspectionAutoEnableReason(account Account, record inspectionRecord, now time.Time) string {
+	if _, recovered := accountQuotaRecoveredAfterDisable(account, record, now); recovered {
+		return "quota_reset"
+	}
 	if record.DisableReason == "quota_exhausted" && !record.DisabledRecoverAfter.IsZero() && !record.DisabledRecoverAfter.After(now) {
 		return "quota_reset"
 	}
@@ -291,6 +298,20 @@ func inspectionAutoEnableReason(account Account, record inspectionRecord, now ti
 		return "credential_refreshed"
 	}
 	return "health_recovered"
+}
+
+func quotaRecoveryPriority(policy InspectionPolicy, account Account, record inspectionRecord, now time.Time) *int {
+	if !policy.QuotaRecoveryPriorityEnabled {
+		return nil
+	}
+	if _, recovered := accountQuotaRecoveredAfterDisable(account, record, now); !recovered {
+		return nil
+	}
+	if account.Priority != nil && *account.Priority >= quotaRecoveryPriorityFloor {
+		return nil
+	}
+	priority := quotaRecoveryPriorityFloor
+	return &priority
 }
 
 func inspectionRecoveryEvidenceAfter(record inspectionRecord, disabledAt time.Time) bool {
@@ -339,7 +360,7 @@ func inspectionDeleteReasonAllowed(policy InspectionPolicy, record inspectionRec
 	}
 }
 
-func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Account, record inspectionRecord, disabled bool, writer ManagementWriter) (inspectionMutationResult, error) {
+func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Account, record inspectionRecord, disabled bool, priority *int, writer ManagementWriter) (inspectionMutationResult, error) {
 	if e == nil || e.host == nil {
 		return inspectionMutationResult{}, fmt.Errorf("auth host is unavailable")
 	}
@@ -377,18 +398,50 @@ func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Ac
 			return inspectionMutationResult{}, fmt.Errorf("disabled field is invalid")
 		}
 	}
-	if current == disabled && account.Disabled == disabled {
+	disabledChanged := current != disabled || account.Disabled != disabled
+	priorityChanged := false
+	if priority != nil {
+		currentPriority := 0
+		priorityPresent := false
+		if rawPriority, exists := document["priority"]; exists {
+			var decoded any
+			if errPriority := json.Unmarshal(rawPriority, &decoded); errPriority != nil {
+				return inspectionMutationResult{}, fmt.Errorf("priority field is invalid")
+			}
+			var ok bool
+			currentPriority, ok = intValue(decoded)
+			if !ok {
+				return inspectionMutationResult{}, fmt.Errorf("priority field is invalid")
+			}
+			priorityPresent = true
+		}
+		priorityChanged = !priorityPresent || currentPriority != *priority
+	}
+	if !disabledChanged && !priorityChanged {
 		return inspectionMutationResult{Name: name, Path: path, Revision: revisionFor(raw)}, nil
 	}
-	encodedDisabled, _ := json.Marshal(disabled)
-	document["disabled"] = encodedDisabled
+	if disabledChanged {
+		encodedDisabled, _ := json.Marshal(disabled)
+		document["disabled"] = encodedDisabled
+	}
+	if priorityChanged {
+		encodedPriority, _ := json.Marshal(*priority)
+		document["priority"] = encodedPriority
+	}
 	updated, errMarshal := json.Marshal(document)
 	if errMarshal != nil {
 		return inspectionMutationResult{}, fmt.Errorf("encode auth update: %w", errMarshal)
 	}
 	if writer != nil {
-		if errPatch := writer.PatchDisabled(ctx, name, disabled); errPatch != nil {
-			return inspectionMutationResult{}, fmt.Errorf("update CPA account status: %w", errPatch)
+		if priorityChanged {
+			if errPatch := writer.PatchFields(ctx, name, BatchPatch{Priority: priority}); errPatch != nil {
+				return inspectionMutationResult{}, fmt.Errorf("update CPA account priority: %w", errPatch)
+			}
+		}
+		if disabledChanged {
+			if errPatch := writer.PatchDisabled(ctx, name, disabled); errPatch != nil {
+				return inspectionMutationResult{}, fmt.Errorf("update CPA account status: %w", errPatch)
+			}
 		}
 	} else if _, errSave := e.host.SaveAuth(ctx, name, updated); errSave != nil {
 		return inspectionMutationResult{}, fmt.Errorf("save auth file: %w", errSave)

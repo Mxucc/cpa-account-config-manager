@@ -36,6 +36,7 @@ inspection_policy:
   passive_circuit_minutes: 10
   auto_disable: true
   auto_enable: true
+  quota_recovery_priority_enabled: true
   auto_delete: false
   auto_delete_invalid_credentials: false
   delete_grace_hours: 168
@@ -62,7 +63,7 @@ operation_settings:
 	config := ParseConfig(rawConfig)
 	config.DataDir = t.TempDir()
 
-	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.ModelProbeEnabled || !config.InspectionPolicy.AnomalyNotificationEnabled || !config.InspectionPolicy.AnomalyNotificationOnly {
+	if config.InspectionPolicy == nil || !config.InspectionPolicy.Enabled || !config.InspectionPolicy.AutoDisable || !config.InspectionPolicy.AutoEnable || !config.InspectionPolicy.QuotaRecoveryPriorityEnabled || !config.InspectionPolicy.ModelProbeEnabled || !config.InspectionPolicy.AnomalyNotificationEnabled || !config.InspectionPolicy.AnomalyNotificationOnly {
 		t.Fatalf("parsed inspection policy = %#v", config.InspectionPolicy)
 	}
 	if config.InspectionPolicy.AnomalyNotificationURL != "https://notify.example/hook?available=${available_accounts}" || len(config.InspectionPolicy.NotificationEndpoints) != 0 {
@@ -84,7 +85,7 @@ operation_settings:
 	inspection.Configure(config)
 	t.Cleanup(inspection.Shutdown)
 	gotInspection := inspection.Snapshot().Policy
-	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled || !gotInspection.AnomalyNotificationEnabled || !gotInspection.AnomalyNotificationOnly {
+	if !gotInspection.Enabled || !gotInspection.AutoDisable || !gotInspection.AutoEnable || !gotInspection.QuotaRecoveryPriorityEnabled || !gotInspection.ModelProbeEnabled || !gotInspection.ModelProbeFullSweep || !gotInspection.ScanManuallyDisabled || !gotInspection.AnomalyNotificationEnabled || !gotInspection.AnomalyNotificationOnly {
 		t.Fatalf("restored inspection policy = %#v", gotInspection)
 	}
 	if len(gotInspection.NotificationEndpoints) != 1 || gotInspection.NotificationEndpoints[0].URL != "https://notify.example/hook?available=${available_accounts}" || !gotInspection.NotificationEndpoints[0].Enabled {

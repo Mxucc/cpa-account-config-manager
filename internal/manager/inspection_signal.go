@@ -13,6 +13,7 @@ const (
 	maxInspectionFailureBody = 64 * 1024
 	inspectionEvidenceTTL    = 7 * 24 * time.Hour
 	modelProbeEvidenceTTL    = 24 * time.Hour
+	quotaRecoveryEvidenceTTL = 2 * time.Hour
 )
 
 type inspectionEvidence struct {
@@ -307,6 +308,17 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 	if hasProbeDecision && inspectionProbeDecisionOutranksQuota(probeDecision) {
 		return probeDecision
 	}
+	if quotaWindow, recovered := accountQuotaRecoveredAfterDisable(account, record, now); recovered {
+		return inspectionDecision{
+			Health:         InspectionHealthHealthy,
+			ReasonCode:     "quota_reset",
+			Confidence:     InspectionConfidenceHigh,
+			Recommendation: InspectionRecommendationEnable,
+			HealthyCount:   1,
+			SignalSource:   InspectionSignalNative,
+			QuotaWindow:    quotaWindow,
+		}
+	}
 	if limited, recoverAfter, quotaWindow := accountQuotaLimited(account, now); limited {
 		return inspectionDecision{
 			Health:              InspectionHealthQuotaLimited,
@@ -413,6 +425,80 @@ func decideInspection(account Account, record inspectionRecord, now time.Time) i
 		Recommendation: InspectionRecommendationReview,
 		SignalSource:   InspectionSignalNative,
 	}
+}
+
+func accountQuotaRecoveredAfterDisable(account Account, record inspectionRecord, now time.Time) (string, bool) {
+	if !account.Disabled || !account.Editable || !record.Result.OwnedDisable || record.DisableReason != "quota_exhausted" ||
+		account.Usage == nil || account.Usage.Codex == nil || !isCodexInspectionProvider(account.Provider) {
+		return "", false
+	}
+	snapshot := account.Usage.Codex
+	if !freshQuotaRecoverySnapshot(snapshot, record.DisabledAt, now) || quotaRecoveryBlockedByFailure(account, record, now) {
+		return "", false
+	}
+	quotaWindow := quotaRecoveryWindow(record)
+	return quotaWindow, codexQuotaWindowRecovered(snapshot, quotaWindow)
+}
+
+func freshQuotaRecoverySnapshot(snapshot *CodexUsageSnapshot, disabledAt, now time.Time) bool {
+	if snapshot == nil || snapshot.ObservedAt.IsZero() || disabledAt.IsZero() {
+		return false
+	}
+	observedAt := snapshot.ObservedAt.UTC()
+	now = now.UTC()
+	return observedAt.After(disabledAt.UTC()) && !observedAt.After(now) && now.Sub(observedAt) <= quotaRecoveryEvidenceTTL
+}
+
+func quotaRecoveryWindow(record inspectionRecord) string {
+	if value := normalizeInspectionQuotaWindow(record.Result.QuotaWindow); value != "" {
+		return value
+	}
+	return normalizeInspectionQuotaWindow(record.Signal.QuotaWindow)
+}
+
+func codexQuotaWindowRecovered(snapshot *CodexUsageSnapshot, quotaWindow string) bool {
+	if snapshot == nil {
+		return false
+	}
+	recovered := func(window *UsageWindowSnapshot) bool {
+		return window != nil && window.UsedPercent >= 0 && window.UsedPercent < 100
+	}
+	switch normalizeInspectionQuotaWindow(quotaWindow) {
+	case InspectionQuotaWindowFiveHour, InspectionQuotaWindowFiveHourFallback:
+		return recovered(snapshot.FiveHour)
+	case InspectionQuotaWindowSevenDay:
+		return recovered(snapshot.SevenDay)
+	case InspectionQuotaWindowMultiple:
+		return recovered(snapshot.FiveHour) && recovered(snapshot.SevenDay)
+	default:
+		if snapshot.FiveHour != nil {
+			return recovered(snapshot.FiveHour)
+		}
+		return recovered(snapshot.SevenDay)
+	}
+}
+
+func quotaRecoveryBlockedByFailure(account Account, record inspectionRecord, now time.Time) bool {
+	status := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.StatusMessage, account.Status)))
+	if status == "invalid_grant" || status == "unauthorized" {
+		return true
+	}
+	if decision, ok := decisionFromModelProbe(record.Probe, now); ok && inspectionProbeDecisionOutranksQuota(decision) &&
+		record.Probe.TestedAt.After(record.DisabledAt) {
+		return true
+	}
+	if activeInspectionSignal(record.Signal, now) && record.Signal.LastFailureAt.After(record.DisabledAt) {
+		decision := decisionFromSignal(record.Signal)
+		if decision.Health == InspectionHealthInvalidCredentials || decision.Health == InspectionHealthDeactivated {
+			return true
+		}
+	}
+	return record.Result.LastCheckedAt.After(record.DisabledAt) &&
+		(record.Result.Health == InspectionHealthInvalidCredentials || record.Result.Health == InspectionHealthDeactivated)
+}
+
+func isCodexInspectionProvider(provider string) bool {
+	return normalizeInspectionProvider(provider) == "codex" || isAgentIdentityProvider(provider)
 }
 
 func inspectionProbeDecisionOutranksQuota(decision inspectionDecision) bool {

@@ -665,6 +665,7 @@ export interface InspectionPolicy {
   passive_circuit_minutes?: number;
   auto_disable: boolean;
   auto_enable: boolean;
+  quota_recovery_priority_enabled?: boolean;
   auto_delete: boolean;
   auto_delete_invalid_credentials: boolean;
   delete_grace_hours: number;

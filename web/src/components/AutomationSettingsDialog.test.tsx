@@ -73,4 +73,20 @@ describe("AutomationSettingsDialog", () => {
     expect(confirmDelete).toBe(true);
     expect(confirmDeleteInvalid).toBe(true);
   });
+
+  it("persists recovered Codex priority scheduling and enables its required automation", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<AutomationSettingsDialog inspection={policy()} saving={false} onClose={() => undefined} onSave={onSave} />);
+
+    await user.click(screen.getByLabelText("Codex 额度恢复优先调度"));
+    expect(screen.getByLabelText("自动启用")).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: true,
+      auto_enable: true,
+      quota_recovery_priority_enabled: true,
+    }), false, false);
+  });
 });

@@ -130,6 +130,7 @@ type InspectionPolicy struct {
 	PassiveCircuitMinutes        int                              `json:"passive_circuit_minutes" yaml:"passive_circuit_minutes"`
 	AutoDisable                  bool                             `json:"auto_disable" yaml:"auto_disable"`
 	AutoEnable                   bool                             `json:"auto_enable" yaml:"auto_enable"`
+	QuotaRecoveryPriorityEnabled bool                             `json:"quota_recovery_priority_enabled" yaml:"quota_recovery_priority_enabled"`
 	AutoDelete                   bool                             `json:"auto_delete" yaml:"auto_delete"`
 	AutoDeleteInvalidCredentials bool                             `json:"auto_delete_invalid_credentials" yaml:"auto_delete_invalid_credentials"`
 	DeleteGraceHours             int                              `json:"delete_grace_hours" yaml:"delete_grace_hours"`
@@ -667,6 +668,9 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	}
 	if policy.PassiveCircuitEnabled && (!policy.AutoDisable || !policy.AutoEnable) {
 		return InspectionPolicy{}, fmt.Errorf("passive_circuit_enabled requires auto_disable and auto_enable")
+	}
+	if policy.QuotaRecoveryPriorityEnabled && !policy.AutoEnable {
+		return InspectionPolicy{}, fmt.Errorf("quota_recovery_priority_enabled requires auto_enable")
 	}
 	if policy.ModelProbeFullSweep && !policy.ModelProbeEnabled {
 		return InspectionPolicy{}, fmt.Errorf("model_probe_full_sweep requires scheduled model probes")

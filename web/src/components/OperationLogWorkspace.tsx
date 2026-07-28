@@ -26,6 +26,7 @@ import type {
   OperationEntry,
   OperationExportFormat,
   OperationFilters,
+  OperationFailureDetail,
   OperationListResponse,
   OperationSource,
   OperationStatus,
@@ -173,6 +174,22 @@ const reasonLabels: Record<string, UIMessageKey> = {
   passive_circuit_recovered: "ui.passive_circuit_recovered_reason",
   health_recovered: "ui.health_recovered_reason",
   credential_refreshed: "ui.credential_refreshed_reason",
+};
+
+const failureReasonLabels: Record<string, UIMessageKey> = {
+  policy_auth_scan_failed: "ui.policy_failure_auth_scan",
+  policy_auth_read_failed: "ui.policy_failure_auth_read",
+  policy_account_identity_changed: "ui.policy_failure_account_identity_changed",
+  policy_auth_source_changed: "ui.policy_failure_auth_source_changed",
+  policy_auth_filename_invalid: "ui.policy_failure_auth_filename_invalid",
+  policy_auth_projection_failed: "ui.policy_failure_auth_projection",
+  policy_auth_json_invalid: "ui.policy_failure_auth_json_invalid",
+  policy_auth_update_failed: "ui.policy_failure_auth_update",
+  policy_auth_save_failed: "ui.policy_failure_auth_save",
+  policy_model_policy_unavailable: "ui.policy_failure_model_policy_unavailable",
+  policy_model_policy_apply_failed: "ui.policy_failure_model_policy_apply",
+  policy_quota_metadata_probe_failed: "ui.policy_failure_quota_metadata",
+  policy_state_persist_failed: "ui.policy_failure_state_persist",
 };
 
 const scopeLabels: Record<string, UIMessageKey> = {
@@ -382,7 +399,7 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
               return (
                 <tr key={operation.id}>
                   <td><OperationStatusBadge status={operation.status} /></td>
-                  <td><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{reasonLabelForOperation(operation.reason_code, locale)}</span> : null}</div></td>
+                  <td><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{operationReasonSummary(operation, locale)}</span> : null}</div></td>
                   <td><span className={`operation-source source-${operation.source}`}>{sourceLabel(operation.source, locale)}</span></td>
                   <td><OperationCounts operation={operation} /></td>
                   <td><div className="operation-target"><code>{operation.target_id || operation.related_job_id || "-"}</code><span>{scopeLabel(operation.scope, locale)}</span></div></td>
@@ -448,7 +465,16 @@ function OperationDetailsDialog({ operation, canOpenJob, onClose, onOpenJob }: {
     [tx("ui.started"), formatDateTime(operation.started_at)],
     [tx("ui.completed_3"), formatDateTime(operation.finished_at)],
   ];
-  return <Modal title={tx("ui.operation_details")} wide onClose={onClose} footer={<>{canOpenJob ? <button className="button" type="button" onClick={onOpenJob}><Link2 size={15} />{tx("ui.open_related_job")}</button> : null}<button className="button button-primary" type="button" onClick={onClose}>{tx("ui.completed")}</button></>}><div className="operation-detail-grid">{fields.filter(([, value]) => value !== undefined && value !== "").map(([label, value]) => <div key={label}><span>{label}</span><code>{value}</code></div>)}</div></Modal>;
+  return <Modal title={tx("ui.operation_details")} wide onClose={onClose} footer={<>{canOpenJob ? <button className="button" type="button" onClick={onOpenJob}><Link2 size={15} />{tx("ui.open_related_job")}</button> : null}<button className="button button-primary" type="button" onClick={onClose}>{tx("ui.completed")}</button></>}><div className="operation-detail-content"><div className="operation-detail-grid">{fields.filter(([, value]) => value !== undefined && value !== "").map(([label, value]) => <div key={label}><span>{label}</span><code>{value}</code></div>)}</div>{operation.failure_details?.length ? <OperationFailureDetails details={operation.failure_details} /> : null}</div></Modal>;
+}
+
+function OperationFailureDetails({ details }: { details: OperationFailureDetail[] }) {
+  const { locale, tx } = useI18n();
+  return <section className="operation-failure-details" aria-label={tx("ui.failure_basis")}><div className="operation-failure-heading"><div><AlertTriangle size={17} /><h3>{tx("ui.failure_basis")}</h3></div><p>{tx("ui.policy_failure_sample_limit_note", { count: 5 })}</p></div><div className="operation-failure-list">{details.map((detail, index) => {
+    const samples = detail.sample_account_ids || [];
+    const hidden = Math.max(0, detail.count - samples.length);
+    return <article key={`${detail.reason_code}-${index}`}><div className="operation-failure-title"><strong>{failureReasonLabel(detail.reason_code, locale)}</strong><span>{tx("ui.policy_failure_account_count", { count: detail.count })}</span></div>{samples.length ? <div className="operation-failure-samples"><span>{tx("ui.account_id_samples")}</span><div>{samples.map((sample) => <code key={sample}>{sample}</code>)}</div>{hidden > 0 ? <small>{tx("ui.additional_similar_failures", { count: hidden })}</small> : null}</div> : null}</article>;
+  })}</div></section>;
 }
 
 function OperationExportDialog({ format, count, exporting, onChange, onClose, onExport }: { format: OperationExportFormat; count: number; exporting: boolean; onChange: (format: OperationExportFormat) => void; onClose: () => void; onExport: () => void }) {
@@ -482,6 +508,19 @@ function scopeLabel(value: string | undefined, locale: Locale): string {
 
 function reasonLabelForOperation(value: string, locale: Locale): string {
   return translateUI(locale, reasonLabels[value] || "ui.other_reason");
+}
+
+function failureReasonLabel(value: string, locale: Locale): string {
+  return translateUI(locale, failureReasonLabels[value] || "ui.policy_failure_unknown");
+}
+
+function operationReasonSummary(operation: OperationEntry, locale: Locale): string {
+  const details = operation.failure_details || [];
+  if (details.length === 0) return reasonLabelForOperation(operation.reason_code || "operation_failed", locale);
+  const first = details[0];
+  const reason = failureReasonLabel(first.reason_code, locale);
+  if (details.length === 1) return translateUI(locale, "ui.policy_failure_summary", { reason, count: first.count });
+  return translateUI(locale, "ui.policy_failure_summary_multiple", { reason, count: first.count, categories: details.length });
 }
 
 function OperationLoadingRows() {

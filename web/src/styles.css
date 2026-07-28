@@ -1151,11 +1151,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .operation-fixed-page-size { color: var(--text-secondary); font-size: 9px; }
 .operation-pagination > span { color: var(--text-secondary); font-size: 9px; }
 .operation-pagination > span:not(.operation-fixed-page-size) { margin-left: auto; }
+.operation-detail-content { display: grid; gap: 12px; }
 .operation-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
 .operation-detail-grid > div { min-width: 0; min-height: 58px; display: grid; align-content: center; gap: 4px; padding: 9px 12px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
 .operation-detail-grid > div:nth-child(2n) { border-right: none; }
 .operation-detail-grid span { color: var(--text-secondary); font-size: 9px; }
 .operation-detail-grid code { overflow-wrap: anywhere; color: var(--text-primary); font-size: 10px; }
+.operation-failure-details { display: grid; gap: 9px; }
+.operation-failure-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.operation-failure-heading > div { display: flex; align-items: center; gap: 6px; color: var(--danger); }
+.operation-failure-heading h3 { margin: 0; font-size: 11px; }
+.operation-failure-heading p { margin: 0; color: var(--text-tertiary); font-size: 8px; text-align: right; }
+.operation-failure-list { overflow: hidden; display: grid; border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border-color)); border-radius: var(--radius-md); }
+.operation-failure-list article { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--danger-soft) 52%, var(--bg-primary)); }
+.operation-failure-list article:last-child { border-bottom: none; }
+.operation-failure-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.operation-failure-title strong { color: var(--text-primary); font-size: 10px; }
+.operation-failure-title span { flex: 0 0 auto; color: var(--danger); font-size: 9px; font-weight: 700; }
+.operation-failure-samples { display: grid; gap: 5px; }
+.operation-failure-samples > span, .operation-failure-samples small { color: var(--text-tertiary); font-size: 8px; }
+.operation-failure-samples > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.operation-failure-samples code { max-width: 100%; overflow-wrap: anywhere; padding: 3px 5px; border: 1px solid var(--border-color); border-radius: 3px; color: var(--text-secondary); background: var(--bg-secondary); font-size: 8px; }
 .operation-export { display: grid; gap: 12px; }
 .operation-export-summary { min-height: 64px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--blue); background: var(--blue-soft); }
 .operation-export-summary > div { display: grid; gap: 2px; }
@@ -1512,6 +1528,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .operation-pagination > span { width: 100%; order: -1; margin-left: 0; }
   .operation-detail-grid { grid-template-columns: 1fr; }
   .operation-detail-grid > div { border-right: none; }
+  .operation-failure-heading { align-items: start; flex-direction: column; gap: 4px; }
+  .operation-failure-heading p { text-align: left; }
+  .operation-failure-title { align-items: start; flex-direction: column; gap: 3px; }
   .bulk-bar, .with-job-panel .bulk-bar { min-height: 154px; }
   .bulk-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bulk-actions .button { min-height: 42px; height: auto; line-height: 1.15; white-space: normal; overflow-wrap: anywhere; }

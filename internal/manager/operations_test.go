@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -104,9 +105,17 @@ func TestOperationJournalSanitizesPersistedFieldsAndRetainsClearEvent(t *testing
 		Version:      "not-a-version",
 		Format:       "private-format",
 		RelatedJobID: "job-1\nAuthorization: secret",
+		FailureDetails: []OperationFailureDetail{
+			{ReasonCode: OperationFailurePolicyAuthSave, Count: 3, SampleAccountIDs: []string{"auth-1", "Authorization:secret", "auth-1"}},
+			{ReasonCode: "Bearer raw-secret", Count: 2, SampleAccountIDs: []string{"auth-2"}},
+		},
 	})
 	if entry.ReasonCode != "operation_failed" || entry.Version != "" || entry.Format != "" || entry.RelatedJobID != "" {
 		t.Fatalf("entry was not sanitized: %#v", entry)
+	}
+	if len(entry.FailureDetails) != 1 || entry.FailureDetails[0].ReasonCode != OperationFailurePolicyAuthSave ||
+		entry.FailureDetails[0].Count != 3 || !reflect.DeepEqual(entry.FailureDetails[0].SampleAccountIDs, []string{"auth-1"}) {
+		t.Fatalf("failure details were not sanitized: %#v", entry.FailureDetails)
 	}
 	cleared := journal.Clear()
 	response := journal.List(OperationQuery{Page: 1, PageSize: 20})
@@ -121,6 +130,41 @@ func TestOperationJournalSanitizesPersistedFieldsAndRetainsClearEvent(t *testing
 		if bytes.Contains(raw, []byte(secret)) {
 			t.Fatalf("journal leaked %q: %s", secret, raw)
 		}
+	}
+}
+
+func TestOperationFromPolicyScanPersistsDetailedFailureBasis(t *testing.T) {
+	now := time.Date(2026, 7, 28, 7, 15, 0, 0, time.UTC)
+	summary := PolicyScanSummary{
+		StartedAt: now.Add(-time.Minute), FinishedAt: now, Scanned: 271, Changed: 0, Failed: 38, Skipped: 233,
+		QuotaMetadataFailed: 2,
+		FailureDetails: []OperationFailureDetail{
+			{ReasonCode: OperationFailurePolicyAuthSave, Count: 38, SampleAccountIDs: []string{"auth-1", "auth-2", "auth-3", "auth-4", "auth-5", "auth-6"}},
+			{ReasonCode: OperationFailurePolicyQuotaMetadata, Count: 2, SampleAccountIDs: []string{"quota-1", "quota-2"}},
+		},
+	}
+	entry := operationFromPolicyScan(summary)
+	if entry.Status != OperationStatusFailed || entry.ReasonCode != "operation_failed" || entry.Failed != 40 || len(entry.FailureDetails) != 2 {
+		t.Fatalf("policy operation = %#v", entry)
+	}
+	if len(entry.FailureDetails[0].SampleAccountIDs) > policyFailureSampleLimit || len(entry.FailureDetails[1].SampleAccountIDs) > policyFailureSampleLimit {
+		t.Fatalf("policy samples were not bounded: %#v", entry.FailureDetails)
+	}
+
+	journal := NewOperationJournal()
+	journal.Configure(Config{DataDir: t.TempDir()})
+	recorded := journal.Record(entry)
+	if len(recorded.FailureDetails) != 2 {
+		t.Fatalf("recorded policy failure details = %#v", recorded.FailureDetails)
+	}
+	listed := journal.List(OperationQuery{Search: "auth-3"})
+	if listed.Total != 1 || len(listed.Operations) != 1 || listed.Operations[0].Failed != 40 {
+		t.Fatalf("searchable policy failure details = %#v", listed)
+	}
+	listed.Operations[0].FailureDetails[0].SampleAccountIDs[0] = "mutated-by-caller"
+	fresh := journal.List(OperationQuery{Search: "auth-3"})
+	if fresh.Total != 1 || fresh.Operations[0].FailureDetails[0].SampleAccountIDs[0] == "mutated-by-caller" {
+		t.Fatalf("policy failure details shared mutable state: %#v", fresh.Operations[0].FailureDetails)
 	}
 }
 

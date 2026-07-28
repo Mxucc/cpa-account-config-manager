@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -578,6 +579,7 @@ func normalizeOperationEntry(entry OperationEntry, now time.Time) (OperationEntr
 	entry.Model = safeModelIdentifier(entry.Model)
 	entry.HTTPStatus = boundedHTTPStatus(entry.HTTPStatus)
 	entry.Attempts = boundedCounter(entry.Attempts)
+	entry.FailureDetails = normalizeOperationFailureDetails(entry.FailureDetails)
 	if entry.StartedAt.IsZero() {
 		entry.StartedAt = now
 	} else {
@@ -649,6 +651,69 @@ func safeOperationReason(value string) string {
 	}
 }
 
+func safeOperationFailureReason(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case OperationFailurePolicyAuthScan, OperationFailurePolicyAuthRead, OperationFailurePolicyAccountIdentity,
+		OperationFailurePolicyAuthSource, OperationFailurePolicyAuthFilename, OperationFailurePolicyAuthProjection,
+		OperationFailurePolicyAuthJSON, OperationFailurePolicyAuthUpdate, OperationFailurePolicyAuthSave,
+		OperationFailurePolicyModelPolicyUnavailable, OperationFailurePolicyModelPolicyApply,
+		OperationFailurePolicyQuotaMetadata, OperationFailurePolicyStatePersist:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func safeOperationFailureAccountID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 160 {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	for _, sensitive := range []string{"authorization", "bearer", "cookie", "password", "secret", "token="} {
+		if strings.Contains(lower, sensitive) {
+			return ""
+		}
+	}
+	for _, character := range value {
+		if !unicode.IsLetter(character) && !unicode.IsDigit(character) && !strings.ContainsRune("@._+:-", character) {
+			return ""
+		}
+	}
+	return value
+}
+
+func normalizeOperationFailureDetails(details []OperationFailureDetail) []OperationFailureDetail {
+	if len(details) == 0 {
+		return nil
+	}
+	normalized := make([]OperationFailureDetail, 0, min(len(details), 16))
+	for _, detail := range details {
+		reasonCode := safeOperationFailureReason(detail.ReasonCode)
+		count := boundedCounter(detail.Count)
+		if reasonCode == "" || count == 0 {
+			continue
+		}
+		samples := make([]string, 0, min(len(detail.SampleAccountIDs), policyFailureSampleLimit))
+		for _, sample := range detail.SampleAccountIDs {
+			sample = safeOperationFailureAccountID(sample)
+			if sample == "" || containsString(samples, sample) {
+				continue
+			}
+			samples = append(samples, sample)
+			if len(samples) >= policyFailureSampleLimit {
+				break
+			}
+		}
+		normalized = append(normalized, OperationFailureDetail{ReasonCode: reasonCode, Count: count, SampleAccountIDs: samples})
+		if len(normalized) >= 16 {
+			break
+		}
+	}
+	sort.Slice(normalized, func(left, right int) bool { return normalized[left].ReasonCode < normalized[right].ReasonCode })
+	return normalized
+}
+
 func operationSortTime(entry OperationEntry) time.Time {
 	if !entry.FinishedAt.IsZero() {
 		return entry.FinishedAt
@@ -673,11 +738,16 @@ func operationMatchesQuery(entry OperationEntry, query OperationQuery) bool {
 }
 
 func operationMatchesSearch(entry OperationEntry, search string) bool {
-	haystack := strings.ToLower(strings.Join([]string{
+	fields := []string{
 		entry.ID, entry.Category, entry.Action, entry.Status, entry.Source, entry.Scope,
 		entry.TargetID, entry.ReasonCode, entry.RelatedJobID, entry.RelatedActionID,
 		entry.Version, entry.Format, entry.Model, strconv.Itoa(entry.HTTPStatus), strconv.Itoa(entry.Attempts),
-	}, "\n"))
+	}
+	for _, detail := range entry.FailureDetails {
+		fields = append(fields, detail.ReasonCode)
+		fields = append(fields, detail.SampleAccountIDs...)
+	}
+	haystack := strings.ToLower(strings.Join(fields, "\n"))
 	return strings.Contains(haystack, search)
 }
 
@@ -705,13 +775,33 @@ func addOperationSummary(summary *OperationSummary, entry OperationEntry) {
 }
 
 func cloneOperationEntry(entry OperationEntry) OperationEntry {
+	entry.FailureDetails = cloneOperationFailureDetails(entry.FailureDetails)
 	return entry
 }
 
+func cloneOperationFailureDetails(details []OperationFailureDetail) []OperationFailureDetail {
+	if len(details) == 0 {
+		return nil
+	}
+	cloned := make([]OperationFailureDetail, len(details))
+	for index, detail := range details {
+		cloned[index] = detail
+		cloned[index].SampleAccountIDs = append([]string(nil), detail.SampleAccountIDs...)
+	}
+	return cloned
+}
+
 func cloneOperationEntries(entries []OperationEntry) []OperationEntry {
-	return append([]OperationEntry{}, entries...)
+	if len(entries) == 0 {
+		return []OperationEntry{}
+	}
+	cloned := make([]OperationEntry, len(entries))
+	for index, entry := range entries {
+		cloned[index] = cloneOperationEntry(entry)
+	}
+	return cloned
 }
 
 func operationEntryEqual(left, right OperationEntry) bool {
-	return left == right
+	return reflect.DeepEqual(left, right)
 }

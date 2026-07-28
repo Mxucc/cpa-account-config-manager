@@ -90,7 +90,16 @@ func operationFromForceSync(snapshot ForceSyncJobSnapshot) OperationEntry {
 func operationFromPolicyScan(summary PolicyScanSummary) OperationEntry {
 	status := OperationStatusSucceeded
 	reason := "completed"
-	if summary.Failed > 0 || summary.Error != "" {
+	failureDetails := normalizeOperationFailureDetails(summary.FailureDetails)
+	if summary.Error != "" && len(failureDetails) == 0 {
+		failureCode := OperationFailurePolicyAuthScan
+		if summary.Error == policyLocalStoreError {
+			failureCode = OperationFailurePolicyStatePersist
+		}
+		addPolicyFailureDetail(&failureDetails, failureCode, "")
+	}
+	totalFailed := boundedCounter(summary.Failed + summary.QuotaMetadataFailed)
+	if totalFailed > 0 || summary.Error != "" {
 		status = OperationStatusFailed
 		reason = "operation_failed"
 		if summary.Changed > 0 {
@@ -99,18 +108,19 @@ func operationFromPolicyScan(summary PolicyScanSummary) OperationEntry {
 		}
 	}
 	return OperationEntry{
-		Category:    OperationCategoryDefaultPolicy,
-		Action:      OperationActionPolicyScan,
-		Status:      status,
-		Source:      OperationSourceDefaultPolicy,
-		Scope:       OperationScopeScheduled,
-		TargetCount: summary.Scanned,
-		Succeeded:   summary.Changed,
-		Failed:      summary.Failed,
-		Skipped:     summary.Skipped,
-		StartedAt:   summary.StartedAt,
-		FinishedAt:  summary.FinishedAt,
-		ReasonCode:  reason,
+		Category:       OperationCategoryDefaultPolicy,
+		Action:         OperationActionPolicyScan,
+		Status:         status,
+		Source:         OperationSourceDefaultPolicy,
+		Scope:          OperationScopeScheduled,
+		TargetCount:    summary.Scanned,
+		Succeeded:      summary.Changed,
+		Failed:         totalFailed,
+		Skipped:        summary.Skipped,
+		StartedAt:      summary.StartedAt,
+		FinishedAt:     summary.FinishedAt,
+		ReasonCode:     reason,
+		FailureDetails: failureDetails,
 	}
 }
 

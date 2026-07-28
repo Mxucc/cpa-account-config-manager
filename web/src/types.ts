@@ -573,6 +573,12 @@ export type OperationStatus = "running" | "succeeded" | "partial" | "failed" | "
 export type OperationSource = "manual" | "background" | "default_policy" | "inspection" | "import" | "plugin_store";
 export type OperationExportFormat = "json" | "csv" | "jsonl";
 
+export interface OperationFailureDetail {
+  reason_code: string;
+  count: number;
+  sample_account_ids?: string[];
+}
+
 export interface OperationEntry {
   id: string;
   event_id?: string;
@@ -596,6 +602,7 @@ export interface OperationEntry {
   model?: string;
   http_status?: number;
   attempts?: number;
+  failure_details?: OperationFailureDetail[];
 }
 
 export interface OperationSummary {

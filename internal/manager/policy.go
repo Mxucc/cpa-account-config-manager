@@ -24,12 +24,13 @@ const (
 	policyFailureRetryInterval       = 5 * time.Minute
 	policyApplyModeMissing           = "missing"
 
-	policyFieldPriority   = "priority"
-	policyFieldWebsockets = "websockets"
-	policyMutationOwner   = "default-policy-scan"
-	policyQuotaWorkers    = 4
-	policyLocalStoreError = "default policy scan status could not be persisted locally"
-	configuredPolicyError = "configured default policy could not be loaded"
+	policyFieldPriority      = "priority"
+	policyFieldWebsockets    = "websockets"
+	policyMutationOwner      = "default-policy-scan"
+	policyQuotaWorkers       = 4
+	policyFailureSampleLimit = 5
+	policyLocalStoreError    = "default policy scan status could not be persisted locally"
+	configuredPolicyError    = "configured default policy could not be loaded"
 )
 
 var ErrPolicyStorageUnavailable = errors.New("default policy storage is unavailable; configure data_dir to a writable directory")
@@ -46,17 +47,18 @@ type DefaultPolicy struct {
 }
 
 type PolicyScanSummary struct {
-	StartedAt            time.Time `json:"started_at,omitempty"`
-	FinishedAt           time.Time `json:"finished_at,omitempty"`
-	Scanned              int       `json:"scanned"`
-	Eligible             int       `json:"eligible"`
-	Changed              int       `json:"changed"`
-	Skipped              int       `json:"skipped"`
-	Failed               int       `json:"failed"`
-	QuotaMetadataProbed  int       `json:"quota_metadata_probed"`
-	QuotaMetadataUpdated int       `json:"quota_metadata_updated"`
-	QuotaMetadataFailed  int       `json:"quota_metadata_failed"`
-	Error                string    `json:"error,omitempty"`
+	StartedAt            time.Time                `json:"started_at,omitempty"`
+	FinishedAt           time.Time                `json:"finished_at,omitempty"`
+	Scanned              int                      `json:"scanned"`
+	Eligible             int                      `json:"eligible"`
+	Changed              int                      `json:"changed"`
+	Skipped              int                      `json:"skipped"`
+	Failed               int                      `json:"failed"`
+	QuotaMetadataProbed  int                      `json:"quota_metadata_probed"`
+	QuotaMetadataUpdated int                      `json:"quota_metadata_updated"`
+	QuotaMetadataFailed  int                      `json:"quota_metadata_failed"`
+	Error                string                   `json:"error,omitempty"`
+	FailureDetails       []OperationFailureDetail `json:"failure_details,omitempty"`
 }
 
 type PolicySnapshot struct {
@@ -92,6 +94,7 @@ type policyQuotaMetadataProbe func(context.Context, Account, string) (string, er
 
 type policyQuotaMetadataProbeSummary struct {
 	planTypes map[string]string
+	failures  []OperationFailureDetail
 	attempted int
 	updated   int
 	failed    int
@@ -511,6 +514,7 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	if errSave := savePolicyRuntimeState(storePath, currentPolicy, lastScan, currentFingerprints); errSave != nil {
 		e.mu.Lock()
 		e.lastScan.Error = policyLocalStoreError
+		addPolicyFailureDetail(&e.lastScan.FailureDetails, OperationFailurePolicyStatePersist, "")
 		e.mu.Unlock()
 	}
 	return false
@@ -528,6 +532,7 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 	if e.host == nil {
 		summary.Failed = 1
 		summary.Error = "auth file scan failed"
+		addPolicyFailureDetail(&summary.FailureDetails, OperationFailurePolicyAuthScan, "")
 		summary.FinishedAt = e.now().UTC()
 		return summary, nextFingerprints, nextFailures, nil
 	}
@@ -535,6 +540,7 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 	if errList != nil {
 		summary.Failed = 1
 		summary.Error = "auth file scan failed"
+		addPolicyFailureDetail(&summary.FailureDetails, OperationFailurePolicyAuthScan, "")
 		summary.FinishedAt = e.now().UTC()
 		return summary, nextFingerprints, nextFailures, nil
 	}
@@ -609,6 +615,7 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 	summary.QuotaMetadataProbed = quotaSummary.attempted
 	summary.QuotaMetadataUpdated = quotaSummary.updated
 	summary.QuotaMetadataFailed = quotaSummary.failed
+	summary.FailureDetails = mergePolicyFailureDetails(summary.FailureDetails, quotaSummary.failures)
 	for authIndex, planType := range quotaSummary.planTypes {
 		if account := accountsByID[authIndex]; account != nil && planType != "" {
 			account.PlanType = planType
@@ -642,6 +649,7 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 		}()
 		if errApply != nil {
 			summary.Failed++
+			addPolicyFailureDetail(&summary.FailureDetails, classifyPolicyFailure(errApply), candidate.authIndex)
 			nextFailures[candidate.authIndex] = policyFailureBackoff{Fingerprint: candidate.fingerprint, RetryAt: startedAt.Add(policyFailureRetryInterval)}
 			continue
 		}
@@ -726,6 +734,7 @@ func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Accoun
 	for item := range outcomes {
 		if item.err != nil {
 			result.failed++
+			addPolicyFailureDetail(&result.failures, OperationFailurePolicyQuotaMetadata, item.id)
 			continue
 		}
 		result.updated++
@@ -735,6 +744,99 @@ func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Accoun
 	}
 	managementKey = ""
 	return result
+}
+
+func classifyPolicyFailure(err error) string {
+	message := ""
+	if err != nil {
+		message = strings.ToLower(strings.TrimSpace(err.Error()))
+	}
+	switch {
+	case strings.HasPrefix(message, "get auth file:"):
+		return OperationFailurePolicyAuthRead
+	case message == "auth index changed":
+		return OperationFailurePolicyAccountIdentity
+	case message == "auth source changed" || message == "auth filename changed":
+		return OperationFailurePolicyAuthSource
+	case message == "auth filename is invalid":
+		return OperationFailurePolicyAuthFilename
+	case strings.HasPrefix(message, "project auth account:"):
+		return OperationFailurePolicyAuthProjection
+	case message == "auth json is invalid" || message == "auth json must be an object":
+		return OperationFailurePolicyAuthJSON
+	case strings.HasPrefix(message, "encode policy field:") || strings.HasPrefix(message, "encode updated auth json:"):
+		return OperationFailurePolicyAuthUpdate
+	case strings.HasPrefix(message, "save auth file:"):
+		return OperationFailurePolicyAuthSave
+	case message == "conditional model policy is not armed":
+		return OperationFailurePolicyModelPolicyUnavailable
+	case strings.HasPrefix(message, "apply conditional model policy:"):
+		return OperationFailurePolicyModelPolicyApply
+	default:
+		return OperationFailurePolicyAuthUpdate
+	}
+}
+
+func addPolicyFailureDetail(details *[]OperationFailureDetail, reasonCode, accountID string) {
+	if details == nil {
+		return
+	}
+	reasonCode = safeOperationFailureReason(reasonCode)
+	if reasonCode == "" {
+		return
+	}
+	accountID = safeOperationFailureAccountID(accountID)
+	for index := range *details {
+		if (*details)[index].ReasonCode != reasonCode {
+			continue
+		}
+		(*details)[index].Count = boundedCounter((*details)[index].Count + 1)
+		if accountID != "" && len((*details)[index].SampleAccountIDs) < policyFailureSampleLimit && !containsString((*details)[index].SampleAccountIDs, accountID) {
+			(*details)[index].SampleAccountIDs = append((*details)[index].SampleAccountIDs, accountID)
+		}
+		return
+	}
+	detail := OperationFailureDetail{ReasonCode: reasonCode, Count: 1}
+	if accountID != "" {
+		detail.SampleAccountIDs = []string{accountID}
+	}
+	*details = append(*details, detail)
+}
+
+func mergePolicyFailureDetails(left, right []OperationFailureDetail) []OperationFailureDetail {
+	merged := normalizeOperationFailureDetails(left)
+	for _, incoming := range normalizeOperationFailureDetails(right) {
+		matched := false
+		for index := range merged {
+			if merged[index].ReasonCode != incoming.ReasonCode {
+				continue
+			}
+			merged[index].Count = boundedCounter(merged[index].Count + incoming.Count)
+			for _, accountID := range incoming.SampleAccountIDs {
+				if len(merged[index].SampleAccountIDs) >= policyFailureSampleLimit {
+					break
+				}
+				if !containsString(merged[index].SampleAccountIDs, accountID) {
+					merged[index].SampleAccountIDs = append(merged[index].SampleAccountIDs, accountID)
+				}
+			}
+			matched = true
+			break
+		}
+		if !matched {
+			merged = append(merged, incoming)
+		}
+	}
+	return normalizeOperationFailureDetails(merged)
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func samePolicyAccount(left, right authFingerprint) bool {

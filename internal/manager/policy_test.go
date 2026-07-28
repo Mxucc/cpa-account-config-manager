@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -759,6 +760,10 @@ func TestPolicyEngineSanitizesSaveFailuresAndRetries(t *testing.T) {
 	if first.LastScan.Failed != 1 || len(firstFailures) != 1 {
 		t.Fatalf("first failed scan = %#v failures=%#v", first.LastScan, firstFailures)
 	}
+	if len(first.LastScan.FailureDetails) != 1 || first.LastScan.FailureDetails[0].ReasonCode != OperationFailurePolicyAuthSave ||
+		first.LastScan.FailureDetails[0].Count != 1 || !reflect.DeepEqual(first.LastScan.FailureDetails[0].SampleAccountIDs, []string{"a"}) {
+		t.Fatalf("first failure details = %#v", first.LastScan.FailureDetails)
+	}
 	if !mutations.TryAcquire("post-failure-check") {
 		t.Fatal("policy save failure retained the account mutation slot")
 	}
@@ -788,6 +793,31 @@ func TestPolicyEngineSanitizesSaveFailuresAndRetries(t *testing.T) {
 	defer host.mu.Unlock()
 	if host.saveCalls["a.json"] < 2 {
 		t.Fatalf("failed save was not retried: %#v", host.saveCalls)
+	}
+}
+
+func TestClassifyPolicyFailureUsesStableRedactedReasonCodes(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("get auth file: callback leaked-token"), OperationFailurePolicyAuthRead},
+		{errors.New("auth index changed"), OperationFailurePolicyAccountIdentity},
+		{errors.New("auth source changed"), OperationFailurePolicyAuthSource},
+		{errors.New("auth filename changed"), OperationFailurePolicyAuthSource},
+		{errors.New("auth filename is invalid"), OperationFailurePolicyAuthFilename},
+		{errors.New("project auth account: private detail"), OperationFailurePolicyAuthProjection},
+		{errors.New("auth json is invalid"), OperationFailurePolicyAuthJSON},
+		{errors.New("auth json must be an object"), OperationFailurePolicyAuthJSON},
+		{errors.New("save auth file: callback leaked-token"), OperationFailurePolicyAuthSave},
+		{errors.New("conditional model policy is not armed"), OperationFailurePolicyModelPolicyUnavailable},
+		{errors.New("apply conditional model policy: upstream leaked-token"), OperationFailurePolicyModelPolicyApply},
+		{errors.New("unclassified private failure leaked-token"), OperationFailurePolicyAuthUpdate},
+	}
+	for _, test := range tests {
+		if got := classifyPolicyFailure(test.err); got != test.want {
+			t.Errorf("classifyPolicyFailure(%q) = %q, want %q", test.err, got, test.want)
+		}
 	}
 }
 

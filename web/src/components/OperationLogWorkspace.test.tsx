@@ -81,6 +81,49 @@ describe("OperationLogWorkspace", () => {
     expect(screen.getByText("重试批量删除")).toBeInTheDocument();
   });
 
+  it("shows the categorized basis for failed default-policy scans", async () => {
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [{
+        ...operationResponse.operations[0],
+        id: "policy-failure-1",
+        category: "default_policy",
+        action: "policy_scan",
+        status: "failed",
+        source: "default_policy",
+        scope: "scheduled",
+        target_id: undefined,
+        target_count: 271,
+        succeeded: 0,
+        failed: 38,
+        skipped: 233,
+        reason_code: "operation_failed",
+        related_job_id: undefined,
+        failure_details: [
+          { reason_code: "policy_auth_save_failed", count: 30, sample_account_ids: ["auth-1", "auth-2", "auth-3", "auth-4", "auth-5"] },
+          { reason_code: "policy_model_policy_unavailable", count: 8, sample_account_ids: ["auth-6", "auth-7"] },
+        ],
+      }],
+      summary: { total: 1, running: 0, succeeded: 0, failed: 1, attention: 0, interrupted: 0 },
+    });
+    const user = userEvent.setup();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("无法保存账号 Auth 文件（30）等 2 类失败")).toBeInTheDocument();
+    expect(screen.queryByText("操作失败")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看操作详情" }));
+    const details = screen.getByRole("dialog", { name: "操作详情" });
+    const basis = within(details).getByRole("region", { name: "失败依据" });
+    expect(within(basis).getByText("无法保存账号 Auth 文件")).toBeInTheDocument();
+    expect(within(basis).getByText("30 个账号失败")).toBeInTheDocument();
+    expect(within(basis).getByText("条件模型策略服务尚未就绪")).toBeInTheDocument();
+    expect(within(basis).getByText("8 个账号失败")).toBeInTheDocument();
+    expect(within(basis).getByText("auth-1")).toBeInTheDocument();
+    expect(within(basis).getByText("另有 25 个同类失败未逐项显示")).toBeInTheDocument();
+    expect(within(basis).getByText("另有 6 个同类失败未逐项显示")).toBeInTheDocument();
+    expect(within(basis).queryByText("policy_auth_save_failed")).not.toBeInTheDocument();
+  });
+
   it("uses fixed 500-entry pages and persists extended history", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();

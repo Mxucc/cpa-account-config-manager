@@ -226,7 +226,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.jobs.Shutdown()
 		a.deletions.Clear()
 		a.previews.Clear()
-		a.imports.Clear()
+		a.imports.Shutdown()
 		a.agentIdentity.Clear()
 		a.usage.Close()
 		if superseded {
@@ -351,7 +351,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/export/accounts", Description: "Export selected account credentials for an explicitly selected target format."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results as JSON, CSV, or JSON Lines."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/preview", Description: "Preview JSON or ZIP conversion into CPA Auth files."},
-			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/start", Description: "Import a confirmed converted Auth-file preview."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/import/start", Description: "Start importing a confirmed converted Auth-file preview in the background."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/import/status", Description: "Read current or last background import progress."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults", Description: "Read the default Auth-file policy and safe scan status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/defaults", Description: "Validate and save the default Auth-file policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/scan", Description: "Request an immediate missing-only Auth-file scan."},
@@ -464,6 +465,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleImportPreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/import/start":
 		return a.handleImportStart(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/import/status":
+		return jsonResponse(http.StatusOK, a.imports.Status())
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/defaults":
 		return jsonResponse(http.StatusOK, a.defaultPolicySnapshot())
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/defaults":
@@ -720,14 +723,27 @@ func (a *App) handleImportPreview(ctx context.Context, req cpaapi.ManagementRequ
 	return jsonResponse(http.StatusOK, preview)
 }
 
-func (a *App) handleImportStart(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+func (a *App) handleImportStart(_ context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	startedAt := time.Now().UTC()
 	var request ImportStartRequest
 	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
 	}
-	result, errStart := a.imports.Start(ctx, request.PreviewID)
+	managementKey := resolveManagementKey(req.Headers)
+	backgroundKey := managementKey
+	result, errStart := a.imports.StartAsync(request.PreviewID, func(started ImportResult) {
+		a.operations.Upsert("import:"+started.ID, OperationEntry{
+			Category: OperationCategoryImport, Action: OperationActionImport, Status: OperationStatusRunning,
+			Source: OperationSourceImport, Scope: OperationScopeAll, TargetCount: started.Total, StartedAt: started.StartedAt,
+			ReasonCode: "running",
+		})
+	}, func(ctx context.Context, completed ImportResult, errRun error) ImportResult {
+		defer func() { backgroundKey = "" }()
+		return a.completeImport(ctx, completed, errRun, backgroundKey)
+	})
+	managementKey = ""
 	if errStart != nil {
+		backgroundKey = ""
 		a.operations.Record(OperationEntry{
 			Category: OperationCategoryImport, Action: OperationActionImport, Status: OperationStatusFailed,
 			Source: OperationSourceImport, Scope: OperationScopeAll, Failed: 1, StartedAt: startedAt,
@@ -746,27 +762,27 @@ func (a *App) handleImportStart(ctx context.Context, req cpaapi.ManagementReques
 		}
 		return jsonResponse(status, map[string]any{"error": errStart.Error()})
 	}
-	a.operations.Record(OperationEntry{
+	return jsonResponse(http.StatusAccepted, result)
+}
+
+func (a *App) completeImport(ctx context.Context, result ImportResult, errRun error, managementKey string) ImportResult {
+	if errRun == nil && result.Imported > 0 && ctx.Err() == nil && strings.TrimSpace(managementKey) != "" {
+		accountIDs := a.importedAccountIDs(ctx, result)
+		result.UsageCollectionTargets = len(accountIDs)
+		if result.UsageCollectionTargets > 0 {
+			_, errInspect := a.inspection.RequestRun(InspectionRunRequest{
+				Mode: InspectionRunModeScoped, Selected: accountIDs,
+			}, managementKey)
+			result.UsageCollectionStarted = errInspect == nil
+		}
+	}
+	a.operations.Upsert("import:"+result.ID, OperationEntry{
 		Category: OperationCategoryImport, Action: OperationActionImport, Status: operationStatusFromJobState(result.State),
 		Source: OperationSourceImport, Scope: OperationScopeAll, TargetCount: result.Total, Succeeded: result.Imported,
 		Failed: result.Failed, Skipped: result.Skipped, StartedAt: result.StartedAt, FinishedAt: result.FinishedAt,
 		ReasonCode: operationReasonFromJobState(result.State),
 	})
-	if result.Imported > 0 {
-		managementKey := resolveManagementKey(req.Headers)
-		if managementKey != "" {
-			accountIDs := a.importedAccountIDs(ctx, result)
-			result.UsageCollectionTargets = len(accountIDs)
-			if result.UsageCollectionTargets > 0 {
-				_, errRun := a.inspection.RequestRun(InspectionRunRequest{
-					Mode: InspectionRunModeScoped, Selected: accountIDs,
-				}, managementKey)
-				result.UsageCollectionStarted = errRun == nil
-			}
-			managementKey = ""
-		}
-	}
-	return jsonResponse(http.StatusOK, result)
+	return result
 }
 
 func (a *App) importedAccountIDs(ctx context.Context, result ImportResult) []string {

@@ -169,6 +169,7 @@ func TestPolicyEngineAppliesConditionalFieldsAndModelPolicy(t *testing.T) {
 	}}}); errSet != nil {
 		t.Fatalf("SetPolicy() error = %v", errSet)
 	}
+	engine.RequestScan()
 	waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
 		return snapshot.LastScan.Changed == 1 && snapshot.LastScan.Failed == 0
 	})

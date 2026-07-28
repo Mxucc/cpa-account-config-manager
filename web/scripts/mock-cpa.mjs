@@ -7,6 +7,7 @@ const previews = new Map();
 const deletePreviews = new Map();
 let activeJob = null;
 const importPreviews = new Map();
+let importJob = { id: "", state: "idle", running: false, total: 0, imported: 0, skipped: 0, failed: 0, results: [] };
 const forcePreviews = new Map();
 let activeForceJob = null;
 let inspectionRunUntil = 0;
@@ -1478,9 +1479,10 @@ const server = http.createServer(async (request, response) => {
       return { ...item, status: "imported" };
     });
     importPreviews.delete(body.preview_id);
-    return json(response, 200, {
+    importJob = {
       id: preview.id,
       state: "completed",
+      running: false,
       total: results.length,
       imported: results.length,
       skipped: 0,
@@ -1488,7 +1490,11 @@ const server = http.createServer(async (request, response) => {
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
       results,
-    });
+    };
+    return json(response, 202, { ...importJob, state: "running", running: true, imported: 0, results: [], finished_at: "0001-01-01T00:00:00Z" });
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/import/status")) {
+    return json(response, 200, importJob);
   }
   if (request.method === "GET" && url.pathname.endsWith("/defaults")) {
     return json(response, 200, { policy: defaultPolicy, running: false, last_scan: lastPolicyScan });

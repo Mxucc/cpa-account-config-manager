@@ -2,7 +2,6 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
-  GitBranch,
   LoaderCircle,
   Plus,
   Save,
@@ -20,12 +19,11 @@ import type {
   ConditionalPolicyRule,
   DefaultPolicy,
   ModelPolicyMode,
-  PolicyCondition,
-  PolicyConditionField,
-  PolicyConditionGroup,
   PolicySnapshot,
 } from "../types";
 import { IconButton } from "./IconButton";
+import { Modal } from "./Modal";
+import { PolicyConditionEditor } from "./PolicyConditionEditor";
 
 interface AutomationPolicySettingsProps {
   refreshRevision: number;
@@ -42,6 +40,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [confirmRunAfterSave, setConfirmRunAfterSave] = useState(false);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
@@ -92,6 +91,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
       setSnapshot(next);
       setDraft(clonePolicy(next.policy));
       onNotice(tx("ui.automation_policy_saved"));
+      setConfirmRunAfterSave(true);
     } catch (caught) {
       if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
       else setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
@@ -106,6 +106,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
     try {
       const next = await api.scanDefaultPolicy();
       setSnapshot({ ...next, running: true });
+      onNotice(tx("ui.automation_policy_scan_started"));
     } catch (caught) {
       if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
       else setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
@@ -149,14 +150,6 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
             <span><strong>{tx("ui.new_account_model_probe")}</strong><small>{tx("ui.new_account_model_probe_description")}</small></span>
             <span className="switch-control"><input type="checkbox" checked={draft.new_account_model_probe_enabled} disabled={controlsLocked} onChange={(event) => updateDraft({ new_account_model_probe_enabled: event.target.checked })} aria-label={tx("ui.enable_new_account_model_probe")} /><b>{tx(draft.new_account_model_probe_enabled ? "ui.on_2" : "ui.off_2")}</b></span>
           </label>
-          <div className="policy-row is-enabled">
-            <span>
-              <strong>{tx("ui.codex_quota_metadata_probe")}</strong>
-              <small>{tx("ui.codex_quota_metadata_probe_description")}</small>
-              <small>{tx("ui.quota_metadata_probe_summary", { updated: lastScan.quota_metadata_updated ?? 0, probed: lastScan.quota_metadata_probed ?? 0, failed: lastScan.quota_metadata_failed ?? 0 })}</small>
-            </span>
-            <b>{tx("ui.always_enabled")}</b>
-          </div>
           <OptionalNumberRow label="Priority" ariaLabel={tx("ui.default_priority")} value={draft.priority} disabled={controlsLocked} onChange={(priority) => updateDraft({ priority })} />
           <OptionalBooleanRow label="WebSockets" ariaLabel={tx("ui.default_websockets")} value={draft.websockets} disabled={controlsLocked} onChange={(websockets) => updateDraft({ websockets })} />
           <label className="policy-row policy-interval"><span className="edit-optin">{tx("ui.scan_interval")}</span><span className="number-suffix"><input type="number" min="5" max="300" value={draft.scan_interval_seconds} disabled={controlsLocked} onChange={(event) => updateDraft({ scan_interval_seconds: Number(event.target.value) })} aria-label={tx("ui.scan_interval")} /><b>{tx("ui.seconds")}</b></span></label>
@@ -169,7 +162,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
           <button className="button button-primary" type="button" disabled={controlsLocked || rules.length >= 100} onClick={() => updateRules([...rules, newConditionalRule(rules.length)])}><Plus size={15} />{tx("ui.add_policy")}</button>
         </header>
         <div className="conditional-rule-list">
-          {rules.length === 0 ? <div className="conditional-policy-empty"><GitBranch size={24} /><strong>{tx("ui.no_conditional_policies")}</strong><span>{tx("ui.no_conditional_policies_description")}</span></div> : null}
+          {rules.length === 0 ? <div className="conditional-policy-empty"><Workflow size={24} /><strong>{tx("ui.no_conditional_policies")}</strong><span>{tx("ui.no_conditional_policies_description")}</span></div> : null}
           {rules.map((rule, index) => (
             <ConditionalRuleEditor
               key={rule.id}
@@ -192,6 +185,23 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
         <button className="button" type="button" disabled={scanning || saving || snapshot.running || dirty} onClick={() => void scan()}>{scanning || snapshot.running ? <LoaderCircle className="spin" size={15} /> : <ScanLine size={15} />}{tx("ui.scan_now")}</button>
         <button className="button button-primary" type="button" disabled={saving || !dirty} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_policy")}</button>
       </footer>
+      {confirmRunAfterSave ? (
+        <Modal
+          title={tx("ui.run_automation_policy_after_save")}
+          onClose={() => setConfirmRunAfterSave(false)}
+          footer={(
+            <>
+              <button className="button" type="button" onClick={() => setConfirmRunAfterSave(false)}>{tx("ui.save_only")}</button>
+              <button className="button button-primary" type="button" onClick={() => { setConfirmRunAfterSave(false); void scan(); }}><ScanLine size={15} />{tx("ui.run_asynchronously")}</button>
+            </>
+          )}
+        >
+          <div className="policy-run-confirmation">
+            <Workflow size={22} />
+            <div><strong>{tx("ui.automation_policy_saved")}</strong><span>{tx("ui.run_automation_policy_after_save_description")}</span></div>
+          </div>
+        </Modal>
+      ) : null}
     </section>
   );
 }
@@ -212,7 +222,7 @@ function ConditionalRuleEditor({ rule, index, total, disabled, onChange, onMove,
         </div>
       </header>
       <div className="conditional-rule-body">
-        <section className="conditional-rule-conditions"><h4>{tx("ui.match_conditions")}</h4><ConditionGroupEditor group={rule.conditions} depth={0} disabled={disabled} onChange={(conditions) => onChange({ ...rule, conditions })} /></section>
+        <section className="conditional-rule-conditions"><h4>{tx("ui.match_conditions")}</h4><PolicyConditionEditor group={rule.conditions} disabled={disabled} onChange={(conditions) => onChange({ ...rule, conditions })} /></section>
         <section className="conditional-rule-actions"><h4>{tx("ui.automation_actions")}</h4>
           <OptionalBooleanAction label={tx("ui.new_account_model_probe")} present={hasOwn(rule.actions, "new_account_model_probe")} value={rule.actions.new_account_model_probe ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "new_account_model_probe", present, value))} />
           <OptionalNumberAction label="Priority" present={hasOwn(rule.actions, "priority")} value={rule.actions.priority ?? 0} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "priority", present, value))} />
@@ -222,34 +232,6 @@ function ConditionalRuleEditor({ rule, index, total, disabled, onChange, onMove,
       </div>
     </article>
   );
-}
-
-function ConditionGroupEditor({ group, depth, disabled, onChange }: { group: PolicyConditionGroup; depth: number; disabled: boolean; onChange: (group: PolicyConditionGroup) => void }) {
-  const { tx } = useI18n();
-  const conditions = group.conditions ?? [];
-  const groups = group.groups ?? [];
-  return (
-    <div className={`condition-group condition-depth-${depth}`}>
-      <div className="condition-group-toolbar">
-        <div className="condition-operator" role="group" aria-label={tx("ui.condition_operator")}>
-          <button type="button" className={group.operator === "all" ? "active" : ""} disabled={disabled} onClick={() => onChange({ ...group, operator: "all" })}>{tx("ui.match_all")}</button>
-          <button type="button" className={group.operator === "any" ? "active" : ""} disabled={disabled} onClick={() => onChange({ ...group, operator: "any" })}>{tx("ui.match_any")}</button>
-        </div>
-        <button className="button button-quiet" type="button" disabled={disabled || conditions.length + groups.length >= 32} onClick={() => onChange({ ...group, conditions: [...conditions, { field: "provider", value: "" }] })}><Plus size={13} />{tx("ui.add_condition")}</button>
-        {depth < 3 ? <button className="button button-quiet" type="button" disabled={disabled || conditions.length + groups.length >= 32} onClick={() => onChange({ ...group, groups: [...groups, { operator: "all", conditions: [{ field: "account_type", value: "" }], groups: [] }] })}><GitBranch size={13} />{tx("ui.add_condition_group")}</button> : null}
-      </div>
-      <div className="condition-items">
-        {conditions.map((condition, index) => <ConditionRow key={`${index}:${condition.field}`} condition={condition} disabled={disabled} onChange={(next) => onChange({ ...group, conditions: conditions.map((item, itemIndex) => itemIndex === index ? next : item) })} onDelete={() => onChange({ ...group, conditions: conditions.filter((_, itemIndex) => itemIndex !== index) })} />)}
-        {groups.map((child, index) => <div className="nested-condition-group" key={index}><ConditionGroupEditor group={child} depth={depth + 1} disabled={disabled} onChange={(next) => onChange({ ...group, groups: groups.map((item, itemIndex) => itemIndex === index ? next : item) })} /><IconButton label={tx("ui.delete_condition_group")} disabled={disabled} onClick={() => onChange({ ...group, groups: groups.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={14} /></IconButton></div>)}
-      </div>
-    </div>
-  );
-}
-
-function ConditionRow({ condition, disabled, onChange, onDelete }: { condition: PolicyCondition; disabled: boolean; onChange: (condition: PolicyCondition) => void; onDelete: () => void }) {
-  const { tx } = useI18n();
-  const placeholders: Record<PolicyConditionField, string> = { provider: "codex", account_type: "free", email_suffix: "example.com" };
-  return <div className="condition-row"><select value={condition.field} disabled={disabled} onChange={(event) => onChange({ field: event.target.value as PolicyConditionField, value: "" })} aria-label={tx("ui.condition_field")}><option value="provider">{tx("ui.provider_type")}</option><option value="account_type">{tx("ui.account_or_plan_type")}</option><option value="email_suffix">{tx("ui.email_suffix")}</option></select><input value={condition.value} maxLength={256} disabled={disabled} placeholder={placeholders[condition.field]} onChange={(event) => onChange({ ...condition, value: event.target.value })} aria-label={tx("ui.condition_value")} /><IconButton label={tx("ui.delete_condition")} disabled={disabled} onClick={onDelete}><Trash2 size={14} /></IconButton></div>;
 }
 
 function ModelPolicyAction({ actions, disabled, onChange }: { actions: ConditionalPolicyActions; disabled: boolean; onChange: (actions: ConditionalPolicyActions) => void }) {

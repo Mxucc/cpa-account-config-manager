@@ -77,6 +77,7 @@ type ImportResultItem struct {
 type ImportResult struct {
 	ID                     string             `json:"id"`
 	State                  string             `json:"state"`
+	Running                bool               `json:"running"`
 	Total                  int                `json:"total"`
 	Imported               int                `json:"imported"`
 	Skipped                int                `json:"skipped"`
@@ -84,6 +85,7 @@ type ImportResult struct {
 	StartedAt              time.Time          `json:"started_at"`
 	FinishedAt             time.Time          `json:"finished_at"`
 	Results                []ImportResultItem `json:"results"`
+	Error                  string             `json:"error,omitempty"`
 	UsageCollectionStarted bool               `json:"usage_collection_started,omitempty"`
 	UsageCollectionTargets int                `json:"usage_collection_targets,omitempty"`
 }
@@ -107,6 +109,11 @@ type importPreviewStore struct {
 
 type ImportService struct {
 	operationMu   sync.Mutex
+	jobMu         sync.RWMutex
+	job           ImportResult
+	jobCancel     context.CancelFunc
+	jobWait       sync.WaitGroup
+	closed        bool
 	host          AuthHost
 	mutations     *MutationCoordinator
 	store         *importPreviewStore
@@ -114,6 +121,8 @@ type ImportService struct {
 	now           func() time.Time
 	agentIdentity *AgentIdentityExperiment
 }
+
+type importCompletionFunc func(context.Context, ImportResult, error) ImportResult
 
 func (s *ImportService) SetAgentIdentityExperiment(experiment *AgentIdentityExperiment) {
 	if s == nil {
@@ -375,11 +384,121 @@ func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResu
 	return result, nil
 }
 
+func (s *ImportService) StartAsync(previewID string, onStart func(ImportResult), complete importCompletionFunc) (ImportResult, error) {
+	if s == nil || s.host == nil || s.store == nil {
+		return ImportResult{}, ErrImportAuthUnavailable
+	}
+	previewID = strings.TrimSpace(previewID)
+	preview, errPreview := s.store.inspect(previewID, s.now().UTC())
+	if errPreview != nil {
+		return ImportResult{}, errPreview
+	}
+
+	s.jobMu.Lock()
+	if s.closed {
+		s.jobMu.Unlock()
+		return ImportResult{}, ErrImportAuthUnavailable
+	}
+	if s.job.Running {
+		s.jobMu.Unlock()
+		return ImportResult{}, ErrJobBusy
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := ImportResult{
+		ID: previewID, State: JobStateRunning, Running: true, Total: preview.Total,
+		StartedAt: s.now().UTC(), Results: make([]ImportResultItem, 0),
+	}
+	s.job = started
+	s.jobCancel = cancel
+	s.jobWait.Add(1)
+	s.jobMu.Unlock()
+	if onStart != nil {
+		onStart(cloneImportResult(started))
+	}
+
+	go func() {
+		defer s.jobWait.Done()
+		result, errRun := s.Start(ctx, previewID)
+		if errRun != nil {
+			result = ImportResult{
+				ID: previewID, State: JobStateFailed, Total: preview.Total,
+				StartedAt: started.StartedAt, FinishedAt: s.now().UTC(), Results: make([]ImportResultItem, 0),
+				Error: publicImportJobError(errRun),
+			}
+		}
+		if complete != nil {
+			result = complete(ctx, result, errRun)
+		}
+		result.Running = false
+		if result.Results == nil {
+			result.Results = make([]ImportResultItem, 0)
+		}
+		s.jobMu.Lock()
+		if s.job.ID == previewID {
+			s.job = cloneImportResult(result)
+			s.jobCancel = nil
+		}
+		s.jobMu.Unlock()
+		cancel()
+	}()
+	return cloneImportResult(started), nil
+}
+
+func (s *ImportService) Status() ImportResult {
+	if s == nil {
+		return ImportResult{State: JobStateIdle, Results: make([]ImportResultItem, 0)}
+	}
+	s.jobMu.RLock()
+	defer s.jobMu.RUnlock()
+	result := cloneImportResult(s.job)
+	if result.State == "" {
+		result.State = JobStateIdle
+	}
+	if result.Results == nil {
+		result.Results = make([]ImportResultItem, 0)
+	}
+	return result
+}
+
+func (s *ImportService) Shutdown() {
+	if s == nil {
+		return
+	}
+	s.jobMu.Lock()
+	s.closed = true
+	cancel := s.jobCancel
+	s.jobMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.jobWait.Wait()
+	s.Clear()
+}
+
 func (s *ImportService) Clear() {
 	if s == nil || s.store == nil {
 		return
 	}
 	s.store.clear()
+}
+
+func cloneImportResult(result ImportResult) ImportResult {
+	clone := result
+	clone.Results = append([]ImportResultItem(nil), result.Results...)
+	return clone
+}
+
+func publicImportJobError(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "import was cancelled"
+	case errors.Is(err, ErrJobBusy):
+		return "another account change is running"
+	case errors.Is(err, ErrImportAuthUnavailable):
+		return "CPA Auth storage is unavailable"
+	default:
+		return "import failed"
+	}
 }
 
 func importInputType(upload importUpload) string {
@@ -591,6 +710,23 @@ func (s *importPreviewStore) validate(id string, now time.Time) error {
 		return ErrImportPreviewExpired
 	}
 	return nil
+}
+
+func (s *importPreviewStore) inspect(id string, now time.Time) (ImportPreview, error) {
+	if s == nil {
+		return ImportPreview{}, ErrImportPreviewNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	preview, exists := s.entries[id]
+	if !exists {
+		return ImportPreview{}, ErrImportPreviewNotFound
+	}
+	if !preview.Public.ExpiresAt.After(now) {
+		s.deleteLocked(id)
+		return ImportPreview{}, ErrImportPreviewExpired
+	}
+	return cloneImportPreview(preview.Public), nil
 }
 
 func (s *importPreviewStore) take(id string, now time.Time) (storedImportPreview, error) {

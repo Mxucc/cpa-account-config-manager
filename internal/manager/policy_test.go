@@ -272,6 +272,57 @@ func TestPolicyEngineUnchangedPolicySavePreservesFingerprintsAndDoesNotWakeScan(
 	}
 }
 
+func TestPolicyEngineChangedPolicySaveResetsFingerprintsWithoutWakingScan(t *testing.T) {
+	dataDir := t.TempDir()
+	priority := 4
+	engine := NewPolicyEngine(&fakeAuthHost{})
+	engine.mu.Lock()
+	engine.started = true
+	engine.store = policyStorePath(dataDir)
+	engine.policy = normalizeDefaultPolicy(DefaultPolicy{})
+	engine.fingerprints["stable"] = authFingerprint{Name: "stable.json", Path: "/auths/stable.json"}
+	engine.mu.Unlock()
+
+	if _, errSet := engine.SetPolicy(DefaultPolicy{Enabled: true, Priority: &priority}); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	select {
+	case <-engine.wake:
+		t.Fatal("saving a changed policy woke a scan before explicit execution")
+	default:
+	}
+	engine.mu.RLock()
+	fingerprintCount := len(engine.fingerprints)
+	engine.mu.RUnlock()
+	if fingerprintCount != 0 {
+		t.Fatalf("changed policy retained %d processed fingerprints", fingerprintCount)
+	}
+}
+
+func TestPolicyEngineChangedSameStoreConfigureDoesNotWakeScan(t *testing.T) {
+	dataDir := t.TempDir()
+	priority := 4
+	engine := NewPolicyEngine(&fakeAuthHost{})
+	engine.mu.Lock()
+	engine.started = true
+	engine.store = policyStorePath(dataDir)
+	engine.config = normalizeConfig(Config{DataDir: dataDir})
+	engine.policy = normalizeDefaultPolicy(DefaultPolicy{})
+	engine.fingerprints["stable"] = authFingerprint{Name: "stable.json", Path: "/auths/stable.json"}
+	engine.mu.Unlock()
+
+	configured := normalizeDefaultPolicy(DefaultPolicy{Enabled: true, Priority: &priority})
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &configured})
+	select {
+	case <-engine.wake:
+		t.Fatal("persisting a changed same-store configuration woke a scan before explicit execution")
+	default:
+	}
+	if snapshot := engine.Snapshot(); !snapshot.Policy.Enabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != priority {
+		t.Fatalf("configured snapshot = %#v", snapshot)
+	}
+}
+
 func TestPolicyEngineAppliesConfiguredPolicyDuringSameStoreReconfigure(t *testing.T) {
 	dataDir := t.TempDir()
 	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
@@ -332,6 +383,7 @@ func TestPolicyEngineReconcilesMissingFieldsAndDetectsNewFiles(t *testing.T) {
 	if _, errSet := engine.SetPolicy(DefaultPolicy{Enabled: true, Priority: &priority, Websockets: &websockets}); errSet != nil {
 		t.Fatalf("SetPolicy() error = %v", errSet)
 	}
+	engine.RequestScan()
 	waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
 		host.mu.Lock()
 		defer host.mu.Unlock()
@@ -403,6 +455,7 @@ func TestPolicyEngineScansForNewAccountProbeWithoutApplyingDefaultFields(t *test
 	if _, errSet := engine.SetPolicy(DefaultPolicy{NewAccountModelProbeEnabled: true, ScanIntervalSeconds: 5}); errSet != nil {
 		t.Fatalf("SetPolicy() error = %v", errSet)
 	}
+	engine.RequestScan()
 	waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
 		return !snapshot.Running && snapshot.LastScan.Scanned == 1
 	})
@@ -494,6 +547,7 @@ func TestPolicyEngineSkipsUnsupportedAndDuplicateEntries(t *testing.T) {
 	if _, errSet := engine.SetPolicy(DefaultPolicy{Enabled: true, Priority: &priority}); errSet != nil {
 		t.Fatalf("SetPolicy() error = %v", errSet)
 	}
+	engine.RequestScan()
 	snapshot := waitForPolicy(t, engine, func(snapshot PolicySnapshot) bool {
 		return !snapshot.LastScan.FinishedAt.IsZero()
 	})
@@ -548,7 +602,7 @@ func TestPolicyEngineSharesMutationCoordinatorWithExplicitJobs(t *testing.T) {
 	}
 }
 
-func TestPolicyEngineArmDoesNotWakeForEveryAuthenticatedPageRequest(t *testing.T) {
+func TestPolicyEngineArmNeverWakesScanForAuthenticatedPageRequests(t *testing.T) {
 	engine := NewPolicyEngine(&fakeAuthHost{})
 	engine.mu.Lock()
 	engine.started = true
@@ -557,8 +611,8 @@ func TestPolicyEngineArmDoesNotWakeForEveryAuthenticatedPageRequest(t *testing.T
 	engine.Arm("management-secret")
 	select {
 	case <-engine.wake:
+		t.Fatal("the first management credential woke a policy scan")
 	default:
-		t.Fatal("first management credential did not wake the policy engine")
 	}
 	engine.Arm("management-secret")
 	select {
@@ -569,8 +623,8 @@ func TestPolicyEngineArmDoesNotWakeForEveryAuthenticatedPageRequest(t *testing.T
 	engine.Arm("rotated-management-secret")
 	select {
 	case <-engine.wake:
+		t.Fatal("a rotated management credential woke a policy scan")
 	default:
-		t.Fatal("a rotated management credential did not wake the policy engine")
 	}
 }
 

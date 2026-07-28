@@ -59,8 +59,7 @@ func normalizeConfig(cfg Config) Config {
 		cfg.DefaultPolicy = &policy
 	}
 	if cfg.InspectionPolicy != nil {
-		policy := *cfg.InspectionPolicy
-		policy.NotificationEndpoints = append([]InspectionNotificationEndpoint(nil), policy.NotificationEndpoints...)
+		policy := cloneInspectionPolicy(*cfg.InspectionPolicy)
 		cfg.InspectionPolicy = &policy
 	}
 	if cfg.UpdatePolicy != nil {

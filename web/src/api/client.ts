@@ -820,6 +820,11 @@ export async function startImport(previewID: string): Promise<ImportResult> {
   });
 }
 
+export async function getImportStatus(): Promise<ImportResult> {
+  const result = await request<ImportResult>("/import/status");
+  return { ...result, results: arrayOrEmpty(result.results) };
+}
+
 export interface ExportDownloadResult {
   filename: string;
   exported?: number;

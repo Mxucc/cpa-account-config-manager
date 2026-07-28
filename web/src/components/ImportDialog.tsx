@@ -132,7 +132,9 @@ export function ImportDialog({
       title={tx("ui.add_accounts")}
       wide
       onClose={onClose}
-      footer={result ? (
+      footer={result?.state === "running" ? (
+        <button className="button button-primary" type="button" onClick={onClose}>{tx("ui.close")}</button>
+      ) : result ? (
         <>
           <button className="button" type="button" onClick={reset}><RotateCcw size={15} />{tx("ui.add_more")}</button>
           <button className="button button-primary" type="button" onClick={onClose}>{tx("ui.close")}</button>
@@ -233,14 +235,15 @@ function ImportPreviewView({ preview }: { preview: ImportPreview }) {
 
 function ImportResultView({ result }: { result: ImportResult }) {
   const { locale, tx } = useI18n();
+  const running = result.state === "running";
   const complete = result.state === "completed";
-  const visibleResults = result.results.slice(0, MAX_VISIBLE_IMPORT_ROWS);
-  const hiddenResults = Math.max(0, result.total - visibleResults.length);
+  const visibleResults = (result.results ?? []).slice(0, MAX_VISIBLE_IMPORT_ROWS);
+  const hiddenResults = running ? 0 : Math.max(0, result.total - visibleResults.length);
   return (
     <div className="import-result-stage">
       <div className={`import-result-banner state-${result.state}`}>
-        {complete ? <CheckCircle2 size={22} /> : result.state === "partial" ? <AlertTriangle size={22} /> : <XCircle size={22} />}
-        <div><strong>{complete ? tx("ui.import_complete") : result.state === "partial" ? tx("ui.import_partially_complete") : tx("ui.import_failed")}</strong><span>{tx("ui.imported_slash_total_written_to_cpa", { imported: result.imported, total: result.total })}</span></div>
+        {running ? <LoaderCircle className="spin" size={22} /> : complete ? <CheckCircle2 size={22} /> : result.state === "partial" ? <AlertTriangle size={22} /> : <XCircle size={22} />}
+        <div><strong>{running ? tx("ui.import_running_in_background") : complete ? tx("ui.import_complete") : result.state === "partial" ? tx("ui.import_partially_complete") : tx("ui.import_failed")}</strong><span>{running ? tx("ui.import_can_continue_after_closing") : tx("ui.imported_slash_total_written_to_cpa", { imported: result.imported, total: result.total })}</span></div>
       </div>
       <div className="import-metrics">
         <ImportMetric label={tx("ui.total")} value={result.total} />
@@ -249,6 +252,7 @@ function ImportResultView({ result }: { result: ImportResult }) {
         <ImportMetric label={tx("ui.failed")} value={result.failed} tone={result.failed ? "danger" : ""} />
       </div>
       {result.usage_collection_started ? <div className="import-usage-collection" role="status"><LoaderCircle className="spin" size={15} /><span>{tx("ui.collecting_usage_for_count_imported_accounts", { count: result.usage_collection_targets ?? result.imported })}</span></div> : null}
+      {result.error ? <div className="policy-error" role="alert"><XCircle size={15} /><span>{importMessage(result.error, locale)}</span></div> : null}
       <div className="import-result-list">
         {visibleResults.map((item) => (
           <div className="import-result-row" key={`${item.index}:${item.target_name}`}>
@@ -319,6 +323,9 @@ function importMessage(message: string, locale: Locale): string {
     "could not verify the target Auth filename": "ui.could_not_verify_the_target_auth_filename",
     "CPA rejected the converted Auth file": "ui.cpa_rejected_the_converted_auth_file",
     "import was cancelled": "ui.import_was_cancelled",
+    "another account change is running": "ui.another_account_change_is_running",
+    "CPA Auth storage is unavailable": "ui.cpa_auth_storage_is_unavailable",
+    "import failed": "ui.import_failed",
   };
   if (exact[message]) return translateUI(locale, exact[message]);
   const skipped = message.match(/^(\d+) unsupported or duplicate record\(s\) were skipped$/);

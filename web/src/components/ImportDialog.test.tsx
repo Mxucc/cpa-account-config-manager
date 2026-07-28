@@ -81,6 +81,7 @@ describe("ImportDialog", () => {
     const result: ImportResult = {
       id: "result-large",
       state: "completed",
+      running: false,
       total: 251,
       imported: 251,
       skipped: 0,
@@ -112,5 +113,35 @@ describe("ImportDialog", () => {
     expect(screen.getByText("codex-user-250.json")).toBeInTheDocument();
     expect(screen.queryByText("codex-user-251.json")).not.toBeInTheDocument();
     expect(screen.getByText("另有 1 个账号未展开")).toBeInTheDocument();
+  });
+
+  it("shows an accepted import as a closable background task", () => {
+    render(
+      <ImportDialog
+        preview={null}
+        result={{
+          id: "running-import",
+          state: "running",
+          running: true,
+          total: 10000,
+          imported: 0,
+          skipped: 0,
+          failed: 0,
+          started_at: "2026-07-28T00:00:00Z",
+          finished_at: "0001-01-01T00:00:00Z",
+          results: [],
+        }}
+        previewing={false}
+        importing={false}
+        onClose={() => undefined}
+        onPreview={() => undefined}
+        onImport={() => undefined}
+        onReset={() => undefined}
+      />,
+    );
+    expect(screen.getByText("正在后台导入账号")).toBeInTheDocument();
+    expect(screen.getByText("可以关闭此弹窗，任务会继续执行，并可在操作日志中查看。")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "关闭" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "继续添加" })).not.toBeInTheDocument();
   });
 });

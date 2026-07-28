@@ -54,33 +54,34 @@ type inspectionRecord struct {
 }
 
 type persistedInspectionState struct {
-	Version               int                         `json:"version"`
-	Policy                InspectionPolicy            `json:"policy"`
-	Records               map[string]inspectionRecord `json:"records"`
-	Actions               []InspectionAction          `json:"actions,omitempty"`
-	LastRun               InspectionRunSummary        `json:"last_run"`
-	ProbeCursor           int                         `json:"probe_cursor,omitempty"`
-	LastNativeRunAt       time.Time                   `json:"last_native_run_at,omitempty"`
-	LastProbeRunAt        time.Time                   `json:"last_probe_run_at,omitempty"`
-	ProbeSweepRemaining   int                         `json:"probe_sweep_remaining,omitempty"`
-	ProbeSweepTotal       int                         `json:"probe_sweep_total,omitempty"`
-	ProbeSweepCompleted   int                         `json:"probe_sweep_completed,omitempty"`
-	ProbeSweepSource      string                      `json:"probe_sweep_source,omitempty"`
-	ProbeSweepStatus      string                      `json:"probe_sweep_status,omitempty"`
-	ProbeSweepStartedAt   time.Time                   `json:"probe_sweep_started_at,omitempty"`
-	ProbeSweepTargets     []string                    `json:"probe_sweep_targets,omitempty"`
-	AnomalyTriggerPending bool                        `json:"anomaly_trigger_pending,omitempty"`
-	LastAnomalyTriggerAt  time.Time                   `json:"last_anomaly_trigger_at,omitempty"`
-	LastNotificationAt    time.Time                   `json:"last_notification_at,omitempty"`
-	RunMode               string                      `json:"run_mode,omitempty"`
-	RunHealth             []string                    `json:"run_health,omitempty"`
-	RunSelected           []string                    `json:"run_selected,omitempty"`
-	ProbePhase            string                      `json:"probe_phase,omitempty"`
-	RetryTotal            int                         `json:"retry_total,omitempty"`
-	RetryCompleted        int                         `json:"retry_completed,omitempty"`
-	StopRequested         bool                        `json:"stop_requested,omitempty"`
-	Runs                  []InspectionRunRecord       `json:"runs,omitempty"`
-	ActiveRunID           string                      `json:"active_run_id,omitempty"`
+	Version                    int                         `json:"version"`
+	Policy                     InspectionPolicy            `json:"policy"`
+	Records                    map[string]inspectionRecord `json:"records"`
+	Actions                    []InspectionAction          `json:"actions,omitempty"`
+	LastRun                    InspectionRunSummary        `json:"last_run"`
+	ProbeCursor                int                         `json:"probe_cursor,omitempty"`
+	LastNativeRunAt            time.Time                   `json:"last_native_run_at,omitempty"`
+	LastProbeRunAt             time.Time                   `json:"last_probe_run_at,omitempty"`
+	ProbeSweepRemaining        int                         `json:"probe_sweep_remaining,omitempty"`
+	ProbeSweepTotal            int                         `json:"probe_sweep_total,omitempty"`
+	ProbeSweepCompleted        int                         `json:"probe_sweep_completed,omitempty"`
+	ProbeSweepSource           string                      `json:"probe_sweep_source,omitempty"`
+	ProbeSweepStatus           string                      `json:"probe_sweep_status,omitempty"`
+	ProbeSweepStartedAt        time.Time                   `json:"probe_sweep_started_at,omitempty"`
+	ProbeSweepTargets          []string                    `json:"probe_sweep_targets,omitempty"`
+	AnomalyTriggerPending      bool                        `json:"anomaly_trigger_pending,omitempty"`
+	LastAnomalyTriggerAt       time.Time                   `json:"last_anomaly_trigger_at,omitempty"`
+	LastNotificationAt         time.Time                   `json:"last_notification_at,omitempty"`
+	LastNotificationByEndpoint map[string]time.Time        `json:"last_notification_by_endpoint,omitempty"`
+	RunMode                    string                      `json:"run_mode,omitempty"`
+	RunHealth                  []string                    `json:"run_health,omitempty"`
+	RunSelected                []string                    `json:"run_selected,omitempty"`
+	ProbePhase                 string                      `json:"probe_phase,omitempty"`
+	RetryTotal                 int                         `json:"retry_total,omitempty"`
+	RetryCompleted             int                         `json:"retry_completed,omitempty"`
+	StopRequested              bool                        `json:"stop_requested,omitempty"`
+	Runs                       []InspectionRunRecord       `json:"runs,omitempty"`
+	ActiveRunID                string                      `json:"active_run_id,omitempty"`
 }
 
 func stopPendingAnomalySweep(state *persistedInspectionState, includeRunning bool) {
@@ -120,6 +121,7 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 		return persistedInspectionState{}, fmt.Errorf("validate inspection policy: %w", errPolicy)
 	}
 	state.Policy = policy
+	state.LastNotificationByEndpoint = notificationCooldownsForEndpoints(state.LastNotificationByEndpoint, state.Policy.NotificationEndpoints)
 	if state.LastNotificationAt.IsZero() && state.Policy.AnomalyNotificationEnabled {
 		state.LastNotificationAt = state.LastAnomalyTriggerAt
 	}
@@ -152,9 +154,42 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 	return state, nil
 }
 
+func sanitizeNotificationCooldowns(values map[string]time.Time) map[string]time.Time {
+	if len(values) == 0 {
+		return make(map[string]time.Time)
+	}
+	out := make(map[string]time.Time, min(len(values), maxInspectionNotificationEndpoints))
+	for id, triggeredAt := range values {
+		id = strings.TrimSpace(id)
+		if len(out) >= maxInspectionNotificationEndpoints || !inspectionNotificationEndpointIDPattern.MatchString(id) || triggeredAt.IsZero() {
+			continue
+		}
+		out[id] = triggeredAt.UTC()
+	}
+	return out
+}
+
+func notificationCooldownsForEndpoints(values map[string]time.Time, endpoints []InspectionNotificationEndpoint) map[string]time.Time {
+	values = sanitizeNotificationCooldowns(values)
+	if len(values) == 0 {
+		return values
+	}
+	allowed := make(map[string]struct{}, len(endpoints))
+	for _, endpoint := range endpoints {
+		allowed[endpoint.ID] = struct{}{}
+	}
+	for id := range values {
+		if _, exists := allowed[id]; !exists {
+			delete(values, id)
+		}
+	}
+	return values
+}
+
 func saveInspectionState(path string, state persistedInspectionState) error {
 	state.Version = inspectionStoreVersion
 	state.Policy = normalizeInspectionPolicy(state.Policy)
+	state.LastNotificationByEndpoint = notificationCooldownsForEndpoints(state.LastNotificationByEndpoint, state.Policy.NotificationEndpoints)
 	state.Records = sanitizeInspectionRecords(state.Records)
 	state.Actions = append([]InspectionAction(nil), state.Actions...)
 	state.ProbeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)

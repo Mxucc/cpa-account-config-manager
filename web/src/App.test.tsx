@@ -1194,7 +1194,22 @@ describe("primary account batch flow", () => {
         imported = true;
         return jsonResponse({
           id: "import-preview-ui",
+          state: "running",
+          running: true,
+          total: 1,
+          imported: 0,
+          skipped: 0,
+          failed: 0,
+          started_at: "2026-07-15T10:00:01Z",
+          finished_at: "0001-01-01T00:00:00Z",
+          results: [],
+        });
+      }
+      if (url.includes("/import/status")) {
+        return jsonResponse({
+          id: "import-preview-ui",
           state: "completed",
+          running: false,
           total: 1,
           imported: 1,
           skipped: 0,

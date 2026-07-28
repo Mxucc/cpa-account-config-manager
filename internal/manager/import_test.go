@@ -822,6 +822,74 @@ func TestImportServiceBusyKeepsPreviewForRetry(t *testing.T) {
 	}
 }
 
+type blockingImportHost struct {
+	*fakeAuthHost
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (h *blockingImportHost) SaveAuth(ctx context.Context, name string, rawJSON json.RawMessage) (cpaapi.HostAuthSaveResponse, error) {
+	select {
+	case h.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return cpaapi.HostAuthSaveResponse{}, ctx.Err()
+	case <-h.release:
+		return h.fakeAuthHost.SaveAuth(ctx, name, rawJSON)
+	}
+}
+
+func TestImportServiceStartAsyncReturnsBeforeAccountWritesComplete(t *testing.T) {
+	host := &blockingImportHost{
+		fakeAuthHost: &fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}},
+		entered:      make(chan struct{}, 1),
+		release:      make(chan struct{}),
+	}
+	service := NewImportService(host, NewMutationCoordinator())
+	defer service.Shutdown()
+	preview, errPreview := service.Preview(context.Background(), importUpload{
+		Name: "async.json",
+		Data: []byte(`{"email":"async@example.com","account_id":"async-account","access_token":"async-secret"}`),
+	})
+	if errPreview != nil {
+		t.Fatalf("Preview() error = %v", errPreview)
+	}
+	startedCallbacks := 0
+	accepted, errStart := service.StartAsync(preview.ID, func(result ImportResult) {
+		startedCallbacks++
+		if !result.Running || result.State != JobStateRunning {
+			t.Errorf("start callback result = %#v", result)
+		}
+	}, nil)
+	if errStart != nil {
+		t.Fatalf("StartAsync() error = %v", errStart)
+	}
+	if !accepted.Running || accepted.State != JobStateRunning || startedCallbacks != 1 {
+		t.Fatalf("accepted result = %#v callbacks=%d", accepted, startedCallbacks)
+	}
+	select {
+	case <-host.entered:
+	case <-time.After(time.Second):
+		t.Fatal("background import did not reach the Auth write")
+	}
+	if status := service.Status(); !status.Running {
+		t.Fatalf("blocked background import status = %#v", status)
+	}
+	close(host.release)
+	deadline := time.Now().Add(time.Second)
+	for service.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("background import did not finish after the Auth write was released")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if result := service.Status(); result.State != JobStateCompleted || result.Imported != 1 {
+		t.Fatalf("completed background import = %#v", result)
+	}
+}
+
 func TestImportPreviewStoreActivelyClearsExpiredCredentials(t *testing.T) {
 	ttl := 250 * time.Millisecond
 	now := time.Now().UTC()
@@ -896,12 +964,13 @@ func TestImportRoutesPreviewAndStartWithoutCredentialLeak(t *testing.T) {
 		Path:   "/v0/management/plugins/cpa-account-config-manager/import/start",
 		Body:   startBody,
 	})
-	if startResponse.StatusCode != http.StatusOK {
+	if startResponse.StatusCode != http.StatusAccepted {
 		t.Fatalf("start status = %d body=%s", startResponse.StatusCode, startResponse.Body)
 	}
 	if bytes.Contains(startResponse.Body, []byte("route-access-secret")) || bytes.Contains(startResponse.Body, []byte("route-refresh-secret")) {
 		t.Fatalf("start response leaked credentials: %s", startResponse.Body)
 	}
+	waitForImportCompletion(t, app)
 	if len(host.saves) != 1 {
 		t.Fatalf("save calls = %#v", host.saves)
 	}
@@ -996,18 +1065,41 @@ func TestImportStartsScopedUsageCollectionAndPersistsQuota(t *testing.T) {
 		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
 		Body:    startBody,
 	})
-	if startResponse.StatusCode != http.StatusOK || bytes.Contains(startResponse.Body, []byte("upstream-secret")) {
+	if startResponse.StatusCode != http.StatusAccepted || bytes.Contains(startResponse.Body, []byte("upstream-secret")) {
 		t.Fatalf("start status = %d body=%s", startResponse.StatusCode, startResponse.Body)
 	}
 	var result ImportResult
 	if errDecode := json.Unmarshal(startResponse.Body, &result); errDecode != nil {
 		t.Fatalf("decode result: %v", errDecode)
 	}
+	if !result.Running || result.State != JobStateRunning {
+		t.Fatalf("accepted import result = %#v", result)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for result.Running {
+		statusResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+			Method:  http.MethodGet,
+			Path:    "/v0/management/plugins/cpa-account-config-manager/import/status",
+			Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		})
+		if statusResponse.StatusCode != http.StatusOK || bytes.Contains(statusResponse.Body, []byte("upstream-secret")) {
+			t.Fatalf("status response = %d body=%s", statusResponse.StatusCode, statusResponse.Body)
+		}
+		if errDecode := json.Unmarshal(statusResponse.Body, &result); errDecode != nil {
+			t.Fatalf("decode status: %v", errDecode)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background import did not complete")
+		}
+		if result.Running {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	if !result.UsageCollectionStarted || result.UsageCollectionTargets != 1 {
 		t.Fatalf("usage collection result = %#v", result)
 	}
 	authIndex := preview.Items[0].TargetName
-	deadline := time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
 	for {
 		snapshot := app.usage.Snapshot(authIndex)
 		if snapshot != nil && snapshot.Codex != nil && snapshot.Codex.FiveHour != nil && snapshot.Codex.SevenDay != nil {
@@ -1074,11 +1166,27 @@ func TestImportMultipartRouteAggregatesMultipleFilesAndZIPEntries(t *testing.T) 
 		Path:   "/v0/management/plugins/cpa-account-config-manager/import/start",
 		Body:   startBody,
 	})
-	if startResponse.StatusCode != http.StatusOK {
+	if startResponse.StatusCode != http.StatusAccepted {
 		t.Fatalf("start status = %d body=%s", startResponse.StatusCode, startResponse.Body)
 	}
+	waitForImportCompletion(t, app)
 	if len(host.saves) != 3 {
 		t.Fatalf("save calls = %d, want 3", len(host.saves))
+	}
+}
+
+func waitForImportCompletion(t *testing.T, app *App) ImportResult {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		result := app.imports.Status()
+		if !result.Running {
+			return result
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background import did not complete")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

@@ -548,7 +548,8 @@ export interface ImportResultItem {
 
 export interface ImportResult {
   id: string;
-  state: "completed" | "partial" | "failed";
+  state: "idle" | "running" | "completed" | "partial" | "failed";
+  running: boolean;
   total: number;
   imported: number;
   skipped: number;
@@ -556,6 +557,7 @@ export interface ImportResult {
   started_at: string;
   finished_at: string;
   results: ImportResultItem[];
+  error?: string;
   usage_collection_started?: boolean;
   usage_collection_targets?: number;
 }
@@ -675,6 +677,7 @@ export interface InspectionPolicy {
   anomaly_notification_only: boolean;
   anomaly_notification_url: string;
   notification_endpoints?: InspectionNotificationEndpoint[];
+  notification_policies?: InspectionNotificationPolicy[];
   notification_available_accounts_enabled: boolean;
   notification_available_accounts_threshold: number;
   notification_availability_percent_enabled: boolean;
@@ -687,6 +690,19 @@ export interface InspectionNotificationEndpoint {
   name?: string;
   url: string;
   enabled: boolean;
+  notification_policy_id?: string;
+}
+
+export interface InspectionNotificationPolicy {
+  id: string;
+  name: string;
+  enabled: boolean;
+  conditions: PolicyConditionGroup;
+  threshold_operator: "all" | "any";
+  available_accounts_enabled: boolean;
+  available_accounts_below: number;
+  availability_percent_enabled: boolean;
+  availability_percent_below: number;
 }
 
 export type InspectionNotificationScenario = "manual_test" | "anomaly_threshold" | "available_accounts_low" | "availability_percent_low" | "combined";
@@ -699,6 +715,7 @@ export interface InspectionNotificationRequest {
   threshold_percent: number;
   available_accounts_threshold: number;
   availability_percent_threshold: number;
+  notification_policy_id?: string;
 }
 
 export interface InspectionNotificationPreview {

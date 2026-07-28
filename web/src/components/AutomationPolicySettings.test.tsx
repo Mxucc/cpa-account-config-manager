@@ -80,21 +80,63 @@ describe("AutomationPolicySettings", () => {
     });
   });
 
-  it("keeps the Codex quota metadata probe enabled without a redundant switch", async () => {
+  it("keeps the Codex quota metadata probe as a hidden always-on capability", async () => {
     const user = userEvent.setup();
     const save = vi.spyOn(api, "saveDefaultPolicy").mockImplementation(async (policy) => ({ ...snapshot, policy }));
     vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
     vi.spyOn(api, "scanDefaultPolicy").mockResolvedValue(snapshot);
 
     render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
-    expect(await screen.findByText("始终启用")).toBeInTheDocument();
+    await screen.findByRole("checkbox", { name: "启用新账号模型探测" });
     const panel = screen.getByRole("tabpanel", { name: "自动策略" });
-    expect(within(panel).getByText("最近探测：更新 9/10 · 失败 1")).toBeInTheDocument();
+    expect(within(panel).queryByText("Codex 套餐与重置次数探测")).not.toBeInTheDocument();
+    expect(within(panel).queryByText("最近探测：更新 9/10 · 失败 1")).not.toBeInTheDocument();
+    expect(within(panel).queryByText("始终启用")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("checkbox", { name: "启用 Codex 套餐与重置次数探测" })).not.toBeInTheDocument();
 
     await user.click(within(panel).getByRole("checkbox", { name: "启用新账号模型探测" }));
     await user.click(within(panel).getByRole("button", { name: "保存策略" }));
 
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ codex_quota_metadata_probe_enabled: true })));
+  });
+
+  it("saves without running until the user explicitly starts the asynchronous scan", async () => {
+    const user = userEvent.setup();
+    const changed = { ...snapshot.policy, new_account_model_probe_enabled: true };
+    const save = vi.spyOn(api, "saveDefaultPolicy").mockResolvedValue({ ...snapshot, policy: changed });
+    const scan = vi.spyOn(api, "scanDefaultPolicy").mockResolvedValue({ ...snapshot, policy: changed });
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+    const modelProbe = await screen.findByRole("checkbox", { name: "启用新账号模型探测" });
+    const panel = screen.getByRole("tabpanel", { name: "自动策略" });
+    await user.click(modelProbe);
+    await user.click(within(panel).getByRole("button", { name: "保存策略" }));
+
+    expect(await screen.findByRole("dialog", { name: "保存后执行自动策略？" })).toBeInTheDocument();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(scan).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "仅保存" }));
+    expect(screen.queryByRole("dialog", { name: "保存后执行自动策略？" })).not.toBeInTheDocument();
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it("closes the save confirmation and starts execution through the background scan endpoint", async () => {
+    const user = userEvent.setup();
+    const changed = { ...snapshot.policy, new_account_model_probe_enabled: true };
+    vi.spyOn(api, "saveDefaultPolicy").mockResolvedValue({ ...snapshot, policy: changed });
+    const scan = vi.spyOn(api, "scanDefaultPolicy").mockResolvedValue({ ...snapshot, policy: changed });
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+    const modelProbe = await screen.findByRole("checkbox", { name: "启用新账号模型探测" });
+    const panel = screen.getByRole("tabpanel", { name: "自动策略" });
+    await user.click(modelProbe);
+    await user.click(within(panel).getByRole("button", { name: "保存策略" }));
+    await user.click(await screen.findByRole("button", { name: "后台执行" }));
+
+    expect(screen.queryByRole("dialog", { name: "保存后执行自动策略？" })).not.toBeInTheDocument();
+    await waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
   });
 });

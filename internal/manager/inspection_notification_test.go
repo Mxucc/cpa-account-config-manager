@@ -35,7 +35,7 @@ func notificationCodexUsage(fiveHour, sevenDay *UsageWindowSnapshot) *AccountUsa
 }
 
 func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
-	valid := "https://notify.example/events?event=${event}&available=${available_accounts}&available_percent=${available_percent}&count_threshold=${available_accounts_threshold}&percent_threshold=${availability_percent_threshold}&abnormal=${abnormal_accounts}&abnormal_percent=${abnormal_percent}&threshold=${threshold_percent}&at=${triggered_at}"
+	valid := "https://notify.example/events?event=${event}&available=${available_accounts}&available_percent=${available_percent}&count_threshold=${available_accounts_threshold}&percent_threshold=${availability_percent_threshold}&abnormal=${abnormal_accounts}&abnormal_percent=${abnormal_percent}&threshold=${threshold_percent}&policy=${notification_policy_id}&policy_name=${notification_policy_name}&at=${triggered_at}"
 	if errValidate := validateAnomalyNotificationTemplate(valid); errValidate != nil {
 		t.Fatalf("valid template rejected: %v", errValidate)
 	}
@@ -52,6 +52,8 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 			ThresholdPercent:           50,
 		},
 		TriggeredAt: time.Date(2026, time.July, 22, 8, 9, 10, 0, time.FixedZone("UTC+8", 8*60*60)),
+		PolicyID:    "free-codex",
+		PolicyName:  "Free Codex",
 	}
 	expanded, errExpand := expandAnomalyNotificationURL(event)
 	if errExpand != nil {
@@ -64,7 +66,7 @@ func TestAnomalyNotificationTemplateValidationAndExpansion(t *testing.T) {
 	if parsed.Query().Get("event") != "available_accounts_low,availability_percent_low" || parsed.Query().Get("available") != "17" ||
 		parsed.Query().Get("available_percent") != "42%" || parsed.Query().Get("count_threshold") != "20" ||
 		parsed.Query().Get("percent_threshold") != "50" || parsed.Query().Get("abnormal") != "5" || parsed.Query().Get("abnormal_percent") != "73%" ||
-		parsed.Query().Get("threshold") != "50%" || parsed.Query().Get("at") != "2026-07-22T00:09:10Z" {
+		parsed.Query().Get("threshold") != "50%" || parsed.Query().Get("policy") != "free-codex" || parsed.Query().Get("policy_name") != "Free Codex" || parsed.Query().Get("at") != "2026-07-22T00:09:10Z" {
 		t.Fatalf("expanded query = %#v", parsed.Query())
 	}
 	combined := event
@@ -563,6 +565,9 @@ func TestInspectionNotificationCooldownSurvivesRestart(t *testing.T) {
 	if !loaded.LastNotificationAt.Equal(now) {
 		t.Fatalf("persisted notification time = %s, want %s", loaded.LastNotificationAt, now)
 	}
+	if triggeredAt := loaded.LastNotificationByEndpoint["legacy"]; !triggeredAt.Equal(now) {
+		t.Fatalf("persisted endpoint notification time = %s, want %s", triggeredAt, now)
+	}
 
 	restarted := NewInspectionEngine(nil, nil, nil)
 	restarted.notificationDoer = successfulNotificationDoer()
@@ -620,6 +625,154 @@ func TestInspectionNotificationEndpointValidationBoundaries(t *testing.T) {
 				t.Fatal("invalid notification endpoint policy was accepted")
 			}
 		})
+	}
+}
+
+func TestInspectionNotificationPoliciesValidateNestedConditionsAndEndpointBindings(t *testing.T) {
+	policy := defaultInspectionPolicy()
+	policy.NotificationPolicies = []InspectionNotificationPolicy{{
+		ID: "free-codex", Name: "Free Codex", Enabled: true,
+		Conditions: PolicyConditionGroup{Operator: PolicyConditionAll,
+			Conditions: []PolicyCondition{{Field: PolicyConditionProvider, Value: "codex"}},
+			Groups: []PolicyConditionGroup{{Operator: PolicyConditionAny, Conditions: []PolicyCondition{
+				{Field: PolicyConditionAccountType, Value: "free"}, {Field: PolicyConditionEmailSuffix, Value: "outlook.com"},
+			}}},
+		},
+		ThresholdOperator: PolicyConditionAll, AvailableAccountsEnabled: true, AvailableAccountsBelow: 2,
+		AvailabilityPercentEnabled: true, AvailabilityPercentBelow: 25,
+	}}
+	policy.NotificationEndpoints = []InspectionNotificationEndpoint{{
+		ID: "free-alert", URL: "https://notify.example/free", Enabled: true, NotificationPolicyID: "free-codex",
+	}}
+	normalized, errValidate := validateInspectionPolicy(policy)
+	if errValidate != nil {
+		t.Fatalf("valid nested notification policy rejected: %v", errValidate)
+	}
+	if got := normalized.NotificationEndpoints[0].NotificationPolicyID; got != "free-codex" {
+		t.Fatalf("normalized endpoint policy id = %q", got)
+	}
+
+	unknown := policy
+	unknown.NotificationEndpoints = append([]InspectionNotificationEndpoint(nil), policy.NotificationEndpoints...)
+	unknown.NotificationEndpoints[0].NotificationPolicyID = "missing"
+	if _, errValidate = validateInspectionPolicy(unknown); errValidate == nil {
+		t.Fatal("unknown notification policy binding was accepted")
+	}
+
+	withoutThreshold := policy
+	withoutThreshold.NotificationPolicies = cloneInspectionNotificationPolicies(policy.NotificationPolicies)
+	withoutThreshold.NotificationPolicies[0].AvailableAccountsEnabled = false
+	withoutThreshold.NotificationPolicies[0].AvailabilityPercentEnabled = false
+	if _, errValidate = validateInspectionPolicy(withoutThreshold); errValidate == nil {
+		t.Fatal("notification policy without thresholds was accepted")
+	}
+
+	generic := policy
+	generic.NotificationAvailableEnabled = true
+	if _, errValidate = validateInspectionPolicy(generic); errValidate == nil {
+		t.Fatal("generic triggers without a generic endpoint were accepted")
+	}
+}
+
+func TestInspectionNotificationPolicyEndpointsAreIsolatedFromGenericTriggers(t *testing.T) {
+	policy := defaultInspectionPolicy()
+	policy.NotificationAvailableEnabled = true
+	policy.NotificationAvailableBelow = 3
+	policy.NotificationPolicies = []InspectionNotificationPolicy{{
+		ID: "free-outlook", Name: "Free Outlook", Enabled: true,
+		Conditions: PolicyConditionGroup{Operator: PolicyConditionAll,
+			Conditions: []PolicyCondition{{Field: PolicyConditionProvider, Value: "codex"}},
+			Groups: []PolicyConditionGroup{{Operator: PolicyConditionAny, Conditions: []PolicyCondition{
+				{Field: PolicyConditionAccountType, Value: "free"}, {Field: PolicyConditionEmailSuffix, Value: "outlook.com"},
+			}}},
+		},
+		ThresholdOperator: PolicyConditionAll, AvailableAccountsEnabled: true, AvailableAccountsBelow: 2,
+		AvailabilityPercentEnabled: true, AvailabilityPercentBelow: 25,
+	}}
+	policy.NotificationEndpoints = []InspectionNotificationEndpoint{
+		{ID: "generic", URL: "https://generic.example/hook", Enabled: true},
+		{ID: "policy", URL: "https://policy.example/hook", Enabled: true, NotificationPolicyID: "free-outlook"},
+	}
+	validated, errValidate := validateInspectionPolicy(policy)
+	if errValidate != nil {
+		t.Fatalf("validate notification policy: %v", errValidate)
+	}
+
+	accounts := map[string]Account{
+		"free": {ID: "free", Provider: "codex", PlanType: "free", Email: "member@outlook.com", Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 90}, nil)},
+		"team": {ID: "team", Provider: "codex", PlanType: "team", Email: "member@example.org", Usage: notificationCodexUsage(&UsageWindowSnapshot{UsedPercent: 0}, nil)},
+	}
+	records := map[string]inspectionRecord{
+		"free": {Result: InspectionResult{ID: "free", Health: InspectionHealthHealthy}},
+		"team": {Result: InspectionResult{ID: "team", Health: InspectionHealthHealthy}},
+	}
+	engine := NewInspectionEngine(nil, nil, nil)
+	now := time.Date(2026, time.July, 28, 1, 0, 0, 0, time.UTC)
+	if !engine.evaluateInspectionNotification(validated, accounts, records, now, true) {
+		t.Fatal("generic and policy notifications did not trigger")
+	}
+	events := map[string]anomalyNotificationEvent{}
+	for len(engine.notificationWake) > 0 {
+		event := <-engine.notificationWake
+		events[event.EndpointID] = event
+	}
+	if len(events) != 2 || events["generic"].PolicyID != "" || events["policy"].PolicyID != "free-outlook" {
+		t.Fatalf("notification events = %#v", events)
+	}
+	if events["generic"].Metrics.TotalAccounts != 2 || events["policy"].Metrics.TotalAccounts != 1 || events["policy"].Metrics.AvailablePercent != 10 {
+		t.Fatalf("generic metrics = %#v, policy metrics = %#v", events["generic"].Metrics, events["policy"].Metrics)
+	}
+
+	policyOnly := validated
+	policyOnly.NotificationAvailableEnabled = false
+	policyOnly.NotificationEndpoints[0].Enabled = false
+	second := NewInspectionEngine(nil, nil, nil)
+	if !second.evaluateInspectionNotification(policyOnly, accounts, records, now, true) {
+		t.Fatal("policy notification did not trigger independently")
+	}
+	event := <-second.notificationWake
+	if event.EndpointID != "policy" || event.PolicyName != "Free Outlook" || len(second.notificationWake) != 0 {
+		t.Fatalf("isolated policy event = %#v", event)
+	}
+}
+
+func TestInspectionNotificationPolicyEndpointsUseIndependentCooldowns(t *testing.T) {
+	policy := defaultInspectionPolicy()
+	policy.NotificationCooldownMinutes = 60
+	policy.NotificationPolicies = []InspectionNotificationPolicy{
+		{ID: "free", Name: "Free", Enabled: true, Conditions: PolicyConditionGroup{Operator: PolicyConditionAll, Conditions: []PolicyCondition{{Field: PolicyConditionAccountType, Value: "free"}}}, ThresholdOperator: PolicyConditionAll, AvailableAccountsEnabled: true, AvailableAccountsBelow: 2, AvailabilityPercentBelow: 20},
+		{ID: "team", Name: "Team", Enabled: true, Conditions: PolicyConditionGroup{Operator: PolicyConditionAll, Conditions: []PolicyCondition{{Field: PolicyConditionAccountType, Value: "team"}}}, ThresholdOperator: PolicyConditionAll, AvailableAccountsEnabled: true, AvailableAccountsBelow: 1, AvailabilityPercentBelow: 20},
+	}
+	policy.NotificationEndpoints = []InspectionNotificationEndpoint{
+		{ID: "free-endpoint", URL: "https://free.example/hook", Enabled: true, NotificationPolicyID: "free"},
+		{ID: "team-endpoint", URL: "https://team.example/hook", Enabled: true, NotificationPolicyID: "team"},
+	}
+	validated, errValidate := validateInspectionPolicy(policy)
+	if errValidate != nil {
+		t.Fatalf("validate independent notification policies: %v", errValidate)
+	}
+	accounts := map[string]Account{
+		"free": {ID: "free", PlanType: "free"},
+		"team": {ID: "team", PlanType: "team"},
+	}
+	records := map[string]inspectionRecord{
+		"free": {Result: InspectionResult{ID: "free", Health: InspectionHealthHealthy}},
+		"team": {Result: InspectionResult{ID: "team", Health: InspectionHealthHealthy}},
+	}
+	engine := NewInspectionEngine(nil, nil, nil)
+	now := time.Date(2026, time.July, 28, 2, 0, 0, 0, time.UTC)
+	if !engine.evaluateInspectionNotification(validated, accounts, records, now, true) {
+		t.Fatal("first notification policy did not trigger")
+	}
+	if event := <-engine.notificationWake; event.EndpointID != "free-endpoint" || len(engine.notificationWake) != 0 {
+		t.Fatalf("first policy event = %#v", event)
+	}
+	records["team"] = inspectionRecord{Result: InspectionResult{ID: "team", Health: InspectionHealthQuotaLimited}}
+	if !engine.evaluateInspectionNotification(validated, accounts, records, now.Add(time.Minute), true) {
+		t.Fatal("second notification policy was suppressed by the first endpoint cooldown")
+	}
+	if event := <-engine.notificationWake; event.EndpointID != "team-endpoint" || len(engine.notificationWake) != 0 {
+		t.Fatalf("second policy event = %#v", event)
 	}
 }
 

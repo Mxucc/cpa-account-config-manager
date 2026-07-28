@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 const (
 	maxAnomalyNotificationURLBytes     = 4096
 	maxInspectionNotificationEndpoints = 20
+	maxInspectionNotificationPolicies  = 100
 	maxInspectionNotificationNameBytes = 80
 	anomalyNotificationTimeout         = 10 * time.Second
 	anomalyNotificationAttempts        = 3
@@ -45,6 +47,7 @@ var anomalyNotificationVariables = map[string]struct{}{
 	"invalid_credential_accounts": {}, "deactivated_accounts": {}, "unavailable_accounts": {},
 	"disabled_accounts": {}, "threshold_percent": {}, "available_accounts_threshold": {},
 	"availability_percent_threshold": {}, "triggered_at": {},
+	"notification_policy_id": {}, "notification_policy_name": {},
 }
 
 const (
@@ -80,6 +83,8 @@ type anomalyNotificationEvent struct {
 	Event        string
 	Metrics      anomalyNotificationMetrics
 	TriggeredAt  time.Time
+	PolicyID     string
+	PolicyName   string
 }
 
 var inspectionNotificationEndpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -96,9 +101,98 @@ func normalizeInspectionNotificationEndpoints(endpoints []InspectionNotification
 		}
 		endpoint.Name = strings.TrimSpace(endpoint.Name)
 		endpoint.URL = strings.TrimSpace(endpoint.URL)
+		endpoint.NotificationPolicyID = strings.ToLower(strings.TrimSpace(endpoint.NotificationPolicyID))
 		normalized = append(normalized, endpoint)
 	}
 	return normalized
+}
+
+func normalizeInspectionNotificationPolicies(policies []InspectionNotificationPolicy) []InspectionNotificationPolicy {
+	normalized := make([]InspectionNotificationPolicy, len(policies))
+	for index, policy := range policies {
+		policy.ID = strings.ToLower(strings.TrimSpace(policy.ID))
+		if policy.ID == "" {
+			policy.ID = fmt.Sprintf("notification-policy-%d", index+1)
+		}
+		policy.Name = strings.TrimSpace(policy.Name)
+		policy.ThresholdOperator = strings.ToLower(strings.TrimSpace(policy.ThresholdOperator))
+		if policy.ThresholdOperator == "" {
+			policy.ThresholdOperator = PolicyConditionAll
+		}
+		if policy.AvailableAccountsBelow == 0 {
+			policy.AvailableAccountsBelow = defaultAvailableThreshold
+		}
+		if policy.AvailabilityPercentBelow == 0 {
+			policy.AvailabilityPercentBelow = defaultAvailabilityPercent
+		}
+		policy.Conditions = clonePolicyConditionGroup(policy.Conditions)
+		normalized[index] = policy
+	}
+	return normalized
+}
+
+func cloneInspectionNotificationPolicies(policies []InspectionNotificationPolicy) []InspectionNotificationPolicy {
+	return normalizeInspectionNotificationPolicies(policies)
+}
+
+func validateInspectionNotificationPolicies(policies []InspectionNotificationPolicy) ([]InspectionNotificationPolicy, error) {
+	policies = normalizeInspectionNotificationPolicies(policies)
+	if len(policies) > maxInspectionNotificationPolicies {
+		return nil, fmt.Errorf("notification_policies must contain at most %d entries", maxInspectionNotificationPolicies)
+	}
+	ids := make(map[string]struct{}, len(policies))
+	for index := range policies {
+		policy := &policies[index]
+		if !validConditionalPolicyIdentifier(policy.ID) {
+			return nil, fmt.Errorf("notification policy id is invalid")
+		}
+		if _, duplicate := ids[policy.ID]; duplicate {
+			return nil, fmt.Errorf("notification policy ids must be unique")
+		}
+		ids[policy.ID] = struct{}{}
+		if policy.Name == "" || len(policy.Name) > maxConditionalPolicyName || hasUnsafeControl(policy.Name, true) {
+			return nil, fmt.Errorf("notification policy %s name is invalid", policy.ID)
+		}
+		conditionCount := 0
+		conditions, errConditions := normalizePolicyConditionGroup(policy.Conditions, 1, &conditionCount)
+		if errConditions != nil {
+			return nil, fmt.Errorf("notification policy %s: %w", policy.ID, errConditions)
+		}
+		if conditionCount == 0 {
+			return nil, fmt.Errorf("notification policy %s requires at least one account condition", policy.ID)
+		}
+		policy.Conditions = conditions
+		if policy.ThresholdOperator != PolicyConditionAll && policy.ThresholdOperator != PolicyConditionAny {
+			return nil, fmt.Errorf("notification policy %s threshold_operator must be all or any", policy.ID)
+		}
+		if !policy.AvailableAccountsEnabled && !policy.AvailabilityPercentEnabled {
+			return nil, fmt.Errorf("notification policy %s requires at least one threshold", policy.ID)
+		}
+		if policy.AvailableAccountsBelow < 1 || policy.AvailableAccountsBelow > maxInspectionAccounts {
+			return nil, fmt.Errorf("notification policy %s available_accounts_below must be between 1 and %d", policy.ID, maxInspectionAccounts)
+		}
+		if policy.AvailabilityPercentBelow < 1 || policy.AvailabilityPercentBelow > 100 {
+			return nil, fmt.Errorf("notification policy %s availability_percent_below must be between 1 and 100", policy.ID)
+		}
+	}
+	return policies, nil
+}
+
+func inspectionNotificationPolicyMap(policies []InspectionNotificationPolicy) map[string]InspectionNotificationPolicy {
+	indexed := make(map[string]InspectionNotificationPolicy, len(policies))
+	for _, policy := range policies {
+		indexed[policy.ID] = policy
+	}
+	return indexed
+}
+
+func hasEnabledInspectionNotificationPolicy(policies []InspectionNotificationPolicy) bool {
+	for _, policy := range policies {
+		if policy.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func validateInspectionNotificationEndpoints(endpoints []InspectionNotificationEndpoint) (int, error) {
@@ -116,6 +210,9 @@ func validateInspectionNotificationEndpoints(endpoints []InspectionNotificationE
 			return 0, fmt.Errorf("notification endpoint id %q is duplicated", endpoint.ID)
 		}
 		ids[endpoint.ID] = struct{}{}
+		if endpoint.NotificationPolicyID != "" && !validConditionalPolicyIdentifier(endpoint.NotificationPolicyID) {
+			return 0, fmt.Errorf("notification endpoint %q policy id is invalid", endpoint.ID)
+		}
 		if len(endpoint.Name) > maxInspectionNotificationNameBytes || strings.IndexFunc(endpoint.Name, func(character rune) bool {
 			return character < 0x20 || character == 0x7f
 		}) >= 0 {
@@ -284,6 +381,8 @@ func anomalyNotificationVariableValues(event anomalyNotificationEvent) map[strin
 		"available_accounts_threshold":   strconv.Itoa(event.Metrics.AvailableAccountsThreshold),
 		"availability_percent_threshold": strconv.Itoa(event.Metrics.AvailabilityThreshold),
 		"triggered_at":                   event.TriggeredAt.UTC().Format(time.RFC3339),
+		"notification_policy_id":         event.PolicyID,
+		"notification_policy_name":       event.PolicyName,
 	}
 }
 
@@ -292,11 +391,15 @@ func notificationPercentValue(value int) string {
 }
 
 func inspectionNotificationEnabled(policy InspectionPolicy) bool {
-	if !(policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled) {
-		return false
-	}
+	policies := inspectionNotificationPolicyMap(policy.NotificationPolicies)
 	for _, endpoint := range normalizeInspectionNotificationEndpoints(policy.NotificationEndpoints, policy.AnomalyNotificationURL) {
-		if endpoint.Enabled {
+		if !endpoint.Enabled {
+			continue
+		}
+		if endpoint.NotificationPolicyID == "" && (policy.AnomalyNotificationEnabled || policy.NotificationAvailableEnabled || policy.NotificationPercentEnabled) {
+			return true
+		}
+		if notificationPolicy, exists := policies[endpoint.NotificationPolicyID]; exists && notificationPolicy.Enabled {
 			return true
 		}
 	}
@@ -307,6 +410,7 @@ func inspectionNotificationPolicyChanged(previous, next InspectionPolicy) bool {
 	return previous.AnomalyNotificationEnabled != next.AnomalyNotificationEnabled ||
 		previous.AnomalyNotificationURL != next.AnomalyNotificationURL ||
 		!inspectionNotificationEndpointsEqual(previous.NotificationEndpoints, next.NotificationEndpoints) ||
+		!reflect.DeepEqual(previous.NotificationPolicies, next.NotificationPolicies) ||
 		previous.AnomalyThresholdPercent != next.AnomalyThresholdPercent ||
 		previous.AnomalyMinimumAccounts != next.AnomalyMinimumAccounts ||
 		previous.NotificationAvailableEnabled != next.NotificationAvailableEnabled ||
@@ -342,8 +446,12 @@ func validateInspectionNotificationRequest(request InspectionNotificationRequest
 	request.EndpointID = strings.TrimSpace(request.EndpointID)
 	request.EndpointName = strings.TrimSpace(request.EndpointName)
 	request.URLTemplate = strings.TrimSpace(request.URLTemplate)
+	request.NotificationPolicyID = strings.ToLower(strings.TrimSpace(request.NotificationPolicyID))
 	if request.EndpointID != "" && !inspectionNotificationEndpointIDPattern.MatchString(request.EndpointID) {
 		return InspectionNotificationRequest{}, "", fmt.Errorf("notification endpoint id is invalid")
+	}
+	if request.NotificationPolicyID != "" && !validConditionalPolicyIdentifier(request.NotificationPolicyID) {
+		return InspectionNotificationRequest{}, "", fmt.Errorf("notification policy id is invalid")
 	}
 	if len(request.EndpointName) > maxInspectionNotificationNameBytes || strings.IndexFunc(request.EndpointName, func(character rune) bool {
 		return character < 0x20 || character == 0x7f
@@ -393,7 +501,20 @@ func (e *InspectionEngine) PreviewNotification(ctx context.Context, request Insp
 	}
 	e.mu.RLock()
 	records := cloneInspectionRecords(e.records)
+	policy := e.policy
 	e.mu.RUnlock()
+	policyName := ""
+	if request.NotificationPolicyID != "" {
+		notificationPolicy, exists := inspectionNotificationPolicyMap(policy.NotificationPolicies)[request.NotificationPolicyID]
+		if !exists {
+			return InspectionNotificationPreview{}, fmt.Errorf("notification policy is unavailable")
+		}
+		accountsByID = inspectionNotificationCohort(accountsByID, notificationPolicy.Conditions)
+		request.AvailableAccountsThreshold = notificationPolicy.AvailableAccountsBelow
+		request.AvailabilityPercentThreshold = notificationPolicy.AvailabilityPercentBelow
+		policyName = notificationPolicy.Name
+		eventName += ":" + notificationPolicy.ID
+	}
 	metrics := inspectionAnomalyNotificationMetrics(accountsByID, records)
 	metrics.ThresholdPercent = request.ThresholdPercent
 	metrics.AvailableAccountsThreshold = request.AvailableAccountsThreshold
@@ -406,6 +527,8 @@ func (e *InspectionEngine) PreviewNotification(ctx context.Context, request Insp
 		Event:        eventName,
 		Metrics:      metrics,
 		TriggeredAt:  triggeredAt,
+		PolicyID:     request.NotificationPolicyID,
+		PolicyName:   policyName,
 	}
 	expanded, errExpand := expandAnomalyNotificationURL(event)
 	if errExpand != nil {
@@ -445,6 +568,8 @@ func (e *InspectionEngine) TestNotification(ctx context.Context, request Inspect
 			AvailabilityThreshold:      parseNotificationMetric(preview.Variables, "availability_percent_threshold"),
 		},
 		TriggeredAt: preview.TriggeredAt,
+		PolicyID:    request.NotificationPolicyID,
+		PolicyName:  preview.Variables["notification_policy_name"],
 	}
 	result := e.deliverAnomalyNotification(ctx, event)
 	delivered := result.ReasonCode == "notification_delivered"
@@ -483,7 +608,7 @@ func (e *InspectionEngine) recordNotificationTest(event anomalyNotificationEvent
 		Status: status, Source: OperationSourceManual, Scope: OperationScopeSystem,
 		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
 		StartedAt: event.TriggeredAt, FinishedAt: e.currentTime(), ReasonCode: result.ReasonCode,
-		HTTPStatus: result.StatusCode, Attempts: result.Attempts,
+		RelatedActionID: event.PolicyID, HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})
 }
 
@@ -506,6 +631,59 @@ func inspectionNotificationReasons(policy InspectionPolicy, metrics anomalyNotif
 	return reasons
 }
 
+func inspectionNotificationPolicyReasons(policy InspectionNotificationPolicy, metrics anomalyNotificationMetrics) []string {
+	results := make([]struct {
+		reason  string
+		matched bool
+	}, 0, 2)
+	if policy.AvailableAccountsEnabled {
+		results = append(results, struct {
+			reason  string
+			matched bool
+		}{"available_accounts_low", metrics.AvailableAccounts < policy.AvailableAccountsBelow})
+	}
+	if policy.AvailabilityPercentEnabled {
+		results = append(results, struct {
+			reason  string
+			matched bool
+		}{"availability_percent_low", metrics.AvailabilitySamples > 0 && metrics.AvailablePercent < policy.AvailabilityPercentBelow})
+	}
+	if len(results) == 0 {
+		return nil
+	}
+	matched := policy.ThresholdOperator == PolicyConditionAll
+	if policy.ThresholdOperator == PolicyConditionAny {
+		matched = false
+		for _, result := range results {
+			matched = matched || result.matched
+		}
+	} else {
+		for _, result := range results {
+			matched = matched && result.matched
+		}
+	}
+	if !matched {
+		return nil
+	}
+	reasons := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.matched {
+			reasons = append(reasons, result.reason)
+		}
+	}
+	return reasons
+}
+
+func inspectionNotificationCohort(accounts map[string]Account, conditions PolicyConditionGroup) map[string]Account {
+	cohort := make(map[string]Account)
+	for id, account := range accounts {
+		if conditionalPolicyGroupMatches(conditions, account) {
+			cohort[id] = account
+		}
+	}
+	return cohort
+}
+
 func (e *InspectionEngine) evaluateInspectionNotification(
 	policy InspectionPolicy,
 	accounts map[string]Account,
@@ -517,49 +695,84 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 		return false
 	}
 	endpoints := normalizeInspectionNotificationEndpoints(policy.NotificationEndpoints, policy.AnomalyNotificationURL)
-	hasEnabledEndpoint := false
-	for _, endpoint := range endpoints {
-		if endpoint.Enabled {
-			hasEnabledEndpoint = true
-			break
-		}
-	}
-	if !hasEnabledEndpoint {
+	if len(endpoints) == 0 {
 		return false
 	}
-	metrics := inspectionAnomalyNotificationMetrics(accounts, records)
-	reasons := inspectionNotificationReasons(policy, metrics)
-	if len(reasons) == 0 {
-		return false
+	genericMetrics := inspectionAnomalyNotificationMetrics(accounts, records)
+	genericReasons := inspectionNotificationReasons(policy, genericMetrics)
+	policyByID := inspectionNotificationPolicyMap(policy.NotificationPolicies)
+	type policyEvaluation struct {
+		metrics anomalyNotificationMetrics
+		reasons []string
 	}
+	evaluations := make(map[string]policyEvaluation, len(policyByID))
 	cooldown := time.Duration(policy.NotificationCooldownMinutes) * time.Minute
+	events := make([]anomalyNotificationEvent, 0, len(endpoints))
 	e.mu.Lock()
-	if !e.lastNotificationAt.IsZero() && now.Before(e.lastNotificationAt.Add(cooldown)) {
-		e.mu.Unlock()
-		return false
+	if e.lastNotificationByEndpoint == nil {
+		e.lastNotificationByEndpoint = make(map[string]time.Time)
 	}
-	e.lastNotificationAt = now.UTC()
-	e.dirty = true
-	e.generation++
-	e.mu.Unlock()
-
-	metrics.ThresholdPercent = policy.AnomalyThresholdPercent
-	metrics.AvailableAccountsThreshold = policy.NotificationAvailableBelow
-	metrics.AvailabilityThreshold = policy.NotificationPercentBelow
+	legacyCooldown := len(e.lastNotificationByEndpoint) == 0 && !e.lastNotificationAt.IsZero()
 	for _, endpoint := range endpoints {
 		if !endpoint.Enabled {
 			continue
 		}
-		e.queueAnomalyNotification(anomalyNotificationEvent{
-			EndpointID:   endpoint.ID,
-			EndpointName: endpoint.Name,
-			URLTemplate:  endpoint.URL,
-			Event:        strings.Join(reasons, ","),
-			Metrics:      metrics,
-			TriggeredAt:  now.UTC(),
+		metrics := genericMetrics
+		reasons := genericReasons
+		policyID, policyName := endpoint.NotificationPolicyID, ""
+		if policyID != "" {
+			notificationPolicy, exists := policyByID[policyID]
+			if !exists || !notificationPolicy.Enabled {
+				continue
+			}
+			policyName = notificationPolicy.Name
+			evaluation, exists := evaluations[policyID]
+			if !exists {
+				cohort := inspectionNotificationCohort(accounts, notificationPolicy.Conditions)
+				metrics = inspectionAnomalyNotificationMetrics(cohort, records)
+				reasons = inspectionNotificationPolicyReasons(notificationPolicy, metrics)
+				evaluation = policyEvaluation{metrics: metrics, reasons: reasons}
+				evaluations[policyID] = evaluation
+			} else {
+				metrics, reasons = evaluation.metrics, evaluation.reasons
+			}
+		}
+		if len(reasons) == 0 {
+			continue
+		}
+		lastTriggered := e.lastNotificationByEndpoint[endpoint.ID]
+		if lastTriggered.IsZero() && legacyCooldown {
+			lastTriggered = e.lastNotificationAt
+		}
+		if !lastTriggered.IsZero() && now.Before(lastTriggered.Add(cooldown)) {
+			continue
+		}
+		if policyID == "" {
+			metrics.ThresholdPercent = policy.AnomalyThresholdPercent
+			metrics.AvailableAccountsThreshold = policy.NotificationAvailableBelow
+			metrics.AvailabilityThreshold = policy.NotificationPercentBelow
+		} else {
+			notificationPolicy := policyByID[policyID]
+			metrics.AvailableAccountsThreshold = notificationPolicy.AvailableAccountsBelow
+			metrics.AvailabilityThreshold = notificationPolicy.AvailabilityPercentBelow
+		}
+		events = append(events, anomalyNotificationEvent{
+			EndpointID: endpoint.ID, EndpointName: endpoint.Name, URLTemplate: endpoint.URL,
+			Event: strings.Join(reasons, ","), Metrics: metrics, TriggeredAt: now.UTC(),
+			PolicyID: policyID, PolicyName: policyName,
 		})
+		e.lastNotificationByEndpoint[endpoint.ID] = now.UTC()
 	}
-	return true
+	if len(events) > 0 {
+		e.lastNotificationAt = now.UTC()
+		e.dirty = true
+		e.generation++
+	}
+	e.mu.Unlock()
+	for _, event := range events {
+		e.queueAnomalyNotification(event)
+	}
+	return len(events) > 0
 }
 
 func (e *InspectionEngine) queueAnomalyNotification(event anomalyNotificationEvent) {
@@ -685,7 +898,7 @@ func (e *InspectionEngine) recordAnomalyNotification(event anomalyNotificationEv
 		Status: status, Source: OperationSourceInspection, Scope: OperationScopeSystem,
 		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
 		StartedAt: event.TriggeredAt, FinishedAt: finishedAt, ReasonCode: result.ReasonCode,
-		HTTPStatus: result.StatusCode, Attempts: result.Attempts,
+		RelatedActionID: event.PolicyID, HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})
 }
 

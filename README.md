@@ -40,7 +40,8 @@ journal without exposing raw credentials to the browser.
 
 Import accepts pasted JSON text or up to 10,000 accounts from mixed JSON,
 JSON Lines, text, and ZIP files. A ZIP may contain multiple supported files.
-Every import is previewed, bounded, duplicate-checked, and written only through
+Every import is previewed, bounded, duplicate-checked, and written in a
+cancellable background job only through
 CPA Auth callbacks; existing Auth files are not overwritten.
 
 Supported inputs include native CPA files, common sub2api account collections,
@@ -85,6 +86,9 @@ External notifications support multiple operator-defined HTTPS GET templates.
 Templates can combine allow-listed account and health variables, can be
 previewed with current values, and have a test action. Delivery outcomes and
 bounded HTTP metadata are recorded in the operation journal.
+Each endpoint can remain generic or bind one ordered notification policy.
+Policy notifications reuse nested provider, account-type, and email-suffix
+conditions, then apply independent low-count and low-availability thresholds.
 
 ## Installation
 

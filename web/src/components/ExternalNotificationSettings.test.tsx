@@ -69,13 +69,15 @@ describe("ExternalNotificationSettings", () => {
     expect(screen.queryByRole("tab", { name: "账号可用率" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "组合场景" })).not.toBeInTheDocument();
 
+    await user.click(within(second).getByRole("button", { name: "上移通知链接" }));
+
     await user.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     const saved = save.mock.calls[0][0];
     expect(saved.anomaly_notification_url).toBe("");
     expect(saved.notification_endpoints).toEqual([
-      { id: "legacy", name: "", url: "https://legacy.example/hook?available=${available_accounts}", enabled: true },
       expect.objectContaining({ name: "备用通知", url: "https://backup.example/hook?rate=${available_percent}", enabled: true }),
+      { id: "legacy", name: "", url: "https://legacy.example/hook?available=${available_accounts}", enabled: true },
     ]);
     expect(onNotice).toHaveBeenCalledWith("外部通知设置已保存");
   });
@@ -101,7 +103,45 @@ describe("ExternalNotificationSettings", () => {
     await user.clear(within(second).getByLabelText("通知链接 2 URL 模板"));
     await user.type(within(second).getByLabelText("通知链接 2 URL 模板"), "https://backup.example/hook");
     await user.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("至少要启用一条通知链接");
+    expect(screen.getByRole("alert")).toHaveTextContent("至少启用一条通用通知链接");
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("keeps policy notifications in a separate ordered card and binds endpoints explicitly", async () => {
+    const user = userEvent.setup();
+    const initial = inspectionPolicy();
+    vi.spyOn(api, "getInspection").mockResolvedValue({ policy: initial } as Awaited<ReturnType<typeof api.getInspection>>);
+    const save = vi.spyOn(api, "saveInspectionPolicy").mockImplementation(async (policy) => ({ policy } as Awaited<ReturnType<typeof api.saveInspectionPolicy>>));
+
+    render(<ExternalNotificationSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await screen.findByRole("region", { name: "通知链接 1" });
+    expect(screen.getByRole("region", { name: "通用通知" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "策略通知" })).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "添加通知策略" })[0]);
+    const firstPolicy = screen.getByRole("article", { name: "通知策略 1" });
+    await user.type(within(firstPolicy).getByLabelText("通知策略 1 名称"), "Free Codex");
+    await user.click(within(firstPolicy).getByRole("button", { name: "添加嵌套条件组" }));
+    const conditionValues = within(firstPolicy).getAllByLabelText("条件值");
+    await user.type(conditionValues[1], "free");
+
+    await user.click(screen.getByRole("button", { name: "添加通知策略" }));
+    const secondPolicy = screen.getByRole("article", { name: "通知策略 2" });
+    await user.type(within(secondPolicy).getByLabelText("通知策略 2 名称"), "Team Codex");
+    await user.click(within(secondPolicy).getByRole("button", { name: "上移通知策略" }));
+    await user.click(within(secondPolicy).getAllByRole("checkbox")[0]);
+
+    await user.click(screen.getByRole("button", { name: "添加通知链接" }));
+    const policyEndpoint = screen.getByRole("region", { name: "通知链接 2" });
+    await user.type(within(policyEndpoint).getByLabelText("通知链接 2 URL 模板"), "https://policy.example/hook?available=${available_accounts}");
+    await user.selectOptions(within(policyEndpoint).getByLabelText("通知链接 2 的触发策略"), "Free Codex");
+
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    const saved = save.mock.calls[0][0];
+    expect(saved.notification_policies?.map((item) => [item.name, item.enabled])).toEqual([["Team Codex", false], ["Free Codex", true]]);
+    expect(saved.notification_policies?.[1].conditions.groups?.[0].conditions).toEqual([{ field: "account_type", value: "free" }]);
+    expect(saved.notification_endpoints?.[0].notification_policy_id).toBeFalsy();
+    expect(saved.notification_endpoints?.[1].notification_policy_id).toBe(saved.notification_policies?.[1].id);
   });
 });

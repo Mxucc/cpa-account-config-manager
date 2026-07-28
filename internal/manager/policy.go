@@ -151,16 +151,11 @@ func (e *PolicyEngine) Arm(managementKey string) {
 		return
 	}
 	e.mu.Lock()
-	changed := false
 	if !e.closed {
-		changed = e.managementKey != managementKey
 		e.managementKey = managementKey
 	}
 	e.mu.Unlock()
 	managementKey = ""
-	if changed {
-		e.requestScan()
-	}
 }
 
 func (e *PolicyEngine) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
@@ -219,11 +214,9 @@ func (e *PolicyEngine) Configure(config Config) {
 	if sameStore {
 		e.mu.Lock()
 		e.config = config
-		policyChanged := false
 		if hasConfiguredPolicy {
 			if errConfiguredPolicy != nil {
 				fallback := normalizeDefaultPolicy(DefaultPolicy{})
-				policyChanged = !defaultPolicyEqual(e.policy, fallback) || e.lastScan.Error != configuredPolicyError
 				e.policy = fallback
 				e.lastScan.Error = configuredPolicyError
 				e.fingerprints = make(map[string]authFingerprint)
@@ -233,7 +226,6 @@ func (e *PolicyEngine) Configure(config Config) {
 					e.lastScan.Error = ""
 				}
 				if !defaultPolicyEqual(e.policy, configuredPolicy) {
-					policyChanged = true
 					e.policy = configuredPolicy
 					e.fingerprints = make(map[string]authFingerprint)
 					e.failures = make(map[string]policyFailureBackoff)
@@ -242,9 +234,6 @@ func (e *PolicyEngine) Configure(config Config) {
 		}
 		e.mu.Unlock()
 		e.operationMu.Unlock()
-		if policyChanged {
-			e.requestScan()
-		}
 		return
 	}
 
@@ -376,9 +365,6 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	e.mu.Unlock()
 	e.operationMu.Unlock()
 
-	if changed {
-		e.requestScan()
-	}
 	return cloneDefaultPolicy(normalized), nil
 }
 

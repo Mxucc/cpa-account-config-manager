@@ -17,73 +17,74 @@ import (
 const inspectionPersistDelay = 2 * time.Second
 
 type InspectionEngine struct {
-	mu                     sync.RWMutex
-	scanMu                 sync.Mutex
-	storeMu                sync.Mutex
-	wait                   sync.WaitGroup
-	accounts               *AccountService
-	host                   AuthHost
-	mutations              *MutationCoordinator
-	backgroundOwner        BackgroundWorkOwner
-	modelTests             *ModelTestService
-	automaticDisableProbe  automaticDisableProbeRunner
-	deletions              *AccountDeleteService
-	operations             *OperationJournal
-	notificationDoer       HTTPDoer
-	notificationRetryDelay func(int) time.Duration
-	config                 Config
-	store                  string
-	policy                 InspectionPolicy
-	records                map[string]inspectionRecord
-	actions                []InspectionAction
-	autoDisableGuards      []AutomaticDisableGuard
-	runs                   []InspectionRunRecord
-	activeRunID            string
-	activeRunHealth        map[string]string
-	activeRunHealthID      string
-	lastRun                InspectionRunSummary
-	probeCursor            int
-	lastNativeRunAt        time.Time
-	lastProbeRunAt         time.Time
-	managementKey          string
-	probeSweepRemaining    int
-	probeSweepTotal        int
-	probeSweepCompleted    int
-	probeSweepSource       string
-	probeSweepStatus       string
-	probeSweepStartedAt    time.Time
-	probeSweepTargets      []string
-	anomalyTriggerPending  bool
-	lastAnomalyTriggerAt   time.Time
-	lastNotificationAt     time.Time
-	notificationPending    bool
-	notificationRevision   uint64
-	anomalyEligible        int
-	anomalyCount           int
-	anomalyPercent         int
-	running                bool
-	pending                bool
-	pendingProbe           bool
-	pendingProbeSweep      bool
-	runMode                string
-	runHealth              []string
-	runSelected            []string
-	probePhase             string
-	retryTotal             int
-	retryCompleted         int
-	stopRequested          bool
-	activeCancel           context.CancelFunc
-	scanStarted            time.Time
-	storageErr             string
-	dirty                  bool
-	generation             uint64
-	scanWake               chan struct{}
-	persistWake            chan struct{}
-	notificationWake       chan anomalyNotificationEvent
-	cancel                 context.CancelFunc
-	started                bool
-	closed                 bool
-	now                    func() time.Time
+	mu                         sync.RWMutex
+	scanMu                     sync.Mutex
+	storeMu                    sync.Mutex
+	wait                       sync.WaitGroup
+	accounts                   *AccountService
+	host                       AuthHost
+	mutations                  *MutationCoordinator
+	backgroundOwner            BackgroundWorkOwner
+	modelTests                 *ModelTestService
+	automaticDisableProbe      automaticDisableProbeRunner
+	deletions                  *AccountDeleteService
+	operations                 *OperationJournal
+	notificationDoer           HTTPDoer
+	notificationRetryDelay     func(int) time.Duration
+	config                     Config
+	store                      string
+	policy                     InspectionPolicy
+	records                    map[string]inspectionRecord
+	actions                    []InspectionAction
+	autoDisableGuards          []AutomaticDisableGuard
+	runs                       []InspectionRunRecord
+	activeRunID                string
+	activeRunHealth            map[string]string
+	activeRunHealthID          string
+	lastRun                    InspectionRunSummary
+	probeCursor                int
+	lastNativeRunAt            time.Time
+	lastProbeRunAt             time.Time
+	managementKey              string
+	probeSweepRemaining        int
+	probeSweepTotal            int
+	probeSweepCompleted        int
+	probeSweepSource           string
+	probeSweepStatus           string
+	probeSweepStartedAt        time.Time
+	probeSweepTargets          []string
+	anomalyTriggerPending      bool
+	lastAnomalyTriggerAt       time.Time
+	lastNotificationAt         time.Time
+	lastNotificationByEndpoint map[string]time.Time
+	notificationPending        bool
+	notificationRevision       uint64
+	anomalyEligible            int
+	anomalyCount               int
+	anomalyPercent             int
+	running                    bool
+	pending                    bool
+	pendingProbe               bool
+	pendingProbeSweep          bool
+	runMode                    string
+	runHealth                  []string
+	runSelected                []string
+	probePhase                 string
+	retryTotal                 int
+	retryCompleted             int
+	stopRequested              bool
+	activeCancel               context.CancelFunc
+	scanStarted                time.Time
+	storageErr                 string
+	dirty                      bool
+	generation                 uint64
+	scanWake                   chan struct{}
+	persistWake                chan struct{}
+	notificationWake           chan anomalyNotificationEvent
+	cancel                     context.CancelFunc
+	started                    bool
+	closed                     bool
+	now                        func() time.Time
 }
 
 func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *MutationCoordinator) *InspectionEngine {
@@ -92,17 +93,18 @@ func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *Mut
 	}
 	config := normalizeConfig(Config{})
 	return &InspectionEngine{
-		accounts:         accounts,
-		host:             host,
-		mutations:        mutations,
-		config:           config,
-		store:            inspectionStorePath(config.DataDir),
-		policy:           defaultInspectionPolicy(),
-		records:          make(map[string]inspectionRecord),
-		scanWake:         make(chan struct{}, 1),
-		persistWake:      make(chan struct{}, 1),
-		notificationWake: make(chan anomalyNotificationEvent, maxInspectionNotificationEndpoints*4),
-		now:              time.Now,
+		accounts:                   accounts,
+		host:                       host,
+		mutations:                  mutations,
+		config:                     config,
+		store:                      inspectionStorePath(config.DataDir),
+		policy:                     defaultInspectionPolicy(),
+		records:                    make(map[string]inspectionRecord),
+		scanWake:                   make(chan struct{}, 1),
+		persistWake:                make(chan struct{}, 1),
+		notificationWake:           make(chan anomalyNotificationEvent, maxInspectionNotificationEndpoints*4),
+		lastNotificationByEndpoint: make(map[string]time.Time),
+		now:                        time.Now,
 	}
 }
 
@@ -242,6 +244,7 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.anomalyTriggerPending = state.AnomalyTriggerPending
 	e.lastAnomalyTriggerAt = state.LastAnomalyTriggerAt
 	e.lastNotificationAt = state.LastNotificationAt
+	e.lastNotificationByEndpoint = sanitizeNotificationCooldowns(state.LastNotificationByEndpoint)
 	e.runMode = state.RunMode
 	e.runHealth = append([]string(nil), state.RunHealth...)
 	e.runSelected = append([]string(nil), state.RunSelected...)
@@ -286,7 +289,7 @@ func (e *InspectionEngine) Snapshot() InspectionSnapshot {
 	activeRun := activeInspectionRun(e.runs, e.activeRunID)
 	liveResults := liveInspectionResults(e.records, e.activeRunID, maxInspectionLiveResults)
 	return InspectionSnapshot{
-		Policy:                e.policy,
+		Policy:                cloneInspectionPolicy(e.policy),
 		Running:               e.running,
 		Pending:               e.pending,
 		ScanStartedAt:         e.scanStarted,
@@ -509,6 +512,13 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 		return InspectionSnapshot{}, fmt.Errorf("inspection storage is unavailable")
 	}
 	state.Policy = normalized
+	notificationChanged := inspectionNotificationPolicyChanged(currentPolicy, normalized)
+	if notificationChanged {
+		state.LastNotificationAt = time.Time{}
+		state.LastNotificationByEndpoint = nil
+	} else {
+		state.LastNotificationByEndpoint = notificationCooldownsForEndpoints(state.LastNotificationByEndpoint, normalized.NotificationEndpoints)
+	}
 	if !normalized.AnomalyTriggerEnabled {
 		state.AnomalyTriggerPending = false
 	}
@@ -527,7 +537,11 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 
 	e.mu.Lock()
 	e.policy = normalized
-	if inspectionNotificationPolicyChanged(currentPolicy, normalized) && inspectionNotificationEnabled(normalized) {
+	if notificationChanged {
+		e.lastNotificationAt = time.Time{}
+		e.lastNotificationByEndpoint = make(map[string]time.Time)
+	}
+	if notificationChanged && inspectionNotificationEnabled(normalized) {
 		e.notificationPending = true
 		e.notificationRevision++
 	} else if !inspectionNotificationEnabled(normalized) {
@@ -1663,33 +1677,34 @@ func (e *InspectionEngine) persist() {
 
 func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {
 	return persistedInspectionState{
-		Version:               inspectionStoreVersion,
-		Policy:                e.policy,
-		Records:               cloneInspectionRecords(e.records),
-		Actions:               append([]InspectionAction(nil), e.actions...),
-		LastRun:               e.lastRun,
-		ProbeCursor:           e.probeCursor,
-		LastNativeRunAt:       e.lastNativeRunAt,
-		LastProbeRunAt:        e.lastProbeRunAt,
-		ProbeSweepRemaining:   e.probeSweepRemaining,
-		ProbeSweepTotal:       e.probeSweepTotal,
-		ProbeSweepCompleted:   e.probeSweepCompleted,
-		ProbeSweepSource:      e.probeSweepSource,
-		ProbeSweepStatus:      e.probeSweepStatus,
-		ProbeSweepStartedAt:   e.probeSweepStartedAt,
-		ProbeSweepTargets:     append([]string(nil), e.probeSweepTargets...),
-		AnomalyTriggerPending: e.anomalyTriggerPending,
-		LastAnomalyTriggerAt:  e.lastAnomalyTriggerAt,
-		LastNotificationAt:    e.lastNotificationAt,
-		RunMode:               e.runMode,
-		RunHealth:             append([]string(nil), e.runHealth...),
-		RunSelected:           append([]string(nil), e.runSelected...),
-		ProbePhase:            e.probePhase,
-		RetryTotal:            e.retryTotal,
-		RetryCompleted:        e.retryCompleted,
-		StopRequested:         e.stopRequested,
-		Runs:                  append([]InspectionRunRecord(nil), e.runs...),
-		ActiveRunID:           e.activeRunID,
+		Version:                    inspectionStoreVersion,
+		Policy:                     e.policy,
+		Records:                    cloneInspectionRecords(e.records),
+		Actions:                    append([]InspectionAction(nil), e.actions...),
+		LastRun:                    e.lastRun,
+		ProbeCursor:                e.probeCursor,
+		LastNativeRunAt:            e.lastNativeRunAt,
+		LastProbeRunAt:             e.lastProbeRunAt,
+		ProbeSweepRemaining:        e.probeSweepRemaining,
+		ProbeSweepTotal:            e.probeSweepTotal,
+		ProbeSweepCompleted:        e.probeSweepCompleted,
+		ProbeSweepSource:           e.probeSweepSource,
+		ProbeSweepStatus:           e.probeSweepStatus,
+		ProbeSweepStartedAt:        e.probeSweepStartedAt,
+		ProbeSweepTargets:          append([]string(nil), e.probeSweepTargets...),
+		AnomalyTriggerPending:      e.anomalyTriggerPending,
+		LastAnomalyTriggerAt:       e.lastAnomalyTriggerAt,
+		LastNotificationAt:         e.lastNotificationAt,
+		LastNotificationByEndpoint: notificationCooldownsForEndpoints(e.lastNotificationByEndpoint, e.policy.NotificationEndpoints),
+		RunMode:                    e.runMode,
+		RunHealth:                  append([]string(nil), e.runHealth...),
+		RunSelected:                append([]string(nil), e.runSelected...),
+		ProbePhase:                 e.probePhase,
+		RetryTotal:                 e.retryTotal,
+		RetryCompleted:             e.retryCompleted,
+		StopRequested:              e.stopRequested,
+		Runs:                       append([]InspectionRunRecord(nil), e.runs...),
+		ActiveRunID:                e.activeRunID,
 	}
 }
 

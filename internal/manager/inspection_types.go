@@ -142,6 +142,7 @@ type InspectionPolicy struct {
 	AnomalyNotificationOnly      bool                             `json:"anomaly_notification_only" yaml:"anomaly_notification_only"`
 	AnomalyNotificationURL       string                           `json:"anomaly_notification_url,omitempty" yaml:"anomaly_notification_url,omitempty"`
 	NotificationEndpoints        []InspectionNotificationEndpoint `json:"notification_endpoints" yaml:"notification_endpoints,omitempty"`
+	NotificationPolicies         []InspectionNotificationPolicy   `json:"notification_policies" yaml:"notification_policies,omitempty"`
 	NotificationAvailableEnabled bool                             `json:"notification_available_accounts_enabled" yaml:"notification_available_accounts_enabled"`
 	NotificationAvailableBelow   int                              `json:"notification_available_accounts_threshold" yaml:"notification_available_accounts_threshold"`
 	NotificationPercentEnabled   bool                             `json:"notification_availability_percent_enabled" yaml:"notification_availability_percent_enabled"`
@@ -150,10 +151,23 @@ type InspectionPolicy struct {
 }
 
 type InspectionNotificationEndpoint struct {
-	ID      string `json:"id" yaml:"id"`
-	Name    string `json:"name,omitempty" yaml:"name,omitempty"`
-	URL     string `json:"url" yaml:"url"`
-	Enabled bool   `json:"enabled" yaml:"enabled"`
+	ID                   string `json:"id" yaml:"id"`
+	Name                 string `json:"name,omitempty" yaml:"name,omitempty"`
+	URL                  string `json:"url" yaml:"url"`
+	Enabled              bool   `json:"enabled" yaml:"enabled"`
+	NotificationPolicyID string `json:"notification_policy_id,omitempty" yaml:"notification_policy_id,omitempty"`
+}
+
+type InspectionNotificationPolicy struct {
+	ID                         string               `json:"id" yaml:"id"`
+	Name                       string               `json:"name" yaml:"name"`
+	Enabled                    bool                 `json:"enabled" yaml:"enabled"`
+	Conditions                 PolicyConditionGroup `json:"conditions" yaml:"conditions"`
+	ThresholdOperator          string               `json:"threshold_operator" yaml:"threshold_operator"`
+	AvailableAccountsEnabled   bool                 `json:"available_accounts_enabled" yaml:"available_accounts_enabled"`
+	AvailableAccountsBelow     int                  `json:"available_accounts_below" yaml:"available_accounts_below"`
+	AvailabilityPercentEnabled bool                 `json:"availability_percent_enabled" yaml:"availability_percent_enabled"`
+	AvailabilityPercentBelow   int                  `json:"availability_percent_below" yaml:"availability_percent_below"`
 }
 
 type ModelProbeModels struct {
@@ -178,6 +192,7 @@ type InspectionNotificationRequest struct {
 	ThresholdPercent             int    `json:"threshold_percent"`
 	AvailableAccountsThreshold   int    `json:"available_accounts_threshold"`
 	AvailabilityPercentThreshold int    `json:"availability_percent_threshold"`
+	NotificationPolicyID         string `json:"notification_policy_id,omitempty"`
 }
 
 type InspectionNotificationPreview struct {
@@ -453,6 +468,13 @@ func defaultInspectionPolicy() InspectionPolicy {
 	}
 }
 
+func cloneInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
+	clone := policy
+	clone.NotificationEndpoints = append([]InspectionNotificationEndpoint(nil), policy.NotificationEndpoints...)
+	clone.NotificationPolicies = cloneInspectionNotificationPolicies(policy.NotificationPolicies)
+	return clone
+}
+
 func defaultModelProbeModels() ModelProbeModels {
 	return ModelProbeModels{
 		Codex:  defaultOpenAIProbeModel,
@@ -466,6 +488,7 @@ func defaultModelProbeModels() ModelProbeModels {
 func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 	policy.AnomalyNotificationURL = strings.TrimSpace(policy.AnomalyNotificationURL)
 	policy.NotificationEndpoints = normalizeInspectionNotificationEndpoints(policy.NotificationEndpoints, policy.AnomalyNotificationURL)
+	policy.NotificationPolicies = normalizeInspectionNotificationPolicies(policy.NotificationPolicies)
 	policy.AnomalyNotificationURL = ""
 	if policy.ScanIntervalMinutes == 0 {
 		policy.ScanIntervalMinutes = defaultInspectionInterval
@@ -536,6 +559,11 @@ func normalizeInspectionPolicy(policy InspectionPolicy) InspectionPolicy {
 
 func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error) {
 	policy = normalizeInspectionPolicy(policy)
+	notificationPolicies, errNotificationPolicies := validateInspectionNotificationPolicies(policy.NotificationPolicies)
+	if errNotificationPolicies != nil {
+		return InspectionPolicy{}, errNotificationPolicies
+	}
+	policy.NotificationPolicies = notificationPolicies
 	if policy.ScanIntervalMinutes < minInspectionInterval || policy.ScanIntervalMinutes > maxInspectionInterval {
 		return InspectionPolicy{}, fmt.Errorf("scan_interval_minutes must be between %d and %d", minInspectionInterval, maxInspectionInterval)
 	}
@@ -603,8 +631,33 @@ func validateInspectionPolicy(policy InspectionPolicy) (InspectionPolicy, error)
 	if errEndpoints != nil {
 		return InspectionPolicy{}, errEndpoints
 	}
-	if notificationEnabled && enabledEndpoints == 0 {
+	if (notificationEnabled || hasEnabledInspectionNotificationPolicy(policy.NotificationPolicies)) && enabledEndpoints == 0 {
 		return InspectionPolicy{}, fmt.Errorf("at least one notification endpoint must be enabled when notifications are enabled")
+	}
+	policyIDs := inspectionNotificationPolicyMap(policy.NotificationPolicies)
+	enabledGenericEndpoints := 0
+	enabledPolicyEndpoints := make(map[string]int, len(policy.NotificationPolicies))
+	for _, endpoint := range policy.NotificationEndpoints {
+		if endpoint.NotificationPolicyID != "" {
+			if _, exists := policyIDs[endpoint.NotificationPolicyID]; !exists {
+				return InspectionPolicy{}, fmt.Errorf("notification endpoint %q references an unknown notification policy", endpoint.ID)
+			}
+			if endpoint.Enabled && policyIDs[endpoint.NotificationPolicyID].Enabled {
+				enabledPolicyEndpoints[endpoint.NotificationPolicyID]++
+			}
+			continue
+		}
+		if endpoint.Enabled {
+			enabledGenericEndpoints++
+		}
+	}
+	if notificationEnabled && enabledGenericEndpoints == 0 {
+		return InspectionPolicy{}, fmt.Errorf("at least one generic notification endpoint must be enabled for generic notifications")
+	}
+	for _, notificationPolicy := range policy.NotificationPolicies {
+		if notificationPolicy.Enabled && enabledPolicyEndpoints[notificationPolicy.ID] == 0 {
+			return InspectionPolicy{}, fmt.Errorf("enabled notification policy %q requires an enabled bound endpoint", notificationPolicy.ID)
+		}
 	}
 	if policy.AutoDelete && !policy.AutoDisable {
 		return InspectionPolicy{}, fmt.Errorf("auto_delete requires auto_disable")

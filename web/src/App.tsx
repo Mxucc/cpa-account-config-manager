@@ -428,6 +428,38 @@ function AccountManagerApp() {
   }, [authState, handleAPIError, importUsageCollectionActive, refreshAccounts]);
 
   useEffect(() => {
+    if (authState !== "ready" || importResult?.state !== "running") return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const result = await api.getImportStatus();
+        if (cancelled) return;
+        setImportResult(result);
+        if (result.state === "running") {
+          timer = window.setTimeout(poll, 1000);
+          return;
+        }
+        setImportUsageCollectionActive(Boolean(result.usage_collection_started));
+        setNotice(result.failed || result.skipped
+          ? tx("ui.added_count_accounts_failed_not_written", { count: result.imported, failed: result.failed + result.skipped })
+          : tx("ui.added_count_accounts", { count: result.imported }));
+        void refreshAccounts();
+      } catch (error) {
+        if (!cancelled) {
+          setImportError(errorText(error, locale));
+          if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
+        }
+      }
+    };
+    timer = window.setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [authState, handleAPIError, importResult?.state, locale, refreshAccounts, tx]);
+
+  useEffect(() => {
     if (!inspectionAccountSyncActive || authState !== "ready") return;
     let cancelled = false;
     let timer = 0;
@@ -878,6 +910,11 @@ function AccountManagerApp() {
     setImportResult(null);
     setImportError("");
     setImportOpen(true);
+    void api.getImportStatus().then((result) => {
+      if (result.state === "running") setImportResult(result);
+    }).catch((error) => {
+      if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
+    });
   };
 
   const closeImport = () => {
@@ -919,11 +956,7 @@ function AccountManagerApp() {
       const result = await api.startImport(importPreview.id);
       setImportPreview(null);
       setImportResult(result);
-      setImportUsageCollectionActive(Boolean(result.usage_collection_started));
-      setNotice(result.failed || result.skipped
-        ? tx("ui.added_count_accounts_failed_not_written", { count: result.imported, failed: result.failed + result.skipped })
-        : tx("ui.added_count_accounts", { count: result.imported }));
-      void refreshAccounts();
+      setNotice(tx("ui.import_started_in_background"));
     } catch (error) {
       if (error instanceof api.APIError && error.status === 401) {
         closeImport();

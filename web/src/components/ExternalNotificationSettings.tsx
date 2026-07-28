@@ -1,4 +1,4 @@
-import { BellRing, Eye, LoaderCircle, Plus, Save, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, BellRing, Eye, GitBranch, LoaderCircle, Plus, Save, Send, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
@@ -6,11 +6,14 @@ import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 import type {
   InspectionNotificationEndpoint,
+  InspectionNotificationPolicy,
   InspectionNotificationPreview,
   InspectionNotificationRequest,
   InspectionNotificationTestResult,
   InspectionPolicy,
 } from "../types";
+import { IconButton } from "./IconButton";
+import { PolicyConditionEditor } from "./PolicyConditionEditor";
 
 interface ExternalNotificationSettingsProps {
   refreshRevision: number;
@@ -42,6 +45,8 @@ const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
   { name: "threshold_percent", label: "ui.notification_parameter_threshold_percent" },
   { name: "available_accounts_threshold", label: "ui.notification_parameter_available_accounts_threshold" },
   { name: "availability_percent_threshold", label: "ui.notification_parameter_availability_percent_threshold" },
+  { name: "notification_policy_id", label: "ui.notification_parameter_policy_id" },
+  { name: "notification_policy_name", label: "ui.notification_parameter_policy_name" },
   { name: "triggered_at", label: "ui.notification_parameter_triggered_at" },
 ];
 
@@ -53,10 +58,15 @@ function normalizedEndpoints(policy: InspectionPolicy): InspectionNotificationEn
   return legacy ? [{ id: "legacy", name: "", url: legacy, enabled: true }] : [];
 }
 
+function normalizedNotificationPolicies(policy: InspectionPolicy): InspectionNotificationPolicy[] {
+  return (policy.notification_policies ?? []).map((item) => JSON.parse(JSON.stringify(item)) as InspectionNotificationPolicy);
+}
+
 export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNotice }: ExternalNotificationSettingsProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [policy, setPolicy] = useState<InspectionPolicy | null>(null);
   const [endpoints, setEndpoints] = useState<InspectionNotificationEndpoint[]>([]);
+  const [notificationPolicies, setNotificationPolicies] = useState<InspectionNotificationPolicy[]>([]);
   const [anomalyEnabled, setAnomalyEnabled] = useState(false);
   const [notificationOnly, setNotificationOnly] = useState(false);
   const [availableEnabled, setAvailableEnabled] = useState(false);
@@ -83,6 +93,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   const applyPolicy = useCallback((next: InspectionPolicy) => {
     setPolicy(next);
     setEndpoints(normalizedEndpoints(next));
+    setNotificationPolicies(normalizedNotificationPolicies(next));
     setAnomalyEnabled(next.anomaly_notification_enabled === true);
     setNotificationOnly(next.anomaly_notification_only === true);
     setAvailableEnabled(next.notification_available_accounts_enabled === true);
@@ -118,15 +129,70 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     });
   };
 
-  const addEndpoint = () => {
+  const addEndpoint = (notificationPolicyID = "") => {
     if (endpoints.length >= maxEndpoints) {
       setError(tx("ui.notification_endpoint_limit_reached", { count: maxEndpoints }));
       return;
     }
     endpointCounter.current += 1;
     const id = `notification-${Date.now().toString(36)}-${endpointCounter.current}`;
-    setEndpoints((current) => [...current, { id, name: "", url: "", enabled: true }]);
+    setEndpoints((current) => [...current, { id, name: "", url: "", enabled: true, notification_policy_id: notificationPolicyID }]);
     setError("");
+  };
+
+  const moveEndpoint = (id: string, offset: number) => {
+    setEndpoints((current) => {
+      const source = current.find((item) => item.id === id);
+      if (!source) return current;
+      const policyBound = Boolean(source.notification_policy_id);
+      const peers = current.filter((item) => Boolean(item.notification_policy_id) === policyBound);
+      const peerIndex = peers.findIndex((item) => item.id === id);
+      const target = peers[peerIndex + offset];
+      if (!target) return current;
+      const sourceIndex = current.findIndex((item) => item.id === id);
+      const targetIndex = current.findIndex((item) => item.id === target.id);
+      const next = [...current];
+      [next[sourceIndex], next[targetIndex]] = [next[targetIndex], next[sourceIndex]];
+      return next;
+    });
+  };
+
+  const addNotificationPolicy = () => {
+    if (notificationPolicies.length >= 100) return;
+    const index = notificationPolicies.length + 1;
+    setNotificationPolicies((current) => [...current, {
+      id: `notify-policy-${Date.now().toString(36)}-${index}`,
+      name: "",
+      enabled: true,
+      conditions: { operator: "all", conditions: [{ field: "provider", value: "codex" }], groups: [] },
+      threshold_operator: "all",
+      available_accounts_enabled: true,
+      available_accounts_below: 10,
+      availability_percent_enabled: false,
+      availability_percent_below: 20,
+    }]);
+    setError("");
+  };
+
+  const updateNotificationPolicy = (id: string, patch: Partial<InspectionNotificationPolicy>) => {
+    setNotificationPolicies((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const removeNotificationPolicy = (item: InspectionNotificationPolicy) => {
+    if (!window.confirm(tx("ui.confirm_remove_notification_policy", { name: item.name || item.id }))) return;
+    setNotificationPolicies((current) => current.filter((candidate) => candidate.id !== item.id));
+    setEndpoints((current) => current.map((endpoint) => endpoint.notification_policy_id === item.id ? { ...endpoint, notification_policy_id: "" } : endpoint));
+  };
+
+  const moveNotificationPolicy = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= notificationPolicies.length) return;
+    setNotificationPolicies((current) => {
+      const next = [...current];
+      const [item] = next.splice(index, 1);
+      next.splice(target, 0, item);
+      return next;
+    });
   };
 
   const removeEndpoint = (endpoint: InspectionNotificationEndpoint) => {
@@ -173,8 +239,23 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
       if (urls.has(url)) throw new Error(tx("ui.notification_duplicate_url"));
       urls.add(url);
     }
-    if ((anomalyEnabled || availableEnabled || percentEnabled) && !endpoints.some((endpoint) => endpoint.enabled)) {
-      throw new Error(tx("ui.notification_enabled_endpoint_required"));
+    const ids = new Set(notificationPolicies.map((item) => item.id));
+    for (const endpoint of endpoints) {
+      if (endpoint.notification_policy_id && !ids.has(endpoint.notification_policy_id)) throw new Error(tx("ui.notification_policy_binding_invalid"));
+    }
+    if ((anomalyEnabled || availableEnabled || percentEnabled) && !endpoints.some((endpoint) => endpoint.enabled && !endpoint.notification_policy_id)) {
+      throw new Error(tx("ui.generic_notification_endpoint_required"));
+    }
+    for (const item of notificationPolicies) {
+      if (item.enabled && !endpoints.some((endpoint) => endpoint.enabled && endpoint.notification_policy_id === item.id)) {
+        throw new Error(tx("ui.policy_notification_endpoint_required_named", { name: item.name || item.id }));
+      }
+    }
+    for (const item of notificationPolicies) {
+      if (!item.name.trim()) throw new Error(tx("ui.notification_policy_name_required"));
+      if (!item.available_accounts_enabled && !item.availability_percent_enabled) throw new Error(tx("ui.notification_policy_threshold_required"));
+      if (!Number.isInteger(item.available_accounts_below) || item.available_accounts_below < 1 || item.available_accounts_below > 10000) throw new Error(tx("ui.notification_available_accounts_must_be_between_1_and_10000"));
+      if (!Number.isInteger(item.availability_percent_below) || item.availability_percent_below < 1 || item.availability_percent_below > 100) throw new Error(tx("ui.notification_availability_percent_must_be_between_1_and_100"));
     }
   };
 
@@ -182,6 +263,14 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     const values = numericSettings();
     if (!endpoint.url.trim()) throw new Error(tx("ui.notification_url_is_required"));
     if (!endpoint.url.trim().toLowerCase().startsWith("https://")) throw new Error(tx("ui.notification_url_must_use_https"));
+    if (endpoint.notification_policy_id) {
+      const draftPolicy = notificationPolicies.find((item) => item.id === endpoint.notification_policy_id);
+      const savedPolicy = policy?.notification_policies?.find((item) => item.id === endpoint.notification_policy_id);
+      const savedEndpoint = policy ? normalizedEndpoints(policy).find((item) => item.id === endpoint.id) : undefined;
+      if (!draftPolicy || !savedPolicy || savedEndpoint?.notification_policy_id !== endpoint.notification_policy_id || JSON.stringify(draftPolicy) !== JSON.stringify(savedPolicy)) {
+        throw new Error(tx("ui.save_notification_policy_before_testing"));
+      }
+    }
     return {
       endpoint_id: endpoint.id,
       endpoint_name: endpoint.name?.trim(),
@@ -190,6 +279,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
       threshold_percent: policy?.anomaly_threshold_percent || 50,
       available_accounts_threshold: values.available,
       availability_percent_threshold: values.percent,
+      notification_policy_id: endpoint.notification_policy_id || undefined,
     };
   };
 
@@ -231,7 +321,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     setSaving(true);
     try {
       const latest = (await api.getInspection()).policy;
-      const notificationActive = anomalyEnabled || availableEnabled || percentEnabled;
+      const notificationActive = anomalyEnabled || availableEnabled || percentEnabled || notificationPolicies.some((item) => item.enabled);
       const next: InspectionPolicy = {
         ...latest,
         enabled: notificationActive ? true : latest.enabled,
@@ -240,6 +330,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
         anomaly_notification_only: anomalyEnabled ? notificationOnly : false,
         anomaly_notification_url: "",
         notification_endpoints: endpoints.map((endpoint) => ({ ...endpoint, name: endpoint.name?.trim(), url: endpoint.url.trim() })),
+        notification_policies: notificationPolicies.map((item) => ({ ...item, name: item.name.trim() })),
         notification_available_accounts_enabled: availableEnabled,
         notification_available_accounts_threshold: values.available,
         notification_availability_percent_enabled: percentEnabled,
@@ -256,13 +347,47 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     }
   };
 
-  const notificationActive = anomalyEnabled || availableEnabled || percentEnabled;
+  const renderEndpoint = (endpoint: InspectionNotificationEndpoint) => {
+    const index = endpoints.findIndex((item) => item.id === endpoint.id);
+    const peers = endpoints.filter((item) => Boolean(item.notification_policy_id) === Boolean(endpoint.notification_policy_id));
+    const peerIndex = peers.findIndex((item) => item.id === endpoint.id);
+    const result = results[endpoint.id];
+    const busy = action?.endpointID === endpoint.id;
+    return (
+      <section className="notification-endpoint-row" key={endpoint.id} aria-label={tx("ui.notification_endpoint_number", { number: index + 1 })}>
+        <div className="notification-endpoint-heading">
+          <label className="switch-control"><input type="checkbox" checked={endpoint.enabled} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { enabled: event.target.checked })} aria-label={tx("ui.notification_endpoint_enabled_number", { number: index + 1 })} /><b>{tx(endpoint.enabled ? "ui.on_2" : "ui.off_2")}</b></label>
+          <label><span>{tx("ui.notification_endpoint_name")}</span><input type="text" maxLength={80} value={endpoint.name || ""} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { name: event.target.value })} aria-label={tx("ui.notification_endpoint_name_number", { number: index + 1 })} /></label>
+          <label><span>{tx("ui.notification_delivery_policy")}</span><select value={endpoint.notification_policy_id || ""} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { notification_policy_id: event.target.value })} aria-label={tx("ui.notification_delivery_policy_number", { number: index + 1 })}><option value="">{tx("ui.generic_notification")}</option>{notificationPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
+          <div className="notification-endpoint-tools">
+            <IconButton label={tx("ui.move_notification_endpoint_up")} disabled={saving || peerIndex === 0} onClick={() => moveEndpoint(endpoint.id, -1)}><ArrowUp size={15} /></IconButton>
+            <IconButton label={tx("ui.move_notification_endpoint_down")} disabled={saving || peerIndex === peers.length - 1} onClick={() => moveEndpoint(endpoint.id, 1)}><ArrowDown size={15} /></IconButton>
+            <IconButton label={tx("ui.remove_notification_endpoint_number", { number: index + 1 })} disabled={saving} onClick={() => removeEndpoint(endpoint)}><Trash2 size={15} /></IconButton>
+          </div>
+        </div>
+        <div className="notification-template-editor">
+          <label className="notification-template-field"><span>{tx("ui.notification_url_template")}</span><input ref={(node) => { if (node) inputRefs.current.set(endpoint.id, node); else inputRefs.current.delete(endpoint.id); }} type="text" maxLength={4096} value={endpoint.url} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { url: event.target.value })} placeholder="https://notify.example/hook?available=${available_accounts}" aria-label={tx("ui.notification_endpoint_url_number", { number: index + 1 })} autoComplete="off" spellCheck={false} /></label>
+          <label className="notification-variable-field"><span>{tx("ui.insert_notification_parameter")}</span><select value="" disabled={saving || !endpoint.url} onChange={(event) => insertVariable(endpoint, event.target.value)} aria-label={tx("ui.notification_endpoint_parameter_number", { number: index + 1 })}><option value="">{tx("ui.select_parameter")}</option><option value={detailsPreset}>{tx("ui.notification_parameter_full_details")}</option>{notificationVariables.map((variable) => <option key={variable.name} value={variable.name}>{tx(variable.label)} · ${"{"}{variable.name}{"}"}</option>)}</select></label>
+        </div>
+        <div className="notification-endpoint-actions">
+          <button className="button button-quiet" type="button" disabled={saving || busy || !endpoint.url.trim()} onClick={() => void runEndpointAction(endpoint, "preview")}>{busy && action?.kind === "preview" ? <LoaderCircle className="spin" size={14} /> : <Eye size={14} />}{tx("ui.preview_notification")}</button>
+          <button className="button button-primary" type="button" disabled={saving || busy || !endpoint.url.trim()} onClick={() => void runEndpointAction(endpoint, "test")}>{busy && action?.kind === "test" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}{tx("ui.send_test_notification")}</button>
+        </div>
+        {result ? <NotificationResultView result={result} /> : null}
+      </section>
+    );
+  };
+
+  const notificationActive = anomalyEnabled || availableEnabled || percentEnabled || notificationPolicies.some((item) => item.enabled);
+  const genericEndpoints = endpoints.filter((endpoint) => !endpoint.notification_policy_id);
+  const policyEndpoints = endpoints.filter((endpoint) => Boolean(endpoint.notification_policy_id));
   return (
-    <section className="external-notification-settings" role="tabpanel" aria-label={tx("ui.external_notifications")}>
+    <div className="external-notification-workspace" role="tabpanel" aria-label={tx("ui.external_notifications")}>
+    <section className="external-notification-settings" aria-label={tx("ui.generic_notifications")}>
       <header className="notification-settings-header">
         <BellRing size={18} />
-        <div><strong>{tx("ui.external_notifications")}</strong><span>{tx("ui.external_notifications_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading || endpoints.length >= maxEndpoints} onClick={addEndpoint}><Plus size={15} />{tx("ui.add_notification_endpoint")}</button>
+        <div><strong>{tx("ui.generic_notifications")}</strong><span>{tx("ui.generic_notifications_description")}</span></div>
+        <button className="button button-quiet" type="button" disabled={loading || endpoints.length >= maxEndpoints} onClick={() => addEndpoint()}><Plus size={15} />{tx("ui.add_notification_endpoint")}</button>
       </header>
 
       <div className="notification-global-settings">
@@ -278,34 +403,52 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
       {error ? <div className="automation-error notification-settings-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
       <div className="notification-endpoint-list" aria-label={tx("ui.notification_endpoints")}>
-        {endpoints.map((endpoint, index) => {
-          const result = results[endpoint.id];
-          const busy = action?.endpointID === endpoint.id;
-          return (
-            <section className="notification-endpoint-row" key={endpoint.id} aria-label={tx("ui.notification_endpoint_number", { number: index + 1 })}>
-              <div className="notification-endpoint-heading">
-                <label className="switch-control"><input type="checkbox" checked={endpoint.enabled} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { enabled: event.target.checked })} aria-label={tx("ui.notification_endpoint_enabled_number", { number: index + 1 })} /><b>{tx(endpoint.enabled ? "ui.on_2" : "ui.off_2")}</b></label>
-                <label><span>{tx("ui.notification_endpoint_name")}</span><input type="text" maxLength={80} value={endpoint.name || ""} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { name: event.target.value })} aria-label={tx("ui.notification_endpoint_name_number", { number: index + 1 })} /></label>
-                <button className="icon-button" type="button" title={tx("ui.remove_notification_endpoint")} aria-label={tx("ui.remove_notification_endpoint_number", { number: index + 1 })} disabled={saving} onClick={() => removeEndpoint(endpoint)}><Trash2 size={15} /></button>
-              </div>
-              <div className="notification-template-editor">
-                <label className="notification-template-field"><span>{tx("ui.notification_url_template")}</span><input ref={(node) => { if (node) inputRefs.current.set(endpoint.id, node); else inputRefs.current.delete(endpoint.id); }} type="text" maxLength={4096} value={endpoint.url} disabled={saving} onChange={(event) => updateEndpoint(endpoint.id, { url: event.target.value })} placeholder="https://notify.example/hook?available=${available_accounts}" aria-label={tx("ui.notification_endpoint_url_number", { number: index + 1 })} autoComplete="off" spellCheck={false} /></label>
-                <label className="notification-variable-field"><span>{tx("ui.insert_notification_parameter")}</span><select value="" disabled={saving || !endpoint.url} onChange={(event) => insertVariable(endpoint, event.target.value)} aria-label={tx("ui.notification_endpoint_parameter_number", { number: index + 1 })}><option value="">{tx("ui.select_parameter")}</option><option value={detailsPreset}>{tx("ui.notification_parameter_full_details")}</option>{notificationVariables.map((variable) => <option key={variable.name} value={variable.name}>{tx(variable.label)} · ${"{"}{variable.name}{"}"}</option>)}</select></label>
-              </div>
-              <div className="notification-endpoint-actions">
-                <button className="button button-quiet" type="button" disabled={saving || busy || !endpoint.url.trim()} onClick={() => void runEndpointAction(endpoint, "preview")}>{busy && action?.kind === "preview" ? <LoaderCircle className="spin" size={14} /> : <Eye size={14} />}{tx("ui.preview_notification")}</button>
-                <button className="button button-primary" type="button" disabled={saving || busy || !endpoint.url.trim()} onClick={() => void runEndpointAction(endpoint, "test")}>{busy && action?.kind === "test" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}{tx("ui.send_test_notification")}</button>
-              </div>
-              {result ? <NotificationResultView result={result} /> : null}
-            </section>
-          );
-        })}
-        {!loading && endpoints.length === 0 ? <div className="notification-endpoint-empty"><BellRing size={20} /><span>{tx("ui.no_notification_endpoints")}</span><button className="button button-primary" type="button" onClick={addEndpoint}><Plus size={15} />{tx("ui.add_notification_endpoint")}</button></div> : null}
+        {genericEndpoints.map(renderEndpoint)}
+        {!loading && genericEndpoints.length === 0 ? <div className="notification-endpoint-empty"><BellRing size={20} /><span>{tx("ui.no_generic_notification_endpoints")}</span><button className="button button-primary" type="button" onClick={() => addEndpoint()}><Plus size={15} />{tx("ui.add_notification_endpoint")}</button></div> : null}
         {loading ? <div className="notification-endpoint-empty"><LoaderCircle className="spin" size={20} /><span>{tx("ui.loading_policy")}</span></div> : null}
       </div>
 
-      <div className="settings-section-actions notification-settings-save"><span>{tx("ui.notification_endpoint_count", { count: endpoints.length, max: maxEndpoints })}</span><button className="button button-primary" type="button" disabled={loading || saving || !policy} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}</button></div>
+      <div className="settings-section-actions notification-settings-save"><span>{tx("ui.notification_endpoint_count", { count: genericEndpoints.length, max: maxEndpoints })}</span></div>
     </section>
+
+    <section className="external-notification-settings notification-policy-settings" aria-label={tx("ui.policy_notifications")}>
+      <header className="notification-settings-header">
+        <GitBranch size={18} />
+        <div><strong>{tx("ui.policy_notifications")}</strong><span>{tx("ui.policy_notifications_description")}</span></div>
+        <div className="notification-settings-header-actions"><button className="button button-quiet" type="button" disabled={loading || saving || notificationPolicies.length >= 100} onClick={addNotificationPolicy}><Plus size={15} />{tx("ui.add_notification_policy")}</button><button className="button button-quiet" type="button" disabled={loading || saving || endpoints.length >= maxEndpoints || notificationPolicies.length === 0} onClick={() => addEndpoint(notificationPolicies[0]?.id || "")}><Plus size={15} />{tx("ui.add_policy_notification_endpoint")}</button></div>
+      </header>
+      <div className="notification-endpoint-list policy-notification-endpoint-list" aria-label={tx("ui.policy_notification_endpoints")}>
+        {policyEndpoints.map(renderEndpoint)}
+        {!loading && policyEndpoints.length === 0 ? <div className="notification-endpoint-empty"><BellRing size={20} /><span>{tx("ui.no_policy_notification_endpoints")}</span>{notificationPolicies.length > 0 ? <button className="button button-primary" type="button" onClick={() => addEndpoint(notificationPolicies[0]?.id || "")}><Plus size={15} />{tx("ui.add_policy_notification_endpoint")}</button> : null}</div> : null}
+      </div>
+      <div className="notification-policy-list">
+        {notificationPolicies.length === 0 && !loading ? <div className="notification-endpoint-empty"><GitBranch size={20} /><span>{tx("ui.no_notification_policies")}</span><button className="button button-primary" type="button" onClick={addNotificationPolicy}><Plus size={15} />{tx("ui.add_notification_policy")}</button></div> : null}
+        {notificationPolicies.map((item, index) => (
+          <article className={`notification-policy-row ${item.enabled ? "is-enabled" : ""}`} key={item.id} aria-label={tx("ui.notification_policy_number", { number: index + 1 })}>
+            <header className="notification-policy-row-header">
+              <label className="switch-control"><input type="checkbox" checked={item.enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { enabled: event.target.checked })} /><b>{tx(item.enabled ? "ui.on_2" : "ui.off_2")}</b></label>
+              <label><span>{tx("ui.notification_policy_name")}</span><input type="text" maxLength={128} value={item.name} disabled={saving} placeholder={tx("ui.notification_policy_name")} aria-label={tx("ui.notification_policy_name_number", { number: index + 1 })} onChange={(event) => updateNotificationPolicy(item.id, { name: event.target.value })} /></label>
+              <div className="conditional-rule-tools">
+                <IconButton label={tx("ui.move_notification_policy_up")} disabled={saving || index === 0} onClick={() => moveNotificationPolicy(index, -1)}><ArrowUp size={15} /></IconButton>
+                <IconButton label={tx("ui.move_notification_policy_down")} disabled={saving || index === notificationPolicies.length - 1} onClick={() => moveNotificationPolicy(index, 1)}><ArrowDown size={15} /></IconButton>
+                <IconButton label={tx("ui.delete_notification_policy")} disabled={saving} onClick={() => removeNotificationPolicy(item)}><Trash2 size={15} /></IconButton>
+              </div>
+            </header>
+            <div className="notification-policy-row-body">
+              <section><h4>{tx("ui.match_conditions")}</h4><PolicyConditionEditor group={item.conditions} disabled={saving} onChange={(conditions) => updateNotificationPolicy(item.id, { conditions })} /></section>
+              <section className="notification-policy-thresholds">
+                <h4>{tx("ui.notification_threshold_conditions")}</h4>
+                <div className="condition-operator" role="group" aria-label={tx("ui.notification_threshold_operator")}><button type="button" className={item.threshold_operator === "all" ? "active" : ""} disabled={saving} onClick={() => updateNotificationPolicy(item.id, { threshold_operator: "all" })}>{tx("ui.match_all")}</button><button type="button" className={item.threshold_operator === "any" ? "active" : ""} disabled={saving} onClick={() => updateNotificationPolicy(item.id, { threshold_operator: "any" })}>{tx("ui.match_any")}</button></div>
+                <label className={`automation-setting ${item.available_accounts_enabled ? "is-enabled" : ""}`}><span>{tx("ui.notify_when_available_accounts_low")}</span><input type="checkbox" checked={item.available_accounts_enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { available_accounts_enabled: event.target.checked })} /><span className="number-suffix"><input type="number" min="1" max="10000" value={item.available_accounts_below} disabled={saving || !item.available_accounts_enabled} onChange={(event) => updateNotificationPolicy(item.id, { available_accounts_below: Number(event.target.value) })} /><b>{tx("ui.accounts_2")}</b></span></label>
+                <label className={`automation-setting ${item.availability_percent_enabled ? "is-enabled" : ""}`}><span>{tx("ui.notify_when_availability_low")}</span><input type="checkbox" checked={item.availability_percent_enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { availability_percent_enabled: event.target.checked })} /><span className="number-suffix"><input type="number" min="1" max="100" value={item.availability_percent_below} disabled={saving || !item.availability_percent_enabled} onChange={(event) => updateNotificationPolicy(item.id, { availability_percent_below: Number(event.target.value) })} /><b>{tx("ui.percent")}</b></span></label>
+              </section>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+    <div className="settings-section-actions notification-settings-save notification-workspace-save"><span>{tx("ui.notification_policy_order_hint")}</span><button className="button button-primary" type="button" disabled={loading || saving || !policy} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}</button></div>
+    </div>
   );
 
   function NotificationResultView({ result }: { result: NotificationResult }) {

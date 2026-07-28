@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,8 @@ type lifecycleRequest struct {
 }
 
 var pluginApp = manager.NewApp(hostAdapter{}, web.IndexHTML())
+
+var emptyRequestInterceptEnvelope = []byte(`{"ok":true,"result":{}}`)
 
 func main() {}
 
@@ -153,18 +156,74 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			return nil, errExecute
 		}
 		return okEnvelope(response)
-	case cpaapi.MethodRequestInterceptBefore, cpaapi.MethodRequestInterceptAfter:
+	case cpaapi.MethodRequestInterceptBefore:
+		return emptyRequestInterceptEnvelope, nil
+	case cpaapi.MethodRequestInterceptAfter:
+		if !pluginApp.RequestInterceptionActive() {
+			return emptyRequestInterceptEnvelope, nil
+		}
+		if len(request) == 0 {
+			return emptyRequestInterceptEnvelope, nil
+		}
+		format, errFormat := requestInterceptFormat(request)
+		if errFormat != nil {
+			return nil, fmt.Errorf("decode request interceptor format: %w", errFormat)
+		}
+		if !pluginApp.RequestInterceptionAcceptsFormat(format) {
+			return emptyRequestInterceptEnvelope, nil
+		}
 		var interceptRequest cpaapi.RequestInterceptRequest
 		if len(request) > 0 {
 			if errUnmarshal := json.Unmarshal(request, &interceptRequest); errUnmarshal != nil {
 				return nil, fmt.Errorf("decode request interceptor input: %w", errUnmarshal)
 			}
 		}
-		if method == cpaapi.MethodRequestInterceptBefore {
-			return okEnvelope(pluginApp.HandleRequestBefore(interceptRequest))
-		}
 		return okEnvelope(pluginApp.HandleRequestAfter(interceptRequest))
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
+	}
+}
+
+func requestInterceptFormat(raw []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, errToken := decoder.Token()
+	if errToken != nil {
+		return "", errToken
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return "", fmt.Errorf("request interceptor input must be an object")
+	}
+	for decoder.More() {
+		keyToken, errKey := decoder.Token()
+		if errKey != nil {
+			return "", errKey
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return "", fmt.Errorf("request interceptor field name must be a string")
+		}
+		if key == "ToFormat" {
+			var format string
+			if errDecode := decoder.Decode(&format); errDecode != nil {
+				return "", errDecode
+			}
+			return format, nil
+		}
+		var ignored json.RawMessage
+		if errDecode := decoder.Decode(&ignored); errDecode != nil {
+			return "", errDecode
+		}
+	}
+	return "", nil
+}
+
+func methodNeedsRequestPayload(method string) bool {
+	switch method {
+	case cpaapi.MethodRequestInterceptBefore:
+		return false
+	case cpaapi.MethodRequestInterceptAfter:
+		return pluginApp.RequestInterceptionActive()
+	default:
+		return true
 	}
 }

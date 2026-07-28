@@ -170,11 +170,12 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		writeResponse(response, errorEnvelope("invalid_method", "method is required"))
 		return 1
 	}
+	methodName := C.GoString(method)
 	var requestBytes []byte
-	if request != nil && requestLen > 0 {
+	if request != nil && requestLen > 0 && methodNeedsRequestPayload(methodName) {
 		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
 	}
-	raw, callCode := callMethodSafely(handleMethod, C.GoString(method), requestBytes)
+	raw, callCode := callMethodSafely(handleMethod, methodName, requestBytes)
 	if !writeResponse(response, raw) {
 		return 1
 	}

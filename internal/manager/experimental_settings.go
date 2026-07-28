@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type ExperimentalSettings struct {
@@ -39,12 +40,13 @@ type ExperimentalSettingsSnapshot struct {
 }
 
 type ExperimentalSettingsService struct {
-	mu         sync.RWMutex
-	storeMu    sync.Mutex
-	store      string
-	settings   ExperimentalSettings
-	storageErr string
-	configured bool
+	mu                     sync.RWMutex
+	storeMu                sync.Mutex
+	store                  string
+	settings               ExperimentalSettings
+	storageErr             string
+	configured             bool
+	weeklyOverdraftEnabled atomic.Bool
 }
 
 func NewExperimentalSettingsService() *ExperimentalSettingsService {
@@ -93,6 +95,7 @@ func (s *ExperimentalSettingsService) Configure(config Config) {
 	s.storageErr = storageErr
 	s.configured = true
 	s.mu.Unlock()
+	s.weeklyOverdraftEnabled.Store(settings.WeeklyOverdraftEnabled)
 }
 
 func (s *ExperimentalSettingsService) Snapshot() ExperimentalSettingsSnapshot {
@@ -108,10 +111,7 @@ func (s *ExperimentalSettingsService) WeeklyOverdraftEnabled() bool {
 	if s == nil {
 		return false
 	}
-	s.mu.RLock()
-	enabled := s.settings.WeeklyOverdraftEnabled
-	s.mu.RUnlock()
-	return enabled
+	return s.weeklyOverdraftEnabled.Load()
 }
 
 func (s *ExperimentalSettingsService) Set(settings ExperimentalSettings) (ExperimentalSettingsSnapshot, error) {
@@ -136,5 +136,6 @@ func (s *ExperimentalSettingsService) Set(settings ExperimentalSettings) (Experi
 	s.settings = settings
 	s.storageErr = ""
 	s.mu.Unlock()
+	s.weeklyOverdraftEnabled.Store(settings.WeeklyOverdraftEnabled)
 	return s.Snapshot(), nil
 }

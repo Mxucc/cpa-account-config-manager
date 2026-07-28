@@ -137,6 +137,10 @@ func TestExperimentalSettingsEnableRequestHookAndSurviveAppRestart(t *testing.T)
 
 	first := NewApp(&fakeAuthHost{}, []byte("index"))
 	first.Configure(config)
+	if first.RequestInterceptionActive() || first.RequestInterceptionAcceptsFormat("codex") {
+		first.Close()
+		t.Fatal("disabled experiment armed the request interceptor")
+	}
 	if response := first.HandleRequestAfter(request); len(response.Body) != 0 {
 		first.Close()
 		t.Fatal("disabled experiment unexpectedly transformed the request")
@@ -150,6 +154,10 @@ func TestExperimentalSettingsEnableRequestHookAndSurviveAppRestart(t *testing.T)
 		first.Close()
 		t.Fatalf("PUT status = %d body=%s", response.StatusCode, response.Body)
 	}
+	if !first.RequestInterceptionActive() || !first.RequestInterceptionAcceptsFormat("codex") || first.RequestInterceptionAcceptsFormat("openai") {
+		first.Close()
+		t.Fatal("enabled experiment did not expose the expected live request-interceptor gate")
+	}
 	if transformed := first.HandleRequestAfter(request); !containsExperimentalToolPair(transformed.Body) {
 		first.Close()
 		t.Fatalf("enabled Hook body = %s", transformed.Body)
@@ -159,6 +167,9 @@ func TestExperimentalSettingsEnableRequestHookAndSurviveAppRestart(t *testing.T)
 	restarted := NewApp(&fakeAuthHost{}, []byte("index"))
 	defer restarted.Close()
 	restarted.Configure(config)
+	if !restarted.RequestInterceptionActive() || !restarted.RequestInterceptionAcceptsFormat("codex") {
+		t.Fatal("persisted experiment did not re-arm the request interceptor")
+	}
 	if transformed := restarted.HandleRequestAfter(request); !containsExperimentalToolPair(transformed.Body) {
 		t.Fatalf("restarted Hook body = %s", transformed.Body)
 	}

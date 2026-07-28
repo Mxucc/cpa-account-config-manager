@@ -266,6 +266,14 @@ func (a *App) HandleRequestBefore(request cpaapi.RequestInterceptRequest) cpaapi
 	return a.requestHooks.InterceptBefore(request)
 }
 
+func (a *App) RequestInterceptionActive() bool {
+	return a != nil && a.requestHooks != nil && a.requestHooks.Active()
+}
+
+func (a *App) RequestInterceptionAcceptsFormat(format string) bool {
+	return a != nil && a.requestHooks != nil && a.requestHooks.AcceptsFormat(format)
+}
+
 func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
 	if a == nil || a.requestHooks == nil {
 		return cpaapi.RequestInterceptResponse{}

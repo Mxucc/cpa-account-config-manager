@@ -14,6 +14,11 @@ type RequestTransformer interface {
 	InterceptRequest(cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool)
 }
 
+type requestTransformerGate interface {
+	RequestInterceptionActive() bool
+	RequestInterceptionAcceptsFormat(string) bool
+}
+
 type RequestHook struct {
 	mu           sync.RWMutex
 	transformers []RequestTransformer
@@ -40,23 +45,54 @@ func (h *RequestHook) InterceptBefore(cpaapi.RequestInterceptRequest) cpaapi.Req
 	return cpaapi.RequestInterceptResponse{}
 }
 
+func (h *RequestHook) Active() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, transformer := range h.transformers {
+		gate, gated := transformer.(requestTransformerGate)
+		if !gated || gate.RequestInterceptionActive() {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *RequestHook) AcceptsFormat(format string) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, transformer := range h.transformers {
+		gate, gated := transformer.(requestTransformerGate)
+		if !gated || gate.RequestInterceptionActive() && gate.RequestInterceptionAcceptsFormat(format) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *RequestHook) InterceptAfter(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
 	if h == nil {
 		return cpaapi.RequestInterceptResponse{}
 	}
 	h.mu.RLock()
-	transformers := append([]RequestTransformer(nil), h.transformers...)
-	h.mu.RUnlock()
+	defer h.mu.RUnlock()
 	response := cpaapi.RequestInterceptResponse{}
 	current := request
-	for _, transformer := range transformers {
+	for _, transformer := range h.transformers {
 		modification, changed := transformer.InterceptRequest(current)
 		if !changed {
 			continue
 		}
 		if len(modification.Body) > 0 {
-			current.Body = append([]byte(nil), modification.Body...)
-			response.Body = append([]byte(nil), modification.Body...)
+			// A transformer owns a changed body until the hook returns it. Keep one
+			// reference for the next transformer instead of copying a large body twice.
+			response.Body = modification.Body
+			current.Body = modification.Body
 		}
 		if len(modification.ClearHeaders) > 0 {
 			response.ClearHeaders = appendUniqueHeaderNames(response.ClearHeaders, modification.ClearHeaders...)

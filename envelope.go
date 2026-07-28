@@ -33,11 +33,10 @@ func errorEnvelopeFor(err error) []byte {
 }
 
 func okEnvelope(value any) ([]byte, error) {
-	raw, errMarshal := json.Marshal(value)
-	if errMarshal != nil {
-		return nil, errMarshal
-	}
-	return json.Marshal(envelope{OK: true, Result: raw})
+	return json.Marshal(struct {
+		OK     bool `json:"ok"`
+		Result any  `json:"result"`
+	}{OK: true, Result: value})
 }
 
 func errorEnvelope(code, message string) []byte {

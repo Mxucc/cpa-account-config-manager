@@ -3,12 +3,70 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"cpa-account-config-manager/internal/cpaapi"
 	"cpa-account-config-manager/internal/manager"
 )
+
+func BenchmarkRequestInterceptorBeforeNoop(b *testing.B) {
+	benchmarkRequestInterceptor(b, cpaapi.MethodRequestInterceptBefore, false, "codex", false)
+}
+
+func BenchmarkRequestInterceptorAfterDisabled(b *testing.B) {
+	benchmarkRequestInterceptor(b, cpaapi.MethodRequestInterceptAfter, false, "codex", false)
+}
+
+func BenchmarkRequestInterceptorAfterNonCodex(b *testing.B) {
+	benchmarkRequestInterceptor(b, cpaapi.MethodRequestInterceptAfter, true, "openai", false)
+}
+
+func BenchmarkRequestInterceptorAfterTransform(b *testing.B) {
+	benchmarkRequestInterceptor(b, cpaapi.MethodRequestInterceptAfter, true, "codex", true)
+}
+
+func benchmarkRequestInterceptor(b *testing.B, method string, enabled bool, format string, validBody bool) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	config := fmt.Sprintf("data_dir: %s\nexperimental_settings:\n  weekly_overdraft_enabled: %t\n", b.TempDir(), enabled)
+	testApp.Configure([]byte(config))
+	pluginApp = testApp
+	b.Cleanup(func() {
+		testApp.Close()
+		pluginApp = originalApp
+	})
+
+	body := []byte(strings.Repeat("x", 256*1024))
+	if validBody {
+		document := map[string]any{
+			"model": "gpt-5.6-sol",
+			"input": []map[string]any{{
+				"type": "message", "role": "user", "content": strings.Repeat("x", 256*1024),
+			}},
+		}
+		var errMarshal error
+		body, errMarshal = json.Marshal(document)
+		if errMarshal != nil {
+			b.Fatal(errMarshal)
+		}
+	}
+	rawRequest, errMarshal := json.Marshal(cpaapi.RequestInterceptRequest{ToFormat: format, Body: body})
+	if errMarshal != nil {
+		b.Fatal(errMarshal)
+	}
+	b.SetBytes(int64(len(rawRequest)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		raw, errHandle := handleMethod(method, rawRequest)
+		if errHandle != nil || len(raw) == 0 {
+			b.Fatalf("handleMethod(%q) returned %d bytes: %v", method, len(raw), errHandle)
+		}
+	}
+}
 
 func TestCallMethodSafelyAlwaysReturnsAValidEnvelope(t *testing.T) {
 	tests := []struct {
@@ -154,6 +212,37 @@ func TestRequestInterceptorMethodsRemainAvailableWhenExperimentsDisabled(t *test
 		if len(response.Body) != 0 || len(response.Headers) != 0 || len(response.ClearHeaders) != 0 {
 			t.Fatalf("disabled experiment changed %q request: %#v", method, response)
 		}
+	}
+}
+
+func TestRequestInterceptorBypassesMalformedPayloadWhenNoTransformerIsActive(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.Configure([]byte("data_dir: " + t.TempDir()))
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	for _, method := range []string{cpaapi.MethodRequestInterceptBefore, cpaapi.MethodRequestInterceptAfter} {
+		raw, errHandle := handleMethod(method, []byte("not-json"))
+		if errHandle != nil || string(raw) != string(emptyRequestInterceptEnvelope) {
+			t.Fatalf("method %q did not fail open: err=%v raw=%s", method, errHandle, raw)
+		}
+	}
+	if allocations := testing.AllocsPerRun(100, func() {
+		_, _ = handleMethod(cpaapi.MethodRequestInterceptAfter, []byte("not-json"))
+	}); allocations > 1 {
+		t.Fatalf("inactive interceptor allocations = %f, want at most one control allocation", allocations)
+	}
+}
+
+func TestRequestInterceptFormatStopsBeforeLargeBody(t *testing.T) {
+	raw := []byte(`{"SourceFormat":"responses","ToFormat":"openai","Body":"not-base64-needed-for-format"}`)
+	format, errDecode := requestInterceptFormat(raw)
+	if errDecode != nil || format != "openai" {
+		t.Fatalf("requestInterceptFormat() = %q, %v", format, errDecode)
 	}
 }
 

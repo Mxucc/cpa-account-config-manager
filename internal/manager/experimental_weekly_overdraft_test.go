@@ -65,6 +65,27 @@ func TestWeeklyOverdraftExperimentInjectsOneBoundedToolPair(t *testing.T) {
 	}
 }
 
+func TestReplaceTopLevelJSONFieldValuePreservesUnknownFieldsAndNestedInput(t *testing.T) {
+	original := []byte(`{"note":"the string contains \"input\": false","meta":{"input":[1]},"input": [ {"type":"message","role":"user"} ],"tail":{"keep":true}}`)
+	replacement := []byte(`[{"type":"message","role":"user"},{"type":"custom_tool_call"}]`)
+	updated, replaced := replaceTopLevelJSONFieldValue(original, "input", []byte(` [ {"type":"message","role":"user"} ]`), replacement)
+	if !replaced {
+		t.Fatal("top-level input field was not replaced")
+	}
+	var document struct {
+		Note  string            `json:"note"`
+		Meta  map[string][]int  `json:"meta"`
+		Input []json.RawMessage `json:"input"`
+		Tail  map[string]bool   `json:"tail"`
+	}
+	if errDecode := json.Unmarshal(updated, &document); errDecode != nil {
+		t.Fatalf("decode replaced document: %v", errDecode)
+	}
+	if len(document.Input) != 2 || document.Meta["input"][0] != 1 || !document.Tail["keep"] || document.Note == "" {
+		t.Fatalf("replacement lost surrounding fields: %#v", document)
+	}
+}
+
 func TestWeeklyOverdraftExperimentFailsOpenForUnsupportedRequests(t *testing.T) {
 	valid := []byte(`{"input":[{"type":"message","role":"user","content":"continue"}]}`)
 	tests := []struct {

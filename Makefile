@@ -47,7 +47,7 @@ test:
 version-check:
 	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$$'
 	grep -Fq 'PluginVersion    = "0.0.0-dev"' internal/manager/app.go
-	test -z "$$(grep -E '$(PLUGIN_ID)[-_]v?[0-9]+\.[0-9]+\.[0-9]+' README.md README_CN.md)"
+	test -z "$$(grep -E '$(PLUGIN_ID)[-_]v?[0-9]+\.[0-9]+\.[0-9]+' README.md README_EN.md)"
 
 verify: version-check
 	test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './web/node_modules/*'))"

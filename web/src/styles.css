@@ -1020,7 +1020,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notification-settings-error { margin: 10px 12px 0; }
 .notification-endpoint-list { min-width: 0; display: grid; }
 .notification-endpoint-row { min-width: 0; border-bottom: 1px solid var(--border-primary); }
-.notification-endpoint-heading { min-width: 0; display: grid; grid-template-columns: auto minmax(160px, 0.35fr) minmax(180px, 0.65fr) auto; align-items: center; gap: 10px; padding: 9px 12px; background: var(--bg-secondary); }
+.notification-endpoint-heading { min-width: 0; display: grid; grid-template-columns: auto minmax(160px, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; background: var(--bg-secondary); }
 .notification-endpoint-heading > label:not(.switch-control) { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text-secondary); font-size: 9px; }
 .notification-endpoint-heading input[type="text"], .notification-endpoint-heading select { min-width: 0; width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-size: 10px; }
 .notification-endpoint-heading .icon-button { justify-self: end; }
@@ -1030,7 +1030,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notification-settings-save { border-top: 1px solid var(--border-color); }
 .notification-settings-save > span { margin-right: auto; color: var(--text-tertiary); font-size: 9px; }
 .notification-policy-list { min-width: 0; display: grid; }
-.policy-notification-endpoint-list { border-bottom: 1px solid var(--border-color); }
 .notification-policy-row { min-width: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); }
 .notification-policy-row:last-child { border-bottom: none; }
 .notification-policy-row.is-enabled { box-shadow: inset 3px 0 0 var(--primary-color); }
@@ -1045,6 +1044,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .notification-policy-thresholds .condition-operator { justify-self: start; }
 .notification-policy-thresholds .automation-setting { min-height: 52px; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
 .notification-policy-thresholds .automation-setting > input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary-color); }
+.notification-policy-endpoints { min-width: 0; border-top: 1px solid var(--border-color); background: var(--bg-secondary); }
+.notification-policy-endpoints > header { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border-color); }
+.notification-policy-endpoints > header > div { min-width: 0; display: grid; gap: 3px; }
+.notification-policy-endpoints > header strong { color: var(--text-primary); font-size: 10px; }
+.notification-policy-endpoints > header span { color: var(--text-secondary); font-size: 9px; line-height: 1.45; }
+.notification-policy-endpoints .notification-endpoint-row:last-child { border-bottom: none; }
+.notification-endpoint-empty-compact { min-height: 116px; }
 .notification-workspace-save { position: sticky; bottom: 0; z-index: 3; margin: 0; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--bg-primary) 94%, transparent); backdrop-filter: blur(8px); }
 .settings-section-actions { min-height: 58px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; margin-top: auto; padding: 9px 12px; }
 .settings-section-actions .button { min-width: 0; }
@@ -1521,9 +1527,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notification-global-settings { grid-template-columns: 1fr; }
   .notification-endpoint-heading { grid-template-columns: auto minmax(0, 1fr) auto; }
   .notification-endpoint-heading > label:not(.switch-control) { grid-template-columns: 1fr; gap: 4px; }
-  .notification-endpoint-heading > label:nth-of-type(3) { grid-column: 2 / 4; }
   .notification-policy-row-body { grid-template-columns: 1fr; }
   .notification-policy-row-body > section + section { border-left: none; border-top: 1px solid var(--border-color); }
+  .notification-policy-endpoints > header { align-items: stretch; flex-direction: column; }
+  .notification-policy-endpoints > header .button { width: 100%; }
   .probe-model-field, .probe-model-field:last-child:nth-child(odd) { grid-column: auto; border-right: none; }
   .action-history-row { grid-template-columns: 18px minmax(0, 1fr) 88px; padding-inline: 10px; }
   .filter-heading { align-items: flex-start; }

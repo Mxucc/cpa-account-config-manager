@@ -21,8 +21,8 @@ function ConditionGroupEditor({ group, depth, disabled, onChange }: PolicyCondit
     <div className={`condition-group condition-depth-${depth}`}>
       <div className="condition-group-toolbar">
         <div className="condition-operator" role="group" aria-label={tx("ui.condition_operator")}>
-          <button type="button" className={group.operator === "all" ? "active" : ""} disabled={disabled} onClick={() => onChange({ ...group, operator: "all" })}>{tx("ui.match_all")}</button>
-          <button type="button" className={group.operator === "any" ? "active" : ""} disabled={disabled} onClick={() => onChange({ ...group, operator: "any" })}>{tx("ui.match_any")}</button>
+          <button type="button" className={group.operator === "all" ? "active" : ""} aria-pressed={group.operator === "all"} disabled={disabled} onClick={() => onChange({ ...group, operator: "all" })}>{tx("ui.match_all")}</button>
+          <button type="button" className={group.operator === "any" ? "active" : ""} aria-pressed={group.operator === "any"} disabled={disabled} onClick={() => onChange({ ...group, operator: "any" })}>{tx("ui.match_any")}</button>
         </div>
         <button className="button button-quiet" type="button" disabled={disabled || conditions.length + groups.length >= 32} onClick={() => onChange({ ...group, conditions: [...conditions, { field: "provider", value: "" }] })}><Plus size={13} />{tx("ui.add_condition")}</button>
         {depth < 3 ? <button className="button button-quiet" type="button" disabled={disabled || conditions.length + groups.length >= 32} onClick={() => onChange({ ...group, groups: [...groups, { operator: "all", conditions: [{ field: "account_type", value: "" }], groups: [] }] })}><GitBranch size={13} />{tx("ui.add_condition_group")}</button> : null}

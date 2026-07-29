@@ -44,7 +44,7 @@ journal without exposing raw credentials to the browser.
 - Send previewable and testable HTTPS GET notifications to services such as
   Bark and ntfy. Generic and conditional notifications can combine account,
   availability, quota, and health variables.
-- Experimentally support Codex weekly-quota overdraft continuation plus Agent
+- Experimentally support Codex 5-hour and 7-day quota overdraft continuation plus Agent
   Identity and personal access token import, login, and native plugin auth.
 - Follow the CPA Management Center language and theme. The UI supports English,
   Simplified Chinese, Traditional Chinese, and Russian.
@@ -154,7 +154,7 @@ the effective plugin data directory.
 
 Experimental Features currently contains:
 
-- Codex weekly-quota overdraft probing, which relies on upstream tool-call
+- Codex 5-hour and 7-day quota overdraft probing, which relies on upstream tool-call
   continuation behavior.
 - Codex Agent Identity/PAT conversion and authentication hooks.
 

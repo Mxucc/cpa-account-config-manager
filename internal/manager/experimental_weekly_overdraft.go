@@ -246,7 +246,7 @@ func (e *WeeklyOverdraftExperiment) AllowInspectionAutoDisable(result Inspection
 	if e == nil || e.enabled == nil || !e.enabled() || result.ReasonCode != "quota_exhausted" && result.ReasonCode != "quota_limited" {
 		return true
 	}
-	if result.QuotaWindow != InspectionQuotaWindowSevenDay {
+	if !codexQuotaWindowSupportsOverdraftProbe(result.QuotaWindow) {
 		return true
 	}
 	return result.AutoDisableProbeStatus == InspectionAutoDisableProbeFailed &&
@@ -256,7 +256,7 @@ func (e *WeeklyOverdraftExperiment) AllowInspectionAutoDisable(result Inspection
 func (e *WeeklyOverdraftExperiment) AutomaticDisableProbePlan(account Account, result InspectionResult, preferredModel string) (AutomaticDisableProbePlan, bool) {
 	if e == nil || e.enabled == nil || !e.enabled() ||
 		(result.ReasonCode != "quota_exhausted" && result.ReasonCode != "quota_limited") ||
-		result.QuotaWindow != InspectionQuotaWindowSevenDay ||
+		!codexQuotaWindowSupportsOverdraftProbe(result.QuotaWindow) ||
 		!strings.EqualFold(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)), "codex") &&
 			!isAgentIdentityProvider(firstNonEmpty(account.Provider, account.Type)) {
 		return AutomaticDisableProbePlan{}, false
@@ -271,6 +271,16 @@ func (e *WeeklyOverdraftExperiment) AutomaticDisableProbePlan(account Account, r
 			SelectPolicyFallback:        true,
 		},
 	}, true
+}
+
+func codexQuotaWindowSupportsOverdraftProbe(quotaWindow string) bool {
+	switch normalizeInspectionQuotaWindow(quotaWindow) {
+	case InspectionQuotaWindowFiveHour, InspectionQuotaWindowFiveHourFallback,
+		InspectionQuotaWindowSevenDay, InspectionQuotaWindowMultiple:
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *WeeklyOverdraftExperiment) bodyLimit() int {

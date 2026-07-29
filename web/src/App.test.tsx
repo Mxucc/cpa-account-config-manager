@@ -326,6 +326,10 @@ describe("primary account batch flow", () => {
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
 			"", "账号", "提供方", "类型", "用量", "主动重置次数", "账号并发", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
     ]);
+		const unavailableConcurrency = document.querySelector<HTMLElement>(".concurrency-unavailable");
+		expect(unavailableConcurrency).toHaveAttribute("title", expect.stringContaining("当前 CPA 版本不支持账号并发控制"));
+		expect(unavailableConcurrency).toHaveAttribute("aria-label", expect.stringContaining("request lifecycle schema v2"));
+		expect(unavailableConcurrency).toHaveAttribute("tabindex", "0");
     expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
     expect(screen.getByLabelText("每页账号数")).toHaveValue("50");
     const resetFilters = screen.getByRole("button", { name: "重置" });

@@ -7,6 +7,7 @@ import {
   Eye,
   FileCog,
   Github,
+  CircleHelp,
   LoaderCircle,
   LockKeyhole,
   Power,
@@ -1326,7 +1327,8 @@ function AccountQuotaMetadataCell({ account, busy, onRefresh, onReset }: { accou
 function AccountConcurrencyCell({ account }: { account: Account }) {
 	const { tx } = useI18n();
 	if (!account.concurrency?.supported) {
-		return <span className="concurrency-unavailable" title={tx("ui.account_concurrency_unavailable_old_cpa")}>{tx("ui.unavailable")}</span>;
+		const explanation = tx("ui.account_concurrency_unavailable_old_cpa");
+		return <span className="concurrency-unavailable" title={explanation} aria-label={`${tx("ui.unavailable")}: ${explanation}`} tabIndex={0}>{tx("ui.unavailable")}<CircleHelp size={12} aria-hidden="true" /></span>;
 	}
 	if (!account.concurrency.limit) {
 		return <span className="concurrency-unlimited">{tx("ui.unlimited")}</span>;

@@ -88,6 +88,7 @@ import type {
   ResultExportFormat,
   TargetScope,
 } from "./types";
+import { accountConcurrencyLimitLabel } from "./accountConcurrency";
 
 const exportFormatLabels: Record<ExportFormat, string> = {
   cpa: "CPA",
@@ -1377,13 +1378,11 @@ function AccountConcurrencyCell({ account }: { account: Account }) {
 		const explanation = tx("ui.account_concurrency_unavailable_old_cpa");
 		return <span className="concurrency-unavailable" title={explanation} aria-label={`${tx("ui.unavailable")}: ${explanation}`} tabIndex={0}>{tx("ui.unavailable")}<CircleHelp size={12} aria-hidden="true" /></span>;
 	}
-	if (!account.concurrency.limit) {
-		return <span className="concurrency-unlimited">{tx("ui.unlimited")}</span>;
-	}
-	const saturated = account.concurrency.active >= account.concurrency.limit;
+	const limit = accountConcurrencyLimitLabel(account.concurrency);
+	const saturated = account.concurrency.limit > 0 && account.concurrency.active >= account.concurrency.limit;
 	return (
-		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={tx("ui.account_concurrency_active_limit", { active: account.concurrency.active, limit: account.concurrency.limit })}>
-			<strong>{account.concurrency.active}</strong><span>/</span><strong>{account.concurrency.limit}</strong>
+		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={tx("ui.account_concurrency_active_limit", { active: account.concurrency.active, limit })}>
+			<strong>{account.concurrency.active}</strong><span>/</span><strong>{limit}</strong>
 		</div>
 	);
 }

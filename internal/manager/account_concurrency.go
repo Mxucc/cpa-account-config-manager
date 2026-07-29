@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	accountConcurrencyStoreVersion = 1
-	MaxAccountConcurrencyLimit     = 1000
-	accountConcurrencyLeaseTTL     = 24 * time.Hour
-	selectedAuthMetadataKey        = "selected_auth_id"
+	accountConcurrencyStoreVersion  = 1
+	MaxAccountConcurrencyLimit      = 1000
+	accountConcurrencyLeaseTTL      = 24 * time.Hour
+	accountConcurrencyPruneInterval = time.Minute
+	selectedAuthMetadataKey         = "selected_auth_id"
 )
 
 var (
@@ -66,6 +67,7 @@ type AccountConcurrencyService struct {
 	active     map[string]int
 	requests   map[string]accountConcurrencyAdmission
 	now        func() time.Time
+	nextPrune  time.Time
 	activeGate atomic.Bool
 }
 
@@ -217,10 +219,7 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 		}
 	}
 	limit := s.limits[authID].Limit
-	if limit <= 0 {
-		return cpaapi.RequestInterceptResponse{}, false
-	}
-	if s.active[authID] >= limit {
+	if limit > 0 && s.active[authID] >= limit {
 		return accountConcurrencyRejectedResponse(limit), true
 	}
 	s.active[authID]++
@@ -258,7 +257,6 @@ func (s *AccountConcurrencyService) Complete(completion cpaapi.RequestCompletion
 	} else {
 		s.active[admission.AuthID]--
 	}
-	s.updateActiveGateLocked()
 }
 
 func (s *AccountConcurrencyService) Shutdown() {
@@ -273,10 +271,14 @@ func (s *AccountConcurrencyService) Shutdown() {
 }
 
 func (s *AccountConcurrencyService) updateActiveGateLocked() {
-	s.activeGate.Store(s.hostSchema >= cpaapi.SchemaVersion && (len(s.limits) > 0 || len(s.requests) > 0))
+	s.activeGate.Store(s.hostSchema >= cpaapi.SchemaVersion)
 }
 
 func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {
+	if !s.nextPrune.IsZero() && now.Before(s.nextPrune) {
+		return
+	}
+	s.nextPrune = now.Add(accountConcurrencyPruneInterval)
 	cutoff := now.Add(-accountConcurrencyLeaseTTL)
 	for requestID, admission := range s.requests {
 		if admission.AdmittedAt.After(cutoff) {
@@ -289,7 +291,6 @@ func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {
 			s.active[admission.AuthID]--
 		}
 	}
-	s.updateActiveGateLocked()
 }
 
 func loadAccountConcurrency(path string) (map[string]accountConcurrencyRecord, error) {

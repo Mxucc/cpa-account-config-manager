@@ -216,10 +216,10 @@ func TestHandleMethodNegotiatesLifecycleCapabilityWithHostSchema(t *testing.T) {
 	}
 }
 
-func TestRequestCompletionBypassesMalformedPayloadWithoutConfiguredLimits(t *testing.T) {
+func TestRequestCompletionBypassesMalformedPayloadOnLegacyHost(t *testing.T) {
 	originalApp := pluginApp
 	testApp := manager.NewApp(nil, nil)
-	testApp.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.SchemaVersion)
+	testApp.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.LegacySchemaVersion)
 	pluginApp = testApp
 	defer func() {
 		testApp.Close()
@@ -275,10 +275,10 @@ func TestRequestInterceptorMethodsRemainAvailableWhenExperimentsDisabled(t *test
 	}
 }
 
-func TestRequestInterceptorBypassesMalformedPayloadWhenNoTransformerIsActive(t *testing.T) {
+func TestRequestInterceptorBypassesMalformedPayloadOnLegacyHost(t *testing.T) {
 	originalApp := pluginApp
 	testApp := manager.NewApp(nil, nil)
-	testApp.Configure([]byte("data_dir: " + t.TempDir()))
+	testApp.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.LegacySchemaVersion)
 	pluginApp = testApp
 	defer func() {
 		testApp.Close()

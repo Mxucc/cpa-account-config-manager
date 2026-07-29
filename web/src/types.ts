@@ -166,6 +166,7 @@ export interface QuotaMetadataResponse {
 export interface AccountTokenRefreshResult {
 	account_id: string;
 	provider?: string;
+	refresh_source: "cpa_native" | "plugin_codex";
 	refreshed_at: string;
 	expires_at?: string;
 	refresh_token_rotated: boolean;

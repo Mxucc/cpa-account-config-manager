@@ -65,6 +65,7 @@ describe("BatchEditor", () => {
 		});
 
 		expect(await screen.findByText("当前账号配置")).toBeInTheDocument();
+		expect(screen.getByText("0/∞")).toBeInTheDocument();
 		expect(screen.getByText("http://proxy.example")).toBeInTheDocument();
 		expect(screen.getByText("Authorization, X-Team")).toBeInTheDocument();
 		expect(screen.getByLabelText("Priority 值")).toHaveValue("8");

@@ -113,13 +113,30 @@ func TestAccountConcurrencyMovesARequestSlotWhenCPAFailsOverAccounts(t *testing.
 	}
 }
 
-func TestAccountConcurrencyInactiveGateDoesNotAllocate(t *testing.T) {
+func TestAccountConcurrencyTracksUnlimitedAccounts(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
-	if service.RequestInterceptionActive() {
-		t.Fatal("empty service is active")
+	if !service.RequestInterceptionActive() {
+		t.Fatal("supported service did not activate lifecycle observation")
+	}
+	for index, requestID := range []string{"request-1", "request-2", "request-3"} {
+		if response, changed := service.InterceptRequest(concurrencyRequest(requestID, "auth-unlimited")); changed || response.Terminate {
+			t.Fatalf("unlimited admission %d = %#v, changed %v", index+1, response, changed)
+		}
+	}
+	if got := service.Summary("auth-unlimited"); !got.Supported || got.Limit != 0 || got.Active != 3 {
+		t.Fatalf("unlimited summary = %#v", got)
+	}
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-2", Outcome: "succeeded"})
+	if got := service.Summary("auth-unlimited").Active; got != 2 {
+		t.Fatalf("active after unlimited completion = %d", got)
+	}
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-1", Outcome: "failed"})
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-3", Outcome: "canceled"})
+	if got := service.Summary("auth-unlimited").Active; got != 0 {
+		t.Fatalf("active after all unlimited completions = %d", got)
 	}
 	if allocations := testing.AllocsPerRun(1000, func() { _ = service.RequestInterceptionActive() }); allocations != 0 {
-		t.Fatalf("inactive gate allocations = %f", allocations)
+		t.Fatalf("active gate allocations = %f", allocations)
 	}
 }
 
@@ -143,12 +160,12 @@ func TestAccountConcurrencyDynamicLimitAndClear(t *testing.T) {
 	if response, changed := service.InterceptRequest(concurrencyRequest("request-4", "auth-a")); changed || response.Terminate {
 		t.Fatalf("cleared limit rejected a request: %#v, changed %v", response, changed)
 	}
-	if got := service.Summary("auth-a").Limit; got != 0 {
-		t.Fatalf("cleared limit = %d", got)
+	if got := service.Summary("auth-a"); got.Limit != 0 || got.Active != 3 {
+		t.Fatalf("summary after clearing limit = %#v", got)
 	}
 }
 
-func TestAccountConcurrencyClearKeepsCompletionActiveUntilExistingLeaseEnds(t *testing.T) {
+func TestAccountConcurrencyClearKeepsLifecycleObservationActive(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
 	account := Account{ID: "index-a", AuthID: "auth-a"}
 	if errSet := service.SetLimit(account, 1); errSet != nil {
@@ -163,8 +180,8 @@ func TestAccountConcurrencyClearKeepsCompletionActiveUntilExistingLeaseEnds(t *t
 	}
 
 	service.Complete(cpaapi.RequestCompletion{RequestID: "request-1", Outcome: "succeeded"})
-	if service.RequestInterceptionActive() {
-		t.Fatal("completion callback remained active after the final lease ended")
+	if !service.RequestInterceptionActive() {
+		t.Fatal("supported lifecycle observation stopped after the final lease ended")
 	}
 	if got := service.Summary("auth-a"); got.Active != 0 || got.Limit != 0 {
 		t.Fatalf("summary after clear and completion = %#v", got)

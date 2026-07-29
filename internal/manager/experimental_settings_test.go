@@ -126,7 +126,7 @@ func TestExperimentalSettingsManagementRoutesPersistAndValidate(t *testing.T) {
 	}
 }
 
-func TestExperimentalSettingsEnableRequestHookAndSurviveAppRestart(t *testing.T) {
+func TestExperimentalSettingsEnableTransformationAndSurviveAppRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	config := []byte("data_dir: " + dataDir + "\n")
 	path := "/v0/management/plugins/cpa-account-config-manager/experiments"
@@ -137,10 +137,6 @@ func TestExperimentalSettingsEnableRequestHookAndSurviveAppRestart(t *testing.T)
 
 	first := NewApp(&fakeAuthHost{}, []byte("index"))
 	first.Configure(config)
-	if first.RequestInterceptionActive() || first.RequestInterceptionAcceptsFormat("codex") {
-		first.Close()
-		t.Fatal("disabled experiment armed the request interceptor")
-	}
 	if response := first.HandleRequestAfter(request); len(response.Body) != 0 {
 		first.Close()
 		t.Fatal("disabled experiment unexpectedly transformed the request")
@@ -154,9 +150,9 @@ func TestExperimentalSettingsEnableRequestHookAndSurviveAppRestart(t *testing.T)
 		first.Close()
 		t.Fatalf("PUT status = %d body=%s", response.StatusCode, response.Body)
 	}
-	if !first.RequestInterceptionActive() || !first.RequestInterceptionAcceptsFormat("codex") || first.RequestInterceptionAcceptsFormat("openai") {
+	if !first.RequestInterceptionActive() || !first.RequestInterceptionAcceptsFormat("codex") {
 		first.Close()
-		t.Fatal("enabled experiment did not expose the expected live request-interceptor gate")
+		t.Fatal("enabled experiment did not expose the live request-interceptor gate")
 	}
 	if transformed := first.HandleRequestAfter(request); !containsExperimentalToolPair(transformed.Body) {
 		first.Close()

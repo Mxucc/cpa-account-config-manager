@@ -26,6 +26,7 @@ const account: Account = {
   websockets: true,
   header_names: ["Authorization", "X-Team"],
   header_count: 2,
+	concurrency: { supported: true, active: 10, limit: 0 },
 	model_policy: {
 		mode: "allow_only",
 		models: ["gpt-5.5", "gpt-5.4-mini"],
@@ -63,11 +64,17 @@ it("shows only the safe account detail model and opens single-account editing", 
 	expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
 	expect(screen.getByText("gpt-5.4-mini")).toBeInTheDocument();
 	expect(screen.getByText("插件管理的排除模型").parentElement).toHaveTextContent("2");
+	expect(screen.getByText("10/∞")).toBeInTheDocument();
   expect(screen.getByText("158")).toBeInTheDocument();
   expect(screen.queryByText(/access_token|Bearer secret/i)).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "编辑账号" }));
   expect(onEdit).toHaveBeenCalledTimes(1);
+});
+
+it("shows the live active count with a configured concurrency limit", () => {
+	render(<AccountDetailsDialog account={{ ...account, concurrency: { supported: true, active: 10, limit: 100 } }} onClose={() => undefined} onEdit={() => undefined} />);
+	expect(screen.getByText("10/100")).toBeInTheDocument();
 });
 
 it("localizes the Agent Identity account type", () => {

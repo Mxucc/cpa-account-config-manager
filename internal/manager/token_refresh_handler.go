@@ -27,10 +27,16 @@ func (a *App) handleAccountTokenRefresh(ctx context.Context, req cpaapi.Manageme
 			return jsonResponse(http.StatusConflict, map[string]any{"error": ErrAccountTokenRefreshBusy.Error()})
 		case errors.Is(errRefresh, ErrAccountTokenRefreshUnsupported):
 			return jsonResponse(http.StatusNotImplemented, map[string]any{"error": ErrAccountTokenRefreshUnsupported.Error()})
+		case errors.Is(errRefresh, ErrAccountTokenRefreshProviderUnsupported):
+			return jsonResponse(http.StatusUnprocessableEntity, map[string]any{"error": ErrAccountTokenRefreshProviderUnsupported.Error()})
 		case errors.Is(errRefresh, ErrAccountTokenRefreshCredentialMissing):
 			return jsonResponse(http.StatusUnprocessableEntity, map[string]any{"error": ErrAccountTokenRefreshCredentialMissing.Error()})
 		case errors.Is(errRefresh, ErrAccountTokenRefreshRejected):
 			return jsonResponse(http.StatusUnprocessableEntity, map[string]any{"error": ErrAccountTokenRefreshRejected.Error()})
+		case errors.Is(errRefresh, ErrAccountTokenRefreshConflict):
+			return jsonResponse(http.StatusConflict, map[string]any{"error": ErrAccountTokenRefreshConflict.Error()})
+		case errors.Is(errRefresh, ErrAccountTokenRefreshVerification):
+			return jsonResponse(http.StatusConflict, map[string]any{"error": ErrAccountTokenRefreshVerification.Error()})
 		case errors.Is(errRefresh, ErrAccountTokenRefreshFailed):
 			return jsonResponse(http.StatusBadGateway, map[string]any{"error": ErrAccountTokenRefreshFailed.Error()})
 		default:
@@ -44,7 +50,10 @@ func (a *App) recordTokenRefreshOperation(accountID string, result AccountTokenR
 	status := OperationStatusSucceeded
 	succeeded := 1
 	failed := 0
-	reason := "completed"
+	reason := "token_refreshed_plugin"
+	if result.RefreshSource == "cpa_native" {
+		reason = "token_refreshed_native"
+	}
 	if operationError != nil {
 		status = OperationStatusFailed
 		succeeded = 0
@@ -54,8 +63,14 @@ func (a *App) recordTokenRefreshOperation(accountID string, result AccountTokenR
 			reason = "host_refresh_unsupported"
 		case errors.Is(operationError, ErrAccountTokenRefreshCredentialMissing):
 			reason = "refresh_credential_missing"
+		case errors.Is(operationError, ErrAccountTokenRefreshProviderUnsupported):
+			reason = "refresh_provider_unsupported"
 		case errors.Is(operationError, ErrAccountTokenRefreshRejected):
 			reason = "refresh_rejected"
+		case errors.Is(operationError, ErrAccountTokenRefreshConflict):
+			reason = "refresh_conflict"
+		case errors.Is(operationError, ErrAccountTokenRefreshVerification):
+			reason = "refresh_verification_failed"
 		case errors.Is(operationError, ErrAccountTokenRefreshBusy):
 			reason = "refresh_already_running"
 		default:

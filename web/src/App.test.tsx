@@ -747,6 +747,7 @@ describe("primary account batch flow", () => {
 				return jsonResponse({
 					account_id: "auth-1",
 					provider: "codex",
+					refresh_source: "plugin_codex",
 					refreshed_at: "2026-07-30T08:00:00Z",
 					refresh_token_rotated: true,
 				});
@@ -783,10 +784,12 @@ describe("primary account batch flow", () => {
 		const actionsMenu = await screen.findByRole("menu", { name: "账号操作" });
 		expect(within(actionsMenu).getByRole("menuitem", { name: "刷新令牌" })).toBeEnabled();
 		expect(within(actionsMenu).getByRole("menuitem", { name: "删除账号" })).toBeEnabled();
+		const accountListRequestsBeforeRefresh = requests.filter(({ url }) => url.includes("/accounts?")).length;
 		await user.click(within(actionsMenu).getByRole("menuitem", { name: "刷新令牌" }));
 		await screen.findByText("已刷新 operator@example.com 的凭据");
 		const refreshRequest = requests.find(({ url }) => url.includes("/accounts/token/refresh"));
 		expect(JSON.parse(String(refreshRequest?.init.body))).toEqual({ account_id: "auth-1" });
+		expect(requests.filter(({ url }) => url.includes("/accounts?")).length).toBe(accountListRequestsBeforeRefresh);
 
     await user.click(enabledActions.getByRole("button", { name: "禁用 operator@example.com" }));
     let preview = await screen.findByRole("dialog", { name: "变更预览" });

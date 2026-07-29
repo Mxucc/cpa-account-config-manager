@@ -201,7 +201,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .concurrency-cell { display: inline-flex; align-items: baseline; gap: 4px; min-width: 54px; color: var(--text-secondary); font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }
 .concurrency-cell strong { color: var(--text-primary); font-size: 13px; }
 .concurrency-cell.is-saturated strong:first-child { color: var(--danger); }
-.concurrency-unlimited, .concurrency-unavailable { display: inline-flex; align-items: center; min-height: 24px; color: var(--text-tertiary); font-size: 11px; }
+.concurrency-unavailable { display: inline-flex; align-items: center; min-height: 24px; color: var(--text-tertiary); font-size: 11px; }
 .concurrency-unavailable { gap: 4px; color: var(--warning); cursor: help; outline-offset: 2px; }
 .identity-cell { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .identity-cell strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }

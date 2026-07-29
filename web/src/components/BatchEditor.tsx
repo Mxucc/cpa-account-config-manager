@@ -1,6 +1,7 @@
 import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { AccountConcurrencyAvailability, AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
+import { formatAccountConcurrency } from "../accountConcurrency";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
@@ -353,6 +354,8 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 		? tx("ui.not_managed_by_plugin")
 		: tx(policy.mode === "all" ? "ui.all_models" : policy.mode === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist");
 	const modelNames = policy?.models ?? [];
+	const concurrencyAvailability = config.account_concurrency ?? defaultConcurrencyAvailability;
+	const concurrency = config.concurrency ?? { supported: concurrencyAvailability.supported, active: 0, limit: 0 };
 	return (
 		<section className="current-account-config" aria-label={tx("ui.current_account_configuration")}>
 			<header>
@@ -362,7 +365,7 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 			<dl>
 				<CurrentConfigItem label={tx("ui.enabled_state")} value={tx(config.disabled ? "ui.disable" : "ui.enable")} />
 				<CurrentConfigItem label={tx("ui.priority")} value={config.priority === null ? tx("ui.not_set") : String(config.priority)} mono />
-				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!(config.account_concurrency ?? defaultConcurrencyAvailability).supported ? tx("ui.unavailable") : (config.concurrency?.limit ?? 0) > 0 ? tx("ui.account_concurrency_active_limit", { active: config.concurrency?.active ?? 0, limit: config.concurrency?.limit ?? 0 }) : tx("ui.unlimited")} mono />
+				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!concurrencyAvailability.supported || !concurrency.supported ? tx("ui.unavailable") : formatAccountConcurrency(concurrency)} mono />
 				<CurrentConfigItem label={tx("ui.websockets")} value={config.websockets === null ? tx("ui.not_set") : tx(config.websockets ? "ui.on_2" : "ui.off_2")} />
 				<CurrentConfigItem label={tx("ui.prefix")} value={config.prefix || tx("ui.default")} mono />
 				<CurrentConfigItem label={tx("ui.note")} value={config.note || "-"} wide />

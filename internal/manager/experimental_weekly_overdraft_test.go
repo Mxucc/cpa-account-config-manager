@@ -397,6 +397,143 @@ func TestWeeklyOverdraftExperimentDisablesFiveHourAccountOnlyAfterFiveFailedProb
 	}
 }
 
+func TestFiveHourOverdraftBackgroundInspectionRunsGateBeforeDisable(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 9, 0, 0, 0, time.UTC)
+	resetAt := now.Add(5 * time.Hour)
+	tests := []struct {
+		name          string
+		managementKey string
+		configure     func(*InspectionEngine, *AccountService)
+		wantStatus    string
+		wantAttempts  int
+		wantDisabled  bool
+		wantReason    string
+	}{
+		{
+			name: "first successful overdraft probe keeps the account enabled", managementKey: "management-secret",
+			configure: func(engine *InspectionEngine, _ *AccountService) {
+				engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
+					return ModelTestResult{
+						AccountID: request.AccountID, Model: request.Model, Status: "available", ReasonCode: "model_response_ok",
+						StatusCode: http.StatusOK, TestedAt: now,
+						Experiment: &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: "call_background_five_hour"},
+					}, nil
+				}
+			},
+			wantStatus: InspectionAutoDisableProbePassed, wantAttempts: 1, wantDisabled: false, wantReason: "model_response_ok",
+		},
+		{
+			name: "five explicit failures permit disable", managementKey: "",
+			configure: func(engine *InspectionEngine, _ *AccountService) {
+				engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
+					return ModelTestResult{
+						AccountID: request.AccountID, Model: request.Model, Status: "review", ReasonCode: "quota_limited",
+						StatusCode: http.StatusTooManyRequests, TestedAt: now,
+						Experiment: &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: "call_background_five_hour"},
+					}, nil
+				}
+			},
+			wantStatus: InspectionAutoDisableProbeFailed, wantAttempts: weeklyOverdraftProbeAttempts, wantDisabled: true, wantReason: "quota_limited",
+		},
+		{
+			name: "missing authenticated probe path is inconclusive and never disables", managementKey: "",
+			configure: func(engine *InspectionEngine, accounts *AccountService) {
+				engine.SetModelTestService(NewModelTestService(accounts))
+			},
+			wantStatus: InspectionAutoDisableProbeInconclusive, wantAttempts: 0, wantDisabled: false, wantReason: "management_auth_unavailable",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			host := inspectionEditableHost(false)
+			host.entries[0].Unavailable = true
+			host.entries[0].PlanType = "k12"
+			usage := notificationUsageReader{
+				"inspection-account": notificationCodexUsage(
+					&UsageWindowSnapshot{UsedPercent: 100, WindowMinutes: 300, ResetAt: &resetAt},
+					&UsageWindowSnapshot{UsedPercent: 17, WindowMinutes: 10_080},
+				),
+			}
+			accounts := NewAccountService(host, usage)
+			engine := NewInspectionEngine(accounts, host, NewMutationCoordinator())
+			engine.now = func() time.Time { return now }
+			engine.policy = defaultInspectionPolicy()
+			engine.policy.AutoDisable = true
+			engine.managementKey = test.managementKey
+			engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+			binding, ok := usageBindingForEntry(host.entries[0])
+			if !ok {
+				t.Fatal("five-hour fixture has no stable account identity")
+			}
+			engine.records["inspection-account"] = inspectionRecord{
+				AccountIdentity: binding.Key,
+				Result: InspectionResult{
+					ID: "inspection-account", Provider: "codex", Health: InspectionHealthQuotaLimited,
+					ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowFiveHour,
+					Confidence: InspectionConfidenceHigh, Recommendation: InspectionRecommendationDisable,
+					AutoDisableEligible: true, FailureStreak: 4, LastCheckedAt: now.Add(-time.Minute), SignalSource: InspectionSignalNative,
+				},
+			}
+			test.configure(engine, accounts)
+
+			engine.scanWithMode(context.Background(), false, false, false)
+			results := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 20})
+			if len(results.Results) != 1 {
+				t.Fatalf("background inspection result count = %d", len(results.Results))
+			}
+			result := results.Results[0]
+			if result.QuotaWindow != InspectionQuotaWindowFiveHour || result.AutoDisableProbeStatus != test.wantStatus ||
+				result.AutoDisableProbeAttempts != test.wantAttempts || result.Disabled != test.wantDisabled ||
+				result.AutoDisableProbeReasonCode != test.wantReason {
+				t.Fatalf("background five-hour result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestFiveHourOverdraftGatePublishesRunningStateBeforeProbeCompletes(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
+		close(started)
+		<-release
+		return ModelTestResult{
+			AccountID: request.AccountID, Model: request.Model, Status: "available", ReasonCode: "model_response_ok",
+			StatusCode: http.StatusOK, TestedAt: now,
+			Experiment: &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: "call_pending_five_hour"},
+		}, nil
+	}
+	records := weeklyOverdraftActionRecords(now.Add(5 * time.Hour))
+	record := records["inspection-account"]
+	record.Result.QuotaWindow = InspectionQuotaWindowFiveHour
+	record.Result.LastCheckedAt = now
+	records["inspection-account"] = record
+	engine.records = cloneInspectionRecords(records)
+	policy := defaultInspectionPolicy()
+	policy.AutoDisable = true
+	done := make(chan struct{})
+	go func() {
+		engine.applyAutomaticActions(context.Background(), policy, weeklyOverdraftActionAccounts(), records, now, "", "management-secret")
+		close(done)
+	}()
+	<-started
+	running := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 20})
+	if len(running.Results) != 1 || running.Results[0].AutoDisableProbeStatus != InspectionAutoDisableProbePending ||
+		running.Results[0].AutoDisableProbeAttempts != 0 || running.Results[0].AutoDisableProbeLimit != weeklyOverdraftProbeAttempts {
+		t.Fatalf("running five-hour gate = %#v", running.Results)
+	}
+	close(release)
+	<-done
+	completed := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 20})
+	if completed.Results[0].AutoDisableProbeStatus != InspectionAutoDisableProbePassed || completed.Results[0].AutoDisableProbeAttempts != 1 {
+		t.Fatalf("completed five-hour gate = %#v", completed.Results[0])
+	}
+}
+
 func weeklyUsageWithAuth(record cpaapi.UsageRecord, authIndex string) cpaapi.UsageRecord {
 	record.Provider = "codex"
 	record.AuthIndex = authIndex

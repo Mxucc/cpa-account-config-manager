@@ -1,6 +1,7 @@
 import { Activity, AlertTriangle } from "lucide-react";
 import type { Account, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
+import type { UIMessageKey } from "../i18n/uiText";
 
 export function AccountUsageCell({ account }: { account: Account }) {
   const { locale, t, tx, formatDateTime, formatNumber } = useI18n();
@@ -38,16 +39,16 @@ export function AccountUsageCell({ account }: { account: Account }) {
     exhaustedAction = tx("ui.waiting_for_quota_recovery");
   } else if (account.automation?.auto_action === "disable" && account.automation.auto_action_status === "failed") {
     exhaustedAction = t("automation.disable_failed");
-  } else if (longWindowExhausted && gateStatus === "passed") {
+  } else if (quotaExhausted && gateStatus === "passed") {
     exhaustedAction = tx("ui.weekly_overdraft_probe_passed");
-  } else if (longWindowExhausted && gateStatus === "pending") {
+  } else if (quotaExhausted && gateStatus === "pending") {
     exhaustedAction = tx("ui.weekly_overdraft_probe_running", {
       current: account.automation?.auto_disable_probe_attempts ?? 0,
       total: account.automation?.auto_disable_probe_limit ?? 5,
     });
-  } else if (longWindowExhausted && gateStatus === "inconclusive") {
-    exhaustedAction = tx("ui.weekly_overdraft_probe_inconclusive");
-  } else if (longWindowExhausted && gateStatus === "failed") {
+  } else if (quotaExhausted && gateStatus === "inconclusive") {
+    exhaustedAction = `${tx("ui.weekly_overdraft_probe_inconclusive")} · ${probeReasonLabel(account.automation?.auto_disable_probe_reason_code, tx)}`;
+  } else if (quotaExhausted && gateStatus === "failed") {
     exhaustedAction = tx("ui.weekly_overdraft_probe_failed");
   } else if (account.automation?.auto_disable_enabled) {
     exhaustedAction = t("automation.waiting_disable");
@@ -84,6 +85,19 @@ export function AccountUsageCell({ account }: { account: Account }) {
       )}
     </div>
   );
+}
+
+function probeReasonLabel(reasonCode: string | undefined, tx: (key: UIMessageKey) => string): string {
+  switch (reasonCode) {
+    case "management_auth_unavailable":
+      return tx("ui.weekly_overdraft_probe_management_auth_unavailable");
+    case "experimental_probe_unavailable":
+      return tx("ui.weekly_overdraft_probe_experiment_unavailable");
+    case "request_timeout":
+      return tx("ui.weekly_overdraft_probe_timeout");
+    default:
+      return tx("ui.weekly_overdraft_probe_upstream_unavailable");
+  }
 }
 
 function UsageQuota({ label, window }: { label: "5h" | "7d"; window: UsageWindowSnapshot }) {

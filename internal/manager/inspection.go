@@ -27,6 +27,7 @@ type InspectionEngine struct {
 	backgroundOwner            BackgroundWorkOwner
 	modelTests                 *ModelTestService
 	automaticDisableProbe      automaticDisableProbeRunner
+	probeNeedsManagementAuth   bool
 	deletions                  *AccountDeleteService
 	operations                 *OperationJournal
 	notificationDoer           HTTPDoer
@@ -116,7 +117,9 @@ func (e *InspectionEngine) SetModelTestService(service *ModelTestService) {
 	e.modelTests = service
 	if service == nil {
 		e.automaticDisableProbe = nil
+		e.probeNeedsManagementAuth = false
 	} else {
+		e.probeNeedsManagementAuth = true
 		e.automaticDisableProbe = func(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string) (ModelTestResult, error) {
 			return service.Run(ctx, request, managementBaseURL, managementKey)
 		}

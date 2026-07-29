@@ -219,7 +219,29 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
   const provider = providers[index % providers.length];
   const readOnly = index % 11 === 0;
   const disabled = index % 7 === 0;
-  const automation = mockAutomation(index, disabled);
+  const automation = index === 12 ? {
+    health: "quota_limited",
+    reason_code: "quota_exhausted",
+    recommendation: "disable",
+    last_checked_at: new Date(Date.now() - 30_000).toISOString(),
+    owned_disable: false,
+    auto_disable_eligible: true,
+    inspection_enabled: true,
+    auto_disable_enabled: true,
+    auto_enable_enabled: true,
+    auto_delete_enabled: false,
+    failure_threshold: 3,
+    failure_streak: 4,
+    recovery_threshold: 2,
+    healthy_streak: 0,
+    auto_disable_probe_name: "weekly_overdraft",
+    auto_disable_probe_status: "passed",
+    auto_disable_probe_attempts: 1,
+    auto_disable_probe_limit: 5,
+    auto_disable_probe_reason_code: "model_response_ok",
+    auto_disable_probe_model: defaultOpenAIProbeModel,
+    auto_disable_probe_tested_at: new Date(Date.now() - 30_000).toISOString(),
+  } : mockAutomation(index, disabled);
   const recentRequests = Array.from({ length: 6 }, (_, bucket) => ({
     time: new Date(Date.now() - (5 - bucket) * 10 * 60_000).toISOString(),
     success: (index + bucket * 2) % 7,

@@ -32,6 +32,8 @@ const reasonKeys: Record<string, MessageKey> = {
   request_timeout: "reason.request_timeout",
   quota_limited: "reason.quota_limited",
   no_recent_evidence: "reason.no_recent_evidence",
+  management_auth_unavailable: "reason.management_auth_unavailable",
+  experimental_probe_unavailable: "reason.experimental_probe_unavailable",
 };
 
 function reasonLabel(locale: Locale, reasonCode: string): string {
@@ -134,6 +136,42 @@ export function accountAutomationPresentation(
 
   if (automation.auto_action === "disable" && automation.auto_action_status === "failed") {
     return { badge: t("automation.disable_failed"), detail: withReason(reason, t("automation.disable_retry")), reason, tone: "danger" };
+  }
+
+  if (automation.auto_disable_probe_name === "weekly_overdraft") {
+    const probeReason = reasonLabel(locale, automation.auto_disable_probe_reason_code || "no_recent_evidence");
+    const attempts = automation.auto_disable_probe_attempts ?? 0;
+    const limit = automation.auto_disable_probe_limit ?? 5;
+    switch (automation.auto_disable_probe_status) {
+      case "pending":
+        return {
+          badge: t("automation.overdraft_probe_running"),
+          detail: withReason(reason, t("automation.overdraft_probe_progress", { current: attempts, total: limit })),
+          reason,
+          tone: "info",
+        };
+      case "passed":
+        return {
+          badge: t("automation.overdraft_available"),
+          detail: withReason(reason, t("automation.overdraft_keep_enabled")),
+          reason,
+          tone: "info",
+        };
+      case "inconclusive":
+        return {
+          badge: t("automation.overdraft_probe_inconclusive"),
+          detail: withReason(reason, probeReason),
+          reason,
+          tone: "neutral",
+        };
+      case "failed":
+        return {
+          badge: t("automation.overdraft_probe_failed"),
+          detail: withReason(reason, t("automation.overdraft_probe_progress", { current: attempts, total: limit })),
+          reason,
+          tone: "warning",
+        };
+    }
   }
 
   if (automation.auto_disable_eligible && automation.recommendation === "disable") {

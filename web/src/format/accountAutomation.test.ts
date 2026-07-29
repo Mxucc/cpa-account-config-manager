@@ -194,6 +194,35 @@ describe("accountAutomationPresentation", () => {
     expect(failed?.detail).toContain("下次巡检将重试");
   });
 
+  it("prioritizes five-hour overdraft probe state over generic auto-disable waiting", () => {
+    const passed = accountAutomationPresentation(account(automation({
+      health: "quota_limited",
+      reason_code: "quota_exhausted",
+      recommendation: "disable",
+      auto_disable_enabled: true,
+      auto_disable_probe_name: "weekly_overdraft",
+      auto_disable_probe_status: "passed",
+      auto_disable_probe_attempts: 1,
+      auto_disable_probe_limit: 5,
+    }), false), "zh-CN", now);
+    expect(passed?.badge).toBe("透支可用");
+    expect(passed?.detail).toBe("额度已耗尽 · 保持账号启用");
+
+    const inconclusive = accountAutomationPresentation(account(automation({
+      health: "quota_limited",
+      reason_code: "quota_exhausted",
+      recommendation: "disable",
+      auto_disable_enabled: true,
+      auto_disable_probe_name: "weekly_overdraft",
+      auto_disable_probe_status: "inconclusive",
+      auto_disable_probe_attempts: 0,
+      auto_disable_probe_limit: 5,
+      auto_disable_probe_reason_code: "management_auth_unavailable",
+    }), false), "zh-CN", now);
+    expect(inconclusive?.badge).toBe("透支探测未完成");
+    expect(inconclusive?.detail).toBe("额度已耗尽 · 等待已认证的巡检请求后重试");
+  });
+
   it("returns no disposition when no inspection summary exists", () => {
     expect(accountAutomationPresentation(account(undefined, false), "zh-CN", now)).toBeNull();
   });

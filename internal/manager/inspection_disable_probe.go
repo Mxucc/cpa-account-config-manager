@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ func (e *InspectionEngine) applyAutomaticDisableProbeGates(
 	e.mu.RLock()
 	guards := append([]AutomaticDisableGuard(nil), e.autoDisableGuards...)
 	runner := e.automaticDisableProbe
+	runnerNeedsManagementAuth := e.probeNeedsManagementAuth
 	e.mu.RUnlock()
 
 	tasks := make([]automaticDisableProbeTask, 0)
@@ -50,6 +52,9 @@ func (e *InspectionEngine) applyAutomaticDisableProbeGates(
 			records[id] = record
 			continue
 		}
+		prepareAutomaticDisableProbeResult(&record.Result, plan)
+		records[id] = record
+		e.publishAutomaticDisableProbeRecord(id, record)
 		tasks = append(tasks, automaticDisableProbeTask{id: id, account: account, record: record, plan: plan})
 	}
 	if len(tasks) == 0 {
@@ -65,7 +70,7 @@ func (e *InspectionEngine) applyAutomaticDisableProbeGates(
 		go func() {
 			defer wait.Done()
 			for task := range jobs {
-				result := executeAutomaticDisableProbePlan(ctx, runner, task.account, task.record.Result, task.plan, managementBaseURL, managementKey, e.currentTime)
+				result := executeAutomaticDisableProbePlan(ctx, runner, runnerNeedsManagementAuth, task.account, task.record.Result, task.plan, managementBaseURL, managementKey, e.currentTime)
 				select {
 				case outcomes <- automaticDisableProbeOutcome{id: task.id, result: result}:
 				case <-ctx.Done():
@@ -92,7 +97,26 @@ func (e *InspectionEngine) applyAutomaticDisableProbeGates(
 		record := records[outcome.id]
 		record.Result = outcome.result
 		records[outcome.id] = record
+		e.publishAutomaticDisableProbeRecord(outcome.id, record)
 	}
+}
+
+func (e *InspectionEngine) publishAutomaticDisableProbeRecord(id string, incoming inspectionRecord) {
+	if e == nil || strings.TrimSpace(id) == "" {
+		return
+	}
+	e.mu.Lock()
+	record, exists := e.records[id]
+	if !exists {
+		record = incoming
+	} else {
+		copyAutomaticDisableProbeState(&record.Result, incoming.Result)
+	}
+	e.records[id] = record
+	e.dirty = true
+	e.generation++
+	e.mu.Unlock()
+	e.requestPersist()
 }
 
 func automaticDisableProbePlanFor(guards []AutomaticDisableGuard, account Account, result InspectionResult, preferredModel string) (AutomaticDisableProbePlan, bool) {
@@ -119,6 +143,7 @@ func automaticDisableProbePlanFor(guards []AutomaticDisableGuard, account Accoun
 func executeAutomaticDisableProbePlan(
 	ctx context.Context,
 	runner automaticDisableProbeRunner,
+	runnerNeedsManagementAuth bool,
 	account Account,
 	result InspectionResult,
 	plan AutomaticDisableProbePlan,
@@ -126,13 +151,12 @@ func executeAutomaticDisableProbePlan(
 	managementKey string,
 	now func() time.Time,
 ) InspectionResult {
-	result.AutoDisableProbeName = plan.Name
-	result.AutoDisableProbeStatus = InspectionAutoDisableProbePending
-	result.AutoDisableProbeAttempts = 0
-	result.AutoDisableProbeLimit = plan.AttemptLimit
-	result.AutoDisableProbeReasonCode = ""
-	result.AutoDisableProbeModel = ""
-	result.AutoDisableProbeTestedAt = nil
+	prepareAutomaticDisableProbeResult(&result, plan)
+	if runnerNeedsManagementAuth && !isAgentIdentityProvider(firstNonEmpty(account.Provider, account.Type)) && strings.TrimSpace(managementKey) == "" {
+		result.AutoDisableProbeStatus = InspectionAutoDisableProbeInconclusive
+		result.AutoDisableProbeReasonCode = "management_auth_unavailable"
+		return result
+	}
 	if runner == nil {
 		result.AutoDisableProbeStatus = InspectionAutoDisableProbeInconclusive
 		result.AutoDisableProbeReasonCode = "upstream_unavailable"
@@ -148,9 +172,14 @@ func executeAutomaticDisableProbePlan(
 		request.AccountID = account.ID
 		request.Model = plan.Models[attempt%len(plan.Models)]
 		probe, errRun := runner(ctx, request, managementBaseURL, managementKey)
-		if errRun != nil || probe.Experiment == nil || !probe.Experiment.Applied || probe.Experiment.Name != plan.Name {
+		if errRun != nil {
 			result.AutoDisableProbeStatus = InspectionAutoDisableProbeInconclusive
-			result.AutoDisableProbeReasonCode = "upstream_unavailable"
+			result.AutoDisableProbeReasonCode = automaticDisableProbeFailureReason(errRun)
+			return result
+		}
+		if probe.Experiment == nil || !probe.Experiment.Applied || probe.Experiment.Name != plan.Name {
+			result.AutoDisableProbeStatus = InspectionAutoDisableProbeInconclusive
+			result.AutoDisableProbeReasonCode = "experimental_probe_unavailable"
 			return result
 		}
 		result.AutoDisableProbeAttempts++
@@ -168,6 +197,42 @@ func executeAutomaticDisableProbePlan(
 	}
 	result.AutoDisableProbeStatus = InspectionAutoDisableProbeFailed
 	return result
+}
+
+func prepareAutomaticDisableProbeResult(result *InspectionResult, plan AutomaticDisableProbePlan) {
+	if result == nil {
+		return
+	}
+	result.AutoDisableProbeName = plan.Name
+	result.AutoDisableProbeStatus = InspectionAutoDisableProbePending
+	result.AutoDisableProbeAttempts = 0
+	result.AutoDisableProbeLimit = plan.AttemptLimit
+	result.AutoDisableProbeReasonCode = ""
+	result.AutoDisableProbeModel = ""
+	result.AutoDisableProbeTestedAt = nil
+}
+
+func copyAutomaticDisableProbeState(target *InspectionResult, source InspectionResult) {
+	if target == nil {
+		return
+	}
+	target.AutoDisableProbeName = source.AutoDisableProbeName
+	target.AutoDisableProbeStatus = source.AutoDisableProbeStatus
+	target.AutoDisableProbeAttempts = source.AutoDisableProbeAttempts
+	target.AutoDisableProbeLimit = source.AutoDisableProbeLimit
+	target.AutoDisableProbeReasonCode = source.AutoDisableProbeReasonCode
+	target.AutoDisableProbeModel = source.AutoDisableProbeModel
+	target.AutoDisableProbeTestedAt = cloneTimePointer(source.AutoDisableProbeTestedAt)
+}
+
+func automaticDisableProbeFailureReason(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "request_timeout"
+	}
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "management key is required") {
+		return "management_auth_unavailable"
+	}
+	return "upstream_unavailable"
 }
 
 func safeAutomaticDisableProbeModels(models []string) []string {

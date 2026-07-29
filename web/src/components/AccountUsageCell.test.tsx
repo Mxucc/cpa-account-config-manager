@@ -145,7 +145,7 @@ describe("AccountUsageCell", () => {
     expect(screen.getByRole("status")).toHaveTextContent("额度已用尽等待额度恢复");
   });
 
-  it("shows weekly overdraft probe decisions instead of a generic disable action", () => {
+  it("shows five-hour and weekly overdraft probe decisions instead of a generic disable action", () => {
     const weeklyUsage = {
       input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0,
       cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
@@ -176,5 +176,38 @@ describe("AccountUsageCell", () => {
       usage: weeklyUsage,
     }} />);
     expect(screen.getByRole("status")).toHaveTextContent("额度已用尽透支探测未完成，等待下次巡检");
+
+    rerender(<AccountUsageCell account={{
+      ...baseAccount,
+      automation: {
+        ...quotaAutomation,
+        auto_disable_probe_name: "weekly_overdraft",
+        auto_disable_probe_status: "passed",
+        auto_disable_probe_attempts: 1,
+        auto_disable_probe_limit: 5,
+      },
+      usage: {
+        ...weeklyUsage,
+        codex: { observed_at: "2026-07-29T01:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 }, seven_day: { used_percent: 17, window_minutes: 10_080 } },
+      },
+    }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽透支探测可用，保持启用");
+
+    rerender(<AccountUsageCell account={{
+      ...baseAccount,
+      automation: {
+        ...quotaAutomation,
+        auto_disable_probe_name: "weekly_overdraft",
+        auto_disable_probe_status: "inconclusive",
+        auto_disable_probe_attempts: 0,
+        auto_disable_probe_limit: 5,
+        auto_disable_probe_reason_code: "management_auth_unavailable",
+      },
+      usage: {
+        ...weeklyUsage,
+        codex: { observed_at: "2026-07-29T01:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 }, seven_day: { used_percent: 17, window_minutes: 10_080 } },
+      },
+    }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("额度已用尽透支探测未完成，等待下次巡检 · 等待已认证的巡检请求");
   });
 });

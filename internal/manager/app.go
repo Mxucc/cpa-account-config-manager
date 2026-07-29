@@ -57,6 +57,7 @@ type App struct {
 	accounts        *AccountService
 	deduplication   *AccountDeduplicationService
 	deletions       *AccountDeleteService
+	tokenRefresh    *AccountTokenRefreshService
 	previews        *PreviewService
 	jobs            *JobEngine
 	policies        *PolicyEngine
@@ -127,6 +128,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		accounts:        accounts,
 		deduplication:   NewAccountDeduplicationService(accounts),
 		deletions:       deletions,
+		tokenRefresh:    NewAccountTokenRefreshService(accounts, host),
 		previews:        NewPreviewService(accounts),
 		jobs:            jobs,
 		policies:        policies,
@@ -384,6 +386,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/models", Description: "Load the common effective model catalog for an editable account scope."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/deduplicate/preview", Description: "Find duplicate upstream accounts and return a redacted review plan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test", Description: "Run one bounded account-specific model availability probe through CLIProxyAPI."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/token/refresh", Description: "Refresh one editable account through CPA's native credential refresh coordinator."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/preview", Description: "Preview deletion of one editable physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/delete/start", Description: "Delete one confirmed unchanged physical Auth file."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/preview", Description: "Preview a batch account configuration patch."},
@@ -484,6 +487,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleAccountDeduplicationPreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/model-test":
 		return a.handleAccountModelTest(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/token/refresh":
+		return a.handleAccountTokenRefresh(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/preview":
 		return a.handleAccountDeletePreview(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/delete/start":

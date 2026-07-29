@@ -19,6 +19,7 @@ const (
 	OperationCategoryJournal       = "journal"
 
 	OperationActionDelete                 = "delete"
+	OperationActionTokenRefresh           = "token_refresh"
 	OperationActionModelTest              = "model_test"
 	OperationActionQuotaMetadataRefresh   = "quota_metadata_refresh"
 	OperationActionActiveReset            = "active_reset"
@@ -223,7 +224,7 @@ func normalizeOperationCategory(value string) string {
 
 func normalizeOperationAction(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case OperationActionDelete, OperationActionModelTest, OperationActionQuotaMetadataRefresh, OperationActionActiveReset, OperationActionAutoModelWhitelist, OperationActionAgentIdentityLogin, OperationActionBatchEdit, OperationActionBatchRetry,
+	case OperationActionDelete, OperationActionTokenRefresh, OperationActionModelTest, OperationActionQuotaMetadataRefresh, OperationActionActiveReset, OperationActionAutoModelWhitelist, OperationActionAgentIdentityLogin, OperationActionBatchEdit, OperationActionBatchRetry,
 		OperationActionBatchDelete, OperationActionBatchDeleteRetry, OperationActionImport,
 		OperationActionExportAccounts, OperationActionExportResults, OperationActionPolicySave,
 		OperationActionPolicyScan, OperationActionForceSync, OperationActionInspectionSave,

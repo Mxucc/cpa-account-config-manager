@@ -91,6 +91,7 @@ const sourceLabels: Record<OperationSource, UIMessageKey> = {
 
 const actionLabels: Record<string, UIMessageKey> = {
   delete: "ui.delete_account",
+	token_refresh: "ui.refresh_token",
   model_test: "ui.model_availability_test",
 	quota_metadata_refresh: "ui.refresh_quota_metadata_action",
 	active_reset: "ui.use_active_reset",
@@ -125,6 +126,10 @@ const reasonLabels: Record<string, UIMessageKey> = {
   completed: "ui.completed_2",
   partial_failure: "ui.some_operations_failed",
   operation_failed: "ui.operation_failed",
+	host_refresh_unsupported: "ui.host_refresh_unsupported",
+	refresh_credential_missing: "ui.refresh_credential_missing",
+	refresh_rejected: "ui.refresh_rejected",
+	refresh_already_running: "ui.refresh_already_running",
   interrupted: "ui.operation_interrupted",
   conflict: "ui.account_state_conflict",
   restart_required: "ui.cpa_restart_required",

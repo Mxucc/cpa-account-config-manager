@@ -677,7 +677,8 @@ describe("primary account batch flow", () => {
     expect(screen.getByLabelText("选择 operator@example.com")).not.toBeChecked();
     await user.click(within(rowPreview).getByLabelText("关闭"));
 
-    await user.click(screen.getByRole("button", { name: "删除 operator@example.com" }));
+		await user.click(screen.getByRole("button", { name: "operator@example.com 的更多操作" }));
+		await user.click(within(await screen.findByRole("menu", { name: "账号操作" })).getByRole("menuitem", { name: "删除账号" }));
     const deleteDialog = await screen.findByRole("dialog", { name: "删除账号" });
     const deleteButton = within(deleteDialog).getByRole("button", { name: "删除账号" });
     await waitFor(() => expect(deleteButton).toBeEnabled());
@@ -742,6 +743,14 @@ describe("primary account batch flow", () => {
           targets: [{ id: target.id, name: target.name, provider: target.provider, label: target.label, eligible: true }],
         });
       }
+			if (url.includes("/accounts/token/refresh")) {
+				return jsonResponse({
+					account_id: "auth-1",
+					provider: "codex",
+					refreshed_at: "2026-07-30T08:00:00Z",
+					refresh_token_rotated: true,
+				});
+			}
       return jsonResponse({ accounts: [account, disabledAccount, readOnlyAccount], total: 3, page: 1, page_size: 50, pages: 1 });
     }));
 
@@ -768,6 +777,16 @@ describe("primary account batch flow", () => {
     expect(disabledActions.getByRole("button", { name: "禁用 disabled@example.com" })).toBeDisabled();
     expect(readOnlyActions.getByRole("button", { name: "启用 readonly@example.com" })).toBeDisabled();
     expect(readOnlyActions.getByRole("button", { name: "禁用 readonly@example.com" })).toBeDisabled();
+		expect(enabledActions.queryByRole("button", { name: "删除 operator@example.com" })).not.toBeInTheDocument();
+
+		await user.click(enabledActions.getByRole("button", { name: "operator@example.com 的更多操作" }));
+		const actionsMenu = await screen.findByRole("menu", { name: "账号操作" });
+		expect(within(actionsMenu).getByRole("menuitem", { name: "刷新令牌" })).toBeEnabled();
+		expect(within(actionsMenu).getByRole("menuitem", { name: "删除账号" })).toBeEnabled();
+		await user.click(within(actionsMenu).getByRole("menuitem", { name: "刷新令牌" }));
+		await screen.findByText("已刷新 operator@example.com 的凭据");
+		const refreshRequest = requests.find(({ url }) => url.includes("/accounts/token/refresh"));
+		expect(JSON.parse(String(refreshRequest?.init.body))).toEqual({ account_id: "auth-1" });
 
     await user.click(enabledActions.getByRole("button", { name: "禁用 operator@example.com" }));
     let preview = await screen.findByRole("dialog", { name: "变更预览" });

@@ -346,7 +346,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .row-actions .icon-button { width: 32px; height: 32px; }
 .row-actions .row-enable-action:hover:not(:disabled) { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border-color)); background: var(--success-soft); }
 .row-actions .row-disable-action:hover:not(:disabled) { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, var(--border-color)); background: var(--warning-soft); }
-.row-actions .row-delete-action:hover:not(:disabled) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border-color)); background: var(--danger-soft); }
+.row-actions .row-more-action:hover:not(:disabled), .row-actions .row-more-action[aria-expanded="true"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 42%, var(--border-color)); background: var(--accent-soft); }
+.account-actions-menu { position: fixed; z-index: 1200; width: 196px; padding: 5px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--floating-surface); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18); }
+.account-actions-menu button { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); color: var(--text-primary); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.account-actions-menu button:hover:not(:disabled), .account-actions-menu button:focus-visible { background: var(--surface-2); outline: none; }
+.account-actions-menu button:disabled { opacity: 0.52; cursor: not-allowed; }
+.account-actions-menu button.danger { color: var(--danger); }
+.account-actions-menu button.danger:hover:not(:disabled), .account-actions-menu button.danger:focus-visible { background: var(--danger-soft); }
 .loading-row td { height: 80px; }
 .loading-row span { display: block; width: 100%; height: 14px; border-radius: 6px; background: var(--bg-tertiary); animation: loadingPulse 1s ease-in-out infinite alternate; }
 .empty-state { min-height: 240px; display: grid; place-items: center; color: var(--text-tertiary); font-size: 13px; }

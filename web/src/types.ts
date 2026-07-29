@@ -163,6 +163,14 @@ export interface QuotaMetadataResponse {
 	reset_credit_used?: boolean;
 }
 
+export interface AccountTokenRefreshResult {
+	account_id: string;
+	provider?: string;
+	refreshed_at: string;
+	expires_at?: string;
+	refresh_token_rotated: boolean;
+}
+
 export interface AccountUsageSnapshot {
   input_tokens: number;
   output_tokens: number;

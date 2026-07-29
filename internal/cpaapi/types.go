@@ -48,6 +48,7 @@ const (
 	MethodHostAuthGet            = "host.auth.get"
 	MethodHostAuthGetRuntime     = "host.auth.get_runtime"
 	MethodHostAuthSave           = "host.auth.save"
+	MethodHostAuthRefresh        = "host.auth.refresh"
 )
 
 type Metadata struct {
@@ -530,4 +531,16 @@ type HostAuthSaveRequest struct {
 type HostAuthSaveResponse struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+}
+
+type HostAuthRefreshRequest struct {
+	AuthIndex string `json:"auth_index"`
+}
+
+type HostAuthRefreshResponse struct {
+	AuthIndex           string     `json:"auth_index"`
+	Provider            string     `json:"provider,omitempty"`
+	RefreshedAt         time.Time  `json:"refreshed_at"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	RefreshTokenRotated bool       `json:"refresh_token_rotated"`
 }

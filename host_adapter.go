@@ -49,6 +49,18 @@ func (hostAdapter) SaveAuth(_ context.Context, name string, rawJSON json.RawMess
 	return response, nil
 }
 
+func (hostAdapter) RefreshHostAuth(_ context.Context, authIndex string) (cpaapi.HostAuthRefreshResponse, error) {
+	result, errCall := callHost(cpaapi.MethodHostAuthRefresh, cpaapi.HostAuthRefreshRequest{AuthIndex: authIndex})
+	if errCall != nil {
+		return cpaapi.HostAuthRefreshResponse{}, errCall
+	}
+	var response cpaapi.HostAuthRefreshResponse
+	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+		return cpaapi.HostAuthRefreshResponse{}, fmt.Errorf("decode host auth refresh: %w", errUnmarshal)
+	}
+	return response, nil
+}
+
 func (hostAdapter) AgentIdentityDo(_ context.Context, callbackID string, request cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error) {
 	request.HostCallbackID = callbackID
 	result, errCall := callHost(cpaapi.MethodHostHTTPDo, request)

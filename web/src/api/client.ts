@@ -2,6 +2,7 @@ import { getSession } from "../store/session";
 import type {
   AccountDeletePreview,
   AccountDeleteResult,
+	AccountTokenRefreshResult,
   AccountDeduplicationPreview,
   AccountDeduplicationOptions,
 	AccountEditableConfig,
@@ -310,6 +311,13 @@ export async function testAccountModel(accountID: string, model: string, experim
       ...(experimentalWeeklyOverdraft ? { experimental_weekly_overdraft: true } : {}),
     }),
   });
+}
+
+export async function refreshAccountToken(accountID: string): Promise<AccountTokenRefreshResult> {
+	return request<AccountTokenRefreshResult>("/accounts/token/refresh", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID }),
+	});
 }
 
 export async function loadAccountModels(scope: TargetScope): Promise<AccountModelCatalogResponse> {

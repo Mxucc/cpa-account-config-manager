@@ -29,6 +29,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
 import { AccountDetailsDialog } from "./components/AccountDetailsDialog";
+import { AccountActionsMenu } from "./components/AccountActionsMenu";
 import { AccountDeduplicationDialog } from "./components/AccountDeduplicationDialog";
 import { BatchEditor } from "./components/BatchEditor";
 import { AccountUsageCell } from "./components/AccountUsageCell";
@@ -209,6 +210,7 @@ function AccountManagerApp() {
   const [editorContext, setEditorContext] = useState<EditorContext | null>(null);
   const [detailAccount, setDetailAccount] = useState<Account | null>(null);
 	const [quotaMetadataBusy, setQuotaMetadataBusy] = useState<Record<string, "refresh" | "reset">>({});
+	const [tokenRefreshBusy, setTokenRefreshBusy] = useState<Record<string, boolean>>({});
 	const [quotaResetTarget, setQuotaResetTarget] = useState<Account | null>(null);
   const [modelTestTarget, setModelTestTarget] = useState<Account | null>(null);
   const [modelTestResult, setModelTestResult] = useState<ModelTestResult | null>(null);
@@ -367,6 +369,29 @@ function AccountManagerApp() {
 			else delete next[accountID];
 			return next;
 		});
+	};
+
+	const refreshAccountToken = async (account: Account) => {
+		if (!account.editable || tokenRefreshBusy[account.id]) return;
+		setTokenRefreshBusy((current) => ({ ...current, [account.id]: true }));
+		try {
+			const result = await api.refreshAccountToken(account.id);
+			setData((current) => ({
+				...current,
+				accounts: current.accounts.map((entry) => entry.id === account.id
+					? { ...entry, last_refresh: result.refreshed_at, updated_at: result.refreshed_at }
+					: entry),
+			}));
+			setNotice(tx("ui.token_refreshed_for_account", { account: account.label || account.email || account.name || account.id }));
+		} catch (error) {
+			handleAPIError(error);
+		} finally {
+			setTokenRefreshBusy((current) => {
+				const next = { ...current };
+				delete next[account.id];
+				return next;
+			});
+		}
 	};
 
 	const refreshQuotaMetadata = async (account: Account) => {
@@ -1198,7 +1223,17 @@ function AccountManagerApp() {
                         disabled={previewLoading || !account.editable || account.disabled}
                         onClick={() => beginAccountStatePreview(account, true)}
                       ><PowerOff size={15} /></IconButton>
-                      <IconButton className="row-delete-action" label={account.editable ? tx("ui.delete_account_2", { account: identity }) : readOnlyReason} disabled={!account.editable} onClick={() => void openDelete(account)}><Trash2 size={15} /></IconButton>
+											<AccountActionsMenu
+												label={tx("ui.more_actions_for_account", { account: identity })}
+												menuLabel={tx("ui.account_more_actions")}
+												refreshLabel={tx("ui.refresh_token")}
+												deleteLabel={tx("ui.delete_account")}
+												disabled={!account.editable}
+												disabledReason={readOnlyReason}
+												refreshing={Boolean(tokenRefreshBusy[account.id])}
+												onRefresh={() => void refreshAccountToken(account)}
+												onDelete={() => void openDelete(account)}
+											/>
                     </div>
                   </td>
                 </tr>

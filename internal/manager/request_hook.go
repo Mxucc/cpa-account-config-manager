@@ -105,6 +105,13 @@ func (h *RequestHook) InterceptAfter(request cpaapi.RequestInterceptRequest) cpa
 				response.Headers[name] = append([]string(nil), values...)
 			}
 		}
+		if modification.Terminate {
+			response.Terminate = true
+			response.StatusCode = modification.StatusCode
+			response.ResponseHeaders = modification.ResponseHeaders.Clone()
+			response.ResponseBody = append([]byte(nil), modification.ResponseBody...)
+			break
+		}
 	}
 	return response
 }

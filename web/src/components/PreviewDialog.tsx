@@ -23,6 +23,7 @@ const fieldLabels: Record<string, UIMessageKey> = {
   websockets: "ui.websockets",
   headers: "ui.headers",
 	model_policy: "ui.model_policy",
+	concurrency_limit: "ui.account_concurrency",
 };
 
 export function PreviewDialog({ preview, starting, error = "", onClose, onConfirm }: PreviewDialogProps) {

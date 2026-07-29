@@ -91,6 +91,7 @@ type JobEngine struct {
 	mu              sync.Mutex
 	wait            sync.WaitGroup
 	accounts        *AccountService
+	concurrency     *AccountConcurrencyService
 	mutations       *MutationCoordinator
 	backgroundOwner BackgroundWorkOwner
 	config          Config
@@ -103,6 +104,15 @@ type JobEngine struct {
 	retry           *retryIntent
 	store           string
 	loaded          bool
+}
+
+func (e *JobEngine) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.concurrency = concurrency
+	e.mu.Unlock()
 }
 
 func NewJobEngine(accounts *AccountService) *JobEngine {
@@ -447,7 +457,7 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 			return JobResult{Status: ResultFailed, Error: "account field update failed", Retryable: true}
 		}
 		for _, field := range patch.Summary().Fields {
-			if field != "disabled" {
+			if field != "disabled" && field != "concurrency_limit" {
 				applied = append(applied, field)
 			}
 		}
@@ -464,6 +474,18 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 			return JobResult{Status: ResultFailed, Error: message, AppliedFields: applied, Retryable: true}
 		}
 		applied = append(applied, "disabled")
+	}
+	if patch.ConcurrencyLimit != nil {
+		e.mu.Lock()
+		concurrency := e.concurrency
+		e.mu.Unlock()
+		if concurrency == nil {
+			return JobResult{Status: ResultFailed, Error: "account concurrency service is unavailable", AppliedFields: applied, Retryable: true}
+		}
+		if errConcurrency := concurrency.SetLimit(account, *patch.ConcurrencyLimit); errConcurrency != nil {
+			return JobResult{Status: ResultFailed, Error: "account concurrency update failed", AppliedFields: applied, Retryable: true}
+		}
+		applied = append(applied, "concurrency_limit")
 	}
 	return JobResult{Status: ResultSucceeded, AppliedFields: applied}
 }

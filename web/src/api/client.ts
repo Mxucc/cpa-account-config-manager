@@ -5,6 +5,7 @@ import type {
   AccountDeduplicationPreview,
   AccountDeduplicationOptions,
 	AccountEditableConfig,
+	AccountConcurrencyAvailability,
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
@@ -231,6 +232,13 @@ function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+const legacyAccountConcurrency: AccountConcurrencyAvailability = {
+	supported: false,
+	host_schema_version: 1,
+	required_schema_version: 2,
+	reason: "host_schema_v2_required",
+};
+
 function filtersQuery(filters: AccountFilters): URLSearchParams {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
@@ -254,7 +262,15 @@ export async function listAccounts(
   query.set("page", String(page));
   query.set("page_size", String(pageSize));
   const response = await request<AccountListResponse>("/accounts", {}, query);
-  return { ...response, accounts: arrayOrEmpty(response.accounts) };
+	const availability = response.account_concurrency ?? legacyAccountConcurrency;
+	return {
+		...response,
+		account_concurrency: availability,
+		accounts: arrayOrEmpty(response.accounts).map((account) => ({
+			...account,
+			concurrency: account.concurrency ?? { supported: availability.supported, active: 0, limit: 0 },
+		})),
+	};
 }
 
 export async function loadAccountConfig(accountID: string): Promise<AccountEditableConfig> {
@@ -262,7 +278,13 @@ export async function loadAccountConfig(accountID: string): Promise<AccountEdita
 		method: "POST",
 		body: JSON.stringify({ account_id: accountID }),
 	});
-	return { ...response, header_names: arrayOrEmpty(response.header_names) };
+	const availability = response.account_concurrency ?? legacyAccountConcurrency;
+	return {
+		...response,
+		header_names: arrayOrEmpty(response.header_names),
+		account_concurrency: availability,
+		concurrency: response.concurrency ?? { supported: availability.supported, active: 0, limit: 0 },
+	};
 }
 
 export async function refreshAccountQuotaMetadata(accountID: string): Promise<QuotaMetadataResponse> {

@@ -39,15 +39,16 @@ type Registration struct {
 }
 
 type RegistrationCapabilities struct {
-	ManagementAPI         bool     `json:"management_api"`
-	UsagePlugin           bool     `json:"usage_plugin"`
-	RequestInterceptor    bool     `json:"request_interceptor"`
-	AuthProvider          bool     `json:"auth_provider"`
-	ModelProvider         bool     `json:"model_provider"`
-	Executor              bool     `json:"executor"`
-	ExecutorModelScope    string   `json:"executor_model_scope,omitempty"`
-	ExecutorInputFormats  []string `json:"executor_input_formats,omitempty"`
-	ExecutorOutputFormats []string `json:"executor_output_formats,omitempty"`
+	ManagementAPI          bool     `json:"management_api"`
+	UsagePlugin            bool     `json:"usage_plugin"`
+	RequestInterceptor     bool     `json:"request_interceptor"`
+	RequestLifecyclePlugin bool     `json:"request_lifecycle_plugin"`
+	AuthProvider           bool     `json:"auth_provider"`
+	ModelProvider          bool     `json:"model_provider"`
+	Executor               bool     `json:"executor"`
+	ExecutorModelScope     string   `json:"executor_model_scope,omitempty"`
+	ExecutorInputFormats   []string `json:"executor_input_formats,omitempty"`
+	ExecutorOutputFormats  []string `json:"executor_output_formats,omitempty"`
 }
 
 type App struct {
@@ -70,6 +71,8 @@ type App struct {
 	quotaBootstrap  *accountQuotaMetadataBootstrap
 	managementDoer  HTTPDoer
 	requestHooks    *RequestHook
+	concurrency     *AccountConcurrencyService
+	hostSchema      uint32
 	runtime         *RuntimeOwnership
 	experiments     *ExperimentalSettingsService
 	agentIdentity   *AgentIdentityExperiment
@@ -81,8 +84,11 @@ type App struct {
 func NewApp(host AuthHost, indexHTML []byte) *App {
 	usage := NewUsageTracker()
 	accounts := NewAccountService(host, usage)
+	concurrency := NewAccountConcurrencyService()
+	accounts.SetAccountConcurrency(concurrency)
 	mutations := NewMutationCoordinator()
 	jobs := NewJobEngineWithCoordinator(accounts, mutations)
+	jobs.SetAccountConcurrency(concurrency)
 	policies := NewPolicyEngineWithCoordinator(host, mutations)
 	inspection := NewInspectionEngine(accounts, host, mutations)
 	modelTests := NewModelTestService(accounts, usage)
@@ -102,7 +108,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	imports := NewImportService(host, mutations)
 	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)
-	requestHooks := NewRequestHook(weeklyOverdraft)
+	requestHooks := NewRequestHook(concurrency, weeklyOverdraft)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -134,11 +140,14 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		newAccountProbe: newAccountProbe,
 		quotaBootstrap:  quotaBootstrap,
 		requestHooks:    requestHooks,
+		concurrency:     concurrency,
+		hostSchema:      cpaapi.SchemaVersion,
 		runtime:         runtime,
 		experiments:     experiments,
 		agentIdentity:   agentIdentity,
 		indexHTML:       append([]byte(nil), indexHTML...),
 	}
+	app.previews.SetAccountConcurrency(concurrency)
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
@@ -154,13 +163,20 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 }
 
 func (a *App) Configure(raw []byte) {
+	a.ConfigureHost(raw, cpaapi.SchemaVersion)
+}
+
+func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	if a == nil {
 		return
 	}
 	a.mu.Lock()
 	a.config = ParseConfig(raw)
 	config := a.config
+	a.hostSchema = normalizeHostSchemaVersion(hostSchema)
+	hostSchema = a.hostSchema
 	a.mu.Unlock()
+	a.concurrency.Configure(config, hostSchema)
 	a.runtime.Configure(config)
 	if a.runtime.Snapshot().Superseded {
 		a.quiesceRetiredInstance()
@@ -228,6 +244,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.previews.Clear()
 		a.imports.Shutdown()
 		a.agentIdentity.Clear()
+		a.concurrency.Shutdown()
 		a.usage.Close()
 		if superseded {
 			debug.FreeOSMemory()
@@ -236,8 +253,17 @@ func (a *App) quiesceRetiredInstance() {
 }
 
 func (a *App) Registration() Registration {
+	a.mu.RLock()
+	hostSchema := normalizeHostSchemaVersion(a.hostSchema)
+	a.mu.RUnlock()
+	registrationSchema := cpaapi.LegacySchemaVersion
+	requestLifecycle := false
+	if hostSchema >= cpaapi.SchemaVersion {
+		registrationSchema = cpaapi.SchemaVersion
+		requestLifecycle = true
+	}
 	return Registration{
-		SchemaVersion: cpaapi.SchemaVersion,
+		SchemaVersion: registrationSchema,
 		Metadata: cpaapi.Metadata{
 			Name:             PluginName,
 			Version:          PluginVersion,
@@ -250,7 +276,7 @@ func (a *App) Registration() Registration {
 			},
 		},
 		Capabilities: RegistrationCapabilities{
-			ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true,
+			ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true, RequestLifecyclePlugin: requestLifecycle,
 			AuthProvider: true, ModelProvider: true, Executor: true,
 			ExecutorModelScope:    "oauth",
 			ExecutorInputFormats:  []string{"codex"},
@@ -279,6 +305,17 @@ func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.
 		return cpaapi.RequestInterceptResponse{}
 	}
 	return a.requestHooks.InterceptAfter(request)
+}
+
+func (a *App) HandleRequestComplete(completion cpaapi.RequestCompletion) {
+	if a == nil || a.concurrency == nil {
+		return
+	}
+	a.concurrency.Complete(completion)
+}
+
+func (a *App) RequestCompletionActive() bool {
+	return a != nil && a.concurrency != nil && a.concurrency.RequestInterceptionActive()
 }
 
 func (a *App) HandleAgentIdentityAuthParse(request cpaapi.AuthParseRequest) (cpaapi.AuthParseResponse, error) {

@@ -38,6 +38,7 @@ type Account struct {
 	LastRefresh     *time.Time                 `json:"last_refresh,omitempty"`
 	Automation      *AccountAutomationSummary  `json:"automation,omitempty"`
 	ModelPolicy     *AccountModelPolicySummary `json:"model_policy,omitempty"`
+	Concurrency     AccountConcurrencySummary  `json:"concurrency"`
 
 	detailAuthIndex string
 	path            string
@@ -68,9 +69,10 @@ type ListQuery struct {
 }
 
 type ListResponse struct {
-	Accounts []Account `json:"accounts"`
-	Total    int       `json:"total"`
-	Page     int       `json:"page"`
-	PageSize int       `json:"page_size"`
-	Pages    int       `json:"pages"`
+	Accounts           []Account                      `json:"accounts"`
+	Total              int                            `json:"total"`
+	Page               int                            `json:"page"`
+	PageSize           int                            `json:"page_size"`
+	Pages              int                            `json:"pages"`
+	AccountConcurrency AccountConcurrencyAvailability `json:"account_concurrency"`
 }

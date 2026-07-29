@@ -44,9 +44,10 @@ type UsageIdentityReader interface {
 }
 
 type AccountService struct {
-	host     AuthHost
-	usage    UsageSnapshotReader
-	observer interface{ ObserveAccounts([]Account) }
+	host        AuthHost
+	usage       UsageSnapshotReader
+	concurrency *AccountConcurrencyService
+	observer    interface{ ObserveAccounts([]Account) }
 }
 
 func (s *AccountService) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
@@ -54,6 +55,13 @@ func (s *AccountService) SetObserver(observer interface{ ObserveAccounts([]Accou
 		return
 	}
 	s.observer = observer
+}
+
+func (s *AccountService) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
+	if s == nil {
+		return
+	}
+	s.concurrency = concurrency
 }
 
 type ResolvedTargets struct {
@@ -99,12 +107,20 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 		pages = (total + pageSize - 1) / pageSize
 	}
 	return ListResponse{
-		Accounts: pageAccounts,
-		Total:    total,
-		Page:     page,
-		PageSize: pageSize,
-		Pages:    pages,
+		Accounts:           pageAccounts,
+		Total:              total,
+		Page:               page,
+		PageSize:           pageSize,
+		Pages:              pages,
+		AccountConcurrency: s.accountConcurrencyAvailability(),
 	}, nil
+}
+
+func (s *AccountService) accountConcurrencyAvailability() AccountConcurrencyAvailability {
+	if s == nil || s.concurrency == nil {
+		return AccountConcurrencyAvailability{RequiredSchemaVersion: cpaapi.SchemaVersion, HostSchemaVersion: cpaapi.LegacySchemaVersion, Reason: "host_schema_v2_required"}
+	}
+	return s.concurrency.Availability()
 }
 
 func (s *AccountService) Export(ctx context.Context, filters AccountFilters) ([]Account, error) {
@@ -223,7 +239,11 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	}
 	accounts := make([]Account, 0, len(entries))
 	for _, entry := range entries {
-		accounts = append(accounts, projectHostEntry(entry, pathCounts, indexCounts, s.usage))
+		account := projectHostEntry(entry, pathCounts, indexCounts, s.usage)
+		if s.concurrency != nil {
+			account.Concurrency = s.concurrency.Summary(account.AuthID)
+		}
+		accounts = append(accounts, account)
 	}
 	if s.observer != nil {
 		s.observer.ObserveAccounts(accounts)

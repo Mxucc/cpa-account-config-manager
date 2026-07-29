@@ -1,12 +1,12 @@
 import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
+import type { AccountConcurrencyAvailability, AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-type FieldName = "disabled" | "priority" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
+type FieldName = "disabled" | "priority" | "concurrency_limit" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
 
 interface HeaderRow {
   id: number;
@@ -23,11 +23,13 @@ interface BatchEditorProps {
 	loadModels: () => Promise<AccountModelCatalogResponse>;
 	loadCurrentConfig?: () => Promise<AccountEditableConfig>;
 	onLoadError?: (error: unknown) => void;
+	accountConcurrency?: AccountConcurrencyAvailability;
 }
 
 const initialEnabled: Record<FieldName, boolean> = {
   disabled: false,
   priority: false,
+	concurrency_limit: false,
   note: false,
   prefix: false,
   proxy_url: false,
@@ -36,7 +38,9 @@ const initialEnabled: Record<FieldName, boolean> = {
 	model_policy: false,
 };
 
-export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError }: BatchEditorProps) {
+const defaultConcurrencyAvailability: AccountConcurrencyAvailability = { supported: true, host_schema_version: 2, required_schema_version: 2 };
+
+export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError, accountConcurrency = defaultConcurrencyAvailability }: BatchEditorProps) {
   const { locale, tx } = useI18n();
 	const currentConfigLoader = useRef(loadCurrentConfig);
 	const loadErrorHandler = useRef(onLoadError);
@@ -44,6 +48,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const [enabled, setEnabled] = useState(initialEnabled);
   const [disabled, setDisabled] = useState(false);
   const [priority, setPriority] = useState("0");
+	const [concurrencyLimit, setConcurrencyLimit] = useState("0");
   const [note, setNote] = useState("");
   const [prefix, setPrefix] = useState("");
   const [proxyURL, setProxyURL] = useState("");
@@ -60,6 +65,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 	const [currentConfig, setCurrentConfig] = useState<AccountEditableConfig | null>(null);
 	const [configLoading, setConfigLoading] = useState(Boolean(loadCurrentConfig));
 	const [configError, setConfigError] = useState(false);
+	const concurrencyAvailability = currentConfig?.account_concurrency ?? accountConcurrency;
 
   const anyEnabled = useMemo(() => Object.values(enabled).some(Boolean), [enabled]);
   const toggle = (field: FieldName) => setEnabled((current) => ({ ...current, [field]: !current[field] }));
@@ -73,6 +79,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			setCurrentConfig(config);
 			setDisabled(config.disabled);
 			setPriority(config.priority === null ? "" : String(config.priority));
+			setConcurrencyLimit(String(config.concurrency?.limit ?? 0));
 			setNote(config.note);
 			setPrefix(config.prefix);
 			setWebsockets(config.websockets ?? false);
@@ -146,6 +153,22 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
       }
       patch.priority = Number(priority);
     }
+		if (enabled.concurrency_limit) {
+			if (!concurrencyAvailability.supported) {
+				setError(tx("ui.account_concurrency_unavailable_old_cpa"));
+				return;
+			}
+			if (!/^\d+$/.test(concurrencyLimit.trim())) {
+				setError(tx("ui.account_concurrency_must_be_an_integer"));
+				return;
+			}
+			const parsed = Number(concurrencyLimit);
+			if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1000) {
+				setError(tx("ui.account_concurrency_range"));
+				return;
+			}
+			patch.concurrency_limit = parsed;
+		}
     if (enabled.note) patch.note = note;
     if (enabled.prefix) patch.prefix = prefix;
     if (enabled.proxy_url) patch.proxy_url = proxyURL;
@@ -222,6 +245,12 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         <EditRow checked={enabled.priority} label={tx("ui.priority")} onToggle={togglePriority}>
           <input value={priority} onChange={(event) => setPriority(event.target.value)} inputMode="numeric" disabled={!enabled.priority} aria-label={tx("ui.priority_value")} />
         </EditRow>
+				<EditRow checked={enabled.concurrency_limit} label={tx("ui.account_concurrency")} onToggle={() => toggle("concurrency_limit")} disabled={!concurrencyAvailability.supported}>
+					<div className="concurrency-editor-control">
+						<input type="number" min="0" max="1000" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} disabled={!enabled.concurrency_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_value")} />
+						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_zero_unlimited") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
+					</div>
+				</EditRow>
         <EditRow checked={enabled.note} label={tx("ui.note")} onToggle={() => toggle("note")}>
           <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} disabled={!enabled.note} aria-label={tx("ui.note_value")} />
         </EditRow>
@@ -333,6 +362,7 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 			<dl>
 				<CurrentConfigItem label={tx("ui.enabled_state")} value={tx(config.disabled ? "ui.disable" : "ui.enable")} />
 				<CurrentConfigItem label={tx("ui.priority")} value={config.priority === null ? tx("ui.not_set") : String(config.priority)} mono />
+				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!(config.account_concurrency ?? defaultConcurrencyAvailability).supported ? tx("ui.unavailable") : (config.concurrency?.limit ?? 0) > 0 ? tx("ui.account_concurrency_active_limit", { active: config.concurrency?.active ?? 0, limit: config.concurrency?.limit ?? 0 }) : tx("ui.unlimited")} mono />
 				<CurrentConfigItem label={tx("ui.websockets")} value={config.websockets === null ? tx("ui.not_set") : tx(config.websockets ? "ui.on_2" : "ui.off_2")} />
 				<CurrentConfigItem label={tx("ui.prefix")} value={config.prefix || tx("ui.default")} mono />
 				<CurrentConfigItem label={tx("ui.note")} value={config.note || "-"} wide />
@@ -354,11 +384,11 @@ function CurrentConfigItem({ label, value, mono = false, wide = false }: { label
 	return <div className={wide ? "is-wide" : ""}><dt>{label}</dt><dd className={mono ? "is-mono" : ""} title={value}>{value}</dd></div>;
 }
 
-function EditRow({ checked, label, onToggle, children }: { checked: boolean; label: string; onToggle: () => void; children: React.ReactNode }) {
+function EditRow({ checked, label, onToggle, children, disabled = false }: { checked: boolean; label: string; onToggle: () => void; children: React.ReactNode; disabled?: boolean }) {
   return (
     <div className={`edit-row ${checked ? "is-enabled" : ""}`}>
       <label className="edit-optin">
-        <input type="checkbox" checked={checked} onChange={onToggle} />
+        <input type="checkbox" checked={checked} onChange={onToggle} disabled={disabled} />
         <span>{label}</span>
       </label>
       <div className="edit-control">{children}</div>

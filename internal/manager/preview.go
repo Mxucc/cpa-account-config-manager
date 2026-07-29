@@ -80,9 +80,17 @@ type previewStore struct {
 }
 
 type PreviewService struct {
-	accounts *AccountService
-	store    *previewStore
-	now      func() time.Time
+	accounts    *AccountService
+	concurrency *AccountConcurrencyService
+	store       *previewStore
+	now         func() time.Time
+}
+
+func (s *PreviewService) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
+	if s == nil {
+		return
+	}
+	s.concurrency = concurrency
 }
 
 func NewPreviewService(accounts *AccountService) *PreviewService {
@@ -164,6 +172,9 @@ func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPat
 	patch, errPatch := rawPatch.Validate()
 	if errPatch != nil {
 		return previewSnapshot{}, errPatch
+	}
+	if patch.ConcurrencyLimit != nil && (s.concurrency == nil || !s.concurrency.Availability().Supported) {
+		return previewSnapshot{}, ErrAccountConcurrencyUnsupported
 	}
 	resolved, errResolve := s.accounts.ResolveTargets(ctx, scope)
 	if errResolve != nil {

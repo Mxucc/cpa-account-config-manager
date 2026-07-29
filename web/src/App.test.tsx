@@ -324,7 +324,7 @@ describe("primary account batch flow", () => {
     expect(screen.getByText("账号列表")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "类型" })).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-			"", "账号", "提供方", "类型", "用量", "主动重置次数", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
+			"", "账号", "提供方", "类型", "用量", "主动重置次数", "账号并发", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
     ]);
     expect(screen.getByText("k12", { selector: ".account-plan-type" })).toBeInTheDocument();
     expect(screen.getByLabelText("每页账号数")).toHaveValue("50");
@@ -1145,7 +1145,7 @@ describe("primary account batch flow", () => {
     await user.click(screen.getByRole("button", { name: "覆盖 1 个文件" }));
     expect(await screen.findByRole("complementary", { name: "默认策略强制同步" })).toBeInTheDocument();
     expect(await screen.findByText("成功", { selector: ".result-status" }, { timeout: 2000 })).toBeInTheDocument();
-    expect(screen.getByText("priority, websockets")).toBeInTheDocument();
+    expect(screen.getByText("优先级, WebSockets")).toBeInTheDocument();
     expect(forceStatusCalls).toBeGreaterThanOrEqual(2);
 
     const putRequest = requests.find(({ url, init }) => url.endsWith("/defaults") && init.method === "PUT");

@@ -21,16 +21,18 @@ type AccountConfigRequest struct {
 }
 
 type AccountEditableConfig struct {
-	AccountID       string                     `json:"account_id"`
-	Disabled        bool                       `json:"disabled"`
-	Priority        *int                       `json:"priority"`
-	Note            string                     `json:"note"`
-	Prefix          string                     `json:"prefix"`
-	Proxy           string                     `json:"proxy"`
-	ProxyConfigured bool                       `json:"proxy_configured"`
-	Websockets      *bool                      `json:"websockets"`
-	HeaderNames     []string                   `json:"header_names"`
-	ModelPolicy     *AccountModelPolicySummary `json:"model_policy"`
+	AccountID               string                         `json:"account_id"`
+	Disabled                bool                           `json:"disabled"`
+	Priority                *int                           `json:"priority"`
+	Note                    string                         `json:"note"`
+	Prefix                  string                         `json:"prefix"`
+	Proxy                   string                         `json:"proxy"`
+	ProxyConfigured         bool                           `json:"proxy_configured"`
+	Websockets              *bool                          `json:"websockets"`
+	HeaderNames             []string                       `json:"header_names"`
+	ModelPolicy             *AccountModelPolicySummary     `json:"model_policy"`
+	Concurrency             AccountConcurrencySummary      `json:"concurrency"`
+	ConcurrencyAvailability AccountConcurrencyAvailability `json:"account_concurrency"`
 }
 
 func (s *AccountService) EditableConfig(ctx context.Context, rawAccountID string) (AccountEditableConfig, error) {
@@ -54,16 +56,18 @@ func (s *AccountService) EditableConfig(ctx context.Context, rawAccountID string
 		return AccountEditableConfig{}, ErrAccountConfigReadOnly
 	}
 	return AccountEditableConfig{
-		AccountID:       account.ID,
-		Disabled:        account.Disabled,
-		Priority:        cloneIntPointer(account.Priority),
-		Note:            account.Note,
-		Prefix:          account.Prefix,
-		Proxy:           account.Proxy,
-		ProxyConfigured: account.ProxyConfigured,
-		Websockets:      cloneBoolPointer(account.Websockets),
-		HeaderNames:     append([]string{}, account.HeaderNames...),
-		ModelPolicy:     cloneAccountModelPolicySummary(account.ModelPolicy),
+		AccountID:               account.ID,
+		Disabled:                account.Disabled,
+		Priority:                cloneIntPointer(account.Priority),
+		Note:                    account.Note,
+		Prefix:                  account.Prefix,
+		Proxy:                   account.Proxy,
+		ProxyConfigured:         account.ProxyConfigured,
+		Websockets:              cloneBoolPointer(account.Websockets),
+		HeaderNames:             append([]string{}, account.HeaderNames...),
+		ModelPolicy:             cloneAccountModelPolicySummary(account.ModelPolicy),
+		Concurrency:             account.Concurrency,
+		ConcurrencyAvailability: s.accountConcurrencyAvailability(),
 	}, nil
 }
 

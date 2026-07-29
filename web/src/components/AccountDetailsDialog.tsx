@@ -92,6 +92,7 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
 
 		<DetailSection title={tx("ui.plugin_configuration")}>
 			<DetailItem label={tx("ui.plugin_configuration_state")} value={tx(modelPolicy ? "ui.managed_by_plugin" : "ui.not_managed_by_plugin")} />
+			<DetailItem label={tx("ui.account_concurrency")} value={!account.concurrency?.supported ? tx("ui.unavailable") : account.concurrency.limit > 0 ? tx("ui.account_concurrency_active_limit", { active: account.concurrency.active, limit: account.concurrency.limit }) : tx("ui.unlimited")} mono />
 			<DetailItem label={tx("ui.model_policy_mode")} value={modelPolicyMode} />
 			<DetailItem label={tx("ui.managed_model_exclusions")} value={modelPolicy?.excluded_count ?? 0} mono />
 			<div className="detail-item detail-item-wide">

@@ -178,6 +178,66 @@ func TestHandleMethodRegistersManagementCapability(t *testing.T) {
 	}
 }
 
+func TestHandleMethodNegotiatesLifecycleCapabilityWithHostSchema(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	for _, test := range []struct {
+		schema        uint32
+		wantLifecycle bool
+	}{
+		{schema: cpaapi.LegacySchemaVersion, wantLifecycle: false},
+		{schema: cpaapi.SchemaVersion, wantLifecycle: true},
+	} {
+		rawRequest, errMarshal := json.Marshal(lifecycleRequest{ConfigYAML: []byte("data_dir: " + t.TempDir()), SchemaVersion: test.schema})
+		if errMarshal != nil {
+			t.Fatalf("Marshal() error = %v", errMarshal)
+		}
+		raw, errHandle := handleMethod(cpaapi.MethodPluginRegister, rawRequest)
+		if errHandle != nil {
+			t.Fatalf("handleMethod(schema %d) error = %v", test.schema, errHandle)
+		}
+		result, errDecode := decodeEnvelopeResult(raw)
+		if errDecode != nil {
+			t.Fatalf("decode schema %d result: %v", test.schema, errDecode)
+		}
+		var registration manager.Registration
+		if errUnmarshal := json.Unmarshal(result, &registration); errUnmarshal != nil {
+			t.Fatalf("Unmarshal(schema %d) error = %v", test.schema, errUnmarshal)
+		}
+		if registration.SchemaVersion != test.schema || registration.Capabilities.RequestLifecyclePlugin != test.wantLifecycle {
+			t.Fatalf("registration for schema %d = %#v", test.schema, registration)
+		}
+	}
+}
+
+func TestRequestCompletionBypassesMalformedPayloadWithoutConfiguredLimits(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.SchemaVersion)
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	raw, errHandle := handleMethod(cpaapi.MethodRequestComplete, []byte("not-json"))
+	if errHandle != nil {
+		t.Fatalf("handleMethod() error = %v", errHandle)
+	}
+	if _, errDecode := decodeEnvelopeResult(raw); errDecode != nil {
+		t.Fatalf("completion bypass result error = %v", errDecode)
+	}
+	if methodNeedsRequestPayload(cpaapi.MethodRequestComplete) {
+		t.Fatal("inactive completion requested a CGO payload copy")
+	}
+}
+
 func TestRequestInterceptorMethodsRemainAvailableWhenExperimentsDisabled(t *testing.T) {
 	originalApp := pluginApp
 	testApp := manager.NewApp(nil, nil)

@@ -34,6 +34,20 @@ export interface Account {
   last_refresh?: string;
   automation?: AccountAutomationSummary;
 	model_policy?: AccountModelPolicySummary;
+	concurrency?: AccountConcurrencySummary;
+}
+
+export interface AccountConcurrencyAvailability {
+	supported: boolean;
+	host_schema_version: number;
+	required_schema_version: number;
+	reason?: "host_schema_v2_required";
+}
+
+export interface AccountConcurrencySummary {
+	supported: boolean;
+	limit: number;
+	active: number;
 }
 
 export type ModelPolicyMode = "all" | "allow_only" | "deny_only";
@@ -55,6 +69,8 @@ export interface AccountEditableConfig {
 	websockets: boolean | null;
 	header_names: string[];
 	model_policy: AccountModelPolicySummary | null;
+	concurrency?: AccountConcurrencySummary;
+	account_concurrency?: AccountConcurrencyAvailability;
 }
 
 export interface ModelPolicyPatch {
@@ -176,6 +192,7 @@ export interface AccountListResponse {
   page: number;
   page_size: number;
   pages: number;
+	account_concurrency?: AccountConcurrencyAvailability;
 }
 
 export type AccountDeduplicationMatch = "account_id" | "email" | "multiple";
@@ -326,6 +343,7 @@ export interface BatchPatch {
   websockets?: boolean;
   headers?: HeaderPatch;
 	model_policy?: ModelPolicyPatch;
+	concurrency_limit?: number;
 }
 
 export interface TargetScope {

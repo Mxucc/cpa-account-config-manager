@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	ABIVersion    uint32 = 1
-	SchemaVersion uint32 = 1
+	ABIVersion          uint32 = 1
+	LegacySchemaVersion uint32 = 1
+	SchemaVersion       uint32 = 2
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	MethodManagementHandle       = "management.handle"
 	MethodRequestInterceptBefore = "request.intercept_before"
 	MethodRequestInterceptAfter  = "request.intercept_after"
+	MethodRequestComplete        = "request.complete"
 	MethodUsageHandle            = "usage.handle"
 	MethodAuthIdentifier         = "auth.identifier"
 	MethodAuthParse              = "auth.parse"
@@ -105,6 +107,8 @@ type ManagementResponse struct {
 }
 
 type RequestInterceptRequest struct {
+	RequestID      string         `json:"RequestID"`
+	TraceID        string         `json:"TraceID"`
 	SourceFormat   string         `json:"SourceFormat"`
 	ToFormat       string         `json:"ToFormat"`
 	Model          string         `json:"Model"`
@@ -116,9 +120,28 @@ type RequestInterceptRequest struct {
 }
 
 type RequestInterceptResponse struct {
-	Headers      http.Header `json:"Headers,omitempty"`
-	Body         []byte      `json:"Body,omitempty"`
-	ClearHeaders []string    `json:"ClearHeaders,omitempty"`
+	Headers         http.Header `json:"Headers,omitempty"`
+	Body            []byte      `json:"Body,omitempty"`
+	ClearHeaders    []string    `json:"ClearHeaders,omitempty"`
+	Terminate       bool        `json:"Terminate,omitempty"`
+	StatusCode      int         `json:"StatusCode,omitempty"`
+	ResponseHeaders http.Header `json:"ResponseHeaders,omitempty"`
+	ResponseBody    []byte      `json:"ResponseBody,omitempty"`
+}
+
+type RequestCompletion struct {
+	RequestID      string         `json:"RequestID"`
+	TraceID        string         `json:"TraceID"`
+	SourceFormat   string         `json:"SourceFormat"`
+	Model          string         `json:"Model"`
+	RequestedModel string         `json:"RequestedModel"`
+	Stream         bool           `json:"Stream"`
+	Outcome        string         `json:"Outcome"`
+	StatusCode     int            `json:"StatusCode"`
+	Error          string         `json:"Error"`
+	StartedAt      time.Time      `json:"StartedAt"`
+	CompletedAt    time.Time      `json:"CompletedAt"`
+	Metadata       map[string]any `json:"Metadata"`
 }
 
 type IdentifierResponse struct {

@@ -115,6 +115,7 @@ function applyCompletedAccountPatch(current: AccountListResponse, job: JobSnapsh
         ...account,
         ...(patch.disabled !== undefined ? { disabled: patch.disabled } : {}),
         ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+				...(patch.concurrency_limit !== undefined ? { concurrency: { supported: account.concurrency?.supported ?? current.account_concurrency?.supported ?? false, active: account.concurrency?.active ?? 0, limit: patch.concurrency_limit } } : {}),
         ...(patch.note !== undefined ? { note: patch.note } : {}),
         ...(patch.prefix !== undefined ? { prefix: patch.prefix } : {}),
         ...(patch.proxy_url !== undefined ? { proxy_configured: patch.proxy_url.trim() !== "" } : {}),
@@ -199,7 +200,7 @@ function AccountManagerApp() {
   const [searchDraft, setSearchDraft] = useState(() => readAccountFilters().search);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(readAccountPageSize);
-  const [data, setData] = useState<AccountListResponse>({ accounts: [], total: 0, page: 1, page_size: DEFAULT_ACCOUNT_PAGE_SIZE, pages: 0 });
+  const [data, setData] = useState<AccountListResponse>({ accounts: [], total: 0, page: 1, page_size: DEFAULT_ACCOUNT_PAGE_SIZE, pages: 0, account_concurrency: { supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" } });
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
@@ -1132,13 +1133,13 @@ function AccountManagerApp() {
           <table className="account-table">
             <colgroup>
               <col className="col-select" /><col className="col-identity" /><col className="col-provider" />
-								<col className="col-type" /><col className="col-activity" /><col className="col-active-reset" /><col className="col-updated" /><col className="col-access" />
+								<col className="col-type" /><col className="col-activity" /><col className="col-active-reset" /><col className="col-concurrency" /><col className="col-updated" /><col className="col-access" />
               <col className="col-state" /><col className="col-priority" /><col className="col-routing" /><col className="col-actions" />
             </colgroup>
             <thead>
               <tr>
                 <th className="select-header"><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label={tx("ui.select_editable_accounts_on_this_page")} /></th>
-								<th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.active_reset_count")}</th><th>{tx("ui.updated")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
+								<th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.active_reset_count")}</th><th>{tx("ui.account_concurrency")}</th><th>{tx("ui.updated")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1159,6 +1160,7 @@ function AccountManagerApp() {
                   <td><AccountTypeCell account={account} /></td>
                   <td><AccountUsageCell account={account} /></td>
 									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
+									<td><AccountConcurrencyCell account={account} /></td>
                   <td><time>{formatDateTime(account.updated_at || account.last_refresh)}</time></td>
                   <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />{tx("ui.editable")}</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason, locale)}><LockKeyhole size={13} />{tx("ui.read_only")}</span>}</td>
                   <td><StateCell account={account} /></td>
@@ -1259,7 +1261,7 @@ function AccountManagerApp() {
 
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
-      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} loadModels={() => api.loadAccountModels(editorContext.scope)} loadCurrentConfig={editorContext.accountID ? () => api.loadAccountConfig(editorContext.accountID || "") : undefined} onLoadError={(error) => { if (error instanceof api.APIError && error.status === 401) { setEditorContext(null); handleAPIError(error); } }} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
+      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} accountConcurrency={data.account_concurrency} loadModels={() => api.loadAccountModels(editorContext.scope)} loadCurrentConfig={editorContext.accountID ? () => api.loadAccountConfig(editorContext.accountID || "") : undefined} onLoadError={(error) => { if (error instanceof api.APIError && error.status === 401) { setEditorContext(null); handleAPIError(error); } }} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
       {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
 			{quotaResetTarget ? (
 				<Modal
@@ -1321,6 +1323,22 @@ function AccountQuotaMetadataCell({ account, busy, onRefresh, onReset }: { accou
 	);
 }
 
+function AccountConcurrencyCell({ account }: { account: Account }) {
+	const { tx } = useI18n();
+	if (!account.concurrency?.supported) {
+		return <span className="concurrency-unavailable" title={tx("ui.account_concurrency_unavailable_old_cpa")}>{tx("ui.unavailable")}</span>;
+	}
+	if (!account.concurrency.limit) {
+		return <span className="concurrency-unlimited">{tx("ui.unlimited")}</span>;
+	}
+	const saturated = account.concurrency.active >= account.concurrency.limit;
+	return (
+		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={tx("ui.account_concurrency_active_limit", { active: account.concurrency.active, limit: account.concurrency.limit })}>
+			<strong>{account.concurrency.active}</strong><span>/</span><strong>{account.concurrency.limit}</strong>
+		</div>
+	);
+}
+
 function StateCell({ account }: { account: Account }) {
   const { locale, tx } = useI18n();
   const status = accountState(account);
@@ -1353,7 +1371,7 @@ function RoutingCell({ account }: { account: Account }) {
 }
 
 function LoadingRows() {
-	return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={12}><span /></td></tr>)}</>;
+	return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={13}><span /></td></tr>)}</>;
 }
 
 function errorText(error: unknown, locale: Locale = "zh-CN"): string {

@@ -20,6 +20,27 @@ describe("BatchEditor", () => {
     expect(submit).toHaveBeenCalledWith({ note: "batch-note" });
   });
 
+	it("submits an explicitly enabled account concurrency limit", async () => {
+		const user = userEvent.setup();
+		const submit = vi.fn();
+		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} accountConcurrency={{ supported: true, host_schema_version: 2, required_schema_version: 2 }} onClose={() => undefined} onSubmit={submit} />);
+
+		await user.click(screen.getByRole("checkbox", { name: "账号并发" }));
+		await user.clear(screen.getByLabelText("账号并发值"));
+		await user.type(screen.getByLabelText("账号并发值"), "3");
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+		expect(submit).toHaveBeenCalledWith({ concurrency_limit: 3 });
+	});
+
+	it("explains and disables account concurrency on legacy CPA hosts", () => {
+		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} accountConcurrency={{ supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" }} onClose={() => undefined} onSubmit={() => undefined} />);
+
+		expect(screen.getByRole("checkbox", { name: "账号并发" })).toBeDisabled();
+		expect(screen.getByText(/当前 CPA 版本不支持账号并发控制/)).toBeInTheDocument();
+		expect(screen.getByLabelText("账号并发值")).toBeDisabled();
+	});
+
 	it("loads current single-account values while keeping the patch explicitly opted in", async () => {
 		const user = userEvent.setup();
 		const submit = vi.fn();

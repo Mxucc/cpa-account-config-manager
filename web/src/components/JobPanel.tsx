@@ -43,6 +43,18 @@ const resultLabels: Record<string, UIMessageKey> = {
   interrupted: "ui.interrupted",
 };
 
+const appliedFieldLabels: Record<string, UIMessageKey> = {
+	disabled: "ui.enabled_state",
+	priority: "ui.priority",
+	concurrency_limit: "ui.account_concurrency",
+	note: "ui.note",
+	prefix: "ui.prefix",
+	proxy_url: "ui.proxy_url",
+	websockets: "ui.websockets",
+	headers: "ui.headers",
+	model_policy: "ui.model_policy",
+};
+
 export function JobPanel({ job, title = "ui.batch_job", ariaLabel = "ui.batch_job", retrying = false, fields = [], onClose, onRetry, onExport, onRefresh }: JobPanelProps) {
   const { locale, tx } = useI18n();
   const progress = job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
@@ -88,7 +100,7 @@ export function JobPanel({ job, title = "ui.batch_job", ariaLabel = "ui.batch_jo
               <span>{result.provider || tx("ui.unknown")}</span>
               {result.error ? <small>{operatorMessage(result.error, locale)}</small> : null}
             </div>
-            <span className="job-result-fields">{job.operation === "delete" && result.status === "succeeded" ? tx("ui.deleted") : result.applied_fields?.join(", ") || "-"}</span>
+            <span className="job-result-fields">{job.operation === "delete" && result.status === "succeeded" ? tx("ui.deleted") : result.applied_fields?.map((field) => tx(appliedFieldLabels[field] ?? "ui.unknown")).join(", ") || "-"}</span>
           </div>
         ))}
         {!job.results?.length ? <div className="empty-state compact">{tx("ui.no_item_results_yet")}</div> : null}

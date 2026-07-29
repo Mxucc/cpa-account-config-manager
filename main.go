@@ -12,7 +12,8 @@ import (
 )
 
 type lifecycleRequest struct {
-	ConfigYAML []byte `json:"config_yaml"`
+	ConfigYAML    []byte `json:"config_yaml"`
+	SchemaVersion uint32 `json:"schema_version"`
 }
 
 var pluginApp = manager.NewApp(hostAdapter{}, web.IndexHTML())
@@ -52,7 +53,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				return nil, fmt.Errorf("decode lifecycle request: %w", errUnmarshal)
 			}
 		}
-		pluginApp.Configure(lifecycle.ConfigYAML)
+		pluginApp.ConfigureHost(lifecycle.ConfigYAML, lifecycle.SchemaVersion)
 		return okEnvelope(pluginApp.Registration())
 	case cpaapi.MethodManagementRegister:
 		return okEnvelope(pluginApp.ManagementRegistration())
@@ -179,6 +180,16 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			}
 		}
 		return okEnvelope(pluginApp.HandleRequestAfter(interceptRequest))
+	case cpaapi.MethodRequestComplete:
+		if !pluginApp.RequestCompletionActive() || len(request) == 0 {
+			return okEnvelope(struct{}{})
+		}
+		var completion cpaapi.RequestCompletion
+		if errUnmarshal := json.Unmarshal(request, &completion); errUnmarshal != nil {
+			return nil, fmt.Errorf("decode request completion input: %w", errUnmarshal)
+		}
+		pluginApp.HandleRequestComplete(completion)
+		return okEnvelope(struct{}{})
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
@@ -223,6 +234,8 @@ func methodNeedsRequestPayload(method string) bool {
 		return false
 	case cpaapi.MethodRequestInterceptAfter:
 		return pluginApp.RequestInterceptionActive()
+	case cpaapi.MethodRequestComplete:
+		return pluginApp.RequestCompletionActive()
 	default:
 		return true
 	}

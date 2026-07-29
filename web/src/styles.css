@@ -170,7 +170,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .table-title > strong { min-width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--primary-color) 18%, transparent); color: var(--primary-active); font-size: 12px; font-variant-numeric: tabular-nums; }
 .table-meta > span { white-space: nowrap; }
 .table-scroll { max-width: 100%; overflow: auto; overscroll-behavior-inline: contain; background: var(--bg-primary); }
-.account-table { width: 100%; min-width: 1608px; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: var(--text-primary); }
+.account-table { width: 100%; min-width: 1728px; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: var(--text-primary); }
 .account-table .col-select { width: 42px; }
 .account-table .col-identity { width: 250px; }
 .account-table .col-provider { width: 120px; }
@@ -180,6 +180,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .account-table .col-routing { width: 205px; }
 .account-table .col-activity { width: 205px; }
 .account-table .col-active-reset { width: 138px; }
+.account-table .col-concurrency { width: 120px; }
 .account-table .col-updated { width: 120px; }
 .account-table .col-access { width: 98px; }
 .account-table .col-actions { width: 152px; }
@@ -197,6 +198,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .account-table tbody tr:hover > .select-cell, .account-table tbody tr:hover > .identity-column-cell, .account-table tbody tr:hover > .actions-cell { background: color-mix(in srgb, var(--bg-hover) 72%, var(--bg-primary)); }
 .account-table tbody tr.is-selected > .select-cell, .account-table tbody tr.is-selected > .identity-column-cell, .account-table tbody tr.is-selected > .actions-cell { background: color-mix(in srgb, var(--primary-color) 10%, var(--bg-primary)); }
 .account-table input[type="checkbox"], .edit-optin input[type="checkbox"], .switch-control input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary-color); }
+.concurrency-cell { display: inline-flex; align-items: baseline; gap: 4px; min-width: 54px; color: var(--text-secondary); font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }
+.concurrency-cell strong { color: var(--text-primary); font-size: 13px; }
+.concurrency-cell.is-saturated strong:first-child { color: var(--danger); }
+.concurrency-unlimited, .concurrency-unavailable { display: inline-flex; align-items: center; min-height: 24px; color: var(--text-tertiary); font-size: 11px; }
+.concurrency-unavailable { color: var(--warning); cursor: help; }
 .identity-cell { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .identity-cell strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .identity-cell span, .identity-cell small { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
@@ -417,6 +423,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .account-config-security-notes { display: grid; gap: 4px; padding: 10px 2px 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .edit-row { min-height: 52px; display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); opacity: 0.72; }
 .edit-row.is-enabled { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); opacity: 1; }
+.concurrency-editor-control { display: grid; grid-template-columns: minmax(90px, 150px) minmax(0, 1fr); align-items: center; gap: 10px; }
+.concurrency-editor-control span { color: var(--muted); font-size: 9px; line-height: 1.45; }
 .edit-optin { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
 .edit-control { min-width: 0; }
 .edit-control input, .edit-control select { background: var(--surface); }
@@ -1422,6 +1430,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .modal-body { padding: 16px; }
   .modal-footer { min-height: 62px; padding: 10px 16px; }
   .edit-row { grid-template-columns: 1fr; gap: 7px; }
+	.concurrency-editor-control { grid-template-columns: 1fr; gap: 5px; }
   .current-account-config dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .current-account-config dl > div:nth-child(3n) { border-right: 1px solid var(--line); }
   .current-account-config dl > div:nth-child(2n) { border-right: none; }

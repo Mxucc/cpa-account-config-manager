@@ -755,7 +755,7 @@ export async function getOperationRetentionSettings(): Promise<OperationRetentio
 	return request<OperationRetentionSettings>("/operations/settings");
 }
 
-export async function persistCurrentSettings(): Promise<void> {
+export async function persistCurrentSettings(): Promise<ExperimentalSettings> {
 	const [defaults, inspection, updates, operations, experiments] = await Promise.all([
 		getDefaultPolicy(),
 		getInspection(),
@@ -770,6 +770,7 @@ export async function persistCurrentSettings(): Promise<void> {
 		operation_settings: { extended_history: operations.extended_history === true },
 		experimental_settings: experiments.settings,
 	});
+	return experiments.settings;
 }
 
 export async function clearOperations(): Promise<{ operation: OperationEntry; retained: number }> {

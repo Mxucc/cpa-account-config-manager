@@ -35,6 +35,43 @@ const quotaAutomation: NonNullable<Account["automation"]> = {
 };
 
 describe("AccountUsageCell", () => {
+  it("shows per-window overdraft only while the quota-continuation experiment is enabled", () => {
+    const account: Account = {
+      ...baseAccount,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 0,
+        codex: {
+          observed_at: "2026-07-29T06:00:00Z",
+          five_hour: { used_percent: 118.5, window_minutes: 300 },
+          seven_day: { used_percent: 142, window_minutes: 10_080 },
+        },
+      },
+    };
+    const { rerender } = render(<AccountUsageCell account={account} weeklyOverdraftEnabled />);
+
+    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+18.5%7d+42%");
+    expect(screen.getByRole("meter", { name: "5h 用量 118.5%" })).toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "7d 用量 142%" })).toBeInTheDocument();
+
+    rerender(<AccountUsageCell account={account} weeklyOverdraftEnabled={false} />);
+    expect(screen.queryByRole("group", { name: "透支用量" })).not.toBeInTheDocument();
+
+    rerender(<AccountUsageCell account={{
+      ...account,
+      usage: {
+        ...account.usage!,
+        codex: { observed_at: "2026-07-29T06:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
+      },
+    }} weeklyOverdraftEnabled />);
+    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+0%");
+  });
+
   it("renders token and request activity with clamped Codex quota tracks", () => {
     render(<AccountUsageCell account={{
       ...baseAccount,

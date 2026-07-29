@@ -79,6 +79,7 @@ import type {
   ForceSyncJobSnapshot,
   ForceSyncPreview,
   ExportFormat,
+  ExperimentalSettings,
   ImportPreview,
   ImportResult,
   JobSnapshot,
@@ -214,6 +215,7 @@ function AccountManagerApp() {
   const [modelTesting, setModelTesting] = useState(false);
   const [modelTestError, setModelTestError] = useState("");
   const [modelTestExperimentalAvailable, setModelTestExperimentalAvailable] = useState(false);
+  const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const modelTestExperimentRequest = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
   const [deletePreview, setDeletePreview] = useState<AccountDeletePreview | null>(null);
@@ -297,7 +299,9 @@ function AccountManagerApp() {
         skipInitialAccountRefresh.current = true;
         setAuthState("ready");
         settingsTimer = window.setTimeout(() => {
-          void api.persistCurrentSettings().catch((error) => {
+          void api.persistCurrentSettings().then((settings) => {
+            if (active) setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
+          }).catch((error) => {
             if (!active) return;
             if (error instanceof api.APIError && error.status === 401) {
               clearSession();
@@ -329,6 +333,14 @@ function AccountManagerApp() {
     }
     setNotice(errorText(error, locale));
   }, [locale]);
+
+  const handleExperimentalSettingsChange = useCallback((settings: ExperimentalSettings) => {
+    setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
+  }, []);
+
+  useEffect(() => {
+    if (authState !== "ready") setWeeklyOverdraftEnabled(false);
+  }, [authState]);
 
   const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters) => {
     if (authState !== "ready") return;
@@ -710,7 +722,7 @@ function AccountManagerApp() {
     setModelTestTarget(account);
     setModelTestResult(null);
     setModelTestError("");
-    setModelTestExperimentalAvailable(false);
+    setModelTestExperimentalAvailable(weeklyOverdraftEnabled);
     void api.getExperimentalSettings().then((snapshot) => {
       if (modelTestExperimentRequest.current !== requestID) return;
       setModelTestExperimentalAvailable(snapshot.settings.weekly_overdraft_enabled === true);
@@ -1159,7 +1171,7 @@ function AccountManagerApp() {
                   </td>
                   <td><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
                   <td><AccountTypeCell account={account} /></td>
-                  <td><AccountUsageCell account={account} /></td>
+                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} /></td>
 									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
 									<td><AccountConcurrencyCell account={account} /></td>
                   <td><time>{formatDateTime(account.updated_at || account.last_refresh)}</time></td>
@@ -1227,7 +1239,7 @@ function AccountManagerApp() {
             }}
           />
         ) : (
-          <OtherSettingsWorkspace onAPIError={handleAPIError} onNotice={setNotice} forceLoading={forcePreviewLoading} onForcePreview={() => void previewForceSync()} />
+          <OtherSettingsWorkspace onAPIError={handleAPIError} onNotice={setNotice} forceLoading={forcePreviewLoading} onForcePreview={() => void previewForceSync()} onExperimentalSettingsChange={handleExperimentalSettingsChange} />
         )}
       </div>
 

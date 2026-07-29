@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
-import type { CPAServerVersionSnapshot, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
+import type { CPAServerVersionSnapshot, ExperimentalSettings, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 
@@ -26,9 +26,12 @@ interface OtherSettingsWorkspaceProps {
   onNotice: (message: string) => void;
   forceLoading?: boolean;
   onForcePreview?: () => void;
+  onExperimentalSettingsChange?: (settings: ExperimentalSettings) => void;
 }
 
-export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined }: OtherSettingsWorkspaceProps) {
+const ignoreExperimentalSettingsChange = (_settings: ExperimentalSettings) => undefined;
+
+export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined, onExperimentalSettingsChange = ignoreExperimentalSettingsChange }: OtherSettingsWorkspaceProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
@@ -74,8 +77,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const refreshExperiments = useCallback(async () => {
     const next = await api.getExperimentalSettings();
     setExperiments(next);
+    onExperimentalSettingsChange(next.settings);
     return next;
-  }, []);
+  }, [onExperimentalSettingsChange]);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -222,11 +226,13 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setSavingExperiment(true);
     setError("");
     try {
-      setExperiments(await api.saveExperimentalSettings({
+      const next = await api.saveExperimentalSettings({
         weekly_overdraft_enabled: weeklyOverdraftEnabled,
         agent_identity_enabled: agentIdentityEnabled,
         auto_model_whitelist_enabled: true,
-      }));
+      });
+      setExperiments(next);
+      onExperimentalSettingsChange(next.settings);
       onNotice(tx("ui.experimental_settings_saved"));
     } catch (caught) {
       handleError(caught);

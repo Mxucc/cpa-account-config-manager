@@ -124,6 +124,7 @@ describe("OtherSettingsWorkspace", () => {
   it("persists independent weekly-overdraft and Agent Identity experiments while model discovery stays built in", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
+    const onExperimentalSettingsChange = vi.fn();
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
@@ -146,7 +147,7 @@ describe("OtherSettingsWorkspace", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} onExperimentalSettingsChange={onExperimentalSettingsChange} />);
     const workspace = await screen.findByRole("region", { name: "其他配置" });
     expect(within(workspace).queryByText(/原生插件更新后必须完整重启 CPA/)).not.toBeInTheDocument();
     await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
@@ -165,6 +166,7 @@ describe("OtherSettingsWorkspace", () => {
     const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
     expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true } });
     expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true });
+    expect(onExperimentalSettingsChange).toHaveBeenLastCalledWith({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true });
     expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
   });
 });

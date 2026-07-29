@@ -1,9 +1,9 @@
-import { Activity, AlertTriangle } from "lucide-react";
+import { Activity, AlertTriangle, Gauge } from "lucide-react";
 import type { Account, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-export function AccountUsageCell({ account }: { account: Account }) {
+export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { account: Account; weeklyOverdraftEnabled?: boolean }) {
   const { locale, t, tx, formatDateTime, formatNumber } = useI18n();
   const usage = account.usage;
   const agentIdentity = String(account.provider || account.type).trim().toLowerCase() === "codex-agent-identity";
@@ -28,6 +28,14 @@ export function AccountUsageCell({ account }: { account: Account }) {
   const fiveHourExhausted = safePercent(codex?.five_hour?.used_percent ?? 0) >= 100;
   const longWindowExhausted = safePercent(codex?.seven_day?.used_percent ?? 0) >= 100;
   const quotaExhausted = fiveHourExhausted || longWindowExhausted;
+  const overdraftWindows = weeklyOverdraftEnabled ? [
+    codex?.five_hour && safePercent(codex.five_hour.used_percent) >= 100
+      ? { label: "5h" as const, total: safePercent(codex.five_hour.used_percent) }
+      : null,
+    codex?.seven_day && safePercent(codex.seven_day.used_percent) >= 100
+      ? { label: "7d" as const, total: safePercent(codex.seven_day.used_percent) }
+      : null,
+  ].filter((window): window is { label: "5h" | "7d"; total: number } => window !== null) : [];
   const quotaPlaceholderTitle = agentIdentity
     ? tx("ui.cpa_does_not_currently_provide_agent_identity_quota")
     : String(account.provider || account.type).toLowerCase() === "codex"
@@ -76,6 +84,28 @@ export function AccountUsageCell({ account }: { account: Account }) {
         <div className="usage-quota-list">
           {codex?.five_hour ? <UsageQuota label="5h" window={codex.five_hour} /> : null}
           {codex?.seven_day ? <UsageQuota label="7d" window={codex.seven_day} /> : null}
+          {overdraftWindows.length > 0 ? (
+            <div
+              className="usage-overdraft-panel"
+              role="group"
+              aria-label={tx("ui.overdraft_usage")}
+              title={tx("ui.overdraft_usage_included_in_total")}
+            >
+              <span className="usage-overdraft-title"><Gauge size={10} aria-hidden="true" />{tx("ui.overdraft_usage")}</span>
+              <span className="usage-overdraft-values">
+                {overdraftWindows.map((window) => {
+                  const overdraft = Math.max(0, window.total - 100);
+                  const overdraftLabel = formatPercent(overdraft);
+                  const totalLabel = formatPercent(window.total);
+                  return (
+                    <span key={window.label} title={tx("ui.overdraft_usage_window", { label: window.label, percent: overdraftLabel, total: totalLabel })}>
+                      <small>{window.label}</small><b>+{overdraftLabel}%</b>
+                    </span>
+                  );
+                })}
+              </span>
+            </div>
+          ) : null}
           {quotaExhausted ? <div className="usage-quota-alert" role="status"><AlertTriangle size={10} /><span>{tx("ui.quota_exhausted")}</span><b>{exhaustedAction}</b></div> : null}
         </div>
       ) : (

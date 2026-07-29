@@ -325,6 +325,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .usage-quota-track > span { height: 100%; display: block; border-radius: inherit; background: currentColor; }
 .usage-quota-row.quota-warning { color: var(--warning); }
 .usage-quota-row.quota-danger { color: var(--danger); }
+.usage-overdraft-panel { min-width: 0; min-height: 18px; display: grid; grid-template-columns: minmax(42px, auto) minmax(0, 1fr); align-items: center; gap: 6px; padding: 2px 4px; border-left: 2px solid var(--warning); background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-secondary); }
+.usage-overdraft-title { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--warning); font-family: inherit; font-size: 8px; font-weight: 700; }
+.usage-overdraft-values { min-width: 0; display: flex; justify-content: flex-end; gap: 7px; }
+.usage-overdraft-values > span { min-width: 0; display: inline-flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+.usage-overdraft-values small { color: var(--muted); font-size: 7px; font-weight: 700; }
+.usage-overdraft-values b { color: var(--warning); font-size: 9px; font-weight: 700; }
 .usage-quota-empty { min-height: 40px; display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 8px; }
 .usage-quota-empty b { color: var(--muted); font-size: 9px; font-weight: 600; }
 .usage-quota-alert { min-width: 0; height: 12px; display: flex; align-items: center; gap: 4px; color: var(--danger); font-size: 8px; }

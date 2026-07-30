@@ -69,7 +69,57 @@ describe("AccountUsageCell", () => {
         codex: { observed_at: "2026-07-29T06:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
       },
     }} weeklyOverdraftEnabled />);
-    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+0%");
+    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+0 tok");
+  });
+
+  it("shows measured post-exhaustion tokens when upstream caps quota at 100 percent", () => {
+    render(<AccountUsageCell account={{
+      ...baseAccount,
+      usage: {
+        input_tokens: 12_000,
+        output_tokens: 3_000,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 15_000,
+        codex: {
+          observed_at: "2026-07-30T01:00:00Z",
+          five_hour: {
+            used_percent: 100,
+            window_minutes: 300,
+            overdraft_tokens: 12_345,
+            overdraft_requests: 4,
+          },
+        },
+      },
+    }} weeklyOverdraftEnabled />);
+
+    const panel = screen.getByRole("group", { name: "透支用量" });
+    expect(panel).toHaveTextContent("5h+1.2万 tok");
+    expect(screen.getByTitle("5h 已观测透支 12,345 Tokens，共 4 个成功请求（官方总用量 100%）")).toBeInTheDocument();
+  });
+
+  it("falls back to measured successful requests when a stream omits token usage", () => {
+    render(<AccountUsageCell account={{
+      ...baseAccount,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 0,
+        codex: {
+          observed_at: "2026-07-30T01:00:00Z",
+          five_hour: { used_percent: 100, window_minutes: 300, overdraft_requests: 3 },
+        },
+      },
+    }} weeklyOverdraftEnabled />);
+
+    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+3 次");
+    expect(screen.getByTitle("5h 已观测透支 0 Tokens，共 3 个成功请求（官方总用量 100%）")).toBeInTheDocument();
   });
 
   it("renders token and request activity with clamped Codex quota tracks", () => {

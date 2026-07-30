@@ -143,6 +143,8 @@ export interface UsageWindowSnapshot {
   used_percent: number;
   reset_at?: string;
   window_minutes?: number;
+	overdraft_tokens?: number;
+	overdraft_requests?: number;
 }
 
 export interface CodexUsageSnapshot {

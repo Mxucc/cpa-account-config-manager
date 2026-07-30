@@ -19,6 +19,7 @@ const (
 	maxUsageResetAfter      = 31 * 24 * time.Hour
 	maxUsageWindowMinutes   = 31 * 24 * 60
 	usageWindowWithoutReset = 15 * time.Minute
+	usageWindowResetDrift   = 2 * time.Minute
 	usagePersistDelay       = 2 * time.Second
 )
 
@@ -45,9 +46,11 @@ type CodexUsageSnapshot struct {
 }
 
 type UsageWindowSnapshot struct {
-	UsedPercent   float64    `json:"used_percent"`
-	ResetAt       *time.Time `json:"reset_at,omitempty"`
-	WindowMinutes int        `json:"window_minutes,omitempty"`
+	UsedPercent       float64    `json:"used_percent"`
+	ResetAt           *time.Time `json:"reset_at,omitempty"`
+	WindowMinutes     int        `json:"window_minutes,omitempty"`
+	OverdraftTokens   int64      `json:"overdraft_tokens,omitempty"`
+	OverdraftRequests int64      `json:"overdraft_requests,omitempty"`
 }
 
 type usageAggregate struct {
@@ -264,6 +267,11 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	}
 	aggregate := t.accounts[storageKey]
 	aggregate.Identity = mergeUsageIdentity(aggregate.Identity, identity)
+	var previousFiveHour, previousSevenDay *UsageWindowSnapshot
+	if aggregate.Codex != nil {
+		previousFiveHour = currentUsageWindow(aggregate.Codex.FiveHour, aggregate.Codex.ObservedAt, now)
+		previousSevenDay = currentUsageWindow(aggregate.Codex.SevenDay, aggregate.Codex.ObservedAt, now)
+	}
 	aggregate.InputTokens = saturatingAdd(aggregate.InputTokens, nonNegative(record.Detail.InputTokens))
 	aggregate.OutputTokens = saturatingAdd(aggregate.OutputTokens, nonNegative(record.Detail.OutputTokens))
 	aggregate.ReasoningTokens = saturatingAdd(aggregate.ReasoningTokens, nonNegative(record.Detail.ReasoningTokens))
@@ -285,12 +293,20 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 			aggregate.Codex = &CodexUsageSnapshot{}
 		}
 		if codex.FiveHour != nil {
-			aggregate.Codex.FiveHour = cloneUsageWindow(codex.FiveHour)
+			aggregate.Codex.FiveHour = mergeObservedUsageWindow(aggregate.Codex.FiveHour, codex.FiveHour)
 		}
 		if codex.SevenDay != nil {
-			aggregate.Codex.SevenDay = cloneUsageWindow(codex.SevenDay)
+			aggregate.Codex.SevenDay = mergeObservedUsageWindow(aggregate.Codex.SevenDay, codex.SevenDay)
 		}
 		aggregate.Codex.ObservedAt = codex.ObservedAt
+	}
+	if !record.Failed && aggregate.Codex != nil {
+		if sameActiveExhaustedUsageWindow(previousFiveHour, aggregate.Codex.FiveHour) {
+			observeOverdraftUsage(aggregate.Codex.FiveHour, totalTokens)
+		}
+		if sameActiveExhaustedUsageWindow(previousSevenDay, aggregate.Codex.SevenDay) {
+			observeOverdraftUsage(aggregate.Codex.SevenDay, totalTokens)
+		}
 	}
 	t.accounts[storageKey] = aggregate
 	t.dirty = true
@@ -324,10 +340,10 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 		aggregate.Codex = &CodexUsageSnapshot{}
 	}
 	if cloned.FiveHour != nil {
-		aggregate.Codex.FiveHour = cloneUsageWindow(cloned.FiveHour)
+		aggregate.Codex.FiveHour = mergeObservedUsageWindow(aggregate.Codex.FiveHour, cloned.FiveHour)
 	}
 	if cloned.SevenDay != nil {
-		aggregate.Codex.SevenDay = cloneUsageWindow(cloned.SevenDay)
+		aggregate.Codex.SevenDay = mergeObservedUsageWindow(aggregate.Codex.SevenDay, cloned.SevenDay)
 	}
 	if cloned.FiveHour != nil || cloned.SevenDay != nil {
 		aggregate.Codex.ObservedAt = now
@@ -535,6 +551,48 @@ func currentUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time) 
 		return nil
 	}
 	return cloneUsageWindow(window)
+}
+
+func mergeObservedUsageWindow(current, observed *UsageWindowSnapshot) *UsageWindowSnapshot {
+	if observed == nil {
+		return cloneUsageWindow(current)
+	}
+	merged := cloneUsageWindow(observed)
+	if current != nil && observed.UsedPercent >= 100 && sameUsageWindow(current, observed) {
+		merged.OverdraftTokens = nonNegative(current.OverdraftTokens)
+		merged.OverdraftRequests = nonNegative(current.OverdraftRequests)
+	}
+	return merged
+}
+
+func sameActiveExhaustedUsageWindow(previous, current *UsageWindowSnapshot) bool {
+	return previous != nil && previous.UsedPercent >= 100 && current != nil && current.UsedPercent >= 100 &&
+		sameUsageWindow(previous, current)
+}
+
+func sameUsageWindow(left, right *UsageWindowSnapshot) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	if left.WindowMinutes > 0 && right.WindowMinutes > 0 && left.WindowMinutes != right.WindowMinutes {
+		return false
+	}
+	if left.ResetAt == nil || right.ResetAt == nil {
+		return left.ResetAt == nil && right.ResetAt == nil
+	}
+	drift := left.ResetAt.Sub(*right.ResetAt)
+	if drift < 0 {
+		drift = -drift
+	}
+	return drift <= usageWindowResetDrift
+}
+
+func observeOverdraftUsage(window *UsageWindowSnapshot, tokens int64) {
+	if window == nil {
+		return
+	}
+	window.OverdraftRequests = saturatingAdd(window.OverdraftRequests, 1)
+	window.OverdraftTokens = saturatingAdd(window.OverdraftTokens, nonNegative(tokens))
 }
 
 type rawCodexWindow struct {

@@ -278,6 +278,27 @@ func mergeCodexUsage(current, stored *CodexUsageSnapshot) *CodexUsageSnapshot {
 			merged.ActiveResetCount = &count
 		}
 	}
+	merged.FiveHour = mergePersistedUsageWindow(merged.FiveHour, current.FiveHour, stored.FiveHour)
+	merged.SevenDay = mergePersistedUsageWindow(merged.SevenDay, current.SevenDay, stored.SevenDay)
+	return merged
+}
+
+func mergePersistedUsageWindow(selected, current, stored *UsageWindowSnapshot) *UsageWindowSnapshot {
+	if selected == nil {
+		return nil
+	}
+	merged := cloneUsageWindow(selected)
+	if merged.UsedPercent < 100 {
+		merged.OverdraftTokens = 0
+		merged.OverdraftRequests = 0
+		return merged
+	}
+	for _, candidate := range []*UsageWindowSnapshot{current, stored} {
+		if sameUsageWindow(merged, candidate) {
+			merged.OverdraftTokens = maxInt64(merged.OverdraftTokens, candidate.OverdraftTokens)
+			merged.OverdraftRequests = maxInt64(merged.OverdraftRequests, candidate.OverdraftRequests)
+		}
+	}
 	return merged
 }
 
@@ -319,6 +340,8 @@ func sanitizeUsageWindow(window *UsageWindowSnapshot) *UsageWindowSnapshot {
 		return nil
 	}
 	window = cloneUsageWindow(window)
+	window.OverdraftTokens = nonNegative(window.OverdraftTokens)
+	window.OverdraftRequests = nonNegative(window.OverdraftRequests)
 	return window
 }
 

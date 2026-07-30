@@ -30,12 +30,12 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
   const quotaExhausted = fiveHourExhausted || longWindowExhausted;
   const overdraftWindows = weeklyOverdraftEnabled ? [
     codex?.five_hour && safePercent(codex.five_hour.used_percent) >= 100
-      ? { label: "5h" as const, total: safePercent(codex.five_hour.used_percent) }
+      ? { label: "5h" as const, window: codex.five_hour }
       : null,
     codex?.seven_day && safePercent(codex.seven_day.used_percent) >= 100
-      ? { label: "7d" as const, total: safePercent(codex.seven_day.used_percent) }
+      ? { label: "7d" as const, window: codex.seven_day }
       : null,
-  ].filter((window): window is { label: "5h" | "7d"; total: number } => window !== null) : [];
+  ].filter((window): window is { label: "5h" | "7d"; window: UsageWindowSnapshot } => window !== null) : [];
   const quotaPlaceholderTitle = agentIdentity
     ? tx("ui.cpa_does_not_currently_provide_agent_identity_quota")
     : String(account.provider || account.type).toLowerCase() === "codex"
@@ -94,12 +94,29 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
               <span className="usage-overdraft-title"><Gauge size={10} aria-hidden="true" />{tx("ui.overdraft_usage")}</span>
               <span className="usage-overdraft-values">
                 {overdraftWindows.map((window) => {
-                  const overdraft = Math.max(0, window.total - 100);
-                  const overdraftLabel = formatPercent(overdraft);
-                  const totalLabel = formatPercent(window.total);
+                  const total = safePercent(window.window.used_percent);
+                  const officialOverdraft = Math.max(0, total - 100);
+                  const measuredTokens = safeCount(window.window.overdraft_tokens ?? 0);
+                  const measuredRequests = safeCount(window.window.overdraft_requests ?? 0);
+                  const totalLabel = formatPercent(total);
+                  const content = officialOverdraft > 0
+                    ? `${formatPercent(officialOverdraft)}%`
+                    : measuredTokens > 0
+                      ? tx("ui.overdraft_tokens_value", { count: formatCompactNumber(measuredTokens, locale) })
+                      : measuredRequests > 0
+                        ? tx("ui.overdraft_requests_value", { count: formatCompactNumber(measuredRequests, locale) })
+                        : tx("ui.overdraft_tokens_value", { count: "0" });
+                  const title = officialOverdraft > 0
+                    ? tx("ui.overdraft_usage_window", { label: window.label, percent: formatPercent(officialOverdraft), total: totalLabel })
+                    : tx("ui.overdraft_usage_window_observed", {
+                        label: window.label,
+                        tokens: formatNumber(measuredTokens),
+                        requests: formatNumber(measuredRequests),
+                        total: totalLabel,
+                      });
                   return (
-                    <span key={window.label} title={tx("ui.overdraft_usage_window", { label: window.label, percent: overdraftLabel, total: totalLabel })}>
-                      <small>{window.label}</small><b>+{overdraftLabel}%</b>
+                    <span key={window.label} title={title}>
+                      <small>{window.label}</small><b>+{content}</b>
                     </span>
                   );
                 })}

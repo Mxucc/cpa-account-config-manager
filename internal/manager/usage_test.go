@@ -90,6 +90,116 @@ func TestUsageTrackerAggregatesSanitizedUsageAndCodexWindows(t *testing.T) {
 	}
 }
 
+func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+
+	exhaustedHeaders := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+		"X-Codex-Primary-Used-Percent":          []string{"17"},
+		"X-Codex-Primary-Reset-After-Seconds":   []string{"86400"},
+		"X-Codex-Primary-Window-Minutes":        []string{"10080"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 100},
+		ResponseHeaders: exhaustedHeaders,
+	})
+	boundary := tracker.Snapshot("overdraft")
+	if boundary == nil || boundary.Codex == nil || boundary.Codex.FiveHour == nil {
+		t.Fatalf("boundary snapshot = %#v", boundary)
+	}
+	if boundary.Codex.FiveHour.OverdraftTokens != 0 || boundary.Codex.FiveHour.OverdraftRequests != 0 {
+		t.Fatalf("first request reaching 100%% counted as overdraft: %#v", boundary.Codex.FiveHour)
+	}
+
+	now = now.Add(time.Minute)
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{InputTokens: 70, OutputTokens: 30},
+	})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "overdraft", RequestedAt: now, Failed: true, Detail: cpaapi.UsageDetail{TotalTokens: 999},
+	})
+	afterSuccess := tracker.Snapshot("overdraft")
+	window := afterSuccess.Codex.FiveHour
+	if window.OverdraftTokens != 100 || window.OverdraftRequests != 1 {
+		t.Fatalf("measured overdraft = tokens:%d requests:%d, want 100/1", window.OverdraftTokens, window.OverdraftRequests)
+	}
+	if afterSuccess.Codex.SevenDay.OverdraftTokens != 0 || afterSuccess.Codex.SevenDay.OverdraftRequests != 0 {
+		t.Fatalf("non-exhausted 7d window counted overdraft: %#v", afterSuccess.Codex.SevenDay)
+	}
+
+	now = now.Add(time.Minute)
+	sameWindowHeaders := exhaustedHeaders.Clone()
+	sameWindowHeaders.Set("X-Codex-Secondary-Reset-After-Seconds", "3480")
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 25},
+		ResponseHeaders: sameWindowHeaders,
+	})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "overdraft", RequestedAt: now})
+	continued := tracker.Snapshot("overdraft")
+	if continued.Codex.FiveHour.OverdraftTokens != 125 || continued.Codex.FiveHour.OverdraftRequests != 3 {
+		t.Fatalf("same-window overdraft was not preserved: %#v", continued.Codex.FiveHour)
+	}
+
+	now = now.Add(time.Minute)
+	recoveredHeaders := exhaustedHeaders.Clone()
+	recoveredHeaders.Set("X-Codex-Secondary-Used-Percent", "0")
+	recoveredHeaders.Set("X-Codex-Secondary-Reset-After-Seconds", "18000")
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 10},
+		ResponseHeaders: recoveredHeaders,
+	})
+	recovered := tracker.Snapshot("overdraft")
+	if recovered.Codex.FiveHour.UsedPercent != 0 || recovered.Codex.FiveHour.OverdraftTokens != 0 || recovered.Codex.FiveHour.OverdraftRequests != 0 {
+		t.Fatalf("recovered quota retained prior overdraft: %#v", recovered.Codex.FiveHour)
+	}
+	tracker.Close()
+
+	restored := NewUsageTracker()
+	defer restored.Close()
+	restored.now = func() time.Time { return now.Add(time.Minute) }
+	restored.Configure(Config{DataDir: dataDir})
+	reloaded := restored.Snapshot("overdraft")
+	if reloaded == nil || reloaded.Codex == nil || reloaded.Codex.FiveHour == nil ||
+		reloaded.Codex.FiveHour.OverdraftTokens != 0 || reloaded.Codex.FiveHour.OverdraftRequests != 0 {
+		t.Fatalf("persisted recovered quota resurrected prior overdraft: %#v", reloaded)
+	}
+}
+
+func TestUsageTrackerPersistsMeasuredOverdraft(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.July, 30, 1, 0, 0, 0, time.UTC)
+	first := NewUsageTracker()
+	first.now = func() time.Time { return now }
+	first.persistDelay = time.Hour
+	first.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	first.Observe(cpaapi.UsageRecord{AuthIndex: "persist-overdraft", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	first.Observe(cpaapi.UsageRecord{AuthIndex: "persist-overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 321}})
+	first.Close()
+
+	second := NewUsageTracker()
+	defer second.Close()
+	second.now = func() time.Time { return now.Add(time.Minute) }
+	second.Configure(Config{DataDir: dataDir})
+	snapshot := second.Snapshot("persist-overdraft")
+	if snapshot == nil || snapshot.Codex == nil || snapshot.Codex.FiveHour == nil ||
+		snapshot.Codex.FiveHour.OverdraftTokens != 321 || snapshot.Codex.FiveHour.OverdraftRequests != 1 {
+		t.Fatalf("persisted overdraft snapshot = %#v", snapshot)
+	}
+}
+
 func TestUsageTrackerLoadsPersistedSnapshotAndExpiresQuotaWindows(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)

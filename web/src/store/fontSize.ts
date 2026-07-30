@@ -3,6 +3,8 @@ export type FontSizePreset = typeof FONT_SIZE_PRESETS[number];
 
 export const DEFAULT_FONT_SIZE: FontSizePreset = "small";
 export const FONT_SIZE_STORAGE_KEY = "cpa-account-config-manager:font-size";
+export const TYPOGRAPHY_DISTINCTION_STORAGE_KEY = "cpa-account-config-manager:typography-distinction";
+export const DEFAULT_TYPOGRAPHY_DISTINCTION = true;
 
 const fontSizePresets = new Set<string>(FONT_SIZE_PRESETS);
 
@@ -39,4 +41,31 @@ export function writeFontSize(preset: FontSizePreset): void {
 
 export function initFontSize(): void {
   applyFontSize(readFontSize());
+  applyTypographyDistinction(readTypographyDistinction());
+}
+
+export function readTypographyDistinction(): boolean {
+  if (typeof window === "undefined") return DEFAULT_TYPOGRAPHY_DISTINCTION;
+  try {
+    return window.localStorage.getItem(TYPOGRAPHY_DISTINCTION_STORAGE_KEY) !== "off";
+  } catch {
+    return DEFAULT_TYPOGRAPHY_DISTINCTION;
+  }
+}
+
+export function applyTypographyDistinction(enabled: boolean): void {
+  if (typeof document === "undefined") return;
+  if (enabled) document.documentElement.removeAttribute("data-typography-distinction");
+  else document.documentElement.setAttribute("data-typography-distinction", "off");
+}
+
+export function writeTypographyDistinction(enabled: boolean): void {
+  applyTypographyDistinction(enabled);
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled === DEFAULT_TYPOGRAPHY_DISTINCTION) window.localStorage.removeItem(TYPOGRAPHY_DISTINCTION_STORAGE_KEY);
+    else window.localStorage.setItem(TYPOGRAPHY_DISTINCTION_STORAGE_KEY, "off");
+  } catch {
+    // The selected typography remains active when browser storage is unavailable.
+  }
 }

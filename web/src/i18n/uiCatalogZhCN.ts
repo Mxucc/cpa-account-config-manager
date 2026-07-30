@@ -17,6 +17,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.font_size_medium": "中",
   "ui.font_size_large": "大",
   "ui.font_size_current": "当前：{size}",
+  "ui.typography_distinction": "字号区分",
+  "ui.typography_distinction_description": "严格区分主标题与描述文本字号；关闭后描述文本将使用与主标题相同的字号。",
   "ui.experimental_features": "实验性功能",
   "ui.experimental_features_warning": "实验性行为",
   "ui.experimental_features_may_change_or_stop_working": "这些功能依赖上游行为，可能随时变化或失效。",

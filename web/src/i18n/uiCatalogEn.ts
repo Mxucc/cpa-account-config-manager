@@ -15,6 +15,8 @@ export const enUI = {
   "ui.font_size_medium": "Medium",
   "ui.font_size_large": "Large",
   "ui.font_size_current": "Current: {size}",
+  "ui.typography_distinction": "Typography distinction",
+  "ui.typography_distinction_description": "Keep title and description text at distinct sizes. Turn this off to make descriptions use their title size.",
   "ui.experimental_features": "Experimental Features",
   "ui.experimental_features_warning": "Experimental behavior",
   "ui.experimental_features_may_change_or_stop_working": "These features depend on upstream behavior and may change or stop working without notice.",

@@ -17,6 +17,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.font_size_medium": "中",
   "ui.font_size_large": "大",
   "ui.font_size_current": "目前：{size}",
+  "ui.typography_distinction": "字級區分",
+  "ui.typography_distinction_description": "嚴格區分主標題與描述文字字級；關閉後描述文字將使用與主標題相同的字級。",
   "ui.experimental_features": "實驗性功能",
   "ui.experimental_features_warning": "實驗性行為",
   "ui.experimental_features_may_change_or_stop_working": "這些功能依賴上游行為，可能隨時變更或失效。",

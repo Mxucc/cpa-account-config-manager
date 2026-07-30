@@ -967,6 +967,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .font-size-options button:hover { color: var(--text-primary); background: var(--bg-hover); }
 .font-size-options button.active { color: var(--primary-contrast); background: var(--primary-color); }
 .font-size-current { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); }
+.font-distinction-setting { min-width: 0; min-height: 66px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border-color); cursor: pointer; }
+.font-distinction-setting > span { min-width: 0; display: grid; gap: 3px; }
+.font-distinction-setting strong { color: var(--text-primary); font-size: calc(12px * var(--font-size-scale)); }
+.font-distinction-setting small { color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); font-weight: 400; line-height: 1.5; }
+.font-distinction-setting input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary-color); }
+.font-distinction-setting > b { min-width: 28px; color: var(--text-primary); font-size: calc(10px * var(--font-size-scale)); }
 .other-settings-grid { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .settings-section { min-width: 0; display: flex; flex-direction: column; }
 .settings-section + .settings-section { border-left: 1px solid var(--border-color); }
@@ -1351,6 +1357,60 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-login-result span { color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); }
 .agent-login-result strong { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); font-size: calc(13px * var(--font-size-scale)); }
 
+/* Keep visual weight and color hierarchy while allowing paired descriptions to match title size. */
+html[data-typography-distinction="off"] .filter-heading span,
+html[data-typography-distinction="off"] .model-test-outcome-heading span,
+html[data-typography-distinction="off"] .model-test-response-heading > div span,
+html[data-typography-distinction="off"] .delete-warning span,
+html[data-typography-distinction="off"] .current-account-config p,
+html[data-typography-distinction="off"] .policy-row > span:first-child small,
+html[data-typography-distinction="off"] .preview-start-error span,
+html[data-typography-distinction="off"] .deduplication-intro span,
+html[data-typography-distinction="off"] .deduplication-empty span,
+html[data-typography-distinction="off"] .automation-title > div > span,
+html[data-typography-distinction="off"] .update-banner span,
+html[data-typography-distinction="off"] .inspection-remediation > header div > span,
+html[data-typography-distinction="off"] .other-settings-toolbar > div > span,
+html[data-typography-distinction="off"] .settings-section > header > div > span,
+html[data-typography-distinction="off"] .automation-policy-section > header > div > span,
+html[data-typography-distinction="off"] .conditional-policy-empty > span,
+html[data-typography-distinction="off"] .policy-run-confirmation span,
+html[data-typography-distinction="off"] .notification-settings-header > div > span,
+html[data-typography-distinction="off"] .notification-policy-endpoints > header > div > span,
+html[data-typography-distinction="off"] .experimental-warning > div > span,
+html[data-typography-distinction="off"] .experimental-feature-copy > div > span,
+html[data-typography-distinction="off"] .experimental-behavior-list > div > span,
+html[data-typography-distinction="off"] .operation-title > div > span,
+html[data-typography-distinction="off"] .automation-settings-section > header > div > span,
+html[data-typography-distinction="off"] .job-result-main > span,
+html[data-typography-distinction="off"] .agent-login-heading p {
+  font-size: calc(12px * var(--font-size-scale));
+}
+html[data-typography-distinction="off"] .filter-heading span { font-size: calc(14px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .model-test-outcome-heading span { font-size: calc(14px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .model-test-response-heading > div span { font-size: calc(12px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .preview-start-error span,
+html[data-typography-distinction="off"] .deduplication-intro span,
+html[data-typography-distinction="off"] .automation-settings-section > header > div > span { font-size: calc(11px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .delete-warning span,
+html[data-typography-distinction="off"] .notification-policy-endpoints > header > div > span { font-size: calc(10px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .experimental-behavior-list > div > span { font-size: calc(10px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .current-account-config p,
+html[data-typography-distinction="off"] .policy-row > span:first-child small { font-size: calc(12px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .deduplication-empty span,
+html[data-typography-distinction="off"] .operation-title > div > span,
+html[data-typography-distinction="off"] .experimental-feature-copy > div > span { font-size: calc(13px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .automation-title > div > span,
+html[data-typography-distinction="off"] .other-settings-toolbar > div > span { font-size: calc(16px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .font-distinction-setting small,
+html[data-typography-distinction="off"] .settings-section > header > div > span,
+html[data-typography-distinction="off"] .automation-policy-section > header > div > span,
+html[data-typography-distinction="off"] .conditional-policy-empty > span,
+html[data-typography-distinction="off"] .notification-settings-header > div > span,
+html[data-typography-distinction="off"] .experimental-warning > div > span { font-size: calc(12px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .policy-run-confirmation span { font-size: calc(13px * var(--font-size-scale)); }
+html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc(20px * var(--font-size-scale)); }
+
 .secret-input, .number-suffix { min-height: 42px; border-radius: var(--radius-md); border-color: var(--border-primary); background: var(--bg-secondary); }
 .secret-input input, .number-suffix input[type="number"] { height: 40px; background: transparent; }
 .policy-row input[type="number"] { height: 42px; border-radius: var(--radius-md); background: var(--bg-secondary); }
@@ -1498,6 +1558,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .other-settings-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); padding-inline: 8px; }
   .other-settings-tabs button { padding-inline: 7px; font-size: calc(9px * var(--font-size-scale)); }
   .font-size-settings-body { align-items: stretch; flex-direction: column; gap: 10px; }
+  .font-distinction-setting { grid-template-columns: minmax(0, 1fr) auto auto; }
   .font-size-options { width: 100%; }
   .automation-global-form { grid-template-columns: 1fr; }
   .automation-global-form .policy-row { border-right: none; }
@@ -1631,6 +1692,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .agent-login-heading { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
   .agent-login-mark { width: 44px; height: 44px; }
   .agent-login-heading h1 { font-size: calc(18px * var(--font-size-scale)); }
+  html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc(18px * var(--font-size-scale)); }
   .agent-login-actions { display: grid; grid-template-columns: 1fr; }
   .agent-login-actions .button-primary { grid-row: 1; }
   .agent-login-result > div { grid-template-columns: 100px minmax(0, 1fr); }

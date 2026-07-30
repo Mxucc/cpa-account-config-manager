@@ -19,7 +19,13 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { CPAServerVersionSnapshot, ExperimentalSettings, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
-import { readFontSize, writeFontSize, type FontSizePreset } from "../store/fontSize";
+import {
+  readFontSize,
+  readTypographyDistinction,
+  writeFontSize,
+  writeTypographyDistinction,
+  type FontSizePreset,
+} from "../store/fontSize";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 
@@ -40,6 +46,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
   const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">("automation");
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
+  const [typographyDistinction, setTypographyDistinction] = useState(readTypographyDistinction);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -249,6 +256,10 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setFontSize(next);
     writeFontSize(next);
   };
+  const updateTypographyDistinction = (enabled: boolean) => {
+    setTypographyDistinction(enabled);
+    writeTypographyDistinction(enabled);
+  };
   return (
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
@@ -292,6 +303,11 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             </div>
             <span className="font-size-current">{tx("ui.font_size_current", { size: tx(`ui.font_size_${fontSize}`) })}</span>
           </div>
+          <label className="font-distinction-setting">
+            <span><strong>{tx("ui.typography_distinction")}</strong><small>{tx("ui.typography_distinction_description")}</small></span>
+            <input type="checkbox" checked={typographyDistinction} onChange={(event) => updateTypographyDistinction(event.target.checked)} />
+            <b>{tx(typographyDistinction ? "ui.enabled" : "ui.disabled")}</b>
+          </label>
         </section>
         <div className="other-settings-grid">
         <section className="settings-section server-version-section" aria-label={tx("ui.cpa_server_version")}>

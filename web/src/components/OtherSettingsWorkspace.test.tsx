@@ -60,6 +60,11 @@ describe("OtherSettingsWorkspace", () => {
     await user.click(within(fontSettings).getByRole("button", { name: "大" }));
     expect(localStorage.getItem("cpa-account-config-manager:font-size")).toBe("large");
     expect(document.documentElement).toHaveAttribute("data-font-size", "large");
+    const distinction = within(fontSettings).getByRole("checkbox", { name: /字号区分/ });
+    expect(distinction).toBeChecked();
+    await user.click(distinction);
+    expect(localStorage.getItem("cpa-account-config-manager:typography-distinction")).toBe("off");
+    expect(document.documentElement).toHaveAttribute("data-typography-distinction", "off");
     const server = within(workspace).getByRole("region", { name: "CPA 服务端版本" });
     expect(within(server).getByText("v7.2.92")).toBeInTheDocument();
     expect(within(server).getAllByText("v7.2.93").length).toBeGreaterThan(0);

@@ -17,6 +17,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.font_size_medium": "Средний",
   "ui.font_size_large": "Большой",
   "ui.font_size_current": "Текущий: {size}",
+  "ui.typography_distinction": "Различать размеры текста",
+  "ui.typography_distinction_description": "Разделять размеры заголовков и описаний. Отключите, чтобы описания использовали размер заголовка.",
   "ui.experimental_features": "Экспериментальные функции",
   "ui.experimental_features_warning": "Экспериментальное поведение",
   "ui.experimental_features_may_change_or_stop_working": "Эти функции зависят от поведения вышестоящего сервиса и могут измениться или перестать работать без предупреждения.",

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { formatDateTimeForLocale } from "./i18n/I18nProvider";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
 import { readPanelAuth } from "./store/panelAuth";
@@ -327,7 +328,7 @@ describe("primary account batch flow", () => {
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
 			"", "账号", "提供方", "类型", "用量", "主动重置次数", "账号并发", "初始时间", "禁用时间", "权限", "状态", "优先级", "路由配置", "操作",
     ]);
-		expect(screen.getByText("2026/07/01 16:00", { selector: ".account-lifecycle-time" })).toHaveAttribute("datetime", account.created_at);
+		expect(screen.getByText(formatDateTimeForLocale("zh-CN", account.created_at), { selector: ".account-lifecycle-time" })).toHaveAttribute("datetime", account.created_at);
 		expect(document.querySelector(".account-time-empty")).toHaveTextContent("-");
 		const unavailableConcurrency = document.querySelector<HTMLElement>(".concurrency-unavailable");
 		expect(unavailableConcurrency).toHaveAttribute("title", expect.stringContaining("当前 CPA 版本不支持账号并发控制"));

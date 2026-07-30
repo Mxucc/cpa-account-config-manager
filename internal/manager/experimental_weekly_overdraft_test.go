@@ -202,6 +202,8 @@ func TestWeeklyOverdraftExperimentKeepsAccountEnabledWhenAnyGateProbeSucceeds(t 
 	host := inspectionEditableHost(false)
 	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
 	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	cycleTracker := &recordingOverdraftCycleStopper{}
+	engine.SetOverdraftCycleTracker(cycleTracker)
 	probeCalls := 0
 	engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
 		probeCalls++
@@ -231,7 +233,7 @@ func TestWeeklyOverdraftExperimentKeepsAccountEnabledWhenAnyGateProbeSucceeds(t 
 	}
 	if record.Result.AutoDisableProbeStatus != InspectionAutoDisableProbePassed || record.Result.AutoDisableProbeAttempts != 3 ||
 		record.Result.AutoDisableProbeLimit != weeklyOverdraftProbeAttempts || record.Result.AutoDisableProbeReasonCode != "model_response_ok" ||
-		record.Result.AutoDisableProbeTestedAt == nil {
+		record.Result.AutoDisableProbeTestedAt == nil || len(cycleTracker.started) != 1 || cycleTracker.started[0] != "inspection-account" {
 		t.Fatalf("successful gate state = %#v", record.Result)
 	}
 }
@@ -334,15 +336,32 @@ func weeklyOverdraftActionAccounts() map[string]Account {
 }
 
 func TestWeeklyOverdraftExperimentKeepsFiveHourAccountEnabledWhenProbeSucceeds(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 7, 0, 0, 0, time.UTC)
 	host := inspectionEditableHost(false)
 	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
 	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	usage := NewUsageTracker()
+	defer usage.Close()
+	usage.now = func() time.Time { return now }
+	usage.persistDelay = time.Hour
+	usage.Configure(Config{DataDir: t.TempDir()})
+	usage.Observe(cpaapi.UsageRecord{
+		AuthIndex: "inspection-account", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 30_875_000},
+		ResponseHeaders: http.Header{
+			"X-Codex-Secondary-Used-Percent":        []string{"100"},
+			"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+			"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+			"X-Codex-Primary-Used-Percent":          []string{"16"},
+			"X-Codex-Primary-Window-Minutes":        []string{"10080"},
+		},
+	})
+	engine.SetOverdraftCycleTracker(usage)
 	probeCalls := 0
 	engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
 		probeCalls++
 		return ModelTestResult{
 			AccountID: request.AccountID, Model: request.Model, Status: "available", ReasonCode: "model_response_ok",
-			StatusCode: http.StatusOK, TestedAt: time.Now().UTC(),
+			StatusCode: http.StatusOK, TestedAt: now.Add(time.Duration(probeCalls) * time.Second),
 			Experiment: &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: "call_five_hour_gate"},
 		}, nil
 	}
@@ -358,11 +377,23 @@ func TestWeeklyOverdraftExperimentKeepsFiveHourAccountEnabledWhenProbeSucceeds(t
 	}
 	policy := defaultInspectionPolicy()
 	policy.AutoDisable = true
-	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, time.Now().UTC(), "", "")
+	summary, actions := engine.applyAutomaticActions(context.Background(), policy, accounts, records, now, "", "")
 	result := records["inspection-account"].Result
 	if probeCalls != 1 || summary.AutoDisabled != 0 || summary.Failed != 0 || len(actions) != 0 || len(host.saves) != 0 || result.Disabled ||
 		result.AutoDisableProbeStatus != InspectionAutoDisableProbePassed || result.AutoDisableProbeAttempts != 1 {
 		t.Fatalf("five-hour quota result summary=%#v actions=%#v probes=%d saves=%d record=%#v", summary, actions, probeCalls, len(host.saves), records["inspection-account"])
+	}
+	started := usage.Snapshot("inspection-account").Codex.FiveHour
+	wantRecoverAt := now.Add(time.Second).Add(5 * time.Hour)
+	if !started.OverdraftActive || started.OverdraftStartedAt == nil || !started.OverdraftStartedAt.Equal(now.Add(time.Second)) ||
+		started.OverdraftRecoverAt == nil || !started.OverdraftRecoverAt.Equal(wantRecoverAt) {
+		t.Fatalf("successful five-hour continuation did not start a frozen cycle: %#v", started)
+	}
+
+	_, _ = engine.applyAutomaticActions(context.Background(), policy, accounts, records, now.Add(time.Minute), "", "")
+	repeated := usage.Snapshot("inspection-account").Codex.FiveHour
+	if probeCalls != 2 || repeated.OverdraftRecoverAt == nil || !repeated.OverdraftRecoverAt.Equal(wantRecoverAt) {
+		t.Fatalf("repeated successful continuation moved the frozen cycle: probes=%d window=%#v", probeCalls, repeated)
 	}
 }
 
@@ -372,6 +403,8 @@ func TestWeeklyOverdraftExperimentDisablesFiveHourAccountOnlyAfterFiveFailedProb
 	host := inspectionEditableHost(false)
 	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
 	engine.RegisterAutomaticDisableGuard(NewWeeklyOverdraftExperiment(func() bool { return true }))
+	cycleTracker := &recordingOverdraftCycleStopper{}
+	engine.SetOverdraftCycleTracker(cycleTracker)
 	probeCalls := 0
 	engine.automaticDisableProbe = func(_ context.Context, request ModelTestRequest, _, _ string) (ModelTestResult, error) {
 		probeCalls++
@@ -392,7 +425,7 @@ func TestWeeklyOverdraftExperimentDisablesFiveHourAccountOnlyAfterFiveFailedProb
 	result := records["inspection-account"]
 	if probeCalls != weeklyOverdraftProbeAttempts || summary.AutoDisabled != 1 || summary.Failed != 0 || len(actions) != 1 || len(host.saves) != 1 ||
 		!result.Result.Disabled || result.Result.AutoDisableProbeStatus != InspectionAutoDisableProbeFailed ||
-		result.Result.AutoDisableProbeAttempts != weeklyOverdraftProbeAttempts || !result.DisabledRecoverAfter.Equal(resetAt) {
+		result.Result.AutoDisableProbeAttempts != weeklyOverdraftProbeAttempts || !result.DisabledRecoverAfter.Equal(resetAt) || len(cycleTracker.started) != 0 {
 		t.Fatalf("failed five-hour gate summary=%#v actions=%#v probes=%d saves=%d record=%#v", summary, actions, probeCalls, len(host.saves), result)
 	}
 }

@@ -324,6 +324,54 @@ func TestUsageTrackerUsesEmailIdentityAcrossAuthIndexChanges(t *testing.T) {
 	}
 }
 
+func TestUsageTrackerPreservesActiveOverdraftAcrossDisabledTeamIdentityRebind(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.July, 30, 6, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{
+		usageIdentityTestEntry(t, "enabled-index", "member@example.com", "team-workspace-before-disable"),
+	})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "enabled-index", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 1_000},
+		ResponseHeaders: http.Header{
+			"X-Codex-Primary-Used-Percent":        []string{"100"},
+			"X-Codex-Primary-Window-Minutes":      []string{"10080"},
+			"X-Codex-Primary-Reset-After-Seconds": []string{"3600"},
+		},
+	})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("enabled-index", InspectionQuotaWindowSevenDay, now)
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "enabled-index", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 381_080},
+	})
+
+	disabledEntry := usageIdentityTestEntry(t, "disabled-index", "MEMBER@example.com", "team-workspace-after-disable")
+	disabledEntry.Disabled = true
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{disabledEntry})
+
+	snapshot := tracker.Snapshot("disabled-index")
+	if snapshot == nil || snapshot.TotalTokens != 382_080 || snapshot.Codex == nil || snapshot.Codex.SevenDay == nil ||
+		!snapshot.Codex.SevenDay.OverdraftActive || snapshot.Codex.SevenDay.OverdraftTokens != 381_080 ||
+		snapshot.Codex.SevenDay.OverdraftRequests != 1 {
+		t.Fatalf("disabled Team account lost active overdraft after identity rebind: %#v", snapshot)
+	}
+	tracker.Close()
+
+	restored := NewUsageTracker()
+	defer restored.Close()
+	restored.now = func() time.Time { return now.Add(time.Minute) }
+	restored.Configure(Config{DataDir: dataDir})
+	restored.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{disabledEntry})
+	reloaded := restored.Snapshot("disabled-index")
+	if reloaded == nil || reloaded.Codex == nil || reloaded.Codex.SevenDay == nil ||
+		!reloaded.Codex.SevenDay.OverdraftActive || reloaded.Codex.SevenDay.OverdraftTokens != 381_080 {
+		t.Fatalf("disabled Team account lost persisted overdraft after reload: %#v", reloaded)
+	}
+}
+
 func TestUsageTrackerDoesNotCarryUsageAcrossEmailReplacement(t *testing.T) {
 	tracker := NewUsageTracker()
 	defer tracker.Close()

@@ -180,7 +180,15 @@ func (t *UsageTracker) bindUsageAccounts(entries []cpaapi.HostAuthFileEntry) {
 	for authIndex, binding := range bindings {
 		current, exists := t.accounts[binding.Key]
 		if exists && usageIdentitiesConflict(current.Identity, binding.Identity) {
-			current = usageAggregate{Identity: binding.Identity, UpdatedAt: now}
+			if binding.Disabled && usageIdentityCanRebindByEmail(current.Identity, binding.Identity) {
+				// Email is the durable primary identity. CPA may regenerate the
+				// auth index and project a different Team workspace fingerprint
+				// after writing the disabled field. Keep usage and active overdraft
+				// cycles for that single account while refreshing the auxiliary ID.
+				current.Identity = rebindUsageIdentity(current.Identity, binding.Identity)
+			} else {
+				current = usageAggregate{Identity: binding.Identity, UpdatedAt: now}
+			}
 			t.accounts[binding.Key] = current
 			changed = true
 		} else if exists {

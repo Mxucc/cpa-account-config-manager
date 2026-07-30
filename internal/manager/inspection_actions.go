@@ -211,6 +211,18 @@ func (e *InspectionEngine) stopOverdraftCycle(accountID string) {
 	}
 }
 
+func (e *InspectionEngine) beginOverdraftCycle(accountID, quotaWindow string, exhaustedAt time.Time) {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	tracker := e.overdraftCycles
+	e.mu.RUnlock()
+	if tracker != nil {
+		tracker.BeginOverdraftCycle(accountID, quotaWindow, exhaustedAt)
+	}
+}
+
 func shouldOpenPassiveCircuit(policy InspectionPolicy, account Account, record inspectionRecord, now time.Time) (bool, string, int) {
 	if !policy.PassiveCircuitEnabled || !policy.AutoDisable || !policy.AutoEnable || account.Disabled || !account.Editable || record.Result.OwnedDisable {
 		return false, "", 0

@@ -22,6 +22,7 @@ type usageIdentityFingerprint struct {
 type usageBinding struct {
 	Key      string
 	Identity usageIdentityFingerprint
+	Disabled bool
 }
 
 func usageBindingForEntry(entry cpaapi.HostAuthFileEntry) (usageBinding, bool) {
@@ -42,12 +43,14 @@ func usageBindingForEntry(entry cpaapi.HostAuthFileEntry) (usageBinding, bool) {
 		return usageBinding{
 			Key:      usageEmailKeyPrefix + usageIdentityDigest(provider+"\x00"+email),
 			Identity: identity,
+			Disabled: entry.Disabled,
 		}, true
 	}
 	if identity.AccountIDHash != "" {
 		return usageBinding{
 			Key:      usageAccountKeyPrefix + usageIdentityDigest(provider+"\x00"+identity.AccountIDHash),
 			Identity: identity,
+			Disabled: entry.Disabled,
 		}, true
 	}
 	return usageBinding{}, false
@@ -146,6 +149,21 @@ func validUsageStorageKey(key string) bool {
 func usageIdentitiesConflict(left, right usageIdentityFingerprint) bool {
 	return left.EmailHash != "" && right.EmailHash != "" && left.EmailHash != right.EmailHash ||
 		left.AccountIDHash != "" && right.AccountIDHash != "" && left.AccountIDHash != right.AccountIDHash
+}
+
+func usageIdentityCanRebindByEmail(current, replacement usageIdentityFingerprint) bool {
+	return current.EmailHash != "" && current.EmailHash == replacement.EmailHash
+}
+
+func rebindUsageIdentity(current, replacement usageIdentityFingerprint) usageIdentityFingerprint {
+	if !usageIdentityCanRebindByEmail(current, replacement) {
+		return mergeUsageIdentity(current, replacement)
+	}
+	current.EmailHash = replacement.EmailHash
+	if replacement.AccountIDHash != "" {
+		current.AccountIDHash = replacement.AccountIDHash
+	}
+	return current
 }
 
 func mergeUsageIdentity(primary, secondary usageIdentityFingerprint) usageIdentityFingerprint {

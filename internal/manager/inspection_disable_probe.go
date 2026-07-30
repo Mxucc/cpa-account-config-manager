@@ -96,6 +96,13 @@ func (e *InspectionEngine) applyAutomaticDisableProbeGates(
 	for outcome := range outcomes {
 		record := records[outcome.id]
 		record.Result = outcome.result
+		if outcome.result.AutoDisableProbeStatus == InspectionAutoDisableProbePassed {
+			startedAt := e.currentTime()
+			if outcome.result.AutoDisableProbeTestedAt != nil && !outcome.result.AutoDisableProbeTestedAt.IsZero() {
+				startedAt = outcome.result.AutoDisableProbeTestedAt.UTC()
+			}
+			e.beginOverdraftCycle(outcome.id, outcome.result.QuotaWindow, startedAt)
+		}
 		records[outcome.id] = record
 		e.publishAutomaticDisableProbeRecord(outcome.id, record)
 	}

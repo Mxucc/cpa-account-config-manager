@@ -154,7 +154,12 @@ func TestAutomaticQuotaRecoveryRaisesPriorityThroughCPAFieldsAPI(t *testing.T) {
 }
 
 type recordingOverdraftCycleStopper struct {
+	started []string
 	stopped []string
+}
+
+func (s *recordingOverdraftCycleStopper) BeginOverdraftCycle(accountID, _ string, _ time.Time) {
+	s.started = append(s.started, accountID)
 }
 
 func (s *recordingOverdraftCycleStopper) StopOverdraftCycle(accountID string) {

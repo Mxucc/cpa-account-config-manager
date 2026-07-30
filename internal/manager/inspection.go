@@ -26,7 +26,7 @@ type InspectionEngine struct {
 	mutations                  *MutationCoordinator
 	backgroundOwner            BackgroundWorkOwner
 	modelTests                 *ModelTestService
-	overdraftCycles            overdraftCycleStopper
+	overdraftCycles            overdraftCycleTracker
 	automaticDisableProbe      automaticDisableProbeRunner
 	probeNeedsManagementAuth   bool
 	deletions                  *AccountDeleteService
@@ -89,7 +89,8 @@ type InspectionEngine struct {
 	now                        func() time.Time
 }
 
-type overdraftCycleStopper interface {
+type overdraftCycleTracker interface {
+	BeginOverdraftCycle(string, string, time.Time)
 	StopOverdraftCycle(string)
 }
 
@@ -132,7 +133,7 @@ func (e *InspectionEngine) SetModelTestService(service *ModelTestService) {
 	e.mu.Unlock()
 }
 
-func (e *InspectionEngine) SetOverdraftCycleTracker(tracker overdraftCycleStopper) {
+func (e *InspectionEngine) SetOverdraftCycleTracker(tracker overdraftCycleTracker) {
 	if e == nil {
 		return
 	}

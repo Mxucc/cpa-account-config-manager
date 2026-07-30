@@ -52,9 +52,14 @@ describe("OtherSettingsWorkspace", () => {
 
     const workspace = await screen.findByRole("region", { name: "其他配置" });
     const settingsTabs = within(workspace).getByRole("tablist", { name: "其他配置分栏" });
-    expect(within(settingsTabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["自动策略", "外部通知", "版本更新", "实验性功能"]);
+    expect(within(settingsTabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["自动策略", "外部通知", "插件配置与版本", "实验性功能"]);
     expect(within(workspace).getByRole("tab", { name: "自动策略" })).toHaveAttribute("aria-selected", "true");
-    await user.click(within(workspace).getByRole("tab", { name: "版本更新" }));
+    await user.click(within(workspace).getByRole("tab", { name: "插件配置与版本" }));
+    const fontSettings = within(workspace).getByRole("region", { name: "字体大小" });
+    expect(within(fontSettings).getByRole("button", { name: "小" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(fontSettings).getByRole("button", { name: "大" }));
+    expect(localStorage.getItem("cpa-account-config-manager:font-size")).toBe("large");
+    expect(document.documentElement).toHaveAttribute("data-font-size", "large");
     const server = within(workspace).getByRole("region", { name: "CPA 服务端版本" });
     expect(within(server).getByText("v7.2.92")).toBeInTheDocument();
     expect(within(server).getAllByText("v7.2.93").length).toBeGreaterThan(0);
@@ -96,7 +101,7 @@ describe("OtherSettingsWorkspace", () => {
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
     const workspace = await screen.findByRole("region", { name: "其他配置" });
-    await user.click(within(workspace).getByRole("tab", { name: "版本更新" }));
+    await user.click(within(workspace).getByRole("tab", { name: "插件配置与版本" }));
     const plugin = within(workspace).getByRole("region", { name: "插件更新" });
     expect(within(plugin).queryByText(/原生插件更新后必须完整重启 CPA/)).not.toBeInTheDocument();
     expect(within(plugin).queryByText(/等待首次 CPA 重启/)).not.toBeInTheDocument();

@@ -8,9 +8,10 @@ import {
   PackageCheck,
   RefreshCw,
   Save,
-  Server,
-  ShieldCheck,
-  UploadCloud,
+	Server,
+	ShieldCheck,
+  Type,
+	UploadCloud,
   Workflow,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,6 +19,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { CPAServerVersionSnapshot, ExperimentalSettings, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
+import { readFontSize, writeFontSize, type FontSizePreset } from "../store/fontSize";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 
@@ -37,6 +39,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
   const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">("automation");
+  const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -242,6 +245,10 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   };
 
   const pluginBusy = checkingPlugin || Boolean(updates?.checking || updates?.pending);
+  const updateFontSize = (next: FontSizePreset) => {
+    setFontSize(next);
+    writeFontSize(next);
+  };
   return (
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
@@ -259,7 +266,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
           <BellRing size={15} />{tx("ui.external_notifications")}
         </button>
         <button type="button" role="tab" aria-selected={activeSection === "updates"} className={activeSection === "updates" ? "active" : ""} onClick={() => setActiveSection("updates")}>
-          <Server size={15} />{tx("ui.version_updates")}
+          <Server size={15} />{tx("ui.plugin_configuration_and_version")}
         </button>
         <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
           <FlaskConical size={15} />{tx("ui.experimental_features")}
@@ -272,7 +279,21 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
       ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
-      ) : activeSection === "updates" ? <div className="other-settings-grid" role="tabpanel" aria-label={tx("ui.version_updates")}>
+      ) : activeSection === "updates" ? <div className="plugin-configuration-version-panel" role="tabpanel" aria-label={tx("ui.plugin_configuration_and_version")}>
+        <section className="font-size-settings settings-section" aria-label={tx("ui.font_size")}>
+          <header><Type size={18} /><div><strong>{tx("ui.font_size")}</strong><span>{tx("ui.font_size_description")}</span></div></header>
+          <div className="font-size-settings-body">
+            <div className="font-size-options" role="group" aria-label={tx("ui.font_size")}>
+              {(["small", "medium", "large"] as const).map((preset) => (
+                <button key={preset} type="button" className={fontSize === preset ? "active" : ""} aria-pressed={fontSize === preset} onClick={() => updateFontSize(preset)}>
+                  {tx(`ui.font_size_${preset}`)}
+                </button>
+              ))}
+            </div>
+            <span className="font-size-current">{tx("ui.font_size_current", { size: tx(`ui.font_size_${fontSize}`) })}</span>
+          </div>
+        </section>
+        <div className="other-settings-grid">
         <section className="settings-section server-version-section" aria-label={tx("ui.cpa_server_version")}>
           <header><Server size={18} /><div><strong>{tx("ui.cpa_server_version")}</strong><span>{tx("ui.cpa_server_version_description")}</span></div></header>
           <div className="settings-version-grid">
@@ -322,6 +343,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             <button className="button button-primary" type="button" disabled={saving || !updates} onClick={() => void saveUpdateSettings()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}</button>
           </div>
         </section>
+        </div>
       </div> : (
         <section className="experimental-settings-section" role="tabpanel" aria-label={tx("ui.experimental_features")}>
           <div className="experimental-warning" role="note">

@@ -64,10 +64,36 @@ type AccountFilters struct {
 	Search      string `json:"search,omitempty"`
 }
 
+type AccountSortField string
+
+const (
+	AccountSortAccount          AccountSortField = "account"
+	AccountSortProvider         AccountSortField = "provider"
+	AccountSortType             AccountSortField = "type"
+	AccountSortUsage            AccountSortField = "usage"
+	AccountSortActiveResetCount AccountSortField = "active_reset_count"
+	AccountSortConcurrency      AccountSortField = "concurrency"
+	AccountSortCreatedAt        AccountSortField = "created_at"
+	AccountSortDisabledAt       AccountSortField = "disabled_at"
+	AccountSortAccess           AccountSortField = "access"
+	AccountSortStatus           AccountSortField = "status"
+	AccountSortPriority         AccountSortField = "priority"
+	AccountSortRouting          AccountSortField = "routing"
+)
+
+type AccountSortOrder string
+
+const (
+	AccountSortAscending  AccountSortOrder = "asc"
+	AccountSortDescending AccountSortOrder = "desc"
+)
+
 type ListQuery struct {
-	Page     int
-	PageSize int
-	Filters  AccountFilters
+	Page      int
+	PageSize  int
+	Filters   AccountFilters
+	SortBy    AccountSortField
+	SortOrder AccountSortOrder
 }
 
 type ListResponse struct {

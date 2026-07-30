@@ -1562,6 +1562,20 @@ func listQueryFromValues(values map[string][]string) (ListQuery, error) {
 	query.Filters.Editability = firstQuery(values, "editability")
 	query.Filters.Source = firstQuery(values, "source")
 	query.Filters.Search = firstQuery(values, "search")
+	query.SortBy = AccountSortField(strings.ToLower(firstQuery(values, "sort_by")))
+	if query.SortBy == "" {
+		query.SortBy = AccountSortAccount
+	}
+	if !validAccountSortField(query.SortBy) {
+		return ListQuery{}, fmt.Errorf("unsupported account sort field")
+	}
+	query.SortOrder = AccountSortOrder(strings.ToLower(firstQuery(values, "sort_order")))
+	if query.SortOrder == "" {
+		query.SortOrder = AccountSortAscending
+	}
+	if query.SortOrder != AccountSortAscending && query.SortOrder != AccountSortDescending {
+		return ListQuery{}, fmt.Errorf("sort_order must be asc or desc")
+	}
 	if rawDisabled := firstQuery(values, "disabled"); rawDisabled != "" {
 		disabled, errParse := strconv.ParseBool(rawDisabled)
 		if errParse != nil {

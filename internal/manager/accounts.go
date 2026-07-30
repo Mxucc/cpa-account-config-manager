@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"cpa-account-config-manager/internal/cpaapi"
@@ -91,7 +92,10 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 		s.enrichAccountDetails(ctx, accounts)
 	}
 	accounts = filterAccounts(accounts, query.Filters)
-	sortAccounts(accounts)
+	if sortRequiresAccountDetail(query.SortBy) && !filtersRequireAccountDetail(query.Filters) {
+		s.enrichAccountDetails(ctx, accounts)
+	}
+	sortAccountsBy(accounts, query.SortBy, query.SortOrder)
 
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	total := len(accounts)
@@ -325,14 +329,178 @@ func filterAccounts(accounts []Account, filters AccountFilters) []Account {
 }
 
 func sortAccounts(accounts []Account) {
+	sortAccountsBy(accounts, AccountSortAccount, AccountSortAscending)
+}
+
+func sortAccountsBy(accounts []Account, field AccountSortField, order AccountSortOrder) {
+	if !validAccountSortField(field) {
+		field = AccountSortAccount
+	}
+	descending := order == AccountSortDescending
 	sort.Slice(accounts, func(i, j int) bool {
-		left := strings.ToLower(firstNonEmpty(accounts[i].Label, accounts[i].Email, accounts[i].Name, accounts[i].ID))
-		right := strings.ToLower(firstNonEmpty(accounts[j].Label, accounts[j].Email, accounts[j].Name, accounts[j].ID))
-		if left == right {
-			return accounts[i].ID < accounts[j].ID
+		comparison, leftMissing, rightMissing := compareAccountSortValue(accounts[i], accounts[j], field)
+		if leftMissing != rightMissing {
+			return !leftMissing
 		}
-		return left < right
+		if comparison != 0 {
+			if descending {
+				return comparison > 0
+			}
+			return comparison < 0
+		}
+		leftIdentity := normalizedAccountIdentity(accounts[i])
+		rightIdentity := normalizedAccountIdentity(accounts[j])
+		if leftIdentity != rightIdentity {
+			return leftIdentity < rightIdentity
+		}
+		return accounts[i].ID < accounts[j].ID
 	})
+}
+
+func compareAccountSortValue(left, right Account, field AccountSortField) (comparison int, leftMissing, rightMissing bool) {
+	switch field {
+	case AccountSortProvider:
+		return compareOptionalStrings(left.Provider, right.Provider)
+	case AccountSortType:
+		return compareOptionalStrings(firstNonEmpty(left.PlanType, left.AccountType, left.Type), firstNonEmpty(right.PlanType, right.AccountType, right.Type))
+	case AccountSortUsage:
+		return compareOptionalInt64(accountUsageTotal(left), accountUsageTotal(right))
+	case AccountSortActiveResetCount:
+		return compareOptionalInts(accountActiveResetCount(left), accountActiveResetCount(right))
+	case AccountSortConcurrency:
+		if !left.Concurrency.Supported || !right.Concurrency.Supported {
+			return 0, !left.Concurrency.Supported, !right.Concurrency.Supported
+		}
+		if comparison = compareSortInt(left.Concurrency.Active, right.Concurrency.Active); comparison == 0 {
+			comparison = compareSortInt(left.Concurrency.Limit, right.Concurrency.Limit)
+		}
+		return comparison, false, false
+	case AccountSortCreatedAt:
+		return compareOptionalTimes(left.CreatedAt, right.CreatedAt)
+	case AccountSortDisabledAt:
+		return compareOptionalTimes(left.DisabledAt, right.DisabledAt)
+	case AccountSortAccess:
+		return strings.Compare(accountAccessSortValue(left), accountAccessSortValue(right)), false, false
+	case AccountSortStatus:
+		return strings.Compare(accountSortStatus(left), accountSortStatus(right)), false, false
+	case AccountSortPriority:
+		return compareOptionalInts(left.Priority, right.Priority)
+	case AccountSortRouting:
+		return strings.Compare(accountRoutingSortValue(left), accountRoutingSortValue(right)), false, false
+	default:
+		return strings.Compare(normalizedAccountIdentity(left), normalizedAccountIdentity(right)), false, false
+	}
+}
+
+func normalizedAccountIdentity(account Account) string {
+	return strings.ToLower(firstNonEmpty(account.Label, account.Email, account.Name, account.ID))
+}
+
+func accountUsageTotal(account Account) *int64 {
+	if account.Usage == nil {
+		return nil
+	}
+	value := account.Usage.TotalTokens
+	return &value
+}
+
+func accountActiveResetCount(account Account) *int {
+	if account.Usage == nil || account.Usage.Codex == nil {
+		return nil
+	}
+	return account.Usage.Codex.ActiveResetCount
+}
+
+func accountSortStatus(account Account) string {
+	switch {
+	case account.Disabled:
+		return "disabled"
+	case account.Unavailable:
+		return "unavailable"
+	default:
+		return strings.ToLower(firstNonEmpty(account.Status, "unknown"))
+	}
+}
+
+func accountAccessSortValue(account Account) string {
+	if account.Editable {
+		return "editable"
+	}
+	return "read_only"
+}
+
+func accountRoutingSortValue(account Account) string {
+	websockets := "0"
+	if account.Websockets != nil && *account.Websockets {
+		websockets = "1"
+	}
+	return strings.ToLower(fmt.Sprintf("%s\x00%t\x00%s\x00%08d", account.Prefix, account.ProxyConfigured, websockets, account.HeaderCount))
+}
+
+func compareOptionalStrings(left, right string) (int, bool, bool) {
+	left = strings.ToLower(strings.TrimSpace(left))
+	right = strings.ToLower(strings.TrimSpace(right))
+	return strings.Compare(left, right), left == "", right == ""
+}
+
+func compareOptionalInt64(left, right *int64) (int, bool, bool) {
+	if left == nil || right == nil {
+		return 0, left == nil, right == nil
+	}
+	return compareSortInt64(*left, *right), false, false
+}
+
+func compareOptionalInts(left, right *int) (int, bool, bool) {
+	if left == nil || right == nil {
+		return 0, left == nil, right == nil
+	}
+	return compareSortInt(*left, *right), false, false
+}
+
+func compareOptionalTimes(left, right *time.Time) (int, bool, bool) {
+	if left == nil || right == nil {
+		return 0, left == nil, right == nil
+	}
+	if left.Before(*right) {
+		return -1, false, false
+	}
+	if left.After(*right) {
+		return 1, false, false
+	}
+	return 0, false, false
+}
+
+func compareSortInt(left, right int) int {
+	return compareSortInt64(int64(left), int64(right))
+}
+
+func compareSortInt64(left, right int64) int {
+	switch {
+	case left < right:
+		return -1
+	case left > right:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func validAccountSortField(field AccountSortField) bool {
+	switch field {
+	case AccountSortAccount, AccountSortProvider, AccountSortType, AccountSortUsage, AccountSortActiveResetCount, AccountSortConcurrency, AccountSortCreatedAt, AccountSortDisabledAt, AccountSortAccess, AccountSortStatus, AccountSortPriority, AccountSortRouting:
+		return true
+	default:
+		return false
+	}
+}
+
+func sortRequiresAccountDetail(field AccountSortField) bool {
+	switch field {
+	case AccountSortType, AccountSortAccess, AccountSortPriority, AccountSortRouting:
+		return true
+	default:
+		return false
+	}
 }
 
 func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts map[string]int, usage UsageSnapshotReader) Account {

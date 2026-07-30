@@ -5,6 +5,7 @@ import App from "./App";
 import { formatDateTimeForLocale } from "./i18n/I18nProvider";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
+import { ACCOUNT_SORT_STORAGE_KEY, writeAccountSort } from "./store/accountSort";
 import { readPanelAuth } from "./store/panelAuth";
 import { _resetSessionForTest } from "./store/session";
 import type { BatchPatch } from "./types";
@@ -521,6 +522,90 @@ describe("primary account batch flow", () => {
     await waitFor(() => expect(requests.some((url) => url.includes("page=1") && url.includes("page_size=1000"))).toBe(true));
     expect(pageSizeSelect).toHaveValue("1000");
     expect(localStorage.getItem(ACCOUNT_PAGE_SIZE_STORAGE_KEY)).toBe("1000");
+  });
+
+  it("sorts account columns on the server, persists the choice, and resets to account A-Z once", async () => {
+    const user = userEvent.setup();
+    const accountRequests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      if (new URL(url, "http://localhost").pathname.endsWith("/accounts")) accountRequests.push(url);
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    const accountHeader = screen.getByText("账号", { selector: ".table-sort-button > span" }).closest("th");
+    const usageHeader = screen.getByText("用量", { selector: ".table-sort-button > span" }).closest("th");
+    expect(accountHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(usageHeader).toHaveAttribute("aria-sort", "none");
+    expect(new URL(accountRequests[0], "http://localhost").searchParams.get("sort_by")).toBe("account");
+    expect(new URL(accountRequests[0], "http://localhost").searchParams.get("sort_order")).toBe("asc");
+
+    await user.click(screen.getByRole("button", { name: "按用量升序排列" }));
+    await waitFor(() => expect(accountRequests.some((url) => {
+      const query = new URL(url, "http://localhost").searchParams;
+      return query.get("sort_by") === "usage" && query.get("sort_order") === "asc";
+    })).toBe(true));
+    expect(usageHeader).toHaveAttribute("aria-sort", "ascending");
+
+    await user.click(screen.getByRole("button", { name: "用量当前为升序，点击切换为降序" }));
+    await waitFor(() => expect(accountRequests.some((url) => {
+      const query = new URL(url, "http://localhost").searchParams;
+      return query.get("sort_by") === "usage" && query.get("sort_order") === "desc";
+    })).toBe(true));
+    await waitFor(() => expect(localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY)).toBe(JSON.stringify({ version: 1, field: "usage", order: "desc" })));
+    expect(usageHeader).toHaveAttribute("aria-sort", "descending");
+
+    const requestsBeforeReset = accountRequests.length;
+    await user.click(screen.getByRole("button", { name: "重置" }));
+    await waitFor(() => expect(accountRequests).toHaveLength(requestsBeforeReset + 1));
+    const resetQuery = new URL(accountRequests.at(-1) ?? "", "http://localhost").searchParams;
+    expect(resetQuery.get("sort_by")).toBe("account");
+    expect(resetQuery.get("sort_order")).toBe("asc");
+    expect(accountHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(usageHeader).toHaveAttribute("aria-sort", "none");
+    expect(localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY)).toBeNull();
+    expect(screen.getByRole("button", { name: "重置" })).toBeDisabled();
+  });
+
+  it("restores the persisted account sort before the first account request", async () => {
+    const user = userEvent.setup();
+    const accountRequests: string[] = [];
+    writeAccountSort({ field: "priority", order: "desc" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/batch/status")) {
+        return jsonResponse({
+          state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0,
+          failed: 0, conflicts: 0, skipped: 0, workers: 0,
+          patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false,
+        });
+      }
+      if (new URL(url, "http://localhost").pathname.endsWith("/accounts")) accountRequests.push(url);
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    const firstQuery = new URL(accountRequests[0], "http://localhost").searchParams;
+    expect(firstQuery.get("sort_by")).toBe("priority");
+    expect(firstQuery.get("sort_order")).toBe("desc");
+    expect(screen.getByText("优先级", { selector: ".table-sort-button > span" }).closest("th")).toHaveAttribute("aria-sort", "descending");
+    expect(screen.getByRole("button", { name: "重置" })).toBeEnabled();
   });
 
   it("restores account search and filters and clears the persisted state on reset", async () => {

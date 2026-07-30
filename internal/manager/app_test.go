@@ -263,6 +263,27 @@ func TestHandleManagementListsRedactedAccounts(t *testing.T) {
 	}
 }
 
+func TestHandleManagementRejectsInvalidAccountSortQuery(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	path := "/v0/management/plugins/cpa-account-config-manager/accounts"
+	for name, query := range map[string]url.Values{
+		"field": {"sort_by": []string{"credential"}},
+		"order": {"sort_order": []string{"sideways"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+				Method: http.MethodGet,
+				Path:   path,
+				Query:  query,
+			})
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+			}
+		})
+	}
+}
+
 func TestAppReplacementRestoresPersistedUsageIntoAccountList(t *testing.T) {
 	dataDir := t.TempDir()
 	config := []byte(fmt.Sprintf("data_dir: %q\n", dataDir))

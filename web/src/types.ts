@@ -202,6 +202,14 @@ export interface AccountFilters {
   search?: string;
 }
 
+export type AccountSortField = "account" | "provider" | "type" | "usage" | "active_reset_count" | "concurrency" | "created_at" | "disabled_at" | "access" | "status" | "priority" | "routing";
+export type AccountSortOrder = "asc" | "desc";
+
+export interface AccountSort {
+  field: AccountSortField;
+  order: AccountSortOrder;
+}
+
 export interface AccountListResponse {
   accounts: Account[];
   total: number;

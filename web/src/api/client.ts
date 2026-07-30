@@ -10,6 +10,7 @@ import type {
   AccountFilters,
   AccountExportFormat,
   AccountListResponse,
+  AccountSort,
 	AccountModelCatalogResponse,
   BatchPatch,
   BatchPreview,
@@ -258,10 +259,13 @@ export async function listAccounts(
   page: number,
   pageSize: number,
   filters: AccountFilters,
+  sort: AccountSort = { field: "account", order: "asc" },
 ): Promise<AccountListResponse> {
   const query = filtersQuery(filters);
   query.set("page", String(page));
   query.set("page_size", String(pageSize));
+  query.set("sort_by", sort.field);
+  query.set("sort_order", sort.order);
   const response = await request<AccountListResponse>("/accounts", {}, query);
 	const availability = response.account_concurrency ?? legacyAccountConcurrency;
 	return {

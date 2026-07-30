@@ -1,5 +1,8 @@
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronLeft,
   ChevronRight,
   CopyCheck,
@@ -65,6 +68,14 @@ import {
   writeAccountFilters,
   type PersistedAccountFilters,
 } from "./store/accountFilters";
+import {
+  DEFAULT_ACCOUNT_SORT,
+  isDefaultAccountSort,
+  readAccountSort,
+  writeAccountSort,
+  type AccountSort,
+  type AccountSortField,
+} from "./store/accountSort";
 import { readPanelAuth } from "./store/panelAuth";
 import { clearSession, setSession } from "./store/session";
 import type {
@@ -204,6 +215,7 @@ function AccountManagerApp() {
   const [searchDraft, setSearchDraft] = useState(() => readAccountFilters().search);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(readAccountPageSize);
+  const [accountSort, setAccountSort] = useState<AccountSort>(readAccountSort);
   const [data, setData] = useState<AccountListResponse>({ accounts: [], total: 0, page: 1, page_size: DEFAULT_ACCOUNT_PAGE_SIZE, pages: 0, account_concurrency: { supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" } });
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -286,6 +298,10 @@ function AccountManagerApp() {
   }, [filters, searchDraft]);
 
   useEffect(() => {
+    writeAccountSort(accountSort);
+  }, [accountSort]);
+
+  useEffect(() => {
     let active = true;
     let settingsTimer = 0;
     const bootstrap = async () => {
@@ -296,7 +312,7 @@ function AccountManagerApp() {
       }
       setSession(panelAuth.apiBase, panelAuth.managementKey);
       try {
-        const response = await api.listAccounts(1, pageSize, apiFilters);
+        const response = await api.listAccounts(1, pageSize, apiFilters, accountSort);
         if (!active) return;
         setData(response);
         skipInitialAccountRefresh.current = true;
@@ -345,13 +361,13 @@ function AccountManagerApp() {
     if (authState !== "ready") setWeeklyOverdraftEnabled(false);
   }, [authState]);
 
-  const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters) => {
+  const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters, requestedSort: AccountSort = accountSort) => {
     if (authState !== "ready") return;
     const requestID = accountRequest.current + 1;
     accountRequest.current = requestID;
     if (!silent) setLoading(true);
     try {
-      const response = await api.listAccounts(requestedPage, pageSize, requestedFilters);
+      const response = await api.listAccounts(requestedPage, pageSize, requestedFilters, requestedSort);
       if (requestID !== accountRequest.current) return;
       setData(response);
       if (response.pages > 0 && requestedPage > response.pages) setPage(response.pages);
@@ -361,7 +377,7 @@ function AccountManagerApp() {
     } finally {
       if (requestID === accountRequest.current) setLoading(false);
     }
-  }, [apiFilters, authState, handleAPIError, page, pageSize]);
+  }, [accountSort, apiFilters, authState, handleAPIError, page, pageSize]);
 
 	const setQuotaBusy = (accountID: string, action?: "refresh" | "reset") => {
 		setQuotaMetadataBusy((current) => {
@@ -598,7 +614,7 @@ function AccountManagerApp() {
     setAuthError("");
     setSession(baseURL, managementKey);
     try {
-      const response = await api.listAccounts(1, pageSize, apiFilters);
+      const response = await api.listAccounts(1, pageSize, apiFilters, accountSort);
       setData(response);
       skipInitialAccountRefresh.current = true;
       setAuthState("ready");
@@ -615,6 +631,15 @@ function AccountManagerApp() {
 
   const updateFilter = (key: keyof FilterState, value: string) => {
     setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
+    setSelected(new Set());
+  };
+
+  const updateAccountSort = (field: AccountSortField) => {
+    setAccountSort((current) => ({
+      field,
+      order: current.field === field && current.order === "asc" ? "desc" : "asc",
+    }));
     setPage(1);
     setSelected(new Set());
   };
@@ -1061,6 +1086,8 @@ function AccountManagerApp() {
     ? tx("ui.selected_accounts")
     : undefined;
   const hasActiveFilters = Object.values(filters).some(Boolean) || Boolean(searchDraft);
+  const hasCustomAccountSort = !isDefaultAccountSort(accountSort);
+  const hasAccountViewPreferences = hasActiveFilters || hasCustomAccountSort;
   const panelOpen = Boolean(jobOpen && job || forceJobOpen && forceJob);
 
   return (
@@ -1106,8 +1133,8 @@ function AccountManagerApp() {
         <section className="account-panel">
           <section className="filter-bar" aria-label={tx("ui.account_filters")}>
             <div className="filter-heading">
-              <div><strong>{tx("ui.filter_accounts")}</strong><span>{tx(hasActiveFilters ? "ui.filters_applied" : "ui.all_accounts")}</span></div>
-              <button className="button button-quiet reset-filters" type="button" disabled={!hasActiveFilters} onClick={() => { setFilters({ ...EMPTY_ACCOUNT_FILTERS }); setSearchDraft(""); setPage(1); setSelected(new Set()); void refreshAccounts(false, 1, {}); }}>
+              <div><strong>{tx("ui.filter_accounts")}</strong><span>{tx(hasAccountViewPreferences ? "ui.filters_or_sort_applied" : "ui.all_accounts")}</span></div>
+              <button className="button button-quiet reset-filters" type="button" disabled={!hasAccountViewPreferences} onClick={() => { setFilters({ ...EMPTY_ACCOUNT_FILTERS }); setSearchDraft(""); setAccountSort({ ...DEFAULT_ACCOUNT_SORT }); setPage(1); setSelected(new Set()); }}>
                 {tx("ui.reset")}
               </button>
             </div>
@@ -1178,7 +1205,19 @@ function AccountManagerApp() {
             <thead>
               <tr>
                 <th className="select-header"><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label={tx("ui.select_editable_accounts_on_this_page")} /></th>
-								<th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.active_reset_count")}</th><th>{tx("ui.account_concurrency")}</th><th>{tx("ui.initial_time")}</th><th>{tx("ui.disabled_time")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
+								<SortableAccountHeader className="identity-header" field="account" label={tx("ui.accounts")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="provider" label={tx("ui.provider")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="type" label={tx("ui.type")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="usage" label={tx("ui.usage")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="active_reset_count" label={tx("ui.active_reset_count")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="concurrency" label={tx("ui.account_concurrency")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="created_at" label={tx("ui.initial_time")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="disabled_at" label={tx("ui.disabled_time")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="access" label={tx("ui.access")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="status" label={tx("ui.status")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="priority" label={tx("ui.priority")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="routing" label={tx("ui.routing")} sort={accountSort} onSort={updateAccountSort} />
+								<th className="actions-header">{tx("ui.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1354,6 +1393,31 @@ function AccountTypeCell({ account }: { account: Account }) {
       {secondaryLabel && secondaryLabel !== primaryLabel ? <span>{secondaryLabel}</span> : null}
     </div>
   );
+}
+
+function SortableAccountHeader({ className, field, label, sort, onSort }: {
+	className?: string;
+	field: AccountSortField;
+	label: string;
+	sort: AccountSort;
+	onSort: (field: AccountSortField) => void;
+}) {
+	const { tx } = useI18n();
+	const active = sort.field === field;
+	const nextOrder = active && sort.order === "asc" ? "desc" : "asc";
+	const nextOrderLabel = tx(nextOrder === "asc" ? "ui.ascending" : "ui.descending");
+	const currentOrderLabel = tx(sort.order === "asc" ? "ui.ascending" : "ui.descending");
+	const buttonLabel = active
+		? tx("ui.sort_column_current_next", { column: label, current: currentOrderLabel, next: nextOrderLabel })
+		: tx("ui.sort_column_next", { column: label, next: nextOrderLabel });
+	return (
+		<th className={className} aria-sort={active ? sort.order === "asc" ? "ascending" : "descending" : "none"}>
+			<button className={`table-sort-button ${active ? "is-active" : ""}`} type="button" title={buttonLabel} aria-label={buttonLabel} onClick={() => onSort(field)}>
+				<span>{label}</span>
+				{active ? sort.order === "asc" ? <ArrowUp size={13} aria-hidden="true" /> : <ArrowDown size={13} aria-hidden="true" /> : <ArrowUpDown size={13} aria-hidden="true" />}
+			</button>
+		</th>
+	);
 }
 
 function AccountLifecycleTime({ value }: { value?: string }) {

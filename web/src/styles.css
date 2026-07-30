@@ -185,6 +185,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .account-table .col-access { width: 98px; }
 .account-table .col-actions { width: 152px; }
 .account-table th { height: 42px; padding: 0 14px; color: var(--text-secondary); background: var(--bg-tertiary); border-bottom: 1px solid var(--border-color); text-align: left; font-size: 12px; font-weight: 500; position: sticky; top: 0; z-index: 5; }
+.table-sort-button { width: 100%; height: 42px; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; display: flex; align-items: center; justify-content: flex-start; gap: 5px; font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+.table-sort-button svg { flex: 0 0 auto; color: var(--text-tertiary); transition: color var(--transition-fast), transform var(--transition-fast); }
+.table-sort-button:hover, .table-sort-button:focus-visible, .table-sort-button.is-active { color: var(--text-primary); }
+.table-sort-button:hover svg, .table-sort-button:focus-visible svg, .table-sort-button.is-active svg { color: var(--primary-color); }
+.table-sort-button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; border-radius: var(--radius-sm); }
 .account-table td { height: 80px; padding: 10px 14px; border-bottom: 1px solid var(--border-color); vertical-align: middle; font-size: 13px; line-height: 1.4; overflow: hidden; }
 .account-table .select-header, .account-table .select-cell { position: sticky; left: 0; }
 .account-table .identity-header, .account-table .identity-column-cell { position: sticky; left: 42px; box-shadow: 1px 0 0 var(--border-color); }

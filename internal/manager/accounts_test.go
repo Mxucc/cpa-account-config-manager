@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,6 +132,113 @@ func TestNormalizeAccountPageSizeSupportsLargePagesAndCapsAtOneThousand(t *testi
 	}
 	if _, got := normalizePage(1, 1001); got != 1000 {
 		t.Fatalf("normalizePage(_, 1001) page size = %d, want 1000", got)
+	}
+}
+
+func TestAccountServiceSortsFullFilteredCollectionBeforePagination(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "charlie", Name: "charlie.json", Label: "Charlie", Provider: "codex", Source: "file", Path: "/auths/charlie.json"},
+		{AuthIndex: "alpha", Name: "alpha.json", Label: "alpha", Provider: "codex", Source: "file", Path: "/auths/alpha.json"},
+		{AuthIndex: "bravo", Name: "bravo.json", Label: "Bravo", Provider: "codex", Source: "file", Path: "/auths/bravo.json"},
+	}}
+	service := NewAccountService(host)
+
+	firstPage, errFirst := service.List(t.Context(), ListQuery{
+		Page: 1, PageSize: 2, SortBy: AccountSortAccount, SortOrder: AccountSortDescending,
+	})
+	if errFirst != nil {
+		t.Fatalf("List() first page error = %v", errFirst)
+	}
+	secondPage, errSecond := service.List(t.Context(), ListQuery{
+		Page: 2, PageSize: 2, SortBy: AccountSortAccount, SortOrder: AccountSortDescending,
+	})
+	if errSecond != nil {
+		t.Fatalf("List() second page error = %v", errSecond)
+	}
+	if got := []string{firstPage.Accounts[0].Label, firstPage.Accounts[1].Label, secondPage.Accounts[0].Label}; !slices.Equal(got, []string{"Charlie", "Bravo", "alpha"}) {
+		t.Fatalf("paged descending accounts = %v", got)
+	}
+}
+
+func TestAccountSortKeepsMissingValuesLastInBothDirections(t *testing.T) {
+	zero := int64(0)
+	ten := int64(10)
+	accounts := []Account{
+		{ID: "missing", Label: "Missing"},
+		{ID: "zero", Label: "Zero", Usage: &AccountUsageSnapshot{TotalTokens: zero}},
+		{ID: "ten", Label: "Ten", Usage: &AccountUsageSnapshot{TotalTokens: ten}},
+	}
+
+	sortAccountsBy(accounts, AccountSortUsage, AccountSortAscending)
+	if got := []string{accounts[0].ID, accounts[1].ID, accounts[2].ID}; !slices.Equal(got, []string{"zero", "ten", "missing"}) {
+		t.Fatalf("ascending usage accounts = %v", got)
+	}
+	sortAccountsBy(accounts, AccountSortUsage, AccountSortDescending)
+	if got := []string{accounts[0].ID, accounts[1].ID, accounts[2].ID}; !slices.Equal(got, []string{"ten", "zero", "missing"}) {
+		t.Fatalf("descending usage accounts = %v", got)
+	}
+}
+
+func TestAccountSortSupportsEveryExposedFieldInBothDirections(t *testing.T) {
+	lowTime := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)
+	highTime := lowTime.Add(time.Hour)
+	lowPriority, highPriority := 1, 2
+	lowResetCount, highResetCount := 3, 4
+	websocketsOff, websocketsOn := false, true
+	low := Account{
+		ID: "low", Label: "Alpha", Provider: "anthropic", PlanType: "free", Status: "active",
+		Usage:       &AccountUsageSnapshot{TotalTokens: 10, Codex: &CodexUsageSnapshot{ActiveResetCount: &lowResetCount}},
+		Concurrency: AccountConcurrencySummary{Supported: true, Active: 1, Limit: 10},
+		CreatedAt:   &lowTime, DisabledAt: &lowTime, Editable: true, Priority: &lowPriority,
+		Prefix: "alpha", Websockets: &websocketsOff,
+	}
+	high := Account{
+		ID: "high", Label: "Zulu", Provider: "codex", PlanType: "team", Status: "healthy",
+		Usage:       &AccountUsageSnapshot{TotalTokens: 20, Codex: &CodexUsageSnapshot{ActiveResetCount: &highResetCount}},
+		Concurrency: AccountConcurrencySummary{Supported: true, Active: 2, Limit: 20},
+		CreatedAt:   &highTime, DisabledAt: &highTime, Priority: &highPriority,
+		Prefix: "zulu", ProxyConfigured: true, Websockets: &websocketsOn, HeaderCount: 1,
+	}
+
+	fields := []AccountSortField{
+		AccountSortAccount, AccountSortProvider, AccountSortType, AccountSortUsage,
+		AccountSortActiveResetCount, AccountSortConcurrency, AccountSortCreatedAt,
+		AccountSortDisabledAt, AccountSortAccess, AccountSortStatus, AccountSortPriority,
+		AccountSortRouting,
+	}
+	for _, field := range fields {
+		t.Run(string(field), func(t *testing.T) {
+			accounts := []Account{high, low}
+			sortAccountsBy(accounts, field, AccountSortAscending)
+			if got := []string{accounts[0].ID, accounts[1].ID}; !slices.Equal(got, []string{"low", "high"}) {
+				t.Fatalf("ascending accounts = %v", got)
+			}
+			sortAccountsBy(accounts, field, AccountSortDescending)
+			if got := []string{accounts[0].ID, accounts[1].ID}; !slices.Equal(got, []string{"high", "low"}) {
+				t.Fatalf("descending accounts = %v", got)
+			}
+		})
+	}
+}
+
+func TestListQueryValidatesAccountSortParameters(t *testing.T) {
+	query, errQuery := listQueryFromValues(map[string][]string{
+		"sort_by": {"created_at"}, "sort_order": {"DESC"},
+	})
+	if errQuery != nil || query.SortBy != AccountSortCreatedAt || query.SortOrder != AccountSortDescending {
+		t.Fatalf("valid sort query = %#v error=%v", query, errQuery)
+	}
+	defaultQuery, errDefault := listQueryFromValues(nil)
+	if errDefault != nil || defaultQuery.SortBy != AccountSortAccount || defaultQuery.SortOrder != AccountSortAscending {
+		t.Fatalf("default sort query = %#v error=%v", defaultQuery, errDefault)
+	}
+	for name, values := range map[string]map[string][]string{
+		"field": {"sort_by": {"credential"}},
+		"order": {"sort_order": {"sideways"}},
+	} {
+		if _, errInvalid := listQueryFromValues(values); errInvalid == nil {
+			t.Fatalf("%s sort query accepted", name)
+		}
 	}
 }
 

@@ -57,8 +57,25 @@ describe("management API client", () => {
     expect(url).toContain("type=k12");
     expect(url).toContain("disabled=false");
     expect(url).toContain("page=2");
+    expect(url).toContain("sort_by=account");
+    expect(url).toContain("sort_order=asc");
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
+  });
+
+  it("serializes an explicit account sort for full-set server ordering", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      accounts: [], total: 0, page: 1, page_size: 50, pages: 0,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listAccounts(1, 50, {}, { field: "usage", order: "desc" });
+
+    const [rawURL] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const url = new URL(rawURL, "http://localhost");
+    expect(url.searchParams.get("sort_by")).toBe("usage");
+    expect(url.searchParams.get("sort_order")).toBe("desc");
   });
 
 	it("loads one safe editable account configuration from the fixed authenticated route", async () => {

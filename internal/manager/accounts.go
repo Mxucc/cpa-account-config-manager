@@ -43,6 +43,10 @@ type UsageIdentityReader interface {
 	UsageIdentity(string) string
 }
 
+type AccountLifecycleReader interface {
+	AccountLifecycle(string) AccountLifecycleSnapshot
+}
+
 type AccountService struct {
 	host        AuthHost
 	usage       UsageSnapshotReader
@@ -374,9 +378,18 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 	if usage != nil && authIndex != "" {
 		account.Usage = usage.Snapshot(authIndex)
 		applyQuotaPlanType(&account)
+		if lifecycle, ok := usage.(AccountLifecycleReader); ok {
+			snapshot := lifecycle.AccountLifecycle(authIndex)
+			account.CreatedAt = snapshot.CreatedAt
+			account.DisabledAt = snapshot.DisabledAt
+		}
 		if identities, ok := usage.(UsageIdentityReader); ok {
 			account.usageIdentity = identities.UsageIdentity(authIndex)
 		}
+	}
+	if account.CreatedAt == nil && !entry.CreatedAt.IsZero() {
+		createdAt := entry.CreatedAt.UTC()
+		account.CreatedAt = &createdAt
 	}
 	if !entry.UpdatedAt.IsZero() {
 		updatedAt := entry.UpdatedAt

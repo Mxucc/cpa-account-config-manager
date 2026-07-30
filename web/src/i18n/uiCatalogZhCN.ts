@@ -165,6 +165,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.read_only": "只读",
   "ui.account_list": "账号列表",
   "ui.usage": "用量",
+  "ui.initial_time": "初始时间",
+  "ui.disabled_time": "禁用时间",
   "ui.updated": "更新时间",
   "ui.access": "权限",
   "ui.priority": "优先级",

@@ -324,6 +324,88 @@ func TestUsageTrackerUsesEmailIdentityAcrossAuthIndexChanges(t *testing.T) {
 	}
 }
 
+func TestUsageTrackerPersistsAccountLifecycleTransitions(t *testing.T) {
+	dataDir := t.TempDir()
+	createdAt := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	entry := usageIdentityTestEntry(t, "lifecycle-enabled", "lifecycle@example.com", "lifecycle-account")
+	entry.CreatedAt = createdAt
+	entry.UpdatedAt = createdAt.Add(time.Hour)
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, tracker.AccountLifecycle("lifecycle-enabled"), createdAt, nil)
+
+	now = now.Add(time.Hour)
+	disabledAt := now.Add(-time.Minute)
+	entry.AuthIndex = "lifecycle-disabled"
+	entry.Disabled = true
+	entry.UpdatedAt = disabledAt.Add(-time.Hour)
+	entry.ModTime = disabledAt
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, tracker.AccountLifecycle("lifecycle-disabled"), createdAt, &disabledAt)
+
+	now = now.Add(time.Hour)
+	entry.AuthIndex = "lifecycle-reenabled"
+	entry.Disabled = false
+	entry.UpdatedAt = now
+	entry.ModTime = now
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, tracker.AccountLifecycle("lifecycle-reenabled"), createdAt, nil)
+
+	now = now.Add(time.Hour)
+	secondDisabledAt := now
+	entry.AuthIndex = "lifecycle-disabled-again"
+	entry.Disabled = true
+	entry.UpdatedAt = secondDisabledAt
+	entry.ModTime = secondDisabledAt
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, tracker.AccountLifecycle("lifecycle-disabled-again"), createdAt, &secondDisabledAt)
+	tracker.Close()
+
+	restored := NewUsageTracker()
+	defer restored.Close()
+	restored.now = func() time.Time { return now.Add(time.Minute) }
+	restored.Configure(Config{DataDir: dataDir})
+	restored.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, restored.AccountLifecycle("lifecycle-disabled-again"), createdAt, &secondDisabledAt)
+}
+
+func TestUsageTrackerUsesFirstObservationForMissingLifecycleTimes(t *testing.T) {
+	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	entry := usageIdentityTestEntry(t, "missing-times", "missing-times@example.com", "missing-times-account")
+	entry.Disabled = true
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, tracker.AccountLifecycle("missing-times"), now, &now)
+
+	now = now.Add(24 * time.Hour)
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	assertAccountLifecycle(t, tracker.AccountLifecycle("missing-times"), now.Add(-24*time.Hour), timePointer(now.Add(-24*time.Hour)))
+}
+
+func assertAccountLifecycle(t *testing.T, snapshot AccountLifecycleSnapshot, createdAt time.Time, disabledAt *time.Time) {
+	t.Helper()
+	if snapshot.CreatedAt == nil || !snapshot.CreatedAt.Equal(createdAt) {
+		t.Fatalf("created_at = %v, want %v", snapshot.CreatedAt, createdAt)
+	}
+	if disabledAt == nil {
+		if snapshot.DisabledAt != nil {
+			t.Fatalf("disabled_at = %v, want nil", snapshot.DisabledAt)
+		}
+		return
+	}
+	if snapshot.DisabledAt == nil || !snapshot.DisabledAt.Equal(*disabledAt) {
+		t.Fatalf("disabled_at = %v, want %v", snapshot.DisabledAt, *disabledAt)
+	}
+}
+
 func TestUsageTrackerPreservesActiveOverdraftAcrossDisabledTeamIdentityRebind(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, time.July, 30, 6, 0, 0, 0, time.UTC)
@@ -477,8 +559,62 @@ func TestUsageTrackerMigratesVersionOneStateIntoCurrentEmailIdentity(t *testing.
 	if errRead != nil {
 		t.Fatalf("read migrated usage state: %v", errRead)
 	}
-	if !bytes.Contains(raw, []byte(`"version":3`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
+	if !bytes.Contains(raw, []byte(`"version":4`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
 		t.Fatalf("legacy state was not safely migrated: %s", raw)
+	}
+}
+
+func TestUsageTrackerMigratesVersionThreeStateWithoutLosingUsage(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := usageStorePath(dataDir)
+	baseline := []byte(`{"version":3,"accounts":{"auth-index:baseline-index":{"total_tokens":91,"successful_tokens":73,"updated_at":"2026-07-30T00:00:00Z","five_hour_overdraft":{"active":true,"baseline_tokens":73,"started_at":"2026-07-30T00:00:00Z","recover_at":"2026-07-30T05:00:00Z","window_minutes":300,"changed_at":"2026-07-30T00:00:00Z"}}}}`)
+	if errWrite := os.WriteFile(storePath, baseline, 0o600); errWrite != nil {
+		t.Fatalf("write version-three usage state: %v", errWrite)
+	}
+	tracker := NewUsageTracker()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "baseline-index", Provider: "codex", Type: "codex", Email: "baseline@example.com",
+	}})
+	snapshot := tracker.Snapshot("baseline-index")
+	if snapshot == nil || snapshot.TotalTokens != 91 {
+		t.Fatalf("version-three usage snapshot = %#v, want existing counters", snapshot)
+	}
+	tracker.Close()
+
+	raw, errRead := os.ReadFile(storePath)
+	if errRead != nil {
+		t.Fatalf("read migrated version-three usage state: %v", errRead)
+	}
+	if !bytes.Contains(raw, []byte(`"version":4`)) || !bytes.Contains(raw, []byte(`"total_tokens":91`)) ||
+		!bytes.Contains(raw, []byte(`"successful_tokens":73`)) || !bytes.Contains(raw, []byte(`"five_hour_overdraft"`)) {
+		t.Fatalf("version-three state was not preserved during migration: %s", raw)
+	}
+}
+
+func TestUsagePersistenceMergesLifecycleByEarliestCreationAndLatestTransition(t *testing.T) {
+	createdEarly := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)
+	createdLate := createdEarly.Add(24 * time.Hour)
+	disabledAt := time.Date(2026, time.July, 30, 8, 0, 0, 0, time.UTC)
+	reenabledAt := disabledAt.Add(time.Hour)
+	disabled := &accountLifecycleState{
+		CreatedAt: createdLate, Disabled: true, DisabledAt: disabledAt, StateChangedAt: disabledAt,
+	}
+	enabled := &accountLifecycleState{
+		CreatedAt: createdEarly, Disabled: false, StateChangedAt: reenabledAt,
+	}
+	merged := mergeAccountLifecycle(disabled, enabled)
+	if merged == nil || !merged.CreatedAt.Equal(createdEarly) || merged.Disabled || !merged.StateChangedAt.Equal(reenabledAt) || !merged.DisabledAt.IsZero() {
+		t.Fatalf("merged lifecycle = %#v, want earliest creation and latest enabled transition", merged)
+	}
+
+	// Equal transition timestamps favor enabled state so a stale instance cannot
+	// resurrect a disabled period after another instance has enabled the account.
+	enabled.StateChangedAt = disabledAt
+	merged = mergeAccountLifecycle(disabled, enabled)
+	if merged == nil || merged.Disabled || !merged.CreatedAt.Equal(createdEarly) || !merged.DisabledAt.IsZero() {
+		t.Fatalf("equal-timestamp lifecycle merge = %#v, want enabled state", merged)
 	}
 }
 

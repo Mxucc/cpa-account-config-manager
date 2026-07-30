@@ -33,6 +33,7 @@ const account = {
   editable: true,
   success: 12,
   failed: 1,
+  created_at: "2026-07-01T08:00:00Z",
   updated_at: "2026-07-15T10:00:00Z",
 };
 
@@ -324,8 +325,10 @@ describe("primary account batch flow", () => {
     expect(screen.getByText("账号列表")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "类型" })).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-			"", "账号", "提供方", "类型", "用量", "主动重置次数", "账号并发", "更新时间", "权限", "状态", "优先级", "路由配置", "操作",
+			"", "账号", "提供方", "类型", "用量", "主动重置次数", "账号并发", "初始时间", "禁用时间", "权限", "状态", "优先级", "路由配置", "操作",
     ]);
+		expect(screen.getByText("2026/07/01 16:00", { selector: ".account-lifecycle-time" })).toHaveAttribute("datetime", account.created_at);
+		expect(document.querySelector(".account-time-empty")).toHaveTextContent("-");
 		const unavailableConcurrency = document.querySelector<HTMLElement>(".concurrency-unavailable");
 		expect(unavailableConcurrency).toHaveAttribute("title", expect.stringContaining("当前 CPA 版本不支持账号并发控制"));
 		expect(unavailableConcurrency).toHaveAttribute("aria-label", expect.stringContaining("request lifecycle schema v2"));

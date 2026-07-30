@@ -311,6 +311,8 @@ const accounts = Array.from({ length: 36 }, (_, index) => {
     next_retry_after: index % 9 === 0 ? new Date(Date.now() + 12 * 60_000).toISOString() : undefined,
     ...(automation ? { automation } : {}),
     ...(usage ? { usage } : {}),
+		created_at: new Date(Date.now() - (45 + index) * 24 * 60 * 60_000).toISOString(),
+		...(disabled ? { disabled_at: new Date(Date.now() - (index + 1) * 37 * 60_000).toISOString() } : {}),
     updated_at: new Date(Date.now() - index * 43 * 60_000).toISOString(),
   };
 });

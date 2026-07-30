@@ -14,14 +14,15 @@ import (
 )
 
 const (
-	usageStoreVersion        = 3
-	counterUsageStoreVersion = 2
-	legacyUsageStoreVersion  = 1
-	usageStoreLockTimeout    = 2 * time.Second
-	usageStoreLockStale      = 30 * time.Second
-	usageStoreLockRetry      = 10 * time.Millisecond
-	usageDurableDirName      = ".cpa-account-config-manager"
-	usageDurableFileName     = "usage-snapshots.state"
+	usageStoreVersion         = 4
+	baselineUsageStoreVersion = 3
+	counterUsageStoreVersion  = 2
+	legacyUsageStoreVersion   = 1
+	usageStoreLockTimeout     = 2 * time.Second
+	usageStoreLockStale       = 30 * time.Second
+	usageStoreLockRetry       = 10 * time.Millisecond
+	usageDurableDirName       = ".cpa-account-config-manager"
+	usageDurableFileName      = "usage-snapshots.state"
 )
 
 type persistedUsageState struct {
@@ -110,6 +111,9 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 			migrated[storageKey] = migrateUsageAggregateToBaselineState(aggregate)
 		}
 		return normalizeUsageAccounts(migrated), nil
+	}
+	if persisted.Version == baselineUsageStoreVersion {
+		return normalizeUsageAccounts(persisted.Accounts), nil
 	}
 	if persisted.Version != usageStoreVersion {
 		return nil, fmt.Errorf("unsupported usage store version %d", persisted.Version)
@@ -262,6 +266,7 @@ func mergeUsageAggregate(current, stored usageAggregate) usageAggregate {
 	current.SuccessfulRequests = maxInt64(current.SuccessfulRequests, stored.SuccessfulRequests)
 	current.FiveHourOverdraft = mergeOverdraftCycle(current.FiveHourOverdraft, stored.FiveHourOverdraft)
 	current.SevenDayOverdraft = mergeOverdraftCycle(current.SevenDayOverdraft, stored.SevenDayOverdraft)
+	current.Lifecycle = mergeAccountLifecycle(current.Lifecycle, stored.Lifecycle)
 	if stored.LastRequestAt.After(current.LastRequestAt) {
 		current.LastRequestAt = stored.LastRequestAt
 	}
@@ -319,6 +324,29 @@ func mergeOverdraftCycle(current, stored *overdraftCycleState) *overdraftCycleSt
 	return cloneOverdraftCycle(current)
 }
 
+func mergeAccountLifecycle(current, stored *accountLifecycleState) *accountLifecycleState {
+	current = sanitizeAccountLifecycle(current)
+	stored = sanitizeAccountLifecycle(stored)
+	if current == nil {
+		return cloneAccountLifecycle(stored)
+	}
+	if stored == nil {
+		return cloneAccountLifecycle(current)
+	}
+	createdAt := current.CreatedAt
+	if stored.CreatedAt.Before(createdAt) {
+		createdAt = stored.CreatedAt
+	}
+	winner := current
+	if stored.StateChangedAt.After(current.StateChangedAt) ||
+		stored.StateChangedAt.Equal(current.StateChangedAt) && !stored.Disabled {
+		winner = stored
+	}
+	merged := cloneAccountLifecycle(winner)
+	merged.CreatedAt = createdAt
+	return merged
+}
+
 func sanitizeUsageAggregate(aggregate usageAggregate) usageAggregate {
 	aggregate.InputTokens = nonNegative(aggregate.InputTokens)
 	aggregate.OutputTokens = nonNegative(aggregate.OutputTokens)
@@ -331,6 +359,7 @@ func sanitizeUsageAggregate(aggregate usageAggregate) usageAggregate {
 	aggregate.SuccessfulRequests = nonNegative(aggregate.SuccessfulRequests)
 	aggregate.FiveHourOverdraft = sanitizeOverdraftCycle(aggregate.FiveHourOverdraft)
 	aggregate.SevenDayOverdraft = sanitizeOverdraftCycle(aggregate.SevenDayOverdraft)
+	aggregate.Lifecycle = sanitizeAccountLifecycle(aggregate.Lifecycle)
 	aggregate.LastRequestAt = aggregate.LastRequestAt.UTC()
 	aggregate.UpdatedAt = aggregate.UpdatedAt.UTC()
 	aggregate.Codex = sanitizeCodexUsage(aggregate.Codex)
@@ -400,6 +429,28 @@ func sanitizeOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
 		cycle.WindowMinutes = 0
 	}
 	return cycle
+}
+
+func sanitizeAccountLifecycle(state *accountLifecycleState) *accountLifecycleState {
+	if state == nil {
+		return nil
+	}
+	state = cloneAccountLifecycle(state)
+	state.CreatedAt = state.CreatedAt.UTC()
+	state.DisabledAt = state.DisabledAt.UTC()
+	state.StateChangedAt = state.StateChangedAt.UTC()
+	minimum := time.Unix(0, 0).UTC()
+	if state.CreatedAt.IsZero() || state.CreatedAt.Before(minimum) || state.StateChangedAt.IsZero() || state.StateChangedAt.Before(state.CreatedAt) {
+		return nil
+	}
+	if state.Disabled {
+		if state.DisabledAt.IsZero() || state.DisabledAt.Before(state.CreatedAt) || !state.DisabledAt.Equal(state.StateChangedAt) {
+			return nil
+		}
+	} else {
+		state.DisabledAt = time.Time{}
+	}
+	return state
 }
 
 func mathInvalidUsagePercent(value float64) bool {

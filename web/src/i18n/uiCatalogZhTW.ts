@@ -165,6 +165,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.read_only": "唯讀",
   "ui.account_list": "帳號清單",
   "ui.usage": "用量",
+  "ui.initial_time": "初始時間",
+  "ui.disabled_time": "停用時間",
   "ui.updated": "更新時間",
   "ui.access": "權限",
   "ui.priority": "優先順序",

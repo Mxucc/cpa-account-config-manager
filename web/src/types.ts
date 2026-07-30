@@ -30,6 +30,8 @@ export interface Account {
   recent_requests?: RecentRequestEntry[];
   next_retry_after?: string;
   usage?: AccountUsageSnapshot;
+  created_at?: string;
+  disabled_at?: string;
   updated_at?: string;
   last_refresh?: string;
   automation?: AccountAutomationSummary;

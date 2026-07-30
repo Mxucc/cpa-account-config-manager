@@ -165,6 +165,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.read_only": "Только чтение",
   "ui.account_list": "Список учётных записей",
   "ui.usage": "Использование",
+  "ui.initial_time": "Время добавления",
+  "ui.disabled_time": "Время отключения",
   "ui.updated": "Обновлено",
   "ui.access": "Доступ",
   "ui.priority": "Приоритет",

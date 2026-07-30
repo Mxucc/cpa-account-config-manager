@@ -36,6 +36,11 @@ type AccountUsageSnapshot struct {
 	Codex               *CodexUsageSnapshot `json:"codex,omitempty"`
 }
 
+type AccountLifecycleSnapshot struct {
+	CreatedAt  *time.Time
+	DisabledAt *time.Time
+}
+
 type CodexUsageSnapshot struct {
 	FiveHour           *UsageWindowSnapshot `json:"five_hour,omitempty"`
 	SevenDay           *UsageWindowSnapshot `json:"seven_day,omitempty"`
@@ -69,9 +74,17 @@ type usageAggregate struct {
 	SuccessfulRequests  int64                    `json:"successful_requests,omitempty"`
 	FiveHourOverdraft   *overdraftCycleState     `json:"five_hour_overdraft,omitempty"`
 	SevenDayOverdraft   *overdraftCycleState     `json:"seven_day_overdraft,omitempty"`
+	Lifecycle           *accountLifecycleState   `json:"lifecycle,omitempty"`
 	LastRequestAt       time.Time                `json:"last_request_at,omitempty"`
 	UpdatedAt           time.Time                `json:"updated_at,omitempty"`
 	Codex               *CodexUsageSnapshot      `json:"codex,omitempty"`
+}
+
+type accountLifecycleState struct {
+	CreatedAt      time.Time `json:"created_at"`
+	Disabled       bool      `json:"disabled"`
+	DisabledAt     time.Time `json:"disabled_at,omitempty"`
+	StateChangedAt time.Time `json:"state_changed_at"`
 }
 
 type overdraftCycleState struct {
@@ -201,17 +214,23 @@ func (t *UsageTracker) bindUsageAccounts(entries []cpaapi.HostAuthFileEntry) {
 		}
 		pendingKey := usagePendingKey(authIndex)
 		pending, pendingExists := t.accounts[pendingKey]
-		if !pendingExists {
-			continue
+		if pendingExists {
+			delete(t.accounts, pendingKey)
+			pending.Identity = mergeUsageIdentity(pending.Identity, binding.Identity)
+			if exists && !usageIdentitiesConflict(current.Identity, pending.Identity) {
+				pending = mergeUsageAggregate(pending, current)
+			}
+			pending.Identity = mergeUsageIdentity(pending.Identity, binding.Identity)
+			current = pending
+			changed = true
 		}
-		delete(t.accounts, pendingKey)
-		pending.Identity = mergeUsageIdentity(pending.Identity, binding.Identity)
-		if exists && !usageIdentitiesConflict(current.Identity, pending.Identity) {
-			pending = mergeUsageAggregate(pending, current)
+		lifecycle := observeAccountLifecycle(current.Lifecycle, binding, now)
+		if !sameAccountLifecycle(current.Lifecycle, lifecycle) {
+			current.Lifecycle = lifecycle
+			current.UpdatedAt = now
+			changed = true
 		}
-		pending.Identity = mergeUsageIdentity(pending.Identity, binding.Identity)
-		t.accounts[binding.Key] = pending
-		changed = true
+		t.accounts[binding.Key] = current
 	}
 	if changed {
 		t.dirty = true
@@ -221,6 +240,38 @@ func (t *UsageTracker) bindUsageAccounts(entries []cpaapi.HostAuthFileEntry) {
 	if changed {
 		t.requestPersist()
 	}
+}
+
+func (t *UsageTracker) AccountLifecycle(authIndex string) AccountLifecycleSnapshot {
+	if t == nil {
+		return AccountLifecycleSnapshot{}
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return AccountLifecycleSnapshot{}
+	}
+	t.mu.RLock()
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	if t.bindingsReady && identity == (usageIdentityFingerprint{}) {
+		t.mu.RUnlock()
+		return AccountLifecycleSnapshot{}
+	}
+	aggregate, exists := t.accounts[storageKey]
+	t.mu.RUnlock()
+	if !exists || usageIdentitiesConflict(aggregate.Identity, identity) || aggregate.Lifecycle == nil {
+		return AccountLifecycleSnapshot{}
+	}
+	state := sanitizeAccountLifecycle(aggregate.Lifecycle)
+	if state == nil {
+		return AccountLifecycleSnapshot{}
+	}
+	createdAt := state.CreatedAt.UTC()
+	snapshot := AccountLifecycleSnapshot{CreatedAt: &createdAt}
+	if state.Disabled && !state.DisabledAt.IsZero() {
+		disabledAt := state.DisabledAt.UTC()
+		snapshot.DisabledAt = &disabledAt
+	}
+	return snapshot
 }
 
 func (t *UsageTracker) configureDurableStore(storePath string) {
@@ -869,9 +920,18 @@ func cloneUsageAggregates(accounts map[string]usageAggregate) map[string]usageAg
 		aggregate.Codex = cloneCodexUsage(aggregate.Codex)
 		aggregate.FiveHourOverdraft = cloneOverdraftCycle(aggregate.FiveHourOverdraft)
 		aggregate.SevenDayOverdraft = cloneOverdraftCycle(aggregate.SevenDayOverdraft)
+		aggregate.Lifecycle = cloneAccountLifecycle(aggregate.Lifecycle)
 		cloned[storageKey] = aggregate
 	}
 	return cloned
+}
+
+func cloneAccountLifecycle(state *accountLifecycleState) *accountLifecycleState {
+	if state == nil {
+		return nil
+	}
+	cloned := *state
+	return &cloned
 }
 
 func cloneOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {

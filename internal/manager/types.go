@@ -34,6 +34,8 @@ type Account struct {
 	RecentRequests  []RecentRequestEntry       `json:"recent_requests,omitempty"`
 	NextRetryAfter  *time.Time                 `json:"next_retry_after,omitempty"`
 	Usage           *AccountUsageSnapshot      `json:"usage,omitempty"`
+	CreatedAt       *time.Time                 `json:"created_at,omitempty"`
+	DisabledAt      *time.Time                 `json:"disabled_at,omitempty"`
 	UpdatedAt       *time.Time                 `json:"updated_at,omitempty"`
 	LastRefresh     *time.Time                 `json:"last_refresh,omitempty"`
 	Automation      *AccountAutomationSummary  `json:"automation,omitempty"`

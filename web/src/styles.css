@@ -170,7 +170,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .table-title > strong { min-width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--primary-color) 18%, transparent); color: var(--primary-active); font-size: 12px; font-variant-numeric: tabular-nums; }
 .table-meta > span { white-space: nowrap; }
 .table-scroll { max-width: 100%; overflow: auto; overscroll-behavior-inline: contain; background: var(--bg-primary); }
-.account-table { width: 100%; min-width: 1728px; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: var(--text-primary); }
+.account-table { width: 100%; min-width: 1848px; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: var(--text-primary); }
 .account-table .col-select { width: 42px; }
 .account-table .col-identity { width: 250px; }
 .account-table .col-provider { width: 120px; }
@@ -181,7 +181,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .account-table .col-activity { width: 205px; }
 .account-table .col-active-reset { width: 138px; }
 .account-table .col-concurrency { width: 120px; }
-.account-table .col-updated { width: 120px; }
+.account-table .col-created, .account-table .col-disabled-at { width: 120px; }
 .account-table .col-access { width: 98px; }
 .account-table .col-actions { width: 152px; }
 .account-table th { height: 42px; padding: 0 14px; color: var(--text-secondary); background: var(--bg-tertiary); border-bottom: 1px solid var(--border-color); text-align: left; font-size: 12px; font-weight: 500; position: sticky; top: 0; z-index: 5; }
@@ -339,6 +339,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .success, .tone-success { color: var(--success); }
 .danger { color: var(--danger); }
 .account-table time { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.account-lifecycle-time { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.account-time-empty { color: var(--text-tertiary); }
 .access-tag { min-height: 28px; max-width: 92px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 7px; border: 1px solid transparent; border-radius: var(--radius-full); font-size: 10px; font-weight: 700; line-height: 1.15; text-align: center; white-space: normal; overflow-wrap: anywhere; }
 .access-tag.editable { color: var(--success); background: var(--success-soft); }
 .access-tag.readonly { color: var(--text-secondary); background: var(--bg-tertiary); border-color: var(--border-color); }

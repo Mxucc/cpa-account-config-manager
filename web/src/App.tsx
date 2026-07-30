@@ -1172,13 +1172,13 @@ function AccountManagerApp() {
           <table className="account-table">
             <colgroup>
               <col className="col-select" /><col className="col-identity" /><col className="col-provider" />
-								<col className="col-type" /><col className="col-activity" /><col className="col-active-reset" /><col className="col-concurrency" /><col className="col-updated" /><col className="col-access" />
+								<col className="col-type" /><col className="col-activity" /><col className="col-active-reset" /><col className="col-concurrency" /><col className="col-created" /><col className="col-disabled-at" /><col className="col-access" />
               <col className="col-state" /><col className="col-priority" /><col className="col-routing" /><col className="col-actions" />
             </colgroup>
             <thead>
               <tr>
                 <th className="select-header"><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label={tx("ui.select_editable_accounts_on_this_page")} /></th>
-								<th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.active_reset_count")}</th><th>{tx("ui.account_concurrency")}</th><th>{tx("ui.updated")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
+								<th className="identity-header">{tx("ui.accounts")}</th><th>{tx("ui.provider")}</th><th>{tx("ui.type")}</th><th>{tx("ui.usage")}</th><th>{tx("ui.active_reset_count")}</th><th>{tx("ui.account_concurrency")}</th><th>{tx("ui.initial_time")}</th><th>{tx("ui.disabled_time")}</th><th>{tx("ui.access")}</th><th>{tx("ui.status")}</th><th>{tx("ui.priority")}</th><th>{tx("ui.routing")}</th><th className="actions-header">{tx("ui.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1200,7 +1200,8 @@ function AccountManagerApp() {
                   <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} /></td>
 									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
 									<td><AccountConcurrencyCell account={account} /></td>
-                  <td><time>{formatDateTime(account.updated_at || account.last_refresh)}</time></td>
+									<td><AccountLifecycleTime value={account.created_at} /></td>
+									<td><AccountLifecycleTime value={account.disabled_at} /></td>
                   <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />{tx("ui.editable")}</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason, locale)}><LockKeyhole size={13} />{tx("ui.read_only")}</span>}</td>
                   <td><StateCell account={account} /></td>
                   <td><code className="priority-value">{account.priority ?? "-"}</code></td>
@@ -1355,6 +1356,13 @@ function AccountTypeCell({ account }: { account: Account }) {
   );
 }
 
+function AccountLifecycleTime({ value }: { value?: string }) {
+	const { formatDateTime } = useI18n();
+	if (!value) return <span className="account-time-empty">-</span>;
+	const formatted = formatDateTime(value);
+	return <time className="account-lifecycle-time" dateTime={value} title={formatted}>{formatted}</time>;
+}
+
 function AccountQuotaMetadataCell({ account, busy, onRefresh, onReset }: { account: Account; busy?: "refresh" | "reset"; onRefresh: () => void; onReset: () => void }) {
 	const { tx, formatNumber, formatDateTime } = useI18n();
 	const provider = String(account.provider || account.type).trim().toLowerCase();
@@ -1419,7 +1427,7 @@ function RoutingCell({ account }: { account: Account }) {
 }
 
 function LoadingRows() {
-	return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={13}><span /></td></tr>)}</>;
+	return <>{Array.from({ length: 8 }, (_, index) => <tr className="loading-row" key={index}><td colSpan={14}><span /></td></tr>)}</>;
 }
 
 function errorText(error: unknown, locale: Locale = "zh-CN"): string {

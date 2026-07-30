@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -20,9 +21,12 @@ type usageIdentityFingerprint struct {
 }
 
 type usageBinding struct {
-	Key      string
-	Identity usageIdentityFingerprint
-	Disabled bool
+	Key       string
+	Identity  usageIdentityFingerprint
+	Disabled  bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ModTime   time.Time
 }
 
 func usageBindingForEntry(entry cpaapi.HostAuthFileEntry) (usageBinding, bool) {
@@ -41,16 +45,22 @@ func usageBindingForEntry(entry cpaapi.HostAuthFileEntry) (usageBinding, bool) {
 	}
 	if identity.EmailHash != "" {
 		return usageBinding{
-			Key:      usageEmailKeyPrefix + usageIdentityDigest(provider+"\x00"+email),
-			Identity: identity,
-			Disabled: entry.Disabled,
+			Key:       usageEmailKeyPrefix + usageIdentityDigest(provider+"\x00"+email),
+			Identity:  identity,
+			Disabled:  entry.Disabled,
+			CreatedAt: entry.CreatedAt,
+			UpdatedAt: entry.UpdatedAt,
+			ModTime:   entry.ModTime,
 		}, true
 	}
 	if identity.AccountIDHash != "" {
 		return usageBinding{
-			Key:      usageAccountKeyPrefix + usageIdentityDigest(provider+"\x00"+identity.AccountIDHash),
-			Identity: identity,
-			Disabled: entry.Disabled,
+			Key:       usageAccountKeyPrefix + usageIdentityDigest(provider+"\x00"+identity.AccountIDHash),
+			Identity:  identity,
+			Disabled:  entry.Disabled,
+			CreatedAt: entry.CreatedAt,
+			UpdatedAt: entry.UpdatedAt,
+			ModTime:   entry.ModTime,
 		}, true
 	}
 	return usageBinding{}, false
@@ -164,6 +174,78 @@ func rebindUsageIdentity(current, replacement usageIdentityFingerprint) usageIde
 		current.AccountIDHash = replacement.AccountIDHash
 	}
 	return current
+}
+
+func observeAccountLifecycle(current *accountLifecycleState, binding usageBinding, now time.Time) *accountLifecycleState {
+	now = now.UTC()
+	createdAt := boundedLifecycleSourceTime(binding.CreatedAt, now)
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	stateAt := latestLifecycleSourceTime(now, binding.UpdatedAt, binding.ModTime)
+	if stateAt.Before(createdAt) {
+		stateAt = createdAt
+	}
+	if current == nil {
+		state := &accountLifecycleState{
+			CreatedAt: createdAt, Disabled: binding.Disabled, StateChangedAt: stateAt,
+		}
+		if binding.Disabled {
+			state.DisabledAt = stateAt
+		}
+		return state
+	}
+	state := sanitizeAccountLifecycle(current)
+	if state == nil {
+		return observeAccountLifecycle(nil, binding, now)
+	}
+	if createdAt.Before(state.CreatedAt) {
+		state.CreatedAt = createdAt
+	}
+	if state.Disabled == binding.Disabled {
+		return state
+	}
+	if !stateAt.After(state.StateChangedAt) {
+		stateAt = now
+	}
+	state.Disabled = binding.Disabled
+	state.StateChangedAt = stateAt
+	if binding.Disabled {
+		state.DisabledAt = stateAt
+	} else {
+		state.DisabledAt = time.Time{}
+	}
+	return state
+}
+
+func latestLifecycleSourceTime(now time.Time, values ...time.Time) time.Time {
+	var latest time.Time
+	for _, value := range values {
+		if bounded := boundedLifecycleSourceTime(value, now); bounded.After(latest) {
+			latest = bounded
+		}
+	}
+	if !latest.IsZero() {
+		return latest
+	}
+	return now.UTC()
+}
+
+func boundedLifecycleSourceTime(value, now time.Time) time.Time {
+	value = value.UTC()
+	now = now.UTC()
+	if value.IsZero() || value.Before(time.Unix(0, 0).UTC()) || value.After(now.Add(24*time.Hour)) {
+		return time.Time{}
+	}
+	return value
+}
+
+func sameAccountLifecycle(left, right *accountLifecycleState) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.CreatedAt.Equal(right.CreatedAt) && left.Disabled == right.Disabled &&
+		left.DisabledAt.Equal(right.DisabledAt) && left.StateChangedAt.Equal(right.StateChangedAt)
 }
 
 func mergeUsageIdentity(primary, secondary usageIdentityFingerprint) usageIdentityFingerprint {

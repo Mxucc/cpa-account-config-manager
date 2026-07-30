@@ -94,6 +94,34 @@ func TestAccountServiceListReturnsEmptyJSONArray(t *testing.T) {
 	}
 }
 
+func TestAccountServiceProjectsCreatedAndDisabledLifecycleTimes(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)
+	disabledAt := time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.now = func() time.Time { return disabledAt.Add(time.Minute) }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "lifecycle-account", Name: "lifecycle.json", Provider: "codex", Type: "codex",
+		Email: "lifecycle@example.com", Disabled: true, CreatedAt: createdAt, UpdatedAt: disabledAt,
+		Source: "file", Path: "/auths/lifecycle.json",
+	}}}
+	response, errList := NewAccountService(host, tracker).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil || len(response.Accounts) != 1 {
+		t.Fatalf("lifecycle account list = %#v error=%v", response.Accounts, errList)
+	}
+	account := response.Accounts[0]
+	if account.CreatedAt == nil || !account.CreatedAt.Equal(createdAt) || account.DisabledAt == nil || !account.DisabledAt.Equal(disabledAt) {
+		t.Fatalf("projected lifecycle = created:%v disabled:%v", account.CreatedAt, account.DisabledAt)
+	}
+	encoded, errMarshal := json.Marshal(account)
+	if errMarshal != nil || !bytes.Contains(encoded, []byte(`"created_at":"2026-07-01T08:00:00Z"`)) ||
+		!bytes.Contains(encoded, []byte(`"disabled_at":"2026-07-31T08:00:00Z"`)) {
+		t.Fatalf("encoded lifecycle account = %s error=%v", encoded, errMarshal)
+	}
+}
+
 func TestNormalizeAccountPageSizeSupportsLargePagesAndCapsAtOneThousand(t *testing.T) {
 	for _, pageSize := range []int{20, 50, 100, 200, 500, 1000} {
 		_, got := normalizePage(1, pageSize)

@@ -163,6 +163,8 @@ export const enUI = {
   "ui.read_only": "Read-only",
   "ui.account_list": "Account list",
   "ui.usage": "Usage",
+  "ui.initial_time": "Initial time",
+  "ui.disabled_time": "Disabled time",
   "ui.updated": "Updated",
   "ui.access": "Access",
   "ui.priority": "Priority",

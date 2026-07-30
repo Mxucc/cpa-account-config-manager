@@ -29,10 +29,10 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
   const longWindowExhausted = safePercent(codex?.seven_day?.used_percent ?? 0) >= 100;
   const quotaExhausted = fiveHourExhausted || longWindowExhausted;
   const overdraftWindows = weeklyOverdraftEnabled ? [
-    codex?.five_hour && safePercent(codex.five_hour.used_percent) >= 100
+    codex?.five_hour?.overdraft_active
       ? { label: "5h" as const, window: codex.five_hour }
       : null,
-    codex?.seven_day && safePercent(codex.seven_day.used_percent) >= 100
+    codex?.seven_day?.overdraft_active
       ? { label: "7d" as const, window: codex.seven_day }
       : null,
   ].filter((window): window is { label: "5h" | "7d"; window: UsageWindowSnapshot } => window !== null) : [];

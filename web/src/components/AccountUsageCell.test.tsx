@@ -48,8 +48,8 @@ describe("AccountUsageCell", () => {
         total_tokens: 0,
         codex: {
           observed_at: "2026-07-29T06:00:00Z",
-          five_hour: { used_percent: 118.5, window_minutes: 300 },
-          seven_day: { used_percent: 142, window_minutes: 10_080 },
+          five_hour: { used_percent: 118.5, window_minutes: 300, overdraft_active: true },
+          seven_day: { used_percent: 142, window_minutes: 10_080, overdraft_active: true },
         },
       },
     };
@@ -69,7 +69,7 @@ describe("AccountUsageCell", () => {
         codex: { observed_at: "2026-07-29T06:00:00Z", five_hour: { used_percent: 100, window_minutes: 300 } },
       },
     }} weeklyOverdraftEnabled />);
-    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+0 tok");
+    expect(screen.queryByRole("group", { name: "透支用量" })).not.toBeInTheDocument();
   });
 
   it("shows measured post-exhaustion tokens when upstream caps quota at 100 percent", () => {
@@ -88,6 +88,7 @@ describe("AccountUsageCell", () => {
           five_hour: {
             used_percent: 100,
             window_minutes: 300,
+            overdraft_active: true,
             overdraft_tokens: 12_345,
             overdraft_requests: 4,
           },
@@ -97,7 +98,7 @@ describe("AccountUsageCell", () => {
 
     const panel = screen.getByRole("group", { name: "透支用量" });
     expect(panel).toHaveTextContent("5h+1.2万 tok");
-    expect(screen.getByTitle("5h 已观测透支 12,345 Tokens，共 4 个成功请求（官方总用量 100%）")).toBeInTheDocument();
+    expect(screen.getByTitle("5h 从普通探测失败时的冻结基线起，已观测透支 12,345 Tokens，共 4 个成功请求（官方总用量 100%）")).toBeInTheDocument();
   });
 
   it("falls back to measured successful requests when a stream omits token usage", () => {
@@ -113,13 +114,13 @@ describe("AccountUsageCell", () => {
         total_tokens: 0,
         codex: {
           observed_at: "2026-07-30T01:00:00Z",
-          five_hour: { used_percent: 100, window_minutes: 300, overdraft_requests: 3 },
+          five_hour: { used_percent: 100, window_minutes: 300, overdraft_active: true, overdraft_requests: 3 },
         },
       },
     }} weeklyOverdraftEnabled />);
 
     expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+3 次");
-    expect(screen.getByTitle("5h 已观测透支 0 Tokens，共 3 个成功请求（官方总用量 100%）")).toBeInTheDocument();
+    expect(screen.getByTitle("5h 从普通探测失败时的冻结基线起，已观测透支 0 Tokens，共 3 个成功请求（官方总用量 100%）")).toBeInTheDocument();
   });
 
   it("renders token and request activity with clamped Codex quota tracks", () => {

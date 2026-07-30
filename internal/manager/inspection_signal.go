@@ -653,8 +653,12 @@ func accountQuotaLimited(account Account, now time.Time) (bool, time.Time, strin
 		} else {
 			quotaWindow = windowKind
 		}
-		if window.ResetAt != nil && window.ResetAt.After(recoverAfter) {
-			recoverAfter = window.ResetAt.UTC()
+		windowRecoverAt := window.ResetAt
+		if window.OverdraftActive && window.OverdraftRecoverAt != nil {
+			windowRecoverAt = window.OverdraftRecoverAt
+		}
+		if windowRecoverAt != nil && windowRecoverAt.After(recoverAfter) {
+			recoverAfter = windowRecoverAt.UTC()
 		}
 	}
 	return limited, recoverAfter, quotaWindow

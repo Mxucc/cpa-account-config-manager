@@ -613,6 +613,78 @@ func TestHandleAccountModelTestLoadsEnabledWeeklyOverdraftExperiment(t *testing.
 	}
 }
 
+func TestNormalQuotaProbeFreezesOverdraftBaselineButExperimentalProbeDoesNot(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 2, 0, 0, 0, time.UTC)
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "overdraft-auth", Name: "overdraft.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Email: "overdraft@example.com", Source: "file", Path: "/auths/overdraft.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"overdraft-auth": {
+				AuthIndex: "overdraft-auth", Name: "overdraft.json", Path: "/auths/overdraft.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-overdraft"}`),
+			},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     map[string][]string{"Content-Type": {"application/json"}},
+			Body:       `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}`,
+		})
+	}))
+	defer server.Close()
+
+	usage := NewUsageTracker()
+	defer usage.Close()
+	usage.now = func() time.Time { return now }
+	usage.persistDelay = time.Hour
+	usage.Configure(Config{DataDir: t.TempDir()})
+	officialResetAt := now.Add(5 * time.Hour)
+	usage.ObserveCredentialUsage("overdraft-auth", &CodexUsageSnapshot{
+		FiveHour: &UsageWindowSnapshot{UsedPercent: 100, WindowMinutes: 300, ResetAt: &officialResetAt}, ObservedAt: now,
+	})
+	service := NewModelTestService(NewAccountService(host, usage), usage)
+	service.now = func() time.Time { return now }
+	service.doer = server.Client()
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	service.SetExperimentalTransformer(experiment)
+
+	result, errRun := service.Run(t.Context(), ModelTestRequest{AccountID: "overdraft-auth", Model: defaultOpenAIProbeModel}, server.URL, "management-secret")
+	if errRun != nil || result.ReasonCode != "quota_limited" {
+		t.Fatalf("normal quota probe result=%#v error=%v", result, errRun)
+	}
+	snapshot := usage.Snapshot("overdraft-auth")
+	if snapshot == nil || snapshot.Codex == nil || snapshot.Codex.FiveHour == nil {
+		t.Fatalf("normal quota probe removed usage snapshot: %#v", snapshot)
+	}
+	started := snapshot.Codex.FiveHour
+	wantRecoverAt := now.Add(5 * time.Hour)
+	if !started.OverdraftActive || started.OverdraftRecoverAt == nil || !started.OverdraftRecoverAt.Equal(wantRecoverAt) {
+		t.Fatalf("normal quota probe did not freeze cycle through %v: %#v", wantRecoverAt, started)
+	}
+
+	now = now.Add(time.Hour)
+	if _, errRepeat := service.Run(t.Context(), ModelTestRequest{AccountID: "overdraft-auth", Model: defaultOpenAIProbeModel}, server.URL, "management-secret"); errRepeat != nil {
+		t.Fatalf("repeat normal quota probe: %v", errRepeat)
+	}
+	if repeated := usage.Snapshot("overdraft-auth").Codex.FiveHour; repeated.OverdraftRecoverAt == nil || !repeated.OverdraftRecoverAt.Equal(wantRecoverAt) {
+		t.Fatalf("repeat normal quota probe moved recovery: %#v", repeated)
+	}
+
+	usage.StopOverdraftCycle("overdraft-auth")
+	if _, errExperimental := service.Run(t.Context(), ModelTestRequest{
+		AccountID: "overdraft-auth", Model: defaultOpenAIProbeModel, ExperimentalWeeklyOverdraft: true,
+	}, server.URL, "management-secret"); errExperimental != nil {
+		t.Fatalf("experimental quota probe: %v", errExperimental)
+	}
+	if afterExperimental := usage.Snapshot("overdraft-auth").Codex.FiveHour; afterExperimental.OverdraftActive {
+		t.Fatalf("experimental quota probe started a new cycle: %#v", afterExperimental)
+	}
+}
+
 func TestHandleAccountModelTestRejectsDisabledWeeklyOverdraftExperiment(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
 	app.Configure([]byte("data_dir: " + t.TempDir() + "\n"))

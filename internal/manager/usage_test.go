@@ -90,7 +90,7 @@ func TestUsageTrackerAggregatesSanitizedUsageAndCodexWindows(t *testing.T) {
 	}
 }
 
-func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing.T) {
+func TestUsageTrackerMeasuresOverdraftFromFrozenNormalProbeFailureBaseline(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC)
 	tracker := NewUsageTracker()
@@ -114,11 +114,23 @@ func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing
 	if boundary == nil || boundary.Codex == nil || boundary.Codex.FiveHour == nil {
 		t.Fatalf("boundary snapshot = %#v", boundary)
 	}
-	if boundary.Codex.FiveHour.OverdraftTokens != 0 || boundary.Codex.FiveHour.OverdraftRequests != 0 {
-		t.Fatalf("first request reaching 100%% counted as overdraft: %#v", boundary.Codex.FiveHour)
+	if boundary.Codex.FiveHour.OverdraftActive || boundary.Codex.FiveHour.OverdraftTokens != 0 || boundary.Codex.FiveHour.OverdraftRequests != 0 {
+		t.Fatalf("reaching 100%% started overdraft without a failed normal probe: %#v", boundary.Codex.FiveHour)
 	}
 
 	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("overdraft", InspectionQuotaWindowFiveHour, now)
+	started := tracker.Snapshot("overdraft").Codex.FiveHour
+	wantRecoverAt := now.Add(5 * time.Hour)
+	if !started.OverdraftActive || started.OverdraftStartedAt == nil || !started.OverdraftStartedAt.Equal(now) ||
+		started.OverdraftRecoverAt == nil || !started.OverdraftRecoverAt.Equal(wantRecoverAt) ||
+		started.OverdraftTokens != 0 || started.OverdraftRequests != 0 {
+		t.Fatalf("started overdraft cycle = %#v, want frozen zero delta through %v", started, wantRecoverAt)
+	}
+	tracker.BeginOverdraftCycle("overdraft", InspectionQuotaWindowFiveHour, now.Add(time.Hour))
+	if repeated := tracker.Snapshot("overdraft").Codex.FiveHour; repeated.OverdraftRecoverAt == nil || !repeated.OverdraftRecoverAt.Equal(wantRecoverAt) {
+		t.Fatalf("repeated normal failure moved recovery from %v: %#v", wantRecoverAt, repeated)
+	}
 	tracker.Observe(cpaapi.UsageRecord{
 		AuthIndex: "overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{InputTokens: 70, OutputTokens: 30},
 	})
@@ -130,7 +142,7 @@ func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing
 	if window.OverdraftTokens != 100 || window.OverdraftRequests != 1 {
 		t.Fatalf("measured overdraft = tokens:%d requests:%d, want 100/1", window.OverdraftTokens, window.OverdraftRequests)
 	}
-	if afterSuccess.Codex.SevenDay.OverdraftTokens != 0 || afterSuccess.Codex.SevenDay.OverdraftRequests != 0 {
+	if afterSuccess.Codex.SevenDay.OverdraftActive || afterSuccess.Codex.SevenDay.OverdraftTokens != 0 || afterSuccess.Codex.SevenDay.OverdraftRequests != 0 {
 		t.Fatalf("non-exhausted 7d window counted overdraft: %#v", afterSuccess.Codex.SevenDay)
 	}
 
@@ -146,6 +158,9 @@ func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing
 	if continued.Codex.FiveHour.OverdraftTokens != 125 || continued.Codex.FiveHour.OverdraftRequests != 3 {
 		t.Fatalf("same-window overdraft was not preserved: %#v", continued.Codex.FiveHour)
 	}
+	if continued.Codex.FiveHour.OverdraftRecoverAt == nil || !continued.Codex.FiveHour.OverdraftRecoverAt.Equal(wantRecoverAt) {
+		t.Fatalf("later usage response moved frozen recovery time: %#v", continued.Codex.FiveHour)
+	}
 
 	now = now.Add(time.Minute)
 	recoveredHeaders := exhaustedHeaders.Clone()
@@ -156,7 +171,7 @@ func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing
 		ResponseHeaders: recoveredHeaders,
 	})
 	recovered := tracker.Snapshot("overdraft")
-	if recovered.Codex.FiveHour.UsedPercent != 0 || recovered.Codex.FiveHour.OverdraftTokens != 0 || recovered.Codex.FiveHour.OverdraftRequests != 0 {
+	if recovered.Codex.FiveHour.UsedPercent != 0 || recovered.Codex.FiveHour.OverdraftActive || recovered.Codex.FiveHour.OverdraftTokens != 0 || recovered.Codex.FiveHour.OverdraftRequests != 0 {
 		t.Fatalf("recovered quota retained prior overdraft: %#v", recovered.Codex.FiveHour)
 	}
 	tracker.Close()
@@ -172,7 +187,7 @@ func TestUsageTrackerMeasuresSuccessfulOverdraftWithinEachQuotaWindow(t *testing
 	}
 }
 
-func TestUsageTrackerPersistsMeasuredOverdraft(t *testing.T) {
+func TestUsageTrackerPersistsFrozenOverdraftBaseline(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, time.July, 30, 1, 0, 0, 0, time.UTC)
 	first := NewUsageTracker()
@@ -186,6 +201,7 @@ func TestUsageTrackerPersistsMeasuredOverdraft(t *testing.T) {
 	}
 	first.Observe(cpaapi.UsageRecord{AuthIndex: "persist-overdraft", RequestedAt: now, ResponseHeaders: headers})
 	now = now.Add(time.Minute)
+	first.BeginOverdraftCycle("persist-overdraft", InspectionQuotaWindowFiveHour, now)
 	first.Observe(cpaapi.UsageRecord{AuthIndex: "persist-overdraft", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 321}})
 	first.Close()
 
@@ -195,8 +211,59 @@ func TestUsageTrackerPersistsMeasuredOverdraft(t *testing.T) {
 	second.Configure(Config{DataDir: dataDir})
 	snapshot := second.Snapshot("persist-overdraft")
 	if snapshot == nil || snapshot.Codex == nil || snapshot.Codex.FiveHour == nil ||
-		snapshot.Codex.FiveHour.OverdraftTokens != 321 || snapshot.Codex.FiveHour.OverdraftRequests != 1 {
+		!snapshot.Codex.FiveHour.OverdraftActive || snapshot.Codex.FiveHour.OverdraftTokens != 321 || snapshot.Codex.FiveHour.OverdraftRequests != 1 ||
+		snapshot.Codex.FiveHour.OverdraftRecoverAt == nil || !snapshot.Codex.FiveHour.OverdraftRecoverAt.Equal(now.Add(5*time.Hour)) {
 		t.Fatalf("persisted overdraft snapshot = %#v", snapshot)
+	}
+}
+
+func TestUsageTrackerMigratesCounterOnlyOverdraftStateAsInactive(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := usageStorePath(dataDir)
+	legacy := []byte(`{"version":2,"accounts":{"auth-index:legacy-overdraft":{"total_tokens":900,"codex":{"five_hour":{"used_percent":100,"window_minutes":300,"overdraft_tokens":450,"overdraft_requests":9},"observed_at":"2026-07-30T00:00:00Z"},"updated_at":"2026-07-30T00:00:00Z"}}}`)
+	if errWrite := os.WriteFile(storePath, legacy, 0o600); errWrite != nil {
+		t.Fatalf("write version-two usage state: %v", errWrite)
+	}
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return time.Date(2026, time.July, 30, 0, 1, 0, 0, time.UTC) }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	snapshot := tracker.Snapshot("legacy-overdraft")
+	if snapshot == nil || snapshot.Codex == nil || snapshot.Codex.FiveHour == nil {
+		t.Fatalf("migrated version-two snapshot = %#v", snapshot)
+	}
+	if snapshot.Codex.FiveHour.OverdraftActive || snapshot.Codex.FiveHour.OverdraftTokens != 0 || snapshot.Codex.FiveHour.OverdraftRequests != 0 {
+		t.Fatalf("counter-only state became an active baseline cycle: %#v", snapshot.Codex.FiveHour)
+	}
+	tracker.Close()
+}
+
+func TestStoppedOverdraftCycleWinsPersistenceMerge(t *testing.T) {
+	startedAt := time.Date(2026, time.July, 30, 3, 0, 0, 0, time.UTC)
+	active := &overdraftCycleState{
+		Active: true, BaselineTokens: 100, BaselineRequests: 2, StartedAt: startedAt,
+		RecoverAt: startedAt.Add(5 * time.Hour), WindowMinutes: 300, ChangedAt: startedAt,
+	}
+	stopped := &overdraftCycleState{Active: false, ChangedAt: startedAt.Add(time.Minute)}
+	for _, merged := range []*overdraftCycleState{mergeOverdraftCycle(active, stopped), mergeOverdraftCycle(stopped, active)} {
+		if merged == nil || merged.Active || !merged.ChangedAt.Equal(stopped.ChangedAt) {
+			t.Fatalf("stopped cycle was resurrected during merge: %#v", merged)
+		}
+	}
+}
+
+func TestAccountQuotaLimitedUsesFrozenOverdraftRecoveryTime(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 4, 0, 0, 0, time.UTC)
+	mutableResetAt := now.Add(6 * time.Hour)
+	frozenRecoverAt := now.Add(5 * time.Hour)
+	limited, recoverAt, quotaWindow := accountQuotaLimited(Account{Usage: &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{
+		FiveHour: &UsageWindowSnapshot{
+			UsedPercent: 100, ResetAt: &mutableResetAt, WindowMinutes: 300,
+			OverdraftActive: true, OverdraftRecoverAt: &frozenRecoverAt,
+		},
+	}}}, now)
+	if !limited || quotaWindow != InspectionQuotaWindowFiveHour || !recoverAt.Equal(frozenRecoverAt) {
+		t.Fatalf("quota recovery = limited:%t window:%q at:%v, want frozen %v", limited, quotaWindow, recoverAt, frozenRecoverAt)
 	}
 }
 
@@ -362,7 +429,7 @@ func TestUsageTrackerMigratesVersionOneStateIntoCurrentEmailIdentity(t *testing.
 	if errRead != nil {
 		t.Fatalf("read migrated usage state: %v", errRead)
 	}
-	if !bytes.Contains(raw, []byte(`"version":2`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
+	if !bytes.Contains(raw, []byte(`"version":3`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
 		t.Fatalf("legacy state was not safely migrated: %s", raw)
 	}
 }

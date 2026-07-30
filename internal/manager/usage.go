@@ -46,11 +46,14 @@ type CodexUsageSnapshot struct {
 }
 
 type UsageWindowSnapshot struct {
-	UsedPercent       float64    `json:"used_percent"`
-	ResetAt           *time.Time `json:"reset_at,omitempty"`
-	WindowMinutes     int        `json:"window_minutes,omitempty"`
-	OverdraftTokens   int64      `json:"overdraft_tokens,omitempty"`
-	OverdraftRequests int64      `json:"overdraft_requests,omitempty"`
+	UsedPercent        float64    `json:"used_percent"`
+	ResetAt            *time.Time `json:"reset_at,omitempty"`
+	WindowMinutes      int        `json:"window_minutes,omitempty"`
+	OverdraftActive    bool       `json:"overdraft_active,omitempty"`
+	OverdraftTokens    int64      `json:"overdraft_tokens,omitempty"`
+	OverdraftRequests  int64      `json:"overdraft_requests,omitempty"`
+	OverdraftStartedAt *time.Time `json:"overdraft_started_at,omitempty"`
+	OverdraftRecoverAt *time.Time `json:"overdraft_recover_at,omitempty"`
 }
 
 type usageAggregate struct {
@@ -62,9 +65,23 @@ type usageAggregate struct {
 	CacheReadTokens     int64                    `json:"cache_read_tokens"`
 	CacheCreationTokens int64                    `json:"cache_creation_tokens"`
 	TotalTokens         int64                    `json:"total_tokens"`
+	SuccessfulTokens    int64                    `json:"successful_tokens,omitempty"`
+	SuccessfulRequests  int64                    `json:"successful_requests,omitempty"`
+	FiveHourOverdraft   *overdraftCycleState     `json:"five_hour_overdraft,omitempty"`
+	SevenDayOverdraft   *overdraftCycleState     `json:"seven_day_overdraft,omitempty"`
 	LastRequestAt       time.Time                `json:"last_request_at,omitempty"`
 	UpdatedAt           time.Time                `json:"updated_at,omitempty"`
 	Codex               *CodexUsageSnapshot      `json:"codex,omitempty"`
+}
+
+type overdraftCycleState struct {
+	Active           bool      `json:"active"`
+	BaselineTokens   int64     `json:"baseline_tokens,omitempty"`
+	BaselineRequests int64     `json:"baseline_requests,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	RecoverAt        time.Time `json:"recover_at,omitempty"`
+	WindowMinutes    int       `json:"window_minutes,omitempty"`
+	ChangedAt        time.Time `json:"changed_at"`
 }
 
 type UsageTracker struct {
@@ -267,11 +284,6 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	}
 	aggregate := t.accounts[storageKey]
 	aggregate.Identity = mergeUsageIdentity(aggregate.Identity, identity)
-	var previousFiveHour, previousSevenDay *UsageWindowSnapshot
-	if aggregate.Codex != nil {
-		previousFiveHour = currentUsageWindow(aggregate.Codex.FiveHour, aggregate.Codex.ObservedAt, now)
-		previousSevenDay = currentUsageWindow(aggregate.Codex.SevenDay, aggregate.Codex.ObservedAt, now)
-	}
 	aggregate.InputTokens = saturatingAdd(aggregate.InputTokens, nonNegative(record.Detail.InputTokens))
 	aggregate.OutputTokens = saturatingAdd(aggregate.OutputTokens, nonNegative(record.Detail.OutputTokens))
 	aggregate.ReasoningTokens = saturatingAdd(aggregate.ReasoningTokens, nonNegative(record.Detail.ReasoningTokens))
@@ -284,6 +296,10 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 		totalTokens = saturatingAdd(totalTokens, nonNegative(record.Detail.ReasoningTokens))
 	}
 	aggregate.TotalTokens = saturatingAdd(aggregate.TotalTokens, totalTokens)
+	if !record.Failed {
+		aggregate.SuccessfulTokens = saturatingAdd(aggregate.SuccessfulTokens, totalTokens)
+		aggregate.SuccessfulRequests = saturatingAdd(aggregate.SuccessfulRequests, 1)
+	}
 	if aggregate.LastRequestAt.IsZero() || requestedAt.After(aggregate.LastRequestAt) {
 		aggregate.LastRequestAt = requestedAt
 	}
@@ -293,20 +309,18 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 			aggregate.Codex = &CodexUsageSnapshot{}
 		}
 		if codex.FiveHour != nil {
+			if codex.FiveHour.UsedPercent == 0 {
+				aggregate.FiveHourOverdraft = stoppedOverdraftCycle(aggregate.FiveHourOverdraft, now)
+			}
 			aggregate.Codex.FiveHour = mergeObservedUsageWindow(aggregate.Codex.FiveHour, codex.FiveHour)
 		}
 		if codex.SevenDay != nil {
+			if codex.SevenDay.UsedPercent == 0 {
+				aggregate.SevenDayOverdraft = stoppedOverdraftCycle(aggregate.SevenDayOverdraft, now)
+			}
 			aggregate.Codex.SevenDay = mergeObservedUsageWindow(aggregate.Codex.SevenDay, codex.SevenDay)
 		}
 		aggregate.Codex.ObservedAt = codex.ObservedAt
-	}
-	if !record.Failed && aggregate.Codex != nil {
-		if sameActiveExhaustedUsageWindow(previousFiveHour, aggregate.Codex.FiveHour) {
-			observeOverdraftUsage(aggregate.Codex.FiveHour, totalTokens)
-		}
-		if sameActiveExhaustedUsageWindow(previousSevenDay, aggregate.Codex.SevenDay) {
-			observeOverdraftUsage(aggregate.Codex.SevenDay, totalTokens)
-		}
 	}
 	t.accounts[storageKey] = aggregate
 	t.dirty = true
@@ -340,9 +354,15 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 		aggregate.Codex = &CodexUsageSnapshot{}
 	}
 	if cloned.FiveHour != nil {
+		if cloned.FiveHour.UsedPercent == 0 {
+			aggregate.FiveHourOverdraft = stoppedOverdraftCycle(aggregate.FiveHourOverdraft, now)
+		}
 		aggregate.Codex.FiveHour = mergeObservedUsageWindow(aggregate.Codex.FiveHour, cloned.FiveHour)
 	}
 	if cloned.SevenDay != nil {
+		if cloned.SevenDay.UsedPercent == 0 {
+			aggregate.SevenDayOverdraft = stoppedOverdraftCycle(aggregate.SevenDayOverdraft, now)
+		}
 		aggregate.Codex.SevenDay = mergeObservedUsageWindow(aggregate.Codex.SevenDay, cloned.SevenDay)
 	}
 	if cloned.FiveHour != nil || cloned.SevenDay != nil {
@@ -360,6 +380,105 @@ func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexU
 	t.generation++
 	t.mu.Unlock()
 	t.requestPersist()
+}
+
+func (t *UsageTracker) BeginOverdraftCycle(authIndex, quotaWindow string, exhaustedAt time.Time) {
+	if t == nil {
+		return
+	}
+	authIndex = safeOperationIdentifier(authIndex, 256)
+	if authIndex == "" {
+		return
+	}
+	now := t.currentTime()
+	exhaustedAt = exhaustedAt.UTC()
+	if exhaustedAt.IsZero() || exhaustedAt.After(now.Add(time.Minute)) {
+		exhaustedAt = now
+	}
+	t.mu.Lock()
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	aggregate, exists := t.accounts[storageKey]
+	if !exists || aggregate.Codex == nil {
+		t.mu.Unlock()
+		return
+	}
+	aggregate.Identity = mergeUsageIdentity(aggregate.Identity, identity)
+	changed := false
+	start := func(window *UsageWindowSnapshot, cycle **overdraftCycleState, fallbackMinutes int) {
+		window = currentUsageWindow(window, aggregate.Codex.ObservedAt, exhaustedAt)
+		if window == nil || window.UsedPercent < 100 || *cycle != nil && (*cycle).Active {
+			return
+		}
+		minutes := window.WindowMinutes
+		if minutes <= 0 {
+			minutes = fallbackMinutes
+		}
+		recoverAt := exhaustedAt.Add(time.Duration(minutes) * time.Minute).UTC()
+		*cycle = &overdraftCycleState{
+			Active: true, BaselineTokens: aggregate.SuccessfulTokens, BaselineRequests: aggregate.SuccessfulRequests,
+			StartedAt: exhaustedAt, RecoverAt: recoverAt, WindowMinutes: minutes, ChangedAt: now,
+		}
+		changed = true
+	}
+	switch normalizeInspectionQuotaWindow(quotaWindow) {
+	case InspectionQuotaWindowFiveHour, InspectionQuotaWindowFiveHourFallback:
+		start(aggregate.Codex.FiveHour, &aggregate.FiveHourOverdraft, 5*60)
+	case InspectionQuotaWindowSevenDay:
+		start(aggregate.Codex.SevenDay, &aggregate.SevenDayOverdraft, 7*24*60)
+	default:
+		start(aggregate.Codex.FiveHour, &aggregate.FiveHourOverdraft, 5*60)
+		start(aggregate.Codex.SevenDay, &aggregate.SevenDayOverdraft, 7*24*60)
+	}
+	if changed {
+		aggregate.UpdatedAt = now
+		t.accounts[storageKey] = aggregate
+		t.dirty = true
+		t.generation++
+	}
+	t.mu.Unlock()
+	if changed {
+		t.requestPersist()
+	}
+}
+
+func (t *UsageTracker) StopOverdraftCycle(authIndex string) {
+	if t == nil {
+		return
+	}
+	authIndex = safeOperationIdentifier(authIndex, 256)
+	if authIndex == "" {
+		return
+	}
+	now := t.currentTime()
+	t.mu.Lock()
+	storageKey, _ := t.usageStorageKeyLocked(authIndex)
+	aggregate, exists := t.accounts[storageKey]
+	if !exists {
+		t.mu.Unlock()
+		return
+	}
+	fiveHour := stoppedOverdraftCycle(aggregate.FiveHourOverdraft, now)
+	sevenDay := stoppedOverdraftCycle(aggregate.SevenDayOverdraft, now)
+	changed := fiveHour != aggregate.FiveHourOverdraft || sevenDay != aggregate.SevenDayOverdraft
+	if changed {
+		aggregate.FiveHourOverdraft = fiveHour
+		aggregate.SevenDayOverdraft = sevenDay
+		aggregate.UpdatedAt = now
+		t.accounts[storageKey] = aggregate
+		t.dirty = true
+		t.generation++
+	}
+	t.mu.Unlock()
+	if changed {
+		t.requestPersist()
+	}
+}
+
+func stoppedOverdraftCycle(cycle *overdraftCycleState, now time.Time) *overdraftCycleState {
+	if cycle == nil || !cycle.Active {
+		return cycle
+	}
+	return &overdraftCycleState{Active: false, ChangedAt: now.UTC()}
 }
 
 func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
@@ -508,8 +627,8 @@ func (t *UsageTracker) persist() {
 func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageSnapshot {
 	codex := cloneCodexUsage(aggregate.Codex)
 	if codex != nil {
-		codex.FiveHour = currentUsageWindow(codex.FiveHour, codex.ObservedAt, now)
-		codex.SevenDay = currentUsageWindow(codex.SevenDay, codex.ObservedAt, now)
+		codex.FiveHour = publicUsageWindow(codex.FiveHour, codex.ObservedAt, now, aggregate.FiveHourOverdraft, aggregate)
+		codex.SevenDay = publicUsageWindow(codex.SevenDay, codex.ObservedAt, now, aggregate.SevenDayOverdraft, aggregate)
 		if !hasCodexUsageData(codex) {
 			codex = nil
 		}
@@ -540,6 +659,31 @@ func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageS
 	return snapshot
 }
 
+func publicUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time, cycle *overdraftCycleState, aggregate usageAggregate) *UsageWindowSnapshot {
+	var snapshot *UsageWindowSnapshot
+	if cycle != nil && cycle.Active {
+		snapshot = cloneUsageWindow(window)
+	} else {
+		snapshot = currentUsageWindow(window, observedAt, now)
+	}
+	if snapshot == nil {
+		return nil
+	}
+	snapshot.OverdraftActive = cycle != nil && cycle.Active
+	snapshot.OverdraftTokens = 0
+	snapshot.OverdraftRequests = 0
+	snapshot.OverdraftStartedAt = nil
+	snapshot.OverdraftRecoverAt = nil
+	if cycle == nil || !cycle.Active {
+		return snapshot
+	}
+	snapshot.OverdraftTokens = nonNegative(aggregate.SuccessfulTokens - cycle.BaselineTokens)
+	snapshot.OverdraftRequests = nonNegative(aggregate.SuccessfulRequests - cycle.BaselineRequests)
+	snapshot.OverdraftStartedAt = timePointer(cycle.StartedAt)
+	snapshot.OverdraftRecoverAt = timePointer(cycle.RecoverAt)
+	return snapshot
+}
+
 func currentUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time) *UsageWindowSnapshot {
 	if window == nil {
 		return nil
@@ -557,17 +701,7 @@ func mergeObservedUsageWindow(current, observed *UsageWindowSnapshot) *UsageWind
 	if observed == nil {
 		return cloneUsageWindow(current)
 	}
-	merged := cloneUsageWindow(observed)
-	if current != nil && observed.UsedPercent >= 100 && sameUsageWindow(current, observed) {
-		merged.OverdraftTokens = nonNegative(current.OverdraftTokens)
-		merged.OverdraftRequests = nonNegative(current.OverdraftRequests)
-	}
-	return merged
-}
-
-func sameActiveExhaustedUsageWindow(previous, current *UsageWindowSnapshot) bool {
-	return previous != nil && previous.UsedPercent >= 100 && current != nil && current.UsedPercent >= 100 &&
-		sameUsageWindow(previous, current)
+	return cloneUsageWindow(observed)
 }
 
 func sameUsageWindow(left, right *UsageWindowSnapshot) bool {
@@ -585,14 +719,6 @@ func sameUsageWindow(left, right *UsageWindowSnapshot) bool {
 		drift = -drift
 	}
 	return drift <= usageWindowResetDrift
-}
-
-func observeOverdraftUsage(window *UsageWindowSnapshot, tokens int64) {
-	if window == nil {
-		return
-	}
-	window.OverdraftRequests = saturatingAdd(window.OverdraftRequests, 1)
-	window.OverdraftTokens = saturatingAdd(window.OverdraftTokens, nonNegative(tokens))
 }
 
 type rawCodexWindow struct {
@@ -733,9 +859,19 @@ func cloneUsageAggregates(accounts map[string]usageAggregate) map[string]usageAg
 	cloned := make(map[string]usageAggregate, len(accounts))
 	for storageKey, aggregate := range accounts {
 		aggregate.Codex = cloneCodexUsage(aggregate.Codex)
+		aggregate.FiveHourOverdraft = cloneOverdraftCycle(aggregate.FiveHourOverdraft)
+		aggregate.SevenDayOverdraft = cloneOverdraftCycle(aggregate.SevenDayOverdraft)
 		cloned[storageKey] = aggregate
 	}
 	return cloned
+}
+
+func cloneOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
+	if cycle == nil {
+		return nil
+	}
+	cloned := *cycle
+	return &cloned
 }
 
 func cloneCodexUsage(snapshot *CodexUsageSnapshot) *CodexUsageSnapshot {

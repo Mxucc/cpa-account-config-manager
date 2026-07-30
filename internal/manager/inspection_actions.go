@@ -112,12 +112,14 @@ func (e *InspectionEngine) applyAutomaticActions(
 				record.Result.AutoActionStatus = InspectionActionFailed
 				summary.Failed++
 			} else if !outcome.Changed {
+				e.stopOverdraftCycle(id)
 				action.Status = InspectionActionSkipped
 				clearInspectionDisableOwnership(&record)
 				record.Result.Disabled = false
 				record.Result.AutoAction = InspectionActionEnable
 				record.Result.AutoActionStatus = InspectionActionSkipped
 			} else {
+				e.stopOverdraftCycle(id)
 				action.Status = InspectionActionSucceeded
 				clearInspectionDisableOwnership(&record)
 				record.Result.Disabled = false
@@ -195,6 +197,18 @@ func (e *InspectionEngine) applyAutomaticActions(
 		}
 	}
 	return summary, actions
+}
+
+func (e *InspectionEngine) stopOverdraftCycle(accountID string) {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	tracker := e.overdraftCycles
+	e.mu.RUnlock()
+	if tracker != nil {
+		tracker.StopOverdraftCycle(accountID)
+	}
 }
 
 func shouldOpenPassiveCircuit(policy InspectionPolicy, account Account, record inspectionRecord, now time.Time) (bool, string, int) {

@@ -121,6 +121,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	modelTests.SetExperimentalTransformer(weeklyOverdraft)
 	inspection.RegisterAutomaticDisableGuard(weeklyOverdraft)
 	inspection.SetModelTestService(modelTests)
+	inspection.SetOverdraftCycleTracker(usage)
 	inspection.SetDeleteService(deletions)
 	inspection.SetOperationJournal(operations)
 	app := &App{

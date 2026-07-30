@@ -26,6 +26,7 @@ type InspectionEngine struct {
 	mutations                  *MutationCoordinator
 	backgroundOwner            BackgroundWorkOwner
 	modelTests                 *ModelTestService
+	overdraftCycles            overdraftCycleStopper
 	automaticDisableProbe      automaticDisableProbeRunner
 	probeNeedsManagementAuth   bool
 	deletions                  *AccountDeleteService
@@ -88,6 +89,10 @@ type InspectionEngine struct {
 	now                        func() time.Time
 }
 
+type overdraftCycleStopper interface {
+	StopOverdraftCycle(string)
+}
+
 func NewInspectionEngine(accounts *AccountService, host AuthHost, mutations *MutationCoordinator) *InspectionEngine {
 	if mutations == nil {
 		mutations = NewMutationCoordinator()
@@ -124,6 +129,15 @@ func (e *InspectionEngine) SetModelTestService(service *ModelTestService) {
 			return service.Run(ctx, request, managementBaseURL, managementKey)
 		}
 	}
+	e.mu.Unlock()
+}
+
+func (e *InspectionEngine) SetOverdraftCycleTracker(tracker overdraftCycleStopper) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.overdraftCycles = tracker
 	e.mu.Unlock()
 }
 
@@ -1467,6 +1481,16 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 			record.Result.RunPhase = phase
 			record.Result.RunObservedAt = timePointer(observedAt)
 			previous[result.AccountID] = record
+		}
+	}
+	// A normal quota probe can freeze an overdraft baseline while this scan is
+	// running. Refresh only the in-memory usage projection so remediation in
+	// the same scan uses the frozen recovery time rather than a later mutable
+	// upstream reset value.
+	if e.accounts != nil && e.accounts.usage != nil {
+		for index := range accounts {
+			accounts[index].Usage = e.accounts.usage.Snapshot(accounts[index].ID)
+			accountsByID[accounts[index].ID] = accounts[index]
 		}
 	}
 	// Probe timestamps are captured while the batch runs. Refresh the decision

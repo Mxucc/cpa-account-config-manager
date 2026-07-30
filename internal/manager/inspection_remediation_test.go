@@ -108,6 +108,8 @@ func TestAutomaticQuotaRecoveryRaisesPriorityThroughCPAFieldsAPI(t *testing.T) {
 	defer server.Close()
 
 	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	cycleTracker := &recordingOverdraftCycleStopper{}
+	engine.SetOverdraftCycleTracker(cycleTracker)
 	records := map[string]inspectionRecord{
 		"inspection-account": {
 			Result: InspectionResult{
@@ -146,6 +148,17 @@ func TestAutomaticQuotaRecoveryRaisesPriorityThroughCPAFieldsAPI(t *testing.T) {
 	if len(host.saves) != 0 {
 		t.Fatalf("quota recovery bypassed CPA management APIs with %d host saves", len(host.saves))
 	}
+	if !reflect.DeepEqual(cycleTracker.stopped, []string{"inspection-account"}) {
+		t.Fatalf("automatic enable stopped overdraft cycles for %#v", cycleTracker.stopped)
+	}
+}
+
+type recordingOverdraftCycleStopper struct {
+	stopped []string
+}
+
+func (s *recordingOverdraftCycleStopper) StopOverdraftCycle(accountID string) {
+	s.stopped = append(s.stopped, accountID)
 }
 
 func TestAutomaticInspectionDefersTransientMutationConflictWithoutStickyError(t *testing.T) {

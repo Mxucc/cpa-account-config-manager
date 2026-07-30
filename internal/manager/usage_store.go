@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	usageStoreVersion       = 2
-	legacyUsageStoreVersion = 1
-	usageStoreLockTimeout   = 2 * time.Second
-	usageStoreLockStale     = 30 * time.Second
-	usageStoreLockRetry     = 10 * time.Millisecond
-	usageDurableDirName     = ".cpa-account-config-manager"
-	usageDurableFileName    = "usage-snapshots.state"
+	usageStoreVersion        = 3
+	counterUsageStoreVersion = 2
+	legacyUsageStoreVersion  = 1
+	usageStoreLockTimeout    = 2 * time.Second
+	usageStoreLockStale      = 30 * time.Second
+	usageStoreLockRetry      = 10 * time.Millisecond
+	usageDurableDirName      = ".cpa-account-config-manager"
+	usageDurableFileName     = "usage-snapshots.state"
 )
 
 type persistedUsageState struct {
@@ -97,8 +98,16 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 		migrated := make(map[string]usageAggregate, len(persisted.Accounts))
 		for authIndex, aggregate := range persisted.Accounts {
 			if key := usagePendingKey(authIndex); key != "" {
+				aggregate = migrateUsageAggregateToBaselineState(aggregate)
 				migrated[key] = aggregate
 			}
+		}
+		return normalizeUsageAccounts(migrated), nil
+	}
+	if persisted.Version == counterUsageStoreVersion {
+		migrated := make(map[string]usageAggregate, len(persisted.Accounts))
+		for storageKey, aggregate := range persisted.Accounts {
+			migrated[storageKey] = migrateUsageAggregateToBaselineState(aggregate)
 		}
 		return normalizeUsageAccounts(migrated), nil
 	}
@@ -106,6 +115,18 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 		return nil, fmt.Errorf("unsupported usage store version %d", persisted.Version)
 	}
 	return normalizeUsageAccounts(persisted.Accounts), nil
+}
+
+func migrateUsageAggregateToBaselineState(aggregate usageAggregate) usageAggregate {
+	aggregate.SuccessfulTokens = maxInt64(aggregate.SuccessfulTokens, aggregate.TotalTokens)
+	aggregate.FiveHourOverdraft = nil
+	aggregate.SevenDayOverdraft = nil
+	if aggregate.Codex != nil {
+		for _, window := range []*UsageWindowSnapshot{aggregate.Codex.FiveHour, aggregate.Codex.SevenDay} {
+			clearPublicOverdraftState(window)
+		}
+	}
+	return aggregate
 }
 
 func loadUsageStateWithBackup(path string) (map[string]usageAggregate, bool, error) {
@@ -237,6 +258,10 @@ func mergeUsageAggregate(current, stored usageAggregate) usageAggregate {
 	current.CacheReadTokens = maxInt64(current.CacheReadTokens, stored.CacheReadTokens)
 	current.CacheCreationTokens = maxInt64(current.CacheCreationTokens, stored.CacheCreationTokens)
 	current.TotalTokens = maxInt64(current.TotalTokens, stored.TotalTokens)
+	current.SuccessfulTokens = maxInt64(current.SuccessfulTokens, stored.SuccessfulTokens)
+	current.SuccessfulRequests = maxInt64(current.SuccessfulRequests, stored.SuccessfulRequests)
+	current.FiveHourOverdraft = mergeOverdraftCycle(current.FiveHourOverdraft, stored.FiveHourOverdraft)
+	current.SevenDayOverdraft = mergeOverdraftCycle(current.SevenDayOverdraft, stored.SevenDayOverdraft)
 	if stored.LastRequestAt.After(current.LastRequestAt) {
 		current.LastRequestAt = stored.LastRequestAt
 	}
@@ -278,28 +303,20 @@ func mergeCodexUsage(current, stored *CodexUsageSnapshot) *CodexUsageSnapshot {
 			merged.ActiveResetCount = &count
 		}
 	}
-	merged.FiveHour = mergePersistedUsageWindow(merged.FiveHour, current.FiveHour, stored.FiveHour)
-	merged.SevenDay = mergePersistedUsageWindow(merged.SevenDay, current.SevenDay, stored.SevenDay)
 	return merged
 }
 
-func mergePersistedUsageWindow(selected, current, stored *UsageWindowSnapshot) *UsageWindowSnapshot {
-	if selected == nil {
-		return nil
+func mergeOverdraftCycle(current, stored *overdraftCycleState) *overdraftCycleState {
+	if current == nil {
+		return cloneOverdraftCycle(stored)
 	}
-	merged := cloneUsageWindow(selected)
-	if merged.UsedPercent < 100 {
-		merged.OverdraftTokens = 0
-		merged.OverdraftRequests = 0
-		return merged
+	if stored == nil {
+		return cloneOverdraftCycle(current)
 	}
-	for _, candidate := range []*UsageWindowSnapshot{current, stored} {
-		if sameUsageWindow(merged, candidate) {
-			merged.OverdraftTokens = maxInt64(merged.OverdraftTokens, candidate.OverdraftTokens)
-			merged.OverdraftRequests = maxInt64(merged.OverdraftRequests, candidate.OverdraftRequests)
-		}
+	if stored.ChangedAt.After(current.ChangedAt) || stored.ChangedAt.Equal(current.ChangedAt) && !stored.Active {
+		return cloneOverdraftCycle(stored)
 	}
-	return merged
+	return cloneOverdraftCycle(current)
 }
 
 func sanitizeUsageAggregate(aggregate usageAggregate) usageAggregate {
@@ -310,6 +327,10 @@ func sanitizeUsageAggregate(aggregate usageAggregate) usageAggregate {
 	aggregate.CacheReadTokens = nonNegative(aggregate.CacheReadTokens)
 	aggregate.CacheCreationTokens = nonNegative(aggregate.CacheCreationTokens)
 	aggregate.TotalTokens = nonNegative(aggregate.TotalTokens)
+	aggregate.SuccessfulTokens = nonNegative(aggregate.SuccessfulTokens)
+	aggregate.SuccessfulRequests = nonNegative(aggregate.SuccessfulRequests)
+	aggregate.FiveHourOverdraft = sanitizeOverdraftCycle(aggregate.FiveHourOverdraft)
+	aggregate.SevenDayOverdraft = sanitizeOverdraftCycle(aggregate.SevenDayOverdraft)
 	aggregate.LastRequestAt = aggregate.LastRequestAt.UTC()
 	aggregate.UpdatedAt = aggregate.UpdatedAt.UTC()
 	aggregate.Codex = sanitizeCodexUsage(aggregate.Codex)
@@ -340,9 +361,45 @@ func sanitizeUsageWindow(window *UsageWindowSnapshot) *UsageWindowSnapshot {
 		return nil
 	}
 	window = cloneUsageWindow(window)
-	window.OverdraftTokens = nonNegative(window.OverdraftTokens)
-	window.OverdraftRequests = nonNegative(window.OverdraftRequests)
+	clearPublicOverdraftState(window)
 	return window
+}
+
+func clearPublicOverdraftState(window *UsageWindowSnapshot) {
+	if window == nil {
+		return
+	}
+	window.OverdraftActive = false
+	window.OverdraftTokens = 0
+	window.OverdraftRequests = 0
+	window.OverdraftStartedAt = nil
+	window.OverdraftRecoverAt = nil
+}
+
+func sanitizeOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
+	if cycle == nil {
+		return nil
+	}
+	cycle = cloneOverdraftCycle(cycle)
+	cycle.BaselineTokens = nonNegative(cycle.BaselineTokens)
+	cycle.BaselineRequests = nonNegative(cycle.BaselineRequests)
+	cycle.StartedAt = cycle.StartedAt.UTC()
+	cycle.RecoverAt = cycle.RecoverAt.UTC()
+	cycle.ChangedAt = cycle.ChangedAt.UTC()
+	if cycle.ChangedAt.IsZero() || cycle.WindowMinutes < 0 || cycle.WindowMinutes > maxUsageWindowMinutes {
+		return nil
+	}
+	if cycle.Active && (cycle.StartedAt.IsZero() || cycle.RecoverAt.IsZero() || !cycle.RecoverAt.After(cycle.StartedAt)) {
+		return nil
+	}
+	if !cycle.Active {
+		cycle.BaselineTokens = 0
+		cycle.BaselineRequests = 0
+		cycle.StartedAt = time.Time{}
+		cycle.RecoverAt = time.Time{}
+		cycle.WindowMinutes = 0
+	}
+	return cycle
 }
 
 func mathInvalidUsagePercent(value float64) bool {

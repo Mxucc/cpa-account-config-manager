@@ -106,6 +106,7 @@ type ModelTestResponseHeader struct {
 type ModelTestService struct {
 	accounts                *AccountService
 	usage                   credentialUsageObserver
+	overdraft               overdraftCycleObserver
 	agentIdentity           *AgentIdentityExperiment
 	doer                    HTTPDoer
 	semaphore               chan struct{}
@@ -115,6 +116,14 @@ type ModelTestService struct {
 
 type credentialUsageObserver interface {
 	ObserveCredentialUsage(string, *CodexUsageSnapshot)
+}
+
+type overdraftCycleObserver interface {
+	BeginOverdraftCycle(string, string, time.Time)
+}
+
+type requestInterceptionActivation interface {
+	RequestInterceptionActive() bool
 }
 
 type modelProbe struct {
@@ -264,6 +273,9 @@ func NewModelTestService(accounts *AccountService, usage ...credentialUsageObser
 	}
 	if len(usage) > 0 {
 		service.usage = usage[0]
+		if observer, ok := usage[0].(overdraftCycleObserver); ok {
+			service.overdraft = observer
+		}
 	}
 	return service
 }
@@ -373,10 +385,11 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		credentialResponse, errCredential := s.callAccountProbe(probeCtx, managementBaseURL, managementKey, callbackID, account, credential)
 		if errCredential == nil {
 			statusCode, body := credentialResponse.StatusCode, credentialResponse.Body
-			if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices && s.usage != nil {
+			if s.usage != nil {
 				s.usage.ObserveCredentialUsage(account.ID, codexUsageProbeSnapshot(body, s.currentTime()))
 			}
 			status, reason, quotaWindow := classifyCredentialProbeDetails(statusCode, body)
+			s.observeNormalQuotaFailure(account.ID, quotaWindow, reason, s.currentTime(), request.ExperimentalWeeklyOverdraft)
 			if credentialProbeResultIsDefinitive(reason) || (request.Inspection && reason == "credential_response_ok") {
 				result.Status = status
 				result.ProbeKind = InspectionProbeKindCredential
@@ -458,6 +471,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		if attempt.Status == "available" {
 			result.SelectedModel = attempt.Model
 		}
+		s.observeNormalQuotaFailure(account.ID, attempt.QuotaWindow, attempt.ReasonCode, s.currentTime(), request.ExperimentalWeeklyOverdraft)
 	}
 
 	primaryAttempt, primaryResponse, primaryErr := runAttempt("primary", selectedModel, probe, result.Experiment)
@@ -491,6 +505,17 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		result.CompatibleModels = []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}
 	}
 	return result, nil
+}
+
+func (s *ModelTestService) observeNormalQuotaFailure(accountID, quotaWindow, reason string, testedAt time.Time, experimental bool) {
+	if s == nil || experimental || safeModelProbeReason(reason) != "quota_limited" || s.overdraft == nil {
+		return
+	}
+	gate, ok := s.experimentalTransformer.(requestInterceptionActivation)
+	if !ok || !gate.RequestInterceptionActive() {
+		return
+	}
+	s.overdraft.BeginOverdraftCycle(accountID, quotaWindow, testedAt)
 }
 
 func shouldFallbackCodexModel(probe modelProbe, model string, response modelProbeHTTPResponse) bool {

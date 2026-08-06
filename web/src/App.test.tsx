@@ -100,7 +100,7 @@ describe("primary account batch flow", () => {
     }
 
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
-    await waitFor(() => expect(settingsRequests).toBe(5));
+    await waitFor(() => expect(settingsRequests).toBe(6));
     expect(settingsPersisted).toBe(false);
     expect(accountRequests).toHaveLength(1);
     expect(accountRequests[0]).toContain("page=1");
@@ -109,6 +109,46 @@ describe("primary account batch flow", () => {
 
     releaseSettings?.();
     await waitFor(() => expect(settingsPersisted).toBe(true));
+  });
+
+  it("runs plugin-store auto-update from the accounts view after authentication", async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    vi.mocked(readPanelAuth).mockReturnValue({ apiBase: "http://localhost:8317", managementKey: "management-secret" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/plugin-store/cpa-account-config-manager/install")) {
+        return jsonResponse({ status: "installed", id: "cpa-account-config-manager", version: "0.3.1319", restart_required: false });
+      }
+      if (url.endsWith("/v0/management/plugin-store")) {
+        return jsonResponse({
+          plugins_enabled: true,
+          plugins: [{ id: "cpa-account-config-manager", version: "0.3.1319", installed: true, installed_version: "0.3.1318", update_available: true }],
+        });
+      }
+      if (url.endsWith("/updates")) {
+        return jsonResponse({
+          policy: { check_enabled: true, check_interval_hours: 24, auto_update: true },
+          current_version: "0.3.1318", update_available: false, checking: false, pending: false,
+          checked_at: "2026-08-07T00:00:00Z",
+        });
+      }
+      if (url.includes("/accounts")) {
+        return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      if (url.includes("/batch/status")) {
+        return jsonResponse({ state: "idle", running: false, total: 0, eligible: 0, done: 0, succeeded: 0, failed: 0, conflicts: 0, skipped: 0, workers: 0, patch: { fields: [], proxy_mutation: false }, retry_available: false, persisted: false });
+      }
+      return persistedSettingsResponse(url);
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "账号" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "其他配置" })).not.toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(requests.some(({ url }) => url.endsWith("/plugin-store/cpa-account-config-manager/install"))).toBe(true));
+    expect(await screen.findByText(/插件 0\.3\.1319 已安装.*刷新页面/)).toBeInTheDocument();
   });
 
   it("renders automatic disable reason and expected recovery in the account row", async () => {

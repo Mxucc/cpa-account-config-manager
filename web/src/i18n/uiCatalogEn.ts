@@ -588,7 +588,7 @@ export const enUI = {
   "ui.check_interval": "Check interval",
   "ui.auto_update": "Auto-update",
   "ui.confirm_auto_update": "Confirm auto-update",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open": "Confirm automatic installation of versions verified by the CPA plugin store while this page is open",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "Confirm automatic installation of versions verified by the CPA plugin store while authenticated plugin management is active",
   "ui.authentication_failed": "Authentication failed",
   "ui.request_failed": "Request failed",
   "ui.deleted_account_account": "Deleted account {account}",

@@ -590,7 +590,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.check_interval": "檢查間隔",
   "ui.auto_update": "自動更新",
   "ui.confirm_auto_update": "確認開啟自動更新",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open": "確認在本管理頁面開啟時，自動安裝通過 CPA 外掛程式商店驗證的新版本",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "確認登入外掛程式管理介面後，自動安裝通過 CPA 外掛程式商店驗證的新版本",
   "ui.authentication_failed": "驗證失敗",
   "ui.request_failed": "請求失敗",
   "ui.deleted_account_account": "已刪除帳號 {account}",

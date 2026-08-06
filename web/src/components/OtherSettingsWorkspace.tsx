@@ -14,7 +14,7 @@ import {
 	UploadCloud,
   Workflow,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
@@ -28,6 +28,7 @@ import {
 } from "../store/fontSize";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
+import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
 
 interface OtherSettingsWorkspaceProps {
   onAPIError: (error: unknown) => void;
@@ -62,8 +63,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
   const [error, setError] = useState("");
-  const attemptedUpdate = useRef("");
-
   const handleError = useCallback((caught: unknown) => {
     if (caught instanceof api.APIError && caught.status === 401) {
       onAPIError(caught);
@@ -95,10 +94,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setLoading(true);
     setError("");
     try {
-      const [nextUpdates] = await Promise.all([refreshPlugin(), refreshServer(), refreshExperiments()]);
-      if (nextUpdates.policy?.check_enabled && !nextUpdates.checked_at && !nextUpdates.checking && !nextUpdates.pending) {
-        await refreshPlugin(true);
-      }
+      await Promise.all([refreshPlugin(), refreshServer(), refreshExperiments()]);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -107,6 +103,8 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   }, [handleError, refreshExperiments, refreshPlugin, refreshServer]);
 
   useEffect(() => { void refreshAll(); }, [refreshAll]);
+
+  useEffect(() => subscribePluginUpdateStatus(setUpdates), []);
 
   useEffect(() => {
     if (!updates?.policy) return;
@@ -122,70 +120,34 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
   }, [experiments]);
 
-  useEffect(() => {
-    if (!updates?.checking && !updates?.pending) return;
-    let polling = false;
-    let cancelled = false;
-    const poll = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        await refreshPlugin();
-      } catch (caught) {
-        if (!cancelled) handleError(caught);
-      } finally {
-        polling = false;
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 1200);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [handleError, refreshPlugin, updates?.checking, updates?.pending]);
-
-  const installUpdate = useCallback(async (automatic = false) => {
+  const installUpdate = useCallback(async () => {
     const version = updates?.latest_version;
     if (!version || installing) return;
     setInstalling(true);
     setError("");
     try {
       const result = await api.installPluginUpdate(version);
-      attemptedUpdate.current = version;
-      setUpdates((current) => current ? { ...current, current_version: result.version, update_available: false } : current);
+      if (updates) {
+        const next = { ...updates, current_version: result.version, update_available: false };
+        setUpdates(next);
+        announcePluginUpdateStatus(next);
+      }
       onNotice(tx(result.restart_required
         ? "ui.plugin_version_installed_restart_cpa_to_activate_it"
         : "ui.plugin_version_installed_refresh_to_use_the_new_version", { version: result.version }));
     } catch (caught) {
-      attemptedUpdate.current = version;
       handleError(caught);
-      if (automatic) setError(tx("ui.auto_update_did_not_complete_retry_it_from_update_status"));
     } finally {
       setInstalling(false);
     }
-  }, [handleError, installing, onNotice, tx, updates?.latest_version]);
-
-  useEffect(() => {
-    if (!updates?.policy?.auto_update || !updates.update_available || !updates.latest_version || attemptedUpdate.current === updates.latest_version) return;
-    attemptedUpdate.current = updates.latest_version;
-    void installUpdate(true);
-  }, [installUpdate, updates]);
-
-  useEffect(() => {
-    if (!updates?.policy?.check_enabled || !updates.checked_at) return;
-    const checkedAt = Date.parse(updates.checked_at);
-    if (!Number.isFinite(checkedAt)) return;
-    const intervalHours = Math.min(168, Math.max(1, updates.policy.check_interval_hours || 24));
-    const dueAt = checkedAt + intervalHours * 60 * 60 * 1000;
-    const timer = window.setTimeout(() => void checkPluginUpdates(), Math.max(1_000, dueAt - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [updates?.checked_at, updates?.policy?.check_enabled, updates?.policy?.check_interval_hours]);
+  }, [handleError, installing, onNotice, tx, updates]);
 
   const checkPluginUpdates = async () => {
     setCheckingPlugin(true);
     setError("");
     try {
-      await refreshPlugin(true);
+      const next = await refreshPlugin(true);
+      announcePluginUpdateStatus(next);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -222,7 +184,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     }
     setSaving(true);
     try {
-      setUpdates(await api.saveUpdatePolicy({ check_enabled: checkEnabled, check_interval_hours: intervalHours, auto_update: autoUpdate }, confirmAutoUpdate));
+      const next = await api.saveUpdatePolicy({ check_enabled: checkEnabled, check_interval_hours: intervalHours, auto_update: autoUpdate }, confirmAutoUpdate);
+      setUpdates(next);
+      announcePluginUpdateStatus(next);
       setConfirmAutoUpdate(false);
       onNotice(tx("ui.update_settings_saved"));
     } catch (caught) {
@@ -349,7 +313,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
           {autoUpdate && !updates?.policy?.auto_update ? (
             <label className="destructive-confirmation update-confirmation other-settings-confirmation">
               <input type="checkbox" checked={confirmAutoUpdate} disabled={saving} onChange={(event) => setConfirmAutoUpdate(event.target.checked)} aria-label={tx("ui.confirm_auto_update")} />
-              <ShieldCheck size={15} /><span>{tx("ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open")}</span>
+              <ShieldCheck size={15} /><span>{tx("ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active")}</span>
             </label>
           ) : null}
           <div className="settings-section-actions">

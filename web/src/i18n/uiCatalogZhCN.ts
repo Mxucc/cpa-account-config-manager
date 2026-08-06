@@ -590,7 +590,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.check_interval": "检查间隔",
   "ui.auto_update": "自动更新",
   "ui.confirm_auto_update": "确认开启自动更新",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open": "确认在本管理页面打开时自动安装通过 CPA 插件商店校验的新版本",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "确认登录插件管理界面后自动安装通过 CPA 插件商店校验的新版本",
   "ui.authentication_failed": "认证失败",
   "ui.request_failed": "请求失败",
   "ui.deleted_account_account": "已删除账号 {account}",

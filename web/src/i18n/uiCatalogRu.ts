@@ -590,7 +590,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.check_interval": "Интервал проверки",
   "ui.auto_update": "Автообновление",
   "ui.confirm_auto_update": "Подтвердить автообновление",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_this_page_is_open": "Подтвердите автоматическую установку версий, проверенных магазином CPA, пока открыта эта страница",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "Подтвердите автоматическую установку версий, проверенных магазином CPA, пока активно авторизованное управление плагином",
   "ui.authentication_failed": "Ошибка авторизации",
   "ui.request_failed": "Ошибка запроса",
   "ui.deleted_account_account": "Учётная запись {account} удалена",

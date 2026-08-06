@@ -44,6 +44,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { OperationLogWorkspace } from "./components/OperationLogWorkspace";
 import { OtherSettingsWorkspace } from "./components/OtherSettingsWorkspace";
+import { PluginUpdateAutomation } from "./components/PluginUpdateAutomation";
 import { JobPanel, jobStateLabel } from "./components/JobPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { ModelTestDialog } from "./components/ModelTestDialog";
@@ -1092,6 +1093,7 @@ function AccountManagerApp() {
 
   return (
     <div className={`app-shell ${panelOpen ? "with-job-panel" : ""}`}>
+      {authState === "ready" ? <PluginUpdateAutomation onAPIError={handleAPIError} onNotice={setNotice} /> : null}
       <div className="page-frame">
         <header className="app-header">
           <div className="brand-block">

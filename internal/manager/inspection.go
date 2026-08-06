@@ -14,7 +14,10 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
-const inspectionPersistDelay = 2 * time.Second
+const (
+	inspectionPersistDelay = 2 * time.Second
+	inspectionStartupDelay = 100 * time.Millisecond
+)
 
 type InspectionEngine struct {
 	mu                         sync.RWMutex
@@ -275,7 +278,12 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.dirty = false
 	e.generation++
 	start := !e.started && !e.closed
+	startupScan := start && inspectionNativeScheduleEnabled(e.policy)
 	if start {
+		if startupScan {
+			e.pending = true
+			e.stopRequested = false
+		}
 		ctx, cancel := context.WithCancel(context.Background())
 		e.cancel = cancel
 		e.started = true
@@ -1214,7 +1222,11 @@ func (e *InspectionEngine) Shutdown() {
 
 func (e *InspectionEngine) scanLoop(ctx context.Context) {
 	defer e.wait.Done()
-	timer := time.NewTimer(e.scanInterval())
+	initialDelay := e.scanInterval()
+	if e.scanPending() {
+		initialDelay = inspectionStartupDelay
+	}
+	timer := time.NewTimer(initialDelay)
 	defer timer.Stop()
 	retryAutomaticActions := false
 	for {
@@ -1229,9 +1241,14 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 			e.pendingProbeSweep = false
 			e.mu.Unlock()
 			retryAutomaticActions = e.scanWithMode(ctx, false, probe, sweep)
+			retryAutomaticActions = retryAutomaticActions || e.scanPending()
 		case <-timer.C:
-			if retryAutomaticActions {
+			if e.scanPending() {
 				retryAutomaticActions = e.scanWithMode(ctx, false, false, false)
+				retryAutomaticActions = retryAutomaticActions || e.scanPending()
+			} else if retryAutomaticActions {
+				retryAutomaticActions = e.scanWithMode(ctx, false, false, false)
+				retryAutomaticActions = retryAutomaticActions || e.scanPending()
 			} else {
 				e.mu.RLock()
 				owner := e.backgroundOwner
@@ -1247,6 +1264,13 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 		}
 		resetInspectionTimer(timer, nextInterval)
 	}
+}
+
+func (e *InspectionEngine) scanPending() bool {
+	e.mu.RLock()
+	pending := e.pending && !e.closed
+	e.mu.RUnlock()
+	return pending
 }
 
 func (e *InspectionEngine) persistLoop(ctx context.Context) {
@@ -1330,7 +1354,7 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 	ctx = batchCtx
 	defer e.clearScanRunning()
 	manualSweepStart := !scheduled && manualProbe && requestedSweep && probeSweepSource == InspectionSweepSourceManual && probeSweepCompleted == 0
-	runNative := (!scheduled && !requestedSweep) || manualSweepStart || ((policy.Enabled || policy.PassiveCircuitEnabled) && inspectionRunDue(startedAt, lastNativeRunAt, nativeInspectionInterval(policy)))
+	runNative := (!scheduled && !requestedSweep) || manualSweepStart || (inspectionNativeScheduleEnabled(policy) && inspectionRunDue(startedAt, lastNativeRunAt, nativeInspectionInterval(policy)))
 	runProbe := manualProbe || (scheduled && policy.ModelProbeEnabled && inspectionRunDue(startedAt, lastProbeRunAt, policy.ModelProbeIntervalMinutes))
 	runProbe = runProbe && strings.TrimSpace(managementKey) != "" && modelTests != nil
 	probeSweep := requestedSweep || (scheduled && runProbe && policy.ModelProbeFullSweep)
@@ -1997,9 +2021,13 @@ func (e *InspectionEngine) requestPersist() {
 
 func (e *InspectionEngine) scheduledEnabled() bool {
 	e.mu.RLock()
-	enabled := (e.policy.Enabled || e.policy.PassiveCircuitEnabled || (e.policy.ModelProbeEnabled && strings.TrimSpace(e.managementKey) != "")) && !e.closed
+	enabled := (inspectionNativeScheduleEnabled(e.policy) || (e.policy.ModelProbeEnabled && strings.TrimSpace(e.managementKey) != "")) && !e.closed
 	e.mu.RUnlock()
 	return enabled
+}
+
+func inspectionNativeScheduleEnabled(policy InspectionPolicy) bool {
+	return policy.Enabled || policy.PassiveCircuitEnabled || policy.AutoDisable || policy.AutoEnable || policy.AutoDelete || inspectionNotificationEnabled(policy)
 }
 
 func (e *InspectionEngine) scanInterval() time.Duration {

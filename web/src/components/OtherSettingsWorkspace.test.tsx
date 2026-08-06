@@ -114,7 +114,7 @@ describe("OtherSettingsWorkspace", () => {
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*重启 CPA/)));
   });
 
-  it("uses the refresh-only result for automatic plugin-store updates", async () => {
+  it("leaves automatic plugin-store installation to the authenticated app lifecycle", async () => {
     const onNotice = vi.fn();
     vi.spyOn(api, "getEffectiveUpdateStatus").mockResolvedValue({
       policy: { check_enabled: true, check_interval_hours: 24, auto_update: true },
@@ -127,8 +127,10 @@ describe("OtherSettingsWorkspace", () => {
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
 
-    await waitFor(() => expect(install).toHaveBeenCalledWith("0.3.0"));
-    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/0\.3\.0.*刷新页面/));
+    expect(await screen.findByRole("region", { name: "其他配置" })).toBeInTheDocument();
+    await waitFor(() => expect(api.getEffectiveUpdateStatus).toHaveBeenCalled());
+    expect(install).not.toHaveBeenCalled();
+    expect(onNotice).not.toHaveBeenCalled();
   });
 
   it("persists independent weekly-overdraft and Agent Identity experiments while model discovery stays built in", async () => {

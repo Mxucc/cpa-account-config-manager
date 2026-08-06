@@ -1,12 +1,84 @@
 package manager
 
 import (
+	"bytes"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
+
+func TestInspectionColdStartRunsAutoEnableWithoutManagementPage(t *testing.T) {
+	now := time.Date(2026, time.August, 7, 8, 0, 0, 0, time.UTC)
+	dataDir := t.TempDir()
+	policy := defaultInspectionPolicy()
+	policy.AutoEnable = true
+	state := persistedInspectionState{
+		Version: inspectionStoreVersion,
+		Policy:  policy,
+		Records: map[string]inspectionRecord{
+			"inspection-account": {
+				Result: InspectionResult{
+					ID: "inspection-account", Name: "inspection.json", Provider: "codex",
+					Health: InspectionHealthQuotaLimited, ReasonCode: "quota_exhausted",
+					Disabled: true, OwnedDisable: true, Editable: true,
+				},
+				DisableReason: "quota_exhausted", DisabledAt: now.Add(-6 * time.Hour),
+				DisabledName: "inspection.json", DisabledPath: "/auths/inspection.json",
+				DisabledRecoverAfter: now.Add(-time.Minute),
+			},
+		},
+		LastNativeRunAt: now,
+	}
+	if errSave := saveInspectionState(inspectionStorePath(dataDir), state); errSave != nil {
+		t.Fatalf("save cold-start inspection state: %v", errSave)
+	}
+
+	host := inspectionEditableHost(true)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.SetModelTestService(NewModelTestService(engine.accounts))
+	var ownershipReady atomic.Bool
+	engine.SetBackgroundWorkOwner(backgroundWorkOwnerFunc(ownershipReady.Load))
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	time.Sleep(250 * time.Millisecond)
+	ownershipReady.Store(true)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		host.mu.Lock()
+		saves := append([]cpaapi.HostAuthSaveRequest(nil), host.saves...)
+		host.mu.Unlock()
+		if len(saves) > 0 {
+			if len(saves) != 1 || !bytes.Contains(saves[0].JSON, []byte(`"disabled":false`)) {
+				t.Fatalf("cold-start auto-enable saves = %#v", saves)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cold-start auto-enable waited for a management page or the full scan interval")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if snapshot := engine.Snapshot(); snapshot.ActiveProbeArmed || snapshot.LastRun.AutoEnabled != 1 {
+		t.Fatalf("cold-start inspection snapshot = %#v", snapshot)
+	}
+	if !engine.scheduledEnabled() {
+		t.Fatal("auto-enable-only policy did not keep native scheduling active")
+	}
+
+	engine.Configure(Config{DataDir: dataDir})
+	time.Sleep(50 * time.Millisecond)
+	host.mu.Lock()
+	saveCount := len(host.saves)
+	host.mu.Unlock()
+	if saveCount != 1 {
+		t.Fatalf("same-store reconfigure queued %d cold-start mutations", saveCount)
+	}
+}
 
 func TestAccountQuotaRecoveryAfterDisableUsesFreshRelevantCodexWindow(t *testing.T) {
 	now := time.Date(2026, time.July, 28, 5, 30, 0, 0, time.UTC)

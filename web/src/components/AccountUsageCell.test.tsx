@@ -35,6 +35,54 @@ const quotaAutomation: NonNullable<Account["automation"]> = {
 };
 
 describe("AccountUsageCell", () => {
+  it("switches the primary usage display to estimated USD cost without hiding token details", () => {
+    const account: Account = {
+      ...baseAccount,
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 100,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 200,
+        cache_creation_tokens: 0,
+        total_tokens: 1100,
+        credit: {
+          amount_usd: 0.00345,
+          rated_requests: 2,
+          unrated_requests: 1,
+          started_at: "2026-08-12T08:00:00Z",
+          pricing_updated_at: "2026-08-12T07:00:00Z",
+          pricing_source: "Sub2API / Wei-Shaw model-price-repo",
+        },
+      },
+    };
+    const { rerender } = render(<AccountUsageCell account={account} creditUsageEnabled />);
+
+    expect(screen.getByText("USD")).toBeInTheDocument();
+    expect(screen.getByTitle(/预估成本：.*已计价请求：2.*未计价请求：1.*原始 Token：1,100/)).toBeInTheDocument();
+    expect(screen.getByText("未计价 1")).toBeInTheDocument();
+
+    rerender(<AccountUsageCell account={account} creditUsageEnabled={false} />);
+    expect(screen.getByText("tok")).toBeInTheDocument();
+    expect(screen.getByText("1100")).toBeInTheDocument();
+    expect(screen.queryByText("未计价 1")).not.toBeInTheDocument();
+  });
+
+  it("shows a collection placeholder before the first credit-rated request", () => {
+    render(<AccountUsageCell account={{ ...baseAccount, usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      total_tokens: 0,
+    } }} creditUsageEnabled />);
+
+    expect(screen.getByText("等待额度计费采集")).toBeInTheDocument();
+    expect(screen.queryByText("tok")).not.toBeInTheDocument();
+  });
+
   it("shows per-window overdraft only while the quota-continuation experiment is enabled", () => {
     const account: Account = {
       ...baseAccount,

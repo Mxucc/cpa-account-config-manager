@@ -190,6 +190,16 @@ export interface AccountUsageSnapshot {
   last_request_at?: string;
   updated_at?: string;
   codex?: CodexUsageSnapshot;
+  credit?: CreditUsageSnapshot;
+}
+
+export interface CreditUsageSnapshot {
+  amount_usd: number;
+  rated_requests: number;
+  unrated_requests: number;
+  started_at?: string;
+  pricing_updated_at?: string;
+  pricing_source?: string;
 }
 
 export interface AccountFilters {
@@ -1022,6 +1032,7 @@ export interface ExperimentalSettings {
   weekly_overdraft_enabled: boolean;
   agent_identity_enabled: boolean;
   auto_model_whitelist_enabled: boolean;
+  sub2api_credit_usage_enabled: boolean;
 }
 
 export interface ExperimentalSettingsSnapshot {

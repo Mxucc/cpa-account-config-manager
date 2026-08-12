@@ -3,7 +3,7 @@ import type { Account, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { account: Account; weeklyOverdraftEnabled?: boolean }) {
+export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, creditUsageEnabled = false }: { account: Account; weeklyOverdraftEnabled?: boolean; creditUsageEnabled?: boolean }) {
   const { locale, t, tx, formatDateTime, formatNumber } = useI18n();
   const usage = account.usage;
   const agentIdentity = String(account.provider || account.type).trim().toLowerCase() === "codex-agent-identity";
@@ -15,6 +15,24 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
   const tokenTitle = usage
     ? tx("ui.total_tokens_count", { count: formatNumber(usage.total_tokens) })
     : tx("ui.no_cpa_usage_data_received");
+  const credit = usage?.credit;
+  const hasCreditSamples = Boolean(credit && (credit.rated_requests > 0 || credit.unrated_requests > 0));
+  const primaryUsageValue = creditUsageEnabled && hasCreditSamples
+    ? formatUSD(credit?.amount_usd ?? 0, locale)
+    : creditUsageEnabled
+      ? tx("ui.awaiting_credit_usage_collection")
+      : tokenValue;
+  const primaryUsageUnit = creditUsageEnabled && hasCreditSamples ? "USD" : creditUsageEnabled ? "" : "tok";
+  const primaryUsageTitle = creditUsageEnabled
+    ? hasCreditSamples
+      ? tx("ui.estimated_credit_usage_detail", {
+          amount: formatUSD(credit?.amount_usd ?? 0, locale),
+          rated: formatNumber(credit?.rated_requests ?? 0),
+          unrated: formatNumber(credit?.unrated_requests ?? 0),
+          tokens: formatNumber(usage?.total_tokens ?? 0),
+        })
+      : tx("ui.awaiting_credit_usage_collection")
+    : tokenTitle;
   const requestTitle = tx("ui.total_requests_success_succeeded_failed_failed", { success: formatNumber(account.success), failed: formatNumber(account.failed) });
   const recentTitle = account.recent_requests?.length
     ? usage?.last_request_at
@@ -67,8 +85,8 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
   return (
     <div className="account-usage-cell">
       <div className="usage-overview">
-        <span className="usage-token-total" title={tokenTitle}>
-          <strong>{tokenValue}</strong><small>tok</small>
+        <span className="usage-token-total" title={primaryUsageTitle}>
+          <strong>{primaryUsageValue}</strong>{primaryUsageUnit ? <small>{primaryUsageUnit}</small> : null}
         </span>
         <span className="usage-request-total" title={requestTitle}>
           <b className="success">{formatCompactNumber(account.success, locale)}</b>
@@ -80,6 +98,11 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
           <b>{account.recent_requests?.length ? formatCompactNumber(recentTotal, locale) : "0"}</b>
         </span>
       </div>
+      {creditUsageEnabled && (credit?.unrated_requests ?? 0) > 0 ? (
+        <div className="usage-quota-empty" title={tx("ui.some_requests_could_not_be_priced", { count: formatNumber(credit?.unrated_requests ?? 0) })}>
+          <AlertTriangle size={10} aria-hidden="true" /><b>{tx("ui.unrated_requests_count", { count: formatNumber(credit?.unrated_requests ?? 0) })}</b>
+        </div>
+      ) : null}
       {hasQuota ? (
         <div className="usage-quota-list">
           {codex?.five_hour ? <UsageQuota label="5h" window={codex.five_hour} /> : null}
@@ -132,6 +155,18 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false }: { 
       )}
     </div>
   );
+}
+
+function formatUSD(value: number, locale: Locale): string {
+  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const maximumFractionDigits = normalized > 0 && normalized < 0.01 ? 6 : 4;
+  return new Intl.NumberFormat(localeFormats[locale].dateTimeLocale, {
+    style: "currency",
+    currency: "USD",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  }).format(normalized);
 }
 
 function probeReasonLabel(reasonCode: string | undefined, tx: (key: UIMessageKey) => string): string {

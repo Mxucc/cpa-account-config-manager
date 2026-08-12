@@ -559,7 +559,7 @@ func TestUsageTrackerMigratesVersionOneStateIntoCurrentEmailIdentity(t *testing.
 	if errRead != nil {
 		t.Fatalf("read migrated usage state: %v", errRead)
 	}
-	if !bytes.Contains(raw, []byte(`"version":4`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
+	if !bytes.Contains(raw, []byte(`"version":5`)) || bytes.Contains(raw, []byte("legacy@example.com")) {
 		t.Fatalf("legacy state was not safely migrated: %s", raw)
 	}
 }
@@ -587,7 +587,7 @@ func TestUsageTrackerMigratesVersionThreeStateWithoutLosingUsage(t *testing.T) {
 	if errRead != nil {
 		t.Fatalf("read migrated version-three usage state: %v", errRead)
 	}
-	if !bytes.Contains(raw, []byte(`"version":4`)) || !bytes.Contains(raw, []byte(`"total_tokens":91`)) ||
+	if !bytes.Contains(raw, []byte(`"version":5`)) || !bytes.Contains(raw, []byte(`"total_tokens":91`)) ||
 		!bytes.Contains(raw, []byte(`"successful_tokens":73`)) || !bytes.Contains(raw, []byte(`"five_hour_overdraft"`)) {
 		t.Fatalf("version-three state was not preserved during migration: %s", raw)
 	}

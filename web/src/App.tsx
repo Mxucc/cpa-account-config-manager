@@ -232,6 +232,7 @@ function AccountManagerApp() {
   const [modelTestError, setModelTestError] = useState("");
   const [modelTestExperimentalAvailable, setModelTestExperimentalAvailable] = useState(false);
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
+  const [sub2APICreditUsageEnabled, setSub2APICreditUsageEnabled] = useState(false);
   const modelTestExperimentRequest = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
   const [deletePreview, setDeletePreview] = useState<AccountDeletePreview | null>(null);
@@ -320,7 +321,10 @@ function AccountManagerApp() {
         setAuthState("ready");
         settingsTimer = window.setTimeout(() => {
           void api.persistCurrentSettings().then((settings) => {
-            if (active) setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
+            if (active) {
+              setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
+              setSub2APICreditUsageEnabled(settings.sub2api_credit_usage_enabled === true);
+            }
           }).catch((error) => {
             if (!active) return;
             if (error instanceof api.APIError && error.status === 401) {
@@ -356,10 +360,14 @@ function AccountManagerApp() {
 
   const handleExperimentalSettingsChange = useCallback((settings: ExperimentalSettings) => {
     setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
+    setSub2APICreditUsageEnabled(settings.sub2api_credit_usage_enabled === true);
   }, []);
 
   useEffect(() => {
-    if (authState !== "ready") setWeeklyOverdraftEnabled(false);
+    if (authState !== "ready") {
+      setWeeklyOverdraftEnabled(false);
+      setSub2APICreditUsageEnabled(false);
+    }
   }, [authState]);
 
   const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters, requestedSort: AccountSort = accountSort) => {
@@ -1238,7 +1246,7 @@ function AccountManagerApp() {
                   </td>
                   <td><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
                   <td><AccountTypeCell account={account} /></td>
-                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} /></td>
+                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled={sub2APICreditUsageEnabled} /></td>
 									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
 									<td><AccountConcurrencyCell account={account} /></td>
 									<td><AccountLifecycleTime value={account.created_at} /></td>
@@ -1353,7 +1361,7 @@ function AccountManagerApp() {
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
       {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} accountConcurrency={data.account_concurrency} loadModels={() => api.loadAccountModels(editorContext.scope)} loadCurrentConfig={editorContext.accountID ? () => api.loadAccountConfig(editorContext.accountID || "") : undefined} onLoadError={(error) => { if (error instanceof api.APIError && error.status === 401) { setEditorContext(null); handleAPIError(error); } }} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
-      {detailAccount ? <AccountDetailsDialog account={detailAccount} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
+      {detailAccount ? <AccountDetailsDialog account={detailAccount} creditUsageEnabled={sub2APICreditUsageEnabled} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
 			{quotaResetTarget ? (
 				<Modal
 					title={tx("ui.confirm_active_reset")}

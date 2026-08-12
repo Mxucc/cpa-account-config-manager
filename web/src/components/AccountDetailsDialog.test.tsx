@@ -86,3 +86,32 @@ it("localizes the Codex PAT account type", () => {
   render(<AccountDetailsDialog account={{ ...account, provider: "codex-agent-identity", account_type: "personal_access_token" }} onClose={() => undefined} onEdit={() => undefined} />);
   expect(screen.getByText("Codex PAT")).toBeInTheDocument();
 });
+
+it("shows credit accounting metadata while preserving the token breakdown", () => {
+  render(<AccountDetailsDialog
+    account={{
+      ...account,
+      usage: {
+        ...account.usage!,
+        credit: {
+          amount_usd: 0.00345,
+          rated_requests: 2,
+          unrated_requests: 1,
+          started_at: "2026-08-12T08:00:00Z",
+          pricing_updated_at: "2026-08-12T07:00:00Z",
+          pricing_source: "Sub2API / Wei-Shaw model-price-repo",
+        },
+      },
+    }}
+    creditUsageEnabled
+    onClose={() => undefined}
+    onEdit={() => undefined}
+  />);
+
+  expect(screen.getByText("预估额度用量").parentElement).toHaveTextContent("$0.00345");
+  expect(screen.getByText("已计价请求").parentElement).toHaveTextContent("2");
+  expect(screen.getByText("未计价请求").parentElement).toHaveTextContent("1");
+  expect(screen.getByText("价格来源").parentElement).toHaveTextContent("Sub2API / Wei-Shaw model-price-repo");
+  expect(screen.getByText("Input").parentElement).toHaveTextContent("100");
+  expect(screen.getByText("Output").parentElement).toHaveTextContent("40");
+});

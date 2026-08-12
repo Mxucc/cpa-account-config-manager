@@ -9,11 +9,12 @@ import { Modal } from "./Modal";
 
 interface AccountDetailsDialogProps {
   account: Account;
+  creditUsageEnabled?: boolean;
   onClose: () => void;
   onEdit: () => void;
 }
 
-export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetailsDialogProps) {
+export function AccountDetailsDialog({ account, creditUsageEnabled = false, onClose, onEdit }: AccountDetailsDialogProps) {
   const { locale, formatDateTime, tx } = useI18n();
   const usage = account.usage;
   const identity = account.label || account.email || account.name || account.id;
@@ -106,6 +107,12 @@ export function AccountDetailsDialog({ account, onClose, onEdit }: AccountDetail
           <DetailItem label={tx("ui.successful_requests")} value={formatNumber(account.success, locale)} mono />
           <DetailItem label={tx("ui.failed_requests")} value={formatNumber(account.failed, locale)} mono />
           <DetailItem label={tx("ui.total_tokens")} value={usage ? formatNumber(usage.total_tokens, locale) : tx("ui.no_data")} mono />
+          {creditUsageEnabled ? <DetailItem label={tx("ui.estimated_credit_usage")} value={usage?.credit ? formatUSD(usage.credit.amount_usd, locale) : tx("ui.awaiting_credit_usage_collection")} mono /> : null}
+          {creditUsageEnabled ? <DetailItem label={tx("ui.rated_requests")} value={usage?.credit ? formatNumber(usage.credit.rated_requests, locale) : tx("ui.no_data")} mono /> : null}
+          {creditUsageEnabled ? <DetailItem label={tx("ui.unrated_requests")} value={usage?.credit ? formatNumber(usage.credit.unrated_requests, locale) : tx("ui.no_data")} mono /> : null}
+          {creditUsageEnabled ? <DetailItem label={tx("ui.credit_usage_started_at")} value={formatDateTime(usage?.credit?.started_at)} /> : null}
+          {creditUsageEnabled ? <DetailItem label={tx("ui.pricing_updated_at")} value={formatDateTime(usage?.credit?.pricing_updated_at)} /> : null}
+          {creditUsageEnabled ? <DetailItem label={tx("ui.credit_pricing_source")} value={usage?.credit?.pricing_source || tx("ui.no_data")} wide /> : null}
           <DetailItem label="Input" value={usage ? formatNumber(usage.input_tokens, locale) : tx("ui.no_data")} mono />
           <DetailItem label="Output" value={usage ? formatNumber(usage.output_tokens, locale) : tx("ui.no_data")} mono />
           <DetailItem label="Reasoning" value={usage ? formatNumber(usage.reasoning_tokens, locale) : tx("ui.no_data")} mono />
@@ -152,4 +159,15 @@ function formatNumber(value: number, locale: Locale): string {
 function formatPercent(value: number): string {
   const normalized = value <= 1 ? value * 100 : value;
   return `${Math.max(0, Math.min(100, normalized)).toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+function formatUSD(value: number, locale: Locale): string {
+  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
+  return new Intl.NumberFormat(localeFormats[locale].dateTimeLocale, {
+    style: "currency",
+    currency: "USD",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: normalized > 0 && normalized < 0.01 ? 6 : 4,
+  }).format(normalized);
 }

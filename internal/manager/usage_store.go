@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	usageStoreVersion         = 4
+	usageStoreVersion         = 5
 	baselineUsageStoreVersion = 3
 	counterUsageStoreVersion  = 2
 	legacyUsageStoreVersion   = 1
@@ -113,6 +113,9 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 		return normalizeUsageAccounts(migrated), nil
 	}
 	if persisted.Version == baselineUsageStoreVersion {
+		return normalizeUsageAccounts(persisted.Accounts), nil
+	}
+	if persisted.Version == 4 {
 		return normalizeUsageAccounts(persisted.Accounts), nil
 	}
 	if persisted.Version != usageStoreVersion {
@@ -264,6 +267,16 @@ func mergeUsageAggregate(current, stored usageAggregate) usageAggregate {
 	current.TotalTokens = maxInt64(current.TotalTokens, stored.TotalTokens)
 	current.SuccessfulTokens = maxInt64(current.SuccessfulTokens, stored.SuccessfulTokens)
 	current.SuccessfulRequests = maxInt64(current.SuccessfulRequests, stored.SuccessfulRequests)
+	current.CreditAmountNanos = maxInt64(current.CreditAmountNanos, stored.CreditAmountNanos)
+	current.CreditRatedRequests = maxInt64(current.CreditRatedRequests, stored.CreditRatedRequests)
+	current.CreditUnratedRequests = maxInt64(current.CreditUnratedRequests, stored.CreditUnratedRequests)
+	if current.CreditStartedAt.IsZero() || (!stored.CreditStartedAt.IsZero() && stored.CreditStartedAt.Before(current.CreditStartedAt)) {
+		current.CreditStartedAt = stored.CreditStartedAt
+	}
+	if stored.CreditPricingUpdatedAt.After(current.CreditPricingUpdatedAt) {
+		current.CreditPricingUpdatedAt = stored.CreditPricingUpdatedAt
+		current.CreditPricingSource = stored.CreditPricingSource
+	}
 	current.FiveHourOverdraft = mergeOverdraftCycle(current.FiveHourOverdraft, stored.FiveHourOverdraft)
 	current.SevenDayOverdraft = mergeOverdraftCycle(current.SevenDayOverdraft, stored.SevenDayOverdraft)
 	current.Lifecycle = mergeAccountLifecycle(current.Lifecycle, stored.Lifecycle)
@@ -357,6 +370,12 @@ func sanitizeUsageAggregate(aggregate usageAggregate) usageAggregate {
 	aggregate.TotalTokens = nonNegative(aggregate.TotalTokens)
 	aggregate.SuccessfulTokens = nonNegative(aggregate.SuccessfulTokens)
 	aggregate.SuccessfulRequests = nonNegative(aggregate.SuccessfulRequests)
+	aggregate.CreditAmountNanos = nonNegative(aggregate.CreditAmountNanos)
+	aggregate.CreditRatedRequests = nonNegative(aggregate.CreditRatedRequests)
+	aggregate.CreditUnratedRequests = nonNegative(aggregate.CreditUnratedRequests)
+	aggregate.CreditStartedAt = aggregate.CreditStartedAt.UTC()
+	aggregate.CreditPricingUpdatedAt = aggregate.CreditPricingUpdatedAt.UTC()
+	aggregate.CreditPricingSource = strings.TrimSpace(aggregate.CreditPricingSource)
 	aggregate.FiveHourOverdraft = sanitizeOverdraftCycle(aggregate.FiveHourOverdraft)
 	aggregate.SevenDayOverdraft = sanitizeOverdraftCycle(aggregate.SevenDayOverdraft)
 	aggregate.Lifecycle = sanitizeAccountLifecycle(aggregate.Lifecycle)

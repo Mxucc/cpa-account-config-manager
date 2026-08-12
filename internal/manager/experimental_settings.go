@@ -13,6 +13,7 @@ type ExperimentalSettings struct {
 	WeeklyOverdraftEnabled    bool `json:"weekly_overdraft_enabled" yaml:"weekly_overdraft_enabled"`
 	AgentIdentityEnabled      bool `json:"agent_identity_enabled" yaml:"agent_identity_enabled"`
 	AutoModelWhitelistEnabled bool `json:"auto_model_whitelist_enabled" yaml:"auto_model_whitelist_enabled"`
+	Sub2APICreditUsageEnabled bool `json:"sub2api_credit_usage_enabled" yaml:"sub2api_credit_usage_enabled"`
 }
 
 func (s *ExperimentalSettingsService) AgentIdentityEnabled() bool {
@@ -40,13 +41,14 @@ type ExperimentalSettingsSnapshot struct {
 }
 
 type ExperimentalSettingsService struct {
-	mu                     sync.RWMutex
-	storeMu                sync.Mutex
-	store                  string
-	settings               ExperimentalSettings
-	storageErr             string
-	configured             bool
-	weeklyOverdraftEnabled atomic.Bool
+	mu                        sync.RWMutex
+	storeMu                   sync.Mutex
+	store                     string
+	settings                  ExperimentalSettings
+	storageErr                string
+	configured                bool
+	weeklyOverdraftEnabled    atomic.Bool
+	sub2APICreditUsageEnabled atomic.Bool
 }
 
 func NewExperimentalSettingsService() *ExperimentalSettingsService {
@@ -96,6 +98,7 @@ func (s *ExperimentalSettingsService) Configure(config Config) {
 	s.configured = true
 	s.mu.Unlock()
 	s.weeklyOverdraftEnabled.Store(settings.WeeklyOverdraftEnabled)
+	s.sub2APICreditUsageEnabled.Store(settings.Sub2APICreditUsageEnabled)
 }
 
 func (s *ExperimentalSettingsService) Snapshot() ExperimentalSettingsSnapshot {
@@ -112,6 +115,13 @@ func (s *ExperimentalSettingsService) WeeklyOverdraftEnabled() bool {
 		return false
 	}
 	return s.weeklyOverdraftEnabled.Load()
+}
+
+func (s *ExperimentalSettingsService) Sub2APICreditUsageEnabled() bool {
+	if s == nil {
+		return false
+	}
+	return s.sub2APICreditUsageEnabled.Load()
 }
 
 func (s *ExperimentalSettingsService) Set(settings ExperimentalSettings) (ExperimentalSettingsSnapshot, error) {
@@ -137,5 +147,6 @@ func (s *ExperimentalSettingsService) Set(settings ExperimentalSettings) (Experi
 	s.storageErr = ""
 	s.mu.Unlock()
 	s.weeklyOverdraftEnabled.Store(settings.WeeklyOverdraftEnabled)
+	s.sub2APICreditUsageEnabled.Store(settings.Sub2APICreditUsageEnabled)
 	return s.Snapshot(), nil
 }

@@ -23,17 +23,27 @@ const (
 	usagePersistDelay       = 2 * time.Second
 )
 
+type CreditUsageSnapshot struct {
+	AmountUSD        float64    `json:"amount_usd"`
+	RatedRequests    int64      `json:"rated_requests"`
+	UnratedRequests  int64      `json:"unrated_requests"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	PricingUpdatedAt *time.Time `json:"pricing_updated_at,omitempty"`
+	PricingSource    string     `json:"pricing_source,omitempty"`
+}
+
 type AccountUsageSnapshot struct {
-	InputTokens         int64               `json:"input_tokens"`
-	OutputTokens        int64               `json:"output_tokens"`
-	ReasoningTokens     int64               `json:"reasoning_tokens"`
-	CachedTokens        int64               `json:"cached_tokens"`
-	CacheReadTokens     int64               `json:"cache_read_tokens"`
-	CacheCreationTokens int64               `json:"cache_creation_tokens"`
-	TotalTokens         int64               `json:"total_tokens"`
-	LastRequestAt       *time.Time          `json:"last_request_at,omitempty"`
-	UpdatedAt           *time.Time          `json:"updated_at,omitempty"`
-	Codex               *CodexUsageSnapshot `json:"codex,omitempty"`
+	InputTokens         int64                `json:"input_tokens"`
+	OutputTokens        int64                `json:"output_tokens"`
+	ReasoningTokens     int64                `json:"reasoning_tokens"`
+	CachedTokens        int64                `json:"cached_tokens"`
+	CacheReadTokens     int64                `json:"cache_read_tokens"`
+	CacheCreationTokens int64                `json:"cache_creation_tokens"`
+	TotalTokens         int64                `json:"total_tokens"`
+	LastRequestAt       *time.Time           `json:"last_request_at,omitempty"`
+	UpdatedAt           *time.Time           `json:"updated_at,omitempty"`
+	Codex               *CodexUsageSnapshot  `json:"codex,omitempty"`
+	Credit              *CreditUsageSnapshot `json:"credit,omitempty"`
 }
 
 type AccountLifecycleSnapshot struct {
@@ -62,22 +72,28 @@ type UsageWindowSnapshot struct {
 }
 
 type usageAggregate struct {
-	Identity            usageIdentityFingerprint `json:"identity,omitempty"`
-	InputTokens         int64                    `json:"input_tokens"`
-	OutputTokens        int64                    `json:"output_tokens"`
-	ReasoningTokens     int64                    `json:"reasoning_tokens"`
-	CachedTokens        int64                    `json:"cached_tokens"`
-	CacheReadTokens     int64                    `json:"cache_read_tokens"`
-	CacheCreationTokens int64                    `json:"cache_creation_tokens"`
-	TotalTokens         int64                    `json:"total_tokens"`
-	SuccessfulTokens    int64                    `json:"successful_tokens,omitempty"`
-	SuccessfulRequests  int64                    `json:"successful_requests,omitempty"`
-	FiveHourOverdraft   *overdraftCycleState     `json:"five_hour_overdraft,omitempty"`
-	SevenDayOverdraft   *overdraftCycleState     `json:"seven_day_overdraft,omitempty"`
-	Lifecycle           *accountLifecycleState   `json:"lifecycle,omitempty"`
-	LastRequestAt       time.Time                `json:"last_request_at,omitempty"`
-	UpdatedAt           time.Time                `json:"updated_at,omitempty"`
-	Codex               *CodexUsageSnapshot      `json:"codex,omitempty"`
+	Identity               usageIdentityFingerprint `json:"identity,omitempty"`
+	InputTokens            int64                    `json:"input_tokens"`
+	OutputTokens           int64                    `json:"output_tokens"`
+	ReasoningTokens        int64                    `json:"reasoning_tokens"`
+	CachedTokens           int64                    `json:"cached_tokens"`
+	CacheReadTokens        int64                    `json:"cache_read_tokens"`
+	CacheCreationTokens    int64                    `json:"cache_creation_tokens"`
+	TotalTokens            int64                    `json:"total_tokens"`
+	SuccessfulTokens       int64                    `json:"successful_tokens,omitempty"`
+	SuccessfulRequests     int64                    `json:"successful_requests,omitempty"`
+	CreditAmountNanos      int64                    `json:"credit_amount_nanos,omitempty"`
+	CreditRatedRequests    int64                    `json:"credit_rated_requests,omitempty"`
+	CreditUnratedRequests  int64                    `json:"credit_unrated_requests,omitempty"`
+	CreditStartedAt        time.Time                `json:"credit_started_at,omitempty"`
+	CreditPricingUpdatedAt time.Time                `json:"credit_pricing_updated_at,omitempty"`
+	CreditPricingSource    string                   `json:"credit_pricing_source,omitempty"`
+	FiveHourOverdraft      *overdraftCycleState     `json:"five_hour_overdraft,omitempty"`
+	SevenDayOverdraft      *overdraftCycleState     `json:"seven_day_overdraft,omitempty"`
+	Lifecycle              *accountLifecycleState   `json:"lifecycle,omitempty"`
+	LastRequestAt          time.Time                `json:"last_request_at,omitempty"`
+	UpdatedAt              time.Time                `json:"updated_at,omitempty"`
+	Codex                  *CodexUsageSnapshot      `json:"codex,omitempty"`
 }
 
 type accountLifecycleState struct {
@@ -98,23 +114,24 @@ type overdraftCycleState struct {
 }
 
 type UsageTracker struct {
-	mu            sync.RWMutex
-	storeMu       sync.Mutex
-	accounts      map[string]usageAggregate
-	bindings      map[string]usageBinding
-	bindingsReady bool
-	now           func() time.Time
-	store         string
-	durableStore  string
-	allowDurable  bool
-	loaded        bool
-	dirty         bool
-	generation    uint64
-	persistDelay  time.Duration
-	wake          chan struct{}
-	stop          chan struct{}
-	done          chan struct{}
-	closeOnce     sync.Once
+	mu               sync.RWMutex
+	storeMu          sync.Mutex
+	accounts         map[string]usageAggregate
+	bindings         map[string]usageBinding
+	bindingsReady    bool
+	now              func() time.Time
+	store            string
+	durableStore     string
+	allowDurable     bool
+	loaded           bool
+	dirty            bool
+	generation       uint64
+	persistDelay     time.Duration
+	wake             chan struct{}
+	stop             chan struct{}
+	done             chan struct{}
+	closeOnce        sync.Once
+	creditCalculator UsageCreditCalculator
 }
 
 func NewUsageTracker() *UsageTracker {
@@ -129,6 +146,15 @@ func NewUsageTracker() *UsageTracker {
 	}
 	go tracker.run()
 	return tracker
+}
+
+func (t *UsageTracker) SetCreditCalculator(calculator UsageCreditCalculator) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.creditCalculator = calculator
+	t.mu.Unlock()
 }
 
 func (t *UsageTracker) Configure(config Config) {
@@ -331,6 +357,13 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 		return
 	}
 	now := t.currentTime()
+	t.mu.RLock()
+	calculator := t.creditCalculator
+	t.mu.RUnlock()
+	creditCharge := CreditCharge{}
+	if calculator != nil {
+		creditCharge = calculator.Calculate(record)
+	}
 	requestedAt := record.RequestedAt.UTC()
 	if requestedAt.IsZero() || requestedAt.After(now.Add(24*time.Hour)) {
 		requestedAt = now
@@ -358,6 +391,21 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	if !record.Failed {
 		aggregate.SuccessfulTokens = saturatingAdd(aggregate.SuccessfulTokens, totalTokens)
 		aggregate.SuccessfulRequests = saturatingAdd(aggregate.SuccessfulRequests, 1)
+		if creditCharge.Enabled {
+			if aggregate.CreditStartedAt.IsZero() {
+				aggregate.CreditStartedAt = now
+			}
+			if creditCharge.Rated {
+				aggregate.CreditAmountNanos = saturatingAdd(aggregate.CreditAmountNanos, creditCharge.AmountNanos)
+				aggregate.CreditRatedRequests = saturatingAdd(aggregate.CreditRatedRequests, 1)
+			} else {
+				aggregate.CreditUnratedRequests = saturatingAdd(aggregate.CreditUnratedRequests, 1)
+			}
+			if creditCharge.PricingUpdatedAt.After(aggregate.CreditPricingUpdatedAt) {
+				aggregate.CreditPricingUpdatedAt = creditCharge.PricingUpdatedAt
+				aggregate.CreditPricingSource = strings.TrimSpace(creditCharge.PricingSource)
+			}
+		}
 	}
 	if aggregate.LastRequestAt.IsZero() || requestedAt.After(aggregate.LastRequestAt) {
 		aggregate.LastRequestAt = requestedAt
@@ -692,9 +740,10 @@ func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageS
 			codex = nil
 		}
 	}
+	credit := publicCreditUsageSnapshot(aggregate)
 	if aggregate.InputTokens == 0 && aggregate.OutputTokens == 0 && aggregate.ReasoningTokens == 0 &&
 		aggregate.CachedTokens == 0 && aggregate.CacheReadTokens == 0 && aggregate.CacheCreationTokens == 0 &&
-		aggregate.TotalTokens == 0 && aggregate.LastRequestAt.IsZero() && codex == nil {
+		aggregate.TotalTokens == 0 && aggregate.LastRequestAt.IsZero() && codex == nil && credit == nil {
 		return nil
 	}
 	snapshot := &AccountUsageSnapshot{
@@ -706,6 +755,7 @@ func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageS
 		CacheCreationTokens: aggregate.CacheCreationTokens,
 		TotalTokens:         aggregate.TotalTokens,
 		Codex:               codex,
+		Credit:              credit,
 	}
 	if !aggregate.LastRequestAt.IsZero() {
 		value := aggregate.LastRequestAt.UTC()
@@ -714,6 +764,27 @@ func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageS
 	if !aggregate.UpdatedAt.IsZero() {
 		value := aggregate.UpdatedAt.UTC()
 		snapshot.UpdatedAt = &value
+	}
+	return snapshot
+}
+
+func publicCreditUsageSnapshot(aggregate usageAggregate) *CreditUsageSnapshot {
+	if aggregate.CreditStartedAt.IsZero() && aggregate.CreditRatedRequests == 0 && aggregate.CreditUnratedRequests == 0 && aggregate.CreditAmountNanos == 0 {
+		return nil
+	}
+	snapshot := &CreditUsageSnapshot{
+		AmountUSD:       float64(nonNegative(aggregate.CreditAmountNanos)) / creditNanosPerUSD,
+		RatedRequests:   nonNegative(aggregate.CreditRatedRequests),
+		UnratedRequests: nonNegative(aggregate.CreditUnratedRequests),
+		PricingSource:   strings.TrimSpace(aggregate.CreditPricingSource),
+	}
+	if !aggregate.CreditStartedAt.IsZero() {
+		value := aggregate.CreditStartedAt.UTC()
+		snapshot.StartedAt = &value
+	}
+	if !aggregate.CreditPricingUpdatedAt.IsZero() {
+		value := aggregate.CreditPricingUpdatedAt.UTC()
+		snapshot.PricingUpdatedAt = &value
 	}
 	return snapshot
 }

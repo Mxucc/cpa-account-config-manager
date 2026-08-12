@@ -116,6 +116,23 @@ it("shows credit accounting metadata while preserving the token breakdown", () =
   expect(screen.getByText("Output").parentElement).toHaveTextContent("40");
 });
 
+it("shows nano-USD credit totals in account details without rounding to zero", () => {
+  render(<AccountDetailsDialog
+    account={{
+      ...account,
+      usage: {
+        ...account.usage!,
+        credit: { amount_usd: 0.000000345, rated_requests: 1, unrated_requests: 0 },
+      },
+    }}
+    creditUsageEnabled
+    onClose={() => undefined}
+    onEdit={() => undefined}
+  />);
+
+  expect(screen.getByText("预估额度用量").parentElement).toHaveTextContent("$0.000000345");
+});
+
 it("shows per-window overdraft credit only when both experiments are enabled", () => {
   const usage = {
     ...account.usage!,

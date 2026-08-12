@@ -68,6 +68,32 @@ describe("AccountUsageCell", () => {
     expect(screen.queryByText("未计价 1")).not.toBeInTheDocument();
   });
 
+  it("shows nano-USD charges from low-cost models instead of rounding them to zero or a collection placeholder", () => {
+    const account: Account = {
+      ...baseAccount,
+      usage: {
+        input_tokens: 3,
+        output_tokens: 0,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 3,
+        cache_creation_tokens: 0,
+        total_tokens: 3,
+        credit: {
+          amount_usd: 0.000000345,
+          rated_requests: 1,
+          unrated_requests: 0,
+        },
+      },
+    };
+
+    render(<AccountUsageCell account={account} creditUsageEnabled />);
+
+    expect(screen.getByText("$0.000000345")).toBeInTheDocument();
+    expect(screen.getByText("USD")).toBeInTheDocument();
+    expect(screen.queryByText("等待额度计费采集")).not.toBeInTheDocument();
+  });
+
   it("shows a collection placeholder before the first credit-rated request", () => {
     render(<AccountUsageCell account={{ ...baseAccount, usage: {
       input_tokens: 0,

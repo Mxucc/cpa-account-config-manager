@@ -1,6 +1,7 @@
 import { Activity, AlertTriangle, Gauge } from "lucide-react";
 import type { Account, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
+import { formatCreditUSD } from "../format/currency";
 import type { UIMessageKey } from "../i18n/uiText";
 
 export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, creditUsageEnabled = false }: { account: Account; weeklyOverdraftEnabled?: boolean; creditUsageEnabled?: boolean }) {
@@ -18,7 +19,7 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   const credit = usage?.credit;
   const hasCreditSamples = Boolean(credit && (credit.rated_requests > 0 || credit.unrated_requests > 0));
   const primaryUsageValue = creditUsageEnabled && hasCreditSamples
-    ? formatUSD(credit?.amount_usd ?? 0, locale)
+    ? formatCreditUSD(credit?.amount_usd ?? 0, locale)
     : creditUsageEnabled
       ? tx("ui.awaiting_credit_usage_collection")
       : tokenValue;
@@ -26,7 +27,7 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   const primaryUsageTitle = creditUsageEnabled
     ? hasCreditSamples
       ? tx("ui.estimated_credit_usage_detail", {
-          amount: formatUSD(credit?.amount_usd ?? 0, locale),
+          amount: formatCreditUSD(credit?.amount_usd ?? 0, locale),
           rated: formatNumber(credit?.rated_requests ?? 0),
           unrated: formatNumber(credit?.unrated_requests ?? 0),
           tokens: formatNumber(usage?.total_tokens ?? 0),
@@ -125,7 +126,7 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
                   const overdraftRated = safeCount(window.window.overdraft_rated_requests ?? 0);
                   const overdraftUnrated = safeCount(window.window.overdraft_unrated_requests ?? 0);
                   const hasCreditOverdraft = creditUsageEnabled && (overdraftRated > 0 || overdraftUnrated > 0);
-                  const overdraftAmount = formatUSD(window.window.overdraft_amount_usd ?? 0, locale);
+                  const overdraftAmount = formatCreditUSD(window.window.overdraft_amount_usd ?? 0, locale);
                   const content = hasCreditOverdraft
                     ? overdraftAmount
                     : officialOverdraft > 0
@@ -170,17 +171,6 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   );
 }
 
-function formatUSD(value: number, locale: Locale): string {
-  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
-  const maximumFractionDigits = normalized > 0 && normalized < 0.01 ? 6 : 4;
-  return new Intl.NumberFormat(localeFormats[locale].dateTimeLocale, {
-    style: "currency",
-    currency: "USD",
-    currencyDisplay: "narrowSymbol",
-    minimumFractionDigits: 0,
-    maximumFractionDigits,
-  }).format(normalized);
-}
 
 function probeReasonLabel(reasonCode: string | undefined, tx: (key: UIMessageKey) => string): string {
   switch (reasonCode) {

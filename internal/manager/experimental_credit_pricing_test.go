@@ -49,6 +49,21 @@ func TestEmbeddedCreditPricingTableCalculatesCachedAndUncachedTokens(t *testing.
 	}
 }
 
+func TestEmbeddedCreditPricingPreservesTinyLunaChargesAtNanoUSDPrecision(t *testing.T) {
+	service := NewSub2APICreditUsage()
+	defer service.Close()
+	service.SetEnabled(true)
+
+	charge := service.Calculate(cpaapi.UsageRecord{
+		Model:  "gpt-5.6-luna",
+		Detail: cpaapi.UsageDetail{InputTokens: 1, CacheReadTokens: 1, TotalTokens: 1},
+	})
+	wantNanos := int64(100) // One cached Luna input token costs USD 0.0000001.
+	if !charge.Enabled || !charge.Rated || charge.AmountNanos != wantNanos {
+		t.Fatalf("tiny Luna charge = %#v, want %d nano-USD", charge, wantNanos)
+	}
+}
+
 func TestCreditPricingAppliesServiceTierAndLongContextRules(t *testing.T) {
 	table, err := parseCreditPricingTable([]byte(`{
 		"priced-model": {

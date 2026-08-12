@@ -5,6 +5,7 @@ import { accountStateLabel, sourceLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
 import { accountAutomationPresentation } from "../format/accountAutomation";
 import { localeFormats, useI18n, type Locale } from "../i18n";
+import { formatCreditUSD } from "../format/currency";
 import { Modal } from "./Modal";
 
 interface AccountDetailsDialogProps {
@@ -108,7 +109,7 @@ export function AccountDetailsDialog({ account, creditUsageEnabled = false, week
           <DetailItem label={tx("ui.successful_requests")} value={formatNumber(account.success, locale)} mono />
           <DetailItem label={tx("ui.failed_requests")} value={formatNumber(account.failed, locale)} mono />
           <DetailItem label={tx("ui.total_tokens")} value={usage ? formatNumber(usage.total_tokens, locale) : tx("ui.no_data")} mono />
-          {creditUsageEnabled ? <DetailItem label={tx("ui.estimated_credit_usage")} value={usage?.credit ? formatUSD(usage.credit.amount_usd, locale) : tx("ui.awaiting_credit_usage_collection")} mono /> : null}
+          {creditUsageEnabled ? <DetailItem label={tx("ui.estimated_credit_usage")} value={usage?.credit ? formatCreditUSD(usage.credit.amount_usd, locale) : tx("ui.awaiting_credit_usage_collection")} mono /> : null}
           {creditUsageEnabled ? <DetailItem label={tx("ui.rated_requests")} value={usage?.credit ? formatNumber(usage.credit.rated_requests, locale) : tx("ui.no_data")} mono /> : null}
           {creditUsageEnabled ? <DetailItem label={tx("ui.unrated_requests")} value={usage?.credit ? formatNumber(usage.credit.unrated_requests, locale) : tx("ui.no_data")} mono /> : null}
           {creditUsageEnabled ? <DetailItem label={tx("ui.credit_usage_started_at")} value={formatDateTime(usage?.credit?.started_at)} /> : null}
@@ -157,7 +158,7 @@ function DetailItem({ label, value, mono = false, wide = false }: { label: strin
 
 function formatOverdraftCredit(window: UsageWindowSnapshot, locale: Locale, tx: ReturnType<typeof useI18n>["tx"]): string {
   return tx("ui.overdraft_credit_usage_detail", {
-    amount: formatUSD(window.overdraft_amount_usd ?? 0, locale),
+    amount: formatCreditUSD(window.overdraft_amount_usd ?? 0, locale),
     rated: formatNumber(window.overdraft_rated_requests ?? 0, locale),
     unrated: formatNumber(window.overdraft_unrated_requests ?? 0, locale),
   });
@@ -170,15 +171,4 @@ function formatNumber(value: number, locale: Locale): string {
 function formatPercent(value: number): string {
   const normalized = value <= 1 ? value * 100 : value;
   return `${Math.max(0, Math.min(100, normalized)).toFixed(1).replace(/\.0$/, "")}%`;
-}
-
-function formatUSD(value: number, locale: Locale): string {
-  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
-  return new Intl.NumberFormat(localeFormats[locale].dateTimeLocale, {
-    style: "currency",
-    currency: "USD",
-    currencyDisplay: "narrowSymbol",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: normalized > 0 && normalized < 0.01 ? 6 : 4,
-  }).format(normalized);
 }

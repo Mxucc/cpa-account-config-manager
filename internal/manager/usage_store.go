@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	usageStoreVersion         = 5
+	usageStoreVersion         = 6
 	baselineUsageStoreVersion = 3
 	counterUsageStoreVersion  = 2
 	legacyUsageStoreVersion   = 1
@@ -118,10 +118,32 @@ func loadUsageState(path string) (map[string]usageAggregate, error) {
 	if persisted.Version == 4 {
 		return normalizeUsageAccounts(persisted.Accounts), nil
 	}
+	if persisted.Version == 5 {
+		return normalizeUsageAccounts(migrateVersionFiveCreditBaselines(persisted.Accounts)), nil
+	}
 	if persisted.Version != usageStoreVersion {
 		return nil, fmt.Errorf("unsupported usage store version %d", persisted.Version)
 	}
 	return normalizeUsageAccounts(persisted.Accounts), nil
+}
+
+func migrateVersionFiveCreditBaselines(accounts map[string]usageAggregate) map[string]usageAggregate {
+	migrated := make(map[string]usageAggregate, len(accounts))
+	for storageKey, aggregate := range accounts {
+		for _, cycle := range []*overdraftCycleState{aggregate.FiveHourOverdraft, aggregate.SevenDayOverdraft} {
+			if cycle == nil || !cycle.Active {
+				continue
+			}
+			// Version 5 persisted total credit usage but had no per-cycle credit
+			// baseline. Freeze the loaded totals so an upgrade cannot relabel all
+			// historical account cost as overdraft cost.
+			cycle.BaselineCreditAmountNanos = aggregate.CreditAmountNanos
+			cycle.BaselineCreditRated = aggregate.CreditRatedRequests
+			cycle.BaselineCreditUnrated = aggregate.CreditUnratedRequests
+		}
+		migrated[storageKey] = aggregate
+	}
+	return migrated
 }
 
 func migrateUsageAggregateToBaselineState(aggregate usageAggregate) usageAggregate {
@@ -420,6 +442,9 @@ func clearPublicOverdraftState(window *UsageWindowSnapshot) {
 	window.OverdraftActive = false
 	window.OverdraftTokens = 0
 	window.OverdraftRequests = 0
+	window.OverdraftAmountUSD = 0
+	window.OverdraftRated = 0
+	window.OverdraftUnrated = 0
 	window.OverdraftStartedAt = nil
 	window.OverdraftRecoverAt = nil
 }
@@ -431,6 +456,9 @@ func sanitizeOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
 	cycle = cloneOverdraftCycle(cycle)
 	cycle.BaselineTokens = nonNegative(cycle.BaselineTokens)
 	cycle.BaselineRequests = nonNegative(cycle.BaselineRequests)
+	cycle.BaselineCreditAmountNanos = nonNegative(cycle.BaselineCreditAmountNanos)
+	cycle.BaselineCreditRated = nonNegative(cycle.BaselineCreditRated)
+	cycle.BaselineCreditUnrated = nonNegative(cycle.BaselineCreditUnrated)
 	cycle.StartedAt = cycle.StartedAt.UTC()
 	cycle.RecoverAt = cycle.RecoverAt.UTC()
 	cycle.ChangedAt = cycle.ChangedAt.UTC()
@@ -443,6 +471,9 @@ func sanitizeOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
 	if !cycle.Active {
 		cycle.BaselineTokens = 0
 		cycle.BaselineRequests = 0
+		cycle.BaselineCreditAmountNanos = 0
+		cycle.BaselineCreditRated = 0
+		cycle.BaselineCreditUnrated = 0
 		cycle.StartedAt = time.Time{}
 		cycle.RecoverAt = time.Time{}
 		cycle.WindowMinutes = 0

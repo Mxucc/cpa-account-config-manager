@@ -148,6 +148,9 @@ export interface UsageWindowSnapshot {
 	overdraft_active?: boolean;
 	overdraft_tokens?: number;
 	overdraft_requests?: number;
+	overdraft_amount_usd?: number;
+	overdraft_rated_requests?: number;
+	overdraft_unrated_requests?: number;
 	overdraft_started_at?: string;
 	overdraft_recover_at?: string;
 }

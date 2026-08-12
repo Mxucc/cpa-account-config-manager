@@ -122,21 +122,34 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
                   const measuredTokens = safeCount(window.window.overdraft_tokens ?? 0);
                   const measuredRequests = safeCount(window.window.overdraft_requests ?? 0);
                   const totalLabel = formatPercent(total);
-                  const content = officialOverdraft > 0
-                    ? `${formatPercent(officialOverdraft)}%`
-                    : measuredTokens > 0
-                      ? tx("ui.overdraft_tokens_value", { count: formatCompactNumber(measuredTokens, locale) })
-                      : measuredRequests > 0
-                        ? tx("ui.overdraft_requests_value", { count: formatCompactNumber(measuredRequests, locale) })
-                        : tx("ui.overdraft_tokens_value", { count: "0" });
-                  const title = officialOverdraft > 0
-                    ? tx("ui.overdraft_usage_window", { label: window.label, percent: formatPercent(officialOverdraft), total: totalLabel })
-                    : tx("ui.overdraft_usage_window_observed", {
+                  const overdraftRated = safeCount(window.window.overdraft_rated_requests ?? 0);
+                  const overdraftUnrated = safeCount(window.window.overdraft_unrated_requests ?? 0);
+                  const hasCreditOverdraft = creditUsageEnabled && (overdraftRated > 0 || overdraftUnrated > 0);
+                  const overdraftAmount = formatUSD(window.window.overdraft_amount_usd ?? 0, locale);
+                  const content = hasCreditOverdraft
+                    ? overdraftAmount
+                    : officialOverdraft > 0
+                      ? `${formatPercent(officialOverdraft)}%`
+                      : measuredTokens > 0
+                        ? tx("ui.overdraft_tokens_value", { count: formatCompactNumber(measuredTokens, locale) })
+                        : measuredRequests > 0
+                          ? tx("ui.overdraft_requests_value", { count: formatCompactNumber(measuredRequests, locale) })
+                          : tx("ui.overdraft_tokens_value", { count: "0" });
+                  const title = hasCreditOverdraft
+                    ? tx("ui.overdraft_credit_usage_window", {
                         label: window.label,
-                        tokens: formatNumber(measuredTokens),
-                        requests: formatNumber(measuredRequests),
-                        total: totalLabel,
-                      });
+                        amount: overdraftAmount,
+                        rated: formatNumber(overdraftRated),
+                        unrated: formatNumber(overdraftUnrated),
+                      })
+                    : officialOverdraft > 0
+                      ? tx("ui.overdraft_usage_window", { label: window.label, percent: formatPercent(officialOverdraft), total: totalLabel })
+                      : tx("ui.overdraft_usage_window_observed", {
+                          label: window.label,
+                          tokens: formatNumber(measuredTokens),
+                          requests: formatNumber(measuredRequests),
+                          total: totalLabel,
+                        });
                   return (
                     <span key={window.label} title={title}>
                       <small>{window.label}</small><b>+{content}</b>

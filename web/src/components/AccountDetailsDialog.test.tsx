@@ -115,3 +115,23 @@ it("shows credit accounting metadata while preserving the token breakdown", () =
   expect(screen.getByText("Input").parentElement).toHaveTextContent("100");
   expect(screen.getByText("Output").parentElement).toHaveTextContent("40");
 });
+
+it("shows per-window overdraft credit only when both experiments are enabled", () => {
+  const usage = {
+    ...account.usage!,
+    credit: { amount_usd: 0.0125, rated_requests: 3, unrated_requests: 1 },
+    codex: {
+      observed_at: "2026-08-12T08:00:00Z",
+      five_hour: { used_percent: 100, overdraft_active: true, overdraft_amount_usd: 0.0065, overdraft_rated_requests: 1, overdraft_unrated_requests: 1 },
+      seven_day: { used_percent: 100, overdraft_active: true, overdraft_amount_usd: 0.004, overdraft_rated_requests: 1, overdraft_unrated_requests: 0 },
+    },
+  };
+  const { rerender } = render(<AccountDetailsDialog account={{ ...account, usage }} creditUsageEnabled weeklyOverdraftEnabled onClose={() => undefined} onEdit={() => undefined} />);
+
+  expect(screen.getByText("5 小时透支费用").parentElement).toHaveTextContent("$0.0065");
+  expect(screen.getByText("5 小时透支费用").parentElement).toHaveTextContent("已计入账号总费用");
+  expect(screen.getByText("7 天透支费用").parentElement).toHaveTextContent("$0.004");
+
+  rerender(<AccountDetailsDialog account={{ ...account, usage }} creditUsageEnabled weeklyOverdraftEnabled={false} onClose={() => undefined} onEdit={() => undefined} />);
+  expect(screen.queryByText("5 小时透支费用")).not.toBeInTheDocument();
+});

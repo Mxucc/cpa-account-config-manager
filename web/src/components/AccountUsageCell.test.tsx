@@ -149,6 +149,45 @@ describe("AccountUsageCell", () => {
     expect(screen.getByTitle("5h 从普通探测失败时的冻结基线起，已观测透支 12,345 Tokens，共 4 个成功请求（官方总用量 100%）")).toBeInTheDocument();
   });
 
+  it("uses credit pricing for overdraft when both experiments are enabled", () => {
+    const account: Account = {
+      ...baseAccount,
+      usage: {
+        input_tokens: 3000,
+        output_tokens: 300,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 3300,
+        credit: { amount_usd: 0.0125, rated_requests: 3, unrated_requests: 1 },
+        codex: {
+          observed_at: "2026-08-12T08:00:00Z",
+          five_hour: {
+            used_percent: 100,
+            window_minutes: 300,
+            overdraft_active: true,
+            overdraft_tokens: 2200,
+            overdraft_requests: 2,
+            overdraft_amount_usd: 0.0065,
+            overdraft_rated_requests: 1,
+            overdraft_unrated_requests: 1,
+          },
+        },
+      },
+    };
+
+    const { rerender } = render(<AccountUsageCell account={account} weeklyOverdraftEnabled creditUsageEnabled />);
+    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+$0.0065");
+    expect(screen.getByTitle("5h 透支预估费用 $0.0065；已计价 1 次，未计价 1 次；该费用已包含在账号总预估费用中。")).toBeInTheDocument();
+
+    rerender(<AccountUsageCell account={account} weeklyOverdraftEnabled creditUsageEnabled={false} />);
+    expect(screen.getByRole("group", { name: "透支用量" })).toHaveTextContent("5h+2200 tok");
+
+    rerender(<AccountUsageCell account={account} weeklyOverdraftEnabled={false} creditUsageEnabled />);
+    expect(screen.queryByRole("group", { name: "透支用量" })).not.toBeInTheDocument();
+  });
+
   it("falls back to measured successful requests when a stream omits token usage", () => {
     render(<AccountUsageCell account={{
       ...baseAccount,

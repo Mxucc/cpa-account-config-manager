@@ -1,5 +1,5 @@
 import { LockKeyhole, Pencil, Settings2 } from "lucide-react";
-import type { Account } from "../types";
+import type { Account, UsageWindowSnapshot } from "../types";
 import { formatAccountConcurrency } from "../accountConcurrency";
 import { accountStateLabel, sourceLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
@@ -10,11 +10,12 @@ import { Modal } from "./Modal";
 interface AccountDetailsDialogProps {
   account: Account;
   creditUsageEnabled?: boolean;
+  weeklyOverdraftEnabled?: boolean;
   onClose: () => void;
   onEdit: () => void;
 }
 
-export function AccountDetailsDialog({ account, creditUsageEnabled = false, onClose, onEdit }: AccountDetailsDialogProps) {
+export function AccountDetailsDialog({ account, creditUsageEnabled = false, weeklyOverdraftEnabled = false, onClose, onEdit }: AccountDetailsDialogProps) {
   const { locale, formatDateTime, tx } = useI18n();
   const usage = account.usage;
   const identity = account.label || account.email || account.name || account.id;
@@ -113,6 +114,8 @@ export function AccountDetailsDialog({ account, creditUsageEnabled = false, onCl
           {creditUsageEnabled ? <DetailItem label={tx("ui.credit_usage_started_at")} value={formatDateTime(usage?.credit?.started_at)} /> : null}
           {creditUsageEnabled ? <DetailItem label={tx("ui.pricing_updated_at")} value={formatDateTime(usage?.credit?.pricing_updated_at)} /> : null}
           {creditUsageEnabled ? <DetailItem label={tx("ui.credit_pricing_source")} value={usage?.credit?.pricing_source || tx("ui.no_data")} wide /> : null}
+          {creditUsageEnabled && weeklyOverdraftEnabled && usage?.codex?.five_hour?.overdraft_active ? <DetailItem label={tx("ui.5_hour_overdraft_credit_usage")} value={formatOverdraftCredit(usage.codex.five_hour, locale, tx)} wide /> : null}
+          {creditUsageEnabled && weeklyOverdraftEnabled && usage?.codex?.seven_day?.overdraft_active ? <DetailItem label={tx("ui.7_day_overdraft_credit_usage")} value={formatOverdraftCredit(usage.codex.seven_day, locale, tx)} wide /> : null}
           <DetailItem label="Input" value={usage ? formatNumber(usage.input_tokens, locale) : tx("ui.no_data")} mono />
           <DetailItem label="Output" value={usage ? formatNumber(usage.output_tokens, locale) : tx("ui.no_data")} mono />
           <DetailItem label="Reasoning" value={usage ? formatNumber(usage.reasoning_tokens, locale) : tx("ui.no_data")} mono />
@@ -150,6 +153,14 @@ function DetailItem({ label, value, mono = false, wide = false }: { label: strin
       {mono ? <code title={shown}>{shown}</code> : <strong title={shown}>{shown}</strong>}
     </div>
   );
+}
+
+function formatOverdraftCredit(window: UsageWindowSnapshot, locale: Locale, tx: ReturnType<typeof useI18n>["tx"]): string {
+  return tx("ui.overdraft_credit_usage_detail", {
+    amount: formatUSD(window.overdraft_amount_usd ?? 0, locale),
+    rated: formatNumber(window.overdraft_rated_requests ?? 0, locale),
+    unrated: formatNumber(window.overdraft_unrated_requests ?? 0, locale),
+  });
 }
 
 function formatNumber(value: number, locale: Locale): string {

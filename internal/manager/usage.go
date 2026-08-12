@@ -67,6 +67,9 @@ type UsageWindowSnapshot struct {
 	OverdraftActive    bool       `json:"overdraft_active,omitempty"`
 	OverdraftTokens    int64      `json:"overdraft_tokens,omitempty"`
 	OverdraftRequests  int64      `json:"overdraft_requests,omitempty"`
+	OverdraftAmountUSD float64    `json:"overdraft_amount_usd,omitempty"`
+	OverdraftRated     int64      `json:"overdraft_rated_requests,omitempty"`
+	OverdraftUnrated   int64      `json:"overdraft_unrated_requests,omitempty"`
 	OverdraftStartedAt *time.Time `json:"overdraft_started_at,omitempty"`
 	OverdraftRecoverAt *time.Time `json:"overdraft_recover_at,omitempty"`
 }
@@ -104,13 +107,16 @@ type accountLifecycleState struct {
 }
 
 type overdraftCycleState struct {
-	Active           bool      `json:"active"`
-	BaselineTokens   int64     `json:"baseline_tokens,omitempty"`
-	BaselineRequests int64     `json:"baseline_requests,omitempty"`
-	StartedAt        time.Time `json:"started_at,omitempty"`
-	RecoverAt        time.Time `json:"recover_at,omitempty"`
-	WindowMinutes    int       `json:"window_minutes,omitempty"`
-	ChangedAt        time.Time `json:"changed_at"`
+	Active                    bool      `json:"active"`
+	BaselineTokens            int64     `json:"baseline_tokens,omitempty"`
+	BaselineRequests          int64     `json:"baseline_requests,omitempty"`
+	BaselineCreditAmountNanos int64     `json:"baseline_credit_amount_nanos,omitempty"`
+	BaselineCreditRated       int64     `json:"baseline_credit_rated_requests,omitempty"`
+	BaselineCreditUnrated     int64     `json:"baseline_credit_unrated_requests,omitempty"`
+	StartedAt                 time.Time `json:"started_at,omitempty"`
+	RecoverAt                 time.Time `json:"recover_at,omitempty"`
+	WindowMinutes             int       `json:"window_minutes,omitempty"`
+	ChangedAt                 time.Time `json:"changed_at"`
 }
 
 type UsageTracker struct {
@@ -523,7 +529,10 @@ func (t *UsageTracker) BeginOverdraftCycle(authIndex, quotaWindow string, exhaus
 		recoverAt := exhaustedAt.Add(time.Duration(minutes) * time.Minute).UTC()
 		*cycle = &overdraftCycleState{
 			Active: true, BaselineTokens: aggregate.SuccessfulTokens, BaselineRequests: aggregate.SuccessfulRequests,
-			StartedAt: exhaustedAt, RecoverAt: recoverAt, WindowMinutes: minutes, ChangedAt: now,
+			BaselineCreditAmountNanos: aggregate.CreditAmountNanos,
+			BaselineCreditRated:       aggregate.CreditRatedRequests,
+			BaselineCreditUnrated:     aggregate.CreditUnratedRequests,
+			StartedAt:                 exhaustedAt, RecoverAt: recoverAt, WindowMinutes: minutes, ChangedAt: now,
 		}
 		changed = true
 	}
@@ -802,6 +811,9 @@ func publicUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time, c
 	snapshot.OverdraftActive = cycle != nil && cycle.Active
 	snapshot.OverdraftTokens = 0
 	snapshot.OverdraftRequests = 0
+	snapshot.OverdraftAmountUSD = 0
+	snapshot.OverdraftRated = 0
+	snapshot.OverdraftUnrated = 0
 	snapshot.OverdraftStartedAt = nil
 	snapshot.OverdraftRecoverAt = nil
 	if cycle == nil || !cycle.Active {
@@ -809,6 +821,9 @@ func publicUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time, c
 	}
 	snapshot.OverdraftTokens = nonNegative(aggregate.SuccessfulTokens - cycle.BaselineTokens)
 	snapshot.OverdraftRequests = nonNegative(aggregate.SuccessfulRequests - cycle.BaselineRequests)
+	snapshot.OverdraftAmountUSD = float64(nonNegative(aggregate.CreditAmountNanos-cycle.BaselineCreditAmountNanos)) / creditNanosPerUSD
+	snapshot.OverdraftRated = nonNegative(aggregate.CreditRatedRequests - cycle.BaselineCreditRated)
+	snapshot.OverdraftUnrated = nonNegative(aggregate.CreditUnratedRequests - cycle.BaselineCreditUnrated)
 	snapshot.OverdraftStartedAt = timePointer(cycle.StartedAt)
 	snapshot.OverdraftRecoverAt = timePointer(cycle.RecoverAt)
 	return snapshot

@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +191,95 @@ func TestUsageTrackerCreditModePreservesTokensAndPersistsCredit(t *testing.T) {
 	restoredSnapshot := restored.Snapshot("credit-index")
 	if restoredSnapshot == nil || restoredSnapshot.TotalTokens != 1110 || restoredSnapshot.Credit == nil || restoredSnapshot.Credit.RatedRequests != 1 || restoredSnapshot.Credit.UnratedRequests != 1 {
 		t.Fatalf("restored credit snapshot = %#v", restoredSnapshot)
+	}
+}
+
+func TestUsageTrackerCreditModeMeasuresAndPersistsOverdraftCredit(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 12, 8, 0, 0, 0, time.UTC)
+	service := NewSub2APICreditUsage()
+	service.SetEnabled(true)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.SetCreditCalculator(service)
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+		"X-Codex-Primary-Used-Percent":          []string{"100"},
+		"X-Codex-Primary-Reset-After-Seconds":   []string{"86400"},
+		"X-Codex-Primary-Window-Minutes":        []string{"10080"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "credit-overdraft", Model: "gpt-5.4", RequestedAt: now,
+		Detail: cpaapi.UsageDetail{InputTokens: 1000, OutputTokens: 100, TotalTokens: 1100}, ResponseHeaders: headers,
+	})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("credit-overdraft", InspectionQuotaWindowMultiple, now)
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "credit-overdraft", Model: "gpt-5.4", RequestedAt: now,
+		Detail: cpaapi.UsageDetail{InputTokens: 2000, OutputTokens: 200, TotalTokens: 2200},
+	})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "credit-overdraft", Model: "unknown-overdraft-model", RequestedAt: now,
+		Detail: cpaapi.UsageDetail{InputTokens: 20, TotalTokens: 20},
+	})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "credit-overdraft", Model: "gpt-5.4", RequestedAt: now, Failed: true,
+		Detail: cpaapi.UsageDetail{InputTokens: 5000, OutputTokens: 500, TotalTokens: 5500},
+	})
+
+	snapshot := tracker.Snapshot("credit-overdraft")
+	if snapshot == nil || snapshot.Credit == nil || snapshot.Credit.RatedRequests != 2 || snapshot.Credit.UnratedRequests != 1 {
+		t.Fatalf("credit snapshot = %#v", snapshot)
+	}
+	for label, window := range map[string]*UsageWindowSnapshot{
+		"5h": snapshot.Codex.FiveHour,
+		"7d": snapshot.Codex.SevenDay,
+	} {
+		if window == nil || !window.OverdraftActive || window.OverdraftAmountUSD <= 0 || window.OverdraftRated != 1 || window.OverdraftUnrated != 1 {
+			t.Fatalf("%s overdraft credit = %#v", label, window)
+		}
+		if window.OverdraftAmountUSD >= snapshot.Credit.AmountUSD {
+			t.Fatalf("%s overdraft credit %f must remain a subset of total %f", label, window.OverdraftAmountUSD, snapshot.Credit.AmountUSD)
+		}
+	}
+	wantOverdraftUSD := snapshot.Codex.FiveHour.OverdraftAmountUSD
+	tracker.Close()
+	service.Close()
+
+	restored := NewUsageTracker()
+	defer restored.Close()
+	restored.now = func() time.Time { return now.Add(time.Minute) }
+	restored.Configure(Config{DataDir: dataDir})
+	restoredSnapshot := restored.Snapshot("credit-overdraft")
+	if restoredSnapshot == nil || restoredSnapshot.Codex == nil || restoredSnapshot.Codex.FiveHour == nil ||
+		math.Abs(restoredSnapshot.Codex.FiveHour.OverdraftAmountUSD-wantOverdraftUSD) > 1e-12 ||
+		restoredSnapshot.Codex.FiveHour.OverdraftRated != 1 || restoredSnapshot.Codex.FiveHour.OverdraftUnrated != 1 {
+		t.Fatalf("restored overdraft credit = %#v", restoredSnapshot)
+	}
+}
+
+func TestUsageStoreVersionFiveFreezesExistingCreditAtActiveOverdraftBaseline(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := usageStorePath(dataDir)
+	legacy := []byte(`{"version":5,"accounts":{"auth-index:legacy-credit":{"total_tokens":1100,"successful_tokens":1100,"successful_requests":1,"credit_amount_nanos":2750000,"credit_rated_requests":1,"credit_started_at":"2026-08-12T08:00:00Z","updated_at":"2026-08-12T08:00:00Z","five_hour_overdraft":{"active":true,"baseline_tokens":1100,"baseline_requests":1,"started_at":"2026-08-12T08:00:00Z","recover_at":"2026-08-12T13:00:00Z","window_minutes":300,"changed_at":"2026-08-12T08:00:00Z"},"codex":{"five_hour":{"used_percent":100,"window_minutes":300},"observed_at":"2026-08-12T08:00:00Z"}}}}`)
+	if errWrite := os.WriteFile(storePath, legacy, 0o600); errWrite != nil {
+		t.Fatalf("write version-five credit usage state: %v", errWrite)
+	}
+
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.now = func() time.Time { return time.Date(2026, time.August, 12, 8, 5, 0, 0, time.UTC) }
+	tracker.Configure(Config{DataDir: dataDir})
+	snapshot := tracker.Snapshot("legacy-credit")
+	if snapshot == nil || snapshot.Codex == nil || snapshot.Codex.FiveHour == nil || !snapshot.Codex.FiveHour.OverdraftActive {
+		t.Fatalf("migrated version-five snapshot = %#v", snapshot)
+	}
+	if snapshot.Codex.FiveHour.OverdraftAmountUSD != 0 || snapshot.Codex.FiveHour.OverdraftRated != 0 || snapshot.Codex.FiveHour.OverdraftUnrated != 0 {
+		t.Fatalf("historical credit was relabeled as overdraft credit: %#v", snapshot.Codex.FiveHour)
 	}
 }
 

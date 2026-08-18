@@ -270,7 +270,12 @@ func inspectionProbeProvider(account Account) string {
 		return "gemini"
 	case "grok":
 		return "xai"
+	case "openai-compatibility", "openai-compatible":
+		return "openai-compatible"
 	default:
+		if strings.HasPrefix(provider, "openai-compatible-") || strings.HasPrefix(provider, "openai-compatibility-") {
+			return "openai-compatible"
+		}
 		return provider
 	}
 }
@@ -287,6 +292,13 @@ func inspectionProbeModel(account Account, models ModelProbeModels) string {
 		return models.Gemini
 	case "xai":
 		return models.XAI
+	case "kimi", "antigravity", "openai-compatible":
+		// These providers have provider-native defaults in buildModelProbe. An
+		// empty policy value lets the probe select the current CPA default rather
+		// than incorrectly sending an OpenAI or Gemini model to another route.
+		return ""
+	case "vertex":
+		return models.Gemini
 	default:
 		return ""
 	}

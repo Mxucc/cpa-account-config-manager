@@ -138,6 +138,9 @@ type modelTestAuthMetadata struct {
 	hasAPIKey      bool
 	hasAccessToken bool
 	accountID      string
+	baseURL        string
+	projectID      string
+	location       string
 }
 
 type managementAPICallRequest struct {
@@ -571,6 +574,9 @@ func (s *ModelTestService) authMetadata(ctx context.Context, authIndex string) m
 		hasAPIKey:      modelTestRecordsHaveString(records, "api_key", "apiKey"),
 		hasAccessToken: modelTestRecordsHaveString(records, "access_token", "accessToken"),
 		accountID:      safeOperationIdentifier(modelTestResolveAccountID(records), 256),
+		baseURL:        safeProbeBaseURL(modelTestRecordsString(records, "base_url", "baseURL", "endpoint")),
+		projectID:      safeOperationIdentifier(modelTestRecordsString(records, "project_id", "projectId"), 256),
+		location:       safeOperationIdentifier(modelTestRecordsString(records, "location", "region"), 128),
 	}
 	return metadata
 }
@@ -590,14 +596,30 @@ func modelTestCredentialRecords(raw map[string]any) []map[string]any {
 }
 
 func modelTestRecordsHaveString(records []map[string]any, keys ...string) bool {
+	return modelTestRecordsString(records, keys...) != ""
+}
+
+func modelTestRecordsString(records []map[string]any, keys ...string) string {
 	for _, record := range records {
 		for _, key := range keys {
-			if strings.TrimSpace(modelTestStringValue(record, key)) != "" {
-				return true
+			if value := strings.TrimSpace(modelTestStringValue(record, key)); value != "" {
+				return value
 			}
 		}
 	}
-	return false
+	return ""
+}
+
+func safeProbeBaseURL(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" || len(value) > 2048 || strings.ContainsAny(value, "\\r\\n") {
+		return ""
+	}
+	parsed, errParse := url.Parse(value)
+	if errParse != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	return strings.TrimRight(value, "/")
 }
 
 func modelTestResolveAccountID(records []map[string]any) string {
@@ -714,6 +736,17 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 			headers["anthropic-beta"] = "oauth-2025-04-20"
 		}
 		return modelProbe{kind: "claude", url: "https://api.anthropic.com/v1/messages", headers: headers, data: data}, model, true, errMarshal
+	case "kimi":
+		if model == "" {
+			model = "kimi-k2.6"
+		}
+		data, errMarshal := marshal(map[string]any{
+			"model":      model,
+			"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+			"max_tokens": 1,
+			"stream":     false,
+		})
+		return modelProbe{kind: "kimi", url: "https://api.kimi.com/coding/v1/chat/completions", headers: bearerJSONHeaders(false), data: data}, model, true, errMarshal
 	case "gemini", "gemini-cli", "gemini-interactions", "aistudio":
 		if model == "" {
 			model = "gemini-2.0-flash"
@@ -731,15 +764,74 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		}
 		probeURL := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(geminiModel) + ":generateContent"
 		return modelProbe{kind: "gemini", url: probeURL, headers: headers, data: data}, model, true, errMarshal
+	case "vertex":
+		if model == "" {
+			model = "gemini-2.0-flash"
+		}
+		if metadata.projectID == "" {
+			return modelProbe{}, model, false, fmt.Errorf("Vertex provider has no project_id")
+		}
+		location := metadata.location
+		if location == "" {
+			location = "us-central1"
+		}
+		data, errMarshal := marshal(map[string]any{
+			"contents":         []map[string]any{{"role": "user", "parts": []map[string]string{{"text": "hi"}}}},
+			"generationConfig": map[string]int{"maxOutputTokens": 1},
+		})
+		headers := map[string]string{"Content-Type": "application/json", "Accept": "application/json"}
+		if metadata.usesAPIKey() {
+			headers["x-goog-api-key"] = "$TOKEN$"
+		} else {
+			headers["Authorization"] = "Bearer $TOKEN$"
+		}
+		probeURL := "https://" + url.PathEscape(location) + "-aiplatform.googleapis.com/v1/projects/" + url.PathEscape(metadata.projectID) + "/locations/" + url.PathEscape(location) + "/publishers/google/models/" + url.PathEscape(model) + ":generateContent"
+		return modelProbe{kind: "gemini", url: probeURL, headers: headers, data: data}, model, true, errMarshal
 	case "xai", "grok":
 		if model == "" {
 			model = "grok-4"
 		}
 		data, errMarshal := marshal(openAIResponsesProbePayload(model, false))
 		return modelProbe{kind: "openai", url: "https://api.x.ai/v1/responses", headers: bearerJSONHeaders(false), data: data}, model, true, errMarshal
+	case "antigravity":
+		if model == "" {
+			model = "gemini-3.6-flash"
+		}
+		data, errMarshal := marshal(map[string]any{
+			"project": metadata.projectID,
+			"model":   model,
+			"request": map[string]any{
+				"contents":         []map[string]any{{"role": "user", "parts": []map[string]string{{"text": "hi"}}}},
+				"generationConfig": map[string]int{"maxOutputTokens": 1},
+			},
+		})
+		return modelProbe{kind: "gemini", url: "https://cloudcode-pa.googleapis.com/v1internal:generateContent", headers: bearerJSONHeaders(false), data: data}, model, metadata.projectID != "", errMarshal
+	case "openai-compatible", "openai-compatibility":
+		if model == "" {
+			model = "gpt-4o-mini"
+		}
+		if metadata.baseURL == "" {
+			return modelProbe{}, model, false, fmt.Errorf("OpenAI-compatible provider has no valid base_url")
+		}
+		data, errMarshal := marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": "hi"}}, "max_tokens": 1, "stream": false})
+		return modelProbe{kind: "openai-chat", url: openAICompatibleChatURL(metadata.baseURL), headers: bearerJSONHeaders(false), data: data}, model, true, errMarshal
 	default:
+		if strings.HasPrefix(provider, "openai-compatible-") || strings.HasPrefix(provider, "openai-compatibility-") {
+			return buildModelProbe("openai-compatible", requestedModel, metadata)
+		}
 		return modelProbe{}, model, false, nil
 	}
+}
+
+func openAICompatibleChatURL(base string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(trimmed, "/chat/completions") {
+		return trimmed
+	}
+	if strings.HasSuffix(trimmed, "/v1") {
+		return trimmed + "/chat/completions"
+	}
+	return trimmed + "/v1/chat/completions"
 }
 
 func openAIResponsesProbePayload(model string, streaming bool) map[string]any {
@@ -1163,6 +1255,9 @@ func validModelProbeBody(kind string, body []byte) bool {
 		return false
 	}
 	switch kind {
+	case "kimi", "openai-chat":
+		choices, ok := decoded["choices"].([]any)
+		return ok && len(choices) > 0
 	case "claude":
 		return strings.TrimSpace(modelTestStringValue(decoded, "id")) != "" && strings.EqualFold(modelTestStringValue(decoded, "type"), "message")
 	case "gemini":

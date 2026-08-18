@@ -950,6 +950,77 @@ func TestBuildModelProbeUsesAPIKeyEndpointForRuntimeAccountMetadata(t *testing.T
 	}
 }
 
+func TestBuildModelProbeUsesCPAProviderNativeRoutes(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		baseURL  string
+		project  string
+		kind     string
+		url      string
+		wantBody string
+	}{
+		{provider: "kimi", model: "kimi-k2.6", kind: "kimi", url: "https://api.kimi.com/coding/v1/chat/completions", wantBody: `"messages"`},
+		{provider: "openai-compatible-kimi", model: "kimi-k2.6", baseURL: "https://api.kimi.com/coding", kind: "openai-chat", url: "https://api.kimi.com/coding/v1/chat/completions", wantBody: `"messages"`},
+		{provider: "antigravity", model: "gemini-3.6-flash", project: "project-1", kind: "gemini", url: "https://cloudcode-pa.googleapis.com/v1internal:generateContent", wantBody: `"generationConfig"`},
+		{provider: "vertex", model: "gemini-2.0-flash", project: "project-1", kind: "gemini", url: "https://us-central1-aiplatform.googleapis.com/v1/projects/project-1/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent", wantBody: `"contents"`},
+	}
+	for _, test := range tests {
+		t.Run(test.provider, func(t *testing.T) {
+			probe, model, supported, errProbe := buildModelProbe(test.provider, test.model, modelTestAuthMetadata{baseURL: test.baseURL, projectID: test.project})
+			if errProbe != nil || !supported || model != test.model {
+				t.Fatalf("buildModelProbe() = %#v, model=%q, supported=%v, err=%v", probe, model, supported, errProbe)
+			}
+			if probe.kind != test.kind || probe.url != test.url || !strings.Contains(probe.data, test.wantBody) {
+				t.Fatalf("probe = %#v, want kind=%q url=%q body containing %q", probe, test.kind, test.url, test.wantBody)
+			}
+		})
+	}
+}
+
+func TestClassifyKimiAndOpenAIChatResponses(t *testing.T) {
+	for _, kind := range []string{"kimi", "openai-chat"} {
+		status, reason := classifyModelProbe(kind, http.StatusOK, []byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"ok"}}]}`))
+		if status != "available" || reason != "model_response_ok" {
+			t.Fatalf("kind=%q classification = %q %q", kind, status, reason)
+		}
+	}
+}
+
+func TestBuildVertexModelProbeUsesGoogleAPIKeyHeader(t *testing.T) {
+	probe, _, supported, errProbe := buildModelProbe("vertex", "gemini-2.0-flash", modelTestAuthMetadata{hasAPIKey: true, projectID: "project-1"})
+	if errProbe != nil || !supported || probe.headers["x-goog-api-key"] != "$TOKEN$" || probe.headers["Authorization"] != "" {
+		t.Fatalf("Vertex API-key probe = %#v, supported=%v, err=%v", probe, supported, errProbe)
+	}
+}
+
+func TestModelTestServiceUsesKimiNativeCPAAPICall(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{AuthIndex: "kimi-auth", Name: "kimi.json", Provider: "kimi", Type: "kimi", AccountType: "oauth", Source: "file", Path: "/auths/kimi.json"}},
+		details: map[string]cpaapi.HostAuthGetResponse{"kimi-auth": {AuthIndex: "kimi-auth", Name: "kimi.json", Path: "/auths/kimi.json", JSON: json.RawMessage(`{"type":"kimi","access_token":"upstream-secret"}`)}},
+	}
+	var received managementAPICallRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{StatusCode: http.StatusOK, Body: `{"id":"chatcmpl-1","choices":[{"message":{"content":"ok"}}]}`})
+	}))
+	defer server.Close()
+
+	service := NewModelTestService(NewAccountService(host))
+	service.doer = server.Client()
+	result, errRun := service.Run(t.Context(), ModelTestRequest{AccountID: "kimi-auth"}, server.URL, "management-secret")
+	if errRun != nil || result.Status != "available" || result.Model != "kimi-k2.6" {
+		t.Fatalf("Kimi model test result=%#v err=%v", result, errRun)
+	}
+	if received.URL != "https://api.kimi.com/coding/v1/chat/completions" || received.Method != http.MethodPost || received.Header["Authorization"] != "Bearer $TOKEN$" || !strings.Contains(received.Data, `"model":"kimi-k2.6"`) {
+		t.Fatalf("Kimi management api-call = %#v", received)
+	}
+}
+
 func TestManagementAPICallResponseAcceptsCompatibleStatusCodeShapes(t *testing.T) {
 	tests := []struct {
 		name string

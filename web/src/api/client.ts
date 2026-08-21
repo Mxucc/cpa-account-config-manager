@@ -19,6 +19,9 @@ import type {
 	ExperimentalSettings,
 	ExperimentalSettingsSnapshot,
 	AgentIdentitySessionLoginResponse,
+	OpenCodeAccountSaveResponse,
+	OpenCodeAccountsResponse,
+	OpenCodeProbeResponse,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
   ExportFormat,
@@ -577,6 +580,36 @@ export async function completeAgentIdentitySessionLogin(state: string, sessionJS
 	return request<AgentIdentitySessionLoginResponse>("/experiments/agent-identity/session-login", {
 		method: "POST",
 		body: JSON.stringify({ state, session_json: sessionJSON }),
+	});
+}
+
+export async function listOpenCodeAccounts(): Promise<OpenCodeAccountsResponse> {
+	return request<OpenCodeAccountsResponse>("/opencode/accounts");
+}
+
+export async function saveOpenCodeAccount(workspaceID: string, authCookie: string): Promise<OpenCodeAccountSaveResponse> {
+	return request<OpenCodeAccountSaveResponse>("/opencode/accounts", {
+		method: "POST",
+		body: JSON.stringify({ workspace_id: workspaceID, auth_cookie: authCookie }),
+	});
+}
+
+export async function removeOpenCodeAccount(accountID: string): Promise<void> {
+	await request<{ removed: boolean }>("/opencode/accounts?account_id=" + encodeURIComponent(accountID), {
+		method: "DELETE",
+	});
+}
+
+export async function refreshOpenCodeQuota(): Promise<{ results: Record<string, import("../types").OpenCodeQuotaResult> }> {
+	return request<{ results: Record<string, import("../types").OpenCodeQuotaResult> }>("/opencode/refresh", {
+		method: "POST",
+	});
+}
+
+export async function probeOpenCodeQuota(workspaceID: string, authCookie: string, timeoutSeconds = 30): Promise<OpenCodeProbeResponse> {
+	return request<OpenCodeProbeResponse>("/opencode/probe", {
+		method: "POST",
+		body: JSON.stringify({ workspace_id: workspaceID, auth_cookie: authCookie, timeout_seconds: timeoutSeconds }),
 	});
 }
 

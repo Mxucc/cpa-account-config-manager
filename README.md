@@ -26,6 +26,7 @@
 | 条件通知 | 每个通知策略拥有独立名称、嵌套匹配条件、全部满足/任意满足逻辑、低可用账号数和低可用率阈值，以及一个或多个有序通知地址。 |
 | 模型路由策略 | 单账号和批量编辑均支持全部模型、白名单和黑名单模式；新账号探测可识别只支持部分 Codex 模型的账号并应用兼容白名单。 |
 | 操作日志 | 对账号修改、导入导出、模型测试、策略扫描、巡检处置、通知和更新操作进行持久化脱敏审计，记录真实原因、结果、失败分类和安全账号样本。 |
+| OpenCode Go 额度监控 | 参考社区插件整合 OpenCode Go 多账号额度监控：绑定 Workspace ID 与 auth Cookie 后，抓取 opencode.ai 工作区仪表盘，展示 5 小时 / 7 天 / 30 天使用率与重置时间，提供独立状态页、配额 JSON 接口、手动刷新与单账号探测。 |
 | 多语言与主题 | 跟随 CPA Management Center 的语言和主题，支持 English、简体中文、繁体中文和俄语，不维护容易与宿主脱节的独立语言设置。 |
 
 ## 账号导入与导出
@@ -135,6 +136,8 @@ make package VERSION=X.Y.Z
   [zhumengling/codex-token-usage](https://github.com/zhumengling/codex-token-usage)
 - Agent Identity 导入与登录思路：
   [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
+- OpenCode Go 额度监控：
+  [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
 - 社区友链：[LINUX DO](https://linux.do/)
 
 以上项目为产品行为提供了参考。除非仓库许可证历史中另有明确说明，本插件没有复制这些项目的代码。

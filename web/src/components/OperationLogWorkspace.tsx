@@ -68,6 +68,7 @@ const categoryLabels: Record<OperationCategory, UIMessageKey> = {
   inspection: "ui.inspection_automation",
   update: "ui.plugin_updates",
   journal: "ui.log_management",
+  opencode: "ui.opencode",
 };
 
 const statusLabels: Record<OperationStatus, UIMessageKey> = {
@@ -120,6 +121,9 @@ const actionLabels: Record<string, UIMessageKey> = {
   update_check: "ui.check_plugin_updates",
   update_install: "ui.install_plugin_update",
   journal_clear: "ui.clear_operation_log",
+  opencode_save: "ui.opencode_save_action",
+  opencode_remove: "ui.opencode_remove_action",
+  opencode_refresh: "ui.opencode_refresh_action",
 };
 
 const reasonLabels: Record<string, UIMessageKey> = {

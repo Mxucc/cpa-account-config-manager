@@ -1573,4 +1573,41 @@ describe("Agent Identity Session login mode", () => {
     expect(new Headers(request?.init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
+  it("switches to the opencode login mode and saves a workspace credential without leaking the cookie", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/opencode/accounts")) {
+        return jsonResponse({
+          account: { id: "wrk_login_1", workspace_id: "wrk_login" },
+          result: { success: true, workspace: "wrk_login", rolling: { usage_percent: 12, percent_remaining: 88, reset_in_sec: 3600, reset_at: "2026-08-07T00:00:00Z" } },
+        });
+      }
+      return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 1, pages: 0 });
+    }));
+    window.history.replaceState({}, "", "/?agent_identity_login=login-state_123");
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    const opencodeTab = await screen.findByRole("tab", { name: "opencode" });
+    await user.click(opencodeTab);
+
+    await user.type(await screen.findByLabelText("Workspace ID"), "wrk_login");
+    await user.type(screen.getByLabelText("Auth Cookie（auth 的值）"), "opencode-cookie-secret");
+    await user.click(screen.getByRole("button", { name: "查询并保存" }));
+
+    expect(await screen.findByText("OpenCode Go 额度账号已绑定，可以关闭此窗口。")).toBeInTheDocument();
+    expect(screen.getByText("wrk_login")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("opencode-cookie-secret");
+
+    const request = requests.find(({ url }) => url.endsWith("/opencode/accounts"));
+    expect(request).toBeDefined();
+    expect(JSON.parse(String(request?.init.body))).toEqual({ workspace_id: "wrk_login", auth_cookie: "opencode-cookie-secret" });
+    expect(new Headers(request?.init.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(localStorage.length).toBe(0);
+  });
 });

@@ -32,6 +32,10 @@ import {
   startBatchDelete,
   testInspectionNotification,
   testAccountModel,
+  saveOpenCodeAccount,
+  removeOpenCodeAccount,
+  refreshOpenCodeQuota,
+  probeOpenCodeQuota,
 } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
@@ -114,6 +118,53 @@ describe("management API client", () => {
     expect(JSON.parse(String(init.body))).toEqual({ state: "login-state", session_json: "{\"accessToken\":\"secret\"}" });
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
+  });
+
+  it("saves an OpenCode workspace credential through the authenticated route without localStorage persistence", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const response = {
+      account: { id: "wrk_x_123", workspace_id: "wrk_x" },
+      result: { success: true, workspace: "wrk_x", rolling: { usage_percent: 12, percent_remaining: 88, reset_in_sec: 3600, reset_at: "2026-08-07T00:00:00Z" } },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveOpenCodeAccount("wrk_x", "auth-cookie-value")).resolves.toEqual(response);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/opencode/accounts");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ workspace_id: "wrk_x", auth_cookie: "auth-cookie-value" });
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("removes an OpenCode account by its unique account ID", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ removed: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await removeOpenCodeAccount("wrk_x_123");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/opencode/accounts?account_id=wrk_x_123");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("forces an OpenCode quota refresh and probes one workspace without saving", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const refreshMock = vi.fn().mockResolvedValue(jsonResponse({ results: {} }));
+    vi.stubGlobal("fetch", refreshMock);
+    await refreshOpenCodeQuota();
+    const [refreshURL, refreshInit] = refreshMock.mock.calls[0] as [string, RequestInit];
+    expect(refreshURL).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/opencode/refresh");
+    expect(refreshInit.method).toBe("POST");
+
+    const probeMock = vi.fn().mockResolvedValue(jsonResponse({ result: { success: true, workspace: "wrk_y" } }));
+    vi.stubGlobal("fetch", probeMock);
+    await probeOpenCodeQuota("wrk_y", "cookie", 15);
+    const [probeURL, probeInit] = probeMock.mock.calls[0] as [string, RequestInit];
+    expect(probeURL).toBe("https://cpa.example/v0/management/plugins/cpa-account-config-manager/opencode/probe");
+    expect(probeInit.method).toBe("POST");
+    expect(JSON.parse(String(probeInit.body))).toEqual({ workspace_id: "wrk_y", auth_cookie: "cookie", timeout_seconds: 15 });
   });
 
   it("reads the connected and latest CPA server versions from the authenticated CPA endpoint", async () => {

@@ -1339,6 +1339,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-login-heading p { margin: 5px 0 0; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); line-height: 1.5; }
 .agent-login-mark { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--primary-30); border-radius: 10px; color: var(--primary-active); background: var(--primary-10); }
 .agent-login-mark.is-complete { color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, var(--border-color)); background: var(--success-soft); }
+.agent-login-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.agent-login-mode button { min-height: 40px; border: 1px solid transparent; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--text-secondary); font-size: calc(13px * var(--font-size-scale)); font-weight: 700; cursor: pointer; }
+.agent-login-mode button:hover { color: var(--text-primary); }
+.agent-login-mode button.is-active { border-color: var(--border-primary); background: var(--bg-primary); color: var(--primary-active); box-shadow: var(--shadow-sm); }
+.opencode-status-link { margin-top: 14px; }
+.opencode-status-link:hover { border-color: var(--primary-color); background: var(--primary-10); }
 .agent-login-form { display: grid; gap: 16px; }
 .agent-login-session-link { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); color: var(--primary-active); background: var(--bg-secondary); font-size: calc(13px * var(--font-size-scale)); font-weight: 700; text-decoration: none; }
 .agent-login-session-link:hover { border-color: var(--primary-color); background: var(--primary-10); }

@@ -94,6 +94,13 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPut + " /plugins/cpa-account-config-manager/operations/settings":                       {},
 		http.MethodDelete + " /plugins/cpa-account-config-manager/operations":                             {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/operations/record":                        {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/opencode/quota":                            {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/refresh":                         {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/refresh-account":                 {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/opencode/accounts":                         {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/accounts":                        {},
+		http.MethodDelete + " /plugins/cpa-account-config-manager/opencode/accounts":                      {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/probe":                           {},
 	}
 	if len(registration.Routes) != len(expected) {
 		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))
@@ -116,7 +123,17 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	if len(expected) != 0 {
 		t.Fatalf("missing routes = %#v", expected)
 	}
-	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/index.html" || registration.Resources[0].Menu != "CPA-A Manager" {
+	if len(registration.Resources) != 2 {
+		t.Fatalf("resources len = %d, want 2", len(registration.Resources))
+	}
+	resourceByPath := map[string]string{}
+	for _, resource := range registration.Resources {
+		if resource.Path == "" || resource.Path[0] != '/' {
+			t.Fatalf("invalid resource path %q", resource.Path)
+		}
+		resourceByPath[resource.Path] = resource.Menu
+	}
+	if resourceByPath["/index.html"] != "CPA-A Manager" || resourceByPath["/opencode-status"] != "OpenCode Go" {
 		t.Fatalf("resources = %#v", registration.Resources)
 	}
 }

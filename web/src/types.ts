@@ -623,7 +623,7 @@ export type ResultExportFormat = "json" | "csv" | "jsonl";
 
 export type ExportFormat = AccountExportFormat | ResultExportFormat;
 
-export type OperationCategory = "account" | "batch" | "import" | "export" | "default_policy" | "inspection" | "update" | "journal";
+export type OperationCategory = "account" | "batch" | "import" | "export" | "default_policy" | "inspection" | "update" | "journal" | "opencode";
 export type OperationStatus = "running" | "succeeded" | "partial" | "failed" | "interrupted" | "warning" | "skipped";
 export type OperationSource = "manual" | "background" | "default_policy" | "inspection" | "import" | "plugin_store";
 export type OperationExportFormat = "json" | "csv" | "jsonl";
@@ -1051,4 +1051,41 @@ export interface AgentIdentitySessionLoginResponse {
     provider: string;
     login_state: string;
   };
+}
+
+export interface OpenCodeAccountView {
+  id: string;
+  workspace_id: string;
+}
+
+export interface OpenCodeWindowUsage {
+  usage_percent: number;
+  percent_remaining: number;
+  reset_in_sec: number;
+  reset_at: string;
+}
+
+export interface OpenCodeQuotaResult {
+  success: boolean;
+  account_id?: string;
+  workspace?: string;
+  rolling?: OpenCodeWindowUsage;
+  weekly?: OpenCodeWindowUsage;
+  monthly?: OpenCodeWindowUsage;
+  source?: string;
+  fetched_at?: string;
+  error?: string;
+}
+
+export interface OpenCodeAccountSaveResponse {
+  account: OpenCodeAccountView;
+  result: OpenCodeQuotaResult;
+}
+
+export interface OpenCodeProbeResponse {
+  result: OpenCodeQuotaResult;
+}
+
+export interface OpenCodeAccountsResponse {
+  accounts: OpenCodeAccountView[];
 }

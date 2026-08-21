@@ -46,6 +46,10 @@ journal without exposing raw credentials to the browser.
   availability, quota, and health variables.
 - Experimentally support Codex 5-hour and 7-day quota overdraft continuation plus Agent
   Identity and personal access token import, login, and native plugin auth.
+- Monitor multiple OpenCode Go accounts: bind a Workspace ID and auth Cookie,
+  scrape the opencode.ai workspace dashboard for 5-hour / 7-day / 30-day usage
+  and reset times, and use a dedicated status page, quota JSON API, manual
+  refresh, and single-account probe.
 - Follow the CPA Management Center language and theme. The UI supports English,
   Simplified Chinese, Traditional Chinese, and Russian.
 
@@ -210,6 +214,8 @@ embedded assets, and validates release metadata. Release tags are annotated as
   [zhumengling/codex-token-usage](https://github.com/zhumengling/codex-token-usage)
 - Agent Identity import and login concepts:
   [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
+- OpenCode Go quota monitor:
+  [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
 - Community link: [LINUX DO](https://linux.do/)
 
 These projects informed product behavior. Their code is not copied into this

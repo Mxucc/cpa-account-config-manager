@@ -17,6 +17,7 @@ const (
 	OperationCategoryInspection    = "inspection"
 	OperationCategoryUpdate        = "update"
 	OperationCategoryJournal       = "journal"
+	OperationCategoryOpenCode      = "opencode"
 
 	OperationActionDelete                 = "delete"
 	OperationActionTokenRefresh           = "token_refresh"
@@ -51,6 +52,9 @@ const (
 	OperationActionUpdateCheck            = "update_check"
 	OperationActionUpdateInstall          = "update_install"
 	OperationActionJournalClear           = "journal_clear"
+	OperationActionOpenCodeSave           = "opencode_save"
+	OperationActionOpenCodeRemove         = "opencode_remove"
+	OperationActionOpenCodeRefresh        = "opencode_refresh"
 
 	OperationStatusRunning     = "running"
 	OperationStatusSucceeded   = "succeeded"
@@ -215,7 +219,8 @@ func validateBrowserOperationRecord(request OperationRecordRequest) (OperationEn
 func normalizeOperationCategory(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case OperationCategoryAccount, OperationCategoryBatch, OperationCategoryImport, OperationCategoryExport,
-		OperationCategoryDefaultPolicy, OperationCategoryInspection, OperationCategoryUpdate, OperationCategoryJournal:
+		OperationCategoryDefaultPolicy, OperationCategoryInspection, OperationCategoryUpdate, OperationCategoryJournal,
+		OperationCategoryOpenCode:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -231,7 +236,8 @@ func normalizeOperationAction(value string) string {
 		OperationActionInspectionScan, OperationActionInspectionManualDelete, OperationActionAnomalyNotification, OperationActionNotificationTest, OperationActionAutoDisable, OperationActionAutoEnable,
 		OperationActionDeleteCandidate, OperationActionAutoDelete, OperationActionUpdateSave,
 		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
-		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear:
+		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear,
+		OperationActionOpenCodeSave, OperationActionOpenCodeRemove, OperationActionOpenCodeRefresh:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""

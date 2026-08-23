@@ -69,8 +69,8 @@ describe("AIProvidersSettings", () => {
     expect(within(section).queryByText("sk-or-live-1234abcd")).not.toBeInTheDocument();
     expect(within(section).getByText("sk-o••••abcd")).toBeInTheDocument();
     expect(within(section).queryByText("AIza-live-abcdef")).not.toBeInTheDocument();
-    // OpenCode workspace is listed under its own channel.
-    expect(within(section).getByText("wrk_test")).toBeInTheDocument();
+    // OpenCode workspace is listed in the table.
+    expect(within(section).getAllByText("wrk_test").length).toBeGreaterThanOrEqual(1);
 
     await user.click(within(section).getByRole("button", { name: "添加 AI 提供商" }));
     const dialog = await screen.findByRole("dialog", { name: "添加 AI 提供商" });
@@ -150,7 +150,7 @@ describe("AIProvidersSettings", () => {
     expect(onNotice).toHaveBeenCalledWith("AI 提供商已添加");
   });
 
-  it("deletes an OpenAI-compatible channel entry and an OpenCode account", async () => {
+  it("deletes an OpenAI-compatible channel entry through the host management API", async () => {
     const user = userEvent.setup();
     const requests = providerFetchMock();
     const onNotice = vi.fn();
@@ -158,12 +158,13 @@ describe("AIProvidersSettings", () => {
     render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
 
     const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
-    const channels = section.querySelectorAll(".ai-provider-channel");
-    expect(channels.length).toBeGreaterThanOrEqual(2);
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    expect(rows.length).toBeGreaterThanOrEqual(2);
 
-    // Delete the OpenAI-compatible entry (first channel).
-    const openaiChannel = channels[0];
-    await user.click(within(openaiChannel as HTMLElement).getByRole("button", { name: "删除" }));
+    // Delete the OpenAI-compatible (OpenRouter) row.
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "删除" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility?index=0") && init.method === "DELETE")).toBe(true));
     expect(onNotice).toHaveBeenCalledWith("渠道已删除");
   });

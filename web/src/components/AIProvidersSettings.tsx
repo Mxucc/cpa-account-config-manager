@@ -396,61 +396,27 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       {loading ? (
         <div className="auth-loading" aria-label={tx("ui.loading")}><LoaderCircle className="spin" size={24} /></div>
       ) : (
-        <div className="ai-providers-list">
-          {channels.map((channel) => (
-            <div className="ai-provider-channel" key={channel.kind}>
-              <div className="ai-provider-channel-heading">
-                <strong>{tx(channelLabelKey(channel.kind))}</strong>
-                <span className="ai-provider-channel-count">{channel.count}</span>
-              </div>
-              {channel.entries.length === 0 ? (
-                <div className="ai-provider-empty">{tx("ui.ai_provider_channel_empty")}</div>
-              ) : (
-                <div className="ai-provider-entries">
-                  {channel.entries.map((entry) => (
-                    <div className="ai-provider-entry" key={`${channel.kind}-${entry.index}`}>
-                      <div className="ai-provider-entry-main">
-                        <span className="ai-provider-entry-name">{entry.name || entry.base_url || maskSecret(entry.api_key) || `#${entry.index + 1}`}</span>
-                        {entry.base_url ? <span className="ai-provider-entry-base">{entry.base_url}</span> : null}
-                        {entry.workspace_id && entry.name !== entry.workspace_id ? <span className="ai-provider-entry-base">{entry.workspace_id}</span> : null}
-                        <span className="ai-provider-entry-key">{maskSecret(entry.api_key)}</span>
-                        {entry.disabled ? <span className="ai-provider-entry-badge is-disabled">{tx("ui.disabled")}</span> : null}
-                        {entry.prefix ? <span className="ai-provider-entry-prefix">{entry.prefix}</span> : null}
-                        {entry.models && entry.models.length > 0 ? <span className="ai-provider-entry-badge">{entry.models.length} {tx("ui.models")}</span> : null}
-                      </div>
-                      <div className="ai-provider-entry-actions">
-                        <button
-                          className="button button-small"
-                          type="button"
-                          disabled={busy}
-                          onClick={() => setEditing({
-                            kind: channel.kind,
-                            index: entry.index,
-                            name: entry.name ?? entry.workspace_id ?? "",
-                            baseURL: entry.base_url ?? "",
-                            apiKey: "",
-                            disabled: entry.disabled === true,
-                            accountID: entry.account_id,
-                            workspaceID: entry.workspace_id,
-                          })}
-                        >
-                          <Save size={14} />{tx("ui.edit")}
-                        </button>
-                        <button
-                          className="button button-small button-danger"
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void deleteEntry(entry, channel.kind)}
-                        >
-                          <Trash2 size={14} />{tx("ui.delete")}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+        <div className="ai-provider-table-wrap">
+          <table className="account-table ai-provider-table">
+            <thead><tr><th>{tx("ui.ai_provider_type")}</th><th>{tx("ui.ai_provider_name")}</th><th>{tx("ui.ai_provider_base_url")}</th><th>{tx("ui.ai_provider_api_key")}</th><th>{tx("ui.status")}</th><th>{tx("ui.models")}</th><th>{tx("ui.actions")}</th></tr></thead>
+            <tbody>
+              {channels.flatMap((channel) => channel.entries.map((entry) => (
+                <tr key={`${channel.kind}-${entry.index}`}>
+                  <td><strong>{tx(channelLabelKey(channel.kind))}</strong></td>
+                  <td>{entry.name || entry.workspace_id || maskSecret(entry.api_key) || `#${entry.index + 1}`}</td>
+                  <td className="ai-provider-table-url">{entry.base_url || entry.workspace_id || "-"}</td>
+                  <td className="ai-provider-table-secret">{maskSecret(entry.api_key) || (channel.kind === "opencode-go" ? tx("ui.opencode_auth_cookie") : "-")}</td>
+                  <td>{entry.disabled ? <span className="ai-provider-entry-badge is-disabled">{tx("ui.disabled")}</span> : <span className="ai-provider-entry-badge">{tx("ui.enabled")}</span>}</td>
+                  <td>{entry.models?.length ?? 0}</td>
+                  <td className="ai-provider-table-actions">
+                    <button className="button button-small" type="button" disabled={busy} onClick={() => setEditing({ kind: channel.kind, index: entry.index, name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, accountID: entry.account_id, workspaceID: entry.workspace_id })}><Save size={14} />{tx("ui.edit")}</button>
+                    <button className="button button-small button-danger" type="button" disabled={busy} onClick={() => void deleteEntry(entry, channel.kind)}><Trash2 size={14} />{tx("ui.delete")}</button>
+                  </td>
+                </tr>
+              )))}
+            </tbody>
+          </table>
+          {channels.every((channel) => channel.entries.length === 0) ? <div className="ai-provider-empty">{tx("ui.ai_provider_channel_empty")}</div> : null}
         </div>
       )}
     </section>

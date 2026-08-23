@@ -104,6 +104,7 @@ const zhCNOperatorMessages = {
   "disabled via management api": "已通过 Management API 禁用",
   "removed via management api": "已通过 Management API 移除",
   "upstream temporarily unavailable": "上游暂时不可用",
+  "Agent Identity Session login is disabled": "Agent Identity 登录未开启：请先在“设置 → 实验性功能”中开启 Codex Agent Identity",
 } as const;
 
 export type OperatorMessageSource = keyof typeof zhCNOperatorMessages;
@@ -132,6 +133,7 @@ const zhTWOverrides: Partial<Record<OperatorMessageSource, string>> = {
   "quota exhausted": "額度已用盡",
   invalid_grant: "授權已失效",
   "upstream temporarily unavailable": "上游暫時不可用",
+  "Agent Identity Session login is disabled": "Agent Identity 登入未開啟：請先在「設定 → 實驗性功能」中開啟 Codex Agent Identity",
 };
 
 const ruOverrides: Partial<Record<OperatorMessageSource, string>> = {
@@ -158,6 +160,7 @@ const ruOverrides: Partial<Record<OperatorMessageSource, string>> = {
   "quota exhausted": "Квота исчерпана",
   invalid_grant: "Авторизация истекла",
   "upstream temporarily unavailable": "Вышестоящий сервис временно недоступен",
+  "Agent Identity Session login is disabled": "Вход Agent Identity отключён: включите Codex Agent Identity в «Настройки → Экспериментальные функции»",
 };
 
 const operatorCatalogs: Record<Locale, Partial<Record<OperatorMessageSource, string>>> = {

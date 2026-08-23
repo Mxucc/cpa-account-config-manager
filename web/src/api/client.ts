@@ -22,6 +22,9 @@ import type {
 	OpenCodeAccountSaveResponse,
 	OpenCodeAccountsResponse,
 	OpenCodeProbeResponse,
+	AIProviderChannelKind,
+	AIProviderChannelSnapshot,
+	AIProviderChannelEntry,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
   ExportFormat,
@@ -942,4 +945,106 @@ function numericHeader(value: string | null): number | undefined {
   if (value === null || value.trim() === "") return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+export const AI_PROVIDER_CHANNELS: Array<{ kind: AIProviderChannelKind; labelKey: string; apiPath: string }> = [
+  { kind: "openai-compatibility", labelKey: "ui.ai_provider_channel_openai_compatibility", apiPath: "/openai-compatibility" },
+  { kind: "gemini-api-key", labelKey: "ui.ai_provider_channel_gemini", apiPath: "/gemini-api-key" },
+  { kind: "interactions-api-key", labelKey: "ui.ai_provider_channel_interactions", apiPath: "/interactions-api-key" },
+  { kind: "claude-api-key", labelKey: "ui.ai_provider_channel_claude", apiPath: "/claude-api-key" },
+  { kind: "codex-api-key", labelKey: "ui.ai_provider_channel_codex", apiPath: "/codex-api-key" },
+  { kind: "xai-api-key", labelKey: "ui.ai_provider_channel_xai", apiPath: "/xai-api-key" },
+  { kind: "vertex-api-key", labelKey: "ui.ai_provider_channel_vertex", apiPath: "/vertex-api-key" },
+  { kind: "api-keys", labelKey: "ui.ai_provider_channel_api_keys", apiPath: "/api-keys" },
+];
+
+function channelEntriesFromResponse(kind: AIProviderChannelKind, payload: unknown): AIProviderChannelEntry[] {
+  const record = (payload ?? {}) as Record<string, unknown>;
+  const raw = record[kind];
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, index) => {
+    if (typeof item === "string") {
+      return { index, api_key: item };
+    }
+    const source = (item ?? {}) as Record<string, unknown>;
+    const entry: AIProviderChannelEntry = { index };
+    if (typeof source["name"] === "string") entry.name = source["name"];
+    if (typeof source["api-key"] === "string") entry.api_key = source["api-key"];
+    if (Array.isArray(source["api-key-entries"]) && (source["api-key-entries"] as Array<Record<string, unknown>>).length > 0) {
+      const firstKey = (source["api-key-entries"] as Array<Record<string, unknown>>)[0];
+      if (typeof firstKey["api-key"] === "string") entry.api_key = firstKey["api-key"];
+    }
+    if (typeof source["base-url"] === "string") entry.base_url = source["base-url"];
+    if (typeof source["proxy-url"] === "string") entry.proxy_url = source["proxy-url"];
+    if (typeof source["prefix"] === "string") entry.prefix = source["prefix"];
+    if (typeof source["priority"] === "number") entry.priority = source["priority"];
+    if (typeof source["disabled"] === "boolean") entry.disabled = source["disabled"];
+    if (source["weight"] !== undefined && source["weight"] !== null) entry.weight = Number(source["weight"]);
+    if (source["headers"] !== undefined && source["headers"] !== null) entry.headers = source["headers"] as Record<string, string>;
+    if (Array.isArray(source["models"])) entry.models = source["models"] as Array<Record<string, unknown>>;
+    if (Array.isArray(source["excluded-models"])) entry.excluded_models = source["excluded-models"] as string[];
+    if (typeof source["auth-index"] === "string") entry.auth_index = source["auth-index"];
+    return entry;
+  });
+}
+
+export async function listAIProviderChannels(): Promise<AIProviderChannelSnapshot[]> {
+  const channels = await Promise.all(
+    AI_PROVIDER_CHANNELS.map(async (channel) => {
+      try {
+        const payload = await managementRequest<unknown>(channel.apiPath);
+        return { kind: channel.kind, entries: channelEntriesFromResponse(channel.kind, payload) };
+      } catch {
+        return { kind: channel.kind, entries: [] as AIProviderChannelEntry[] };
+      }
+    }),
+  );
+  return channels.map((channel) => ({ kind: channel.kind, count: channel.entries.length, entries: channel.entries }));
+}
+
+export async function putAIProviderChannel(kind: AIProviderChannelKind, items: unknown[]): Promise<void> {
+  await managementRequest<void>(`/${kind}`, {
+    method: "PUT",
+    body: JSON.stringify(items),
+  });
+}
+
+export async function deleteAIProviderChannelEntry(kind: AIProviderChannelKind, index: number): Promise<void> {
+  await managementRequest<void>(`/${kind}?index=${index}`, { method: "DELETE" });
+}
+
+export async function patchAIProviderChannelEntry(kind: AIProviderChannelKind, index: number, value: Record<string, unknown>): Promise<void> {
+  await managementRequest<void>(`/${kind}`, {
+    method: "PATCH",
+    body: JSON.stringify({ index, value }),
+  });
+}
+
+export interface NewOpenAICompatibilityProvider {
+  name: string;
+  base_url: string;
+  api_key: string;
+}
+
+export async function addOpenAICompatibilityProvider(provider: NewOpenAICompatibilityProvider): Promise<void> {
+  const current = await listAIProviderChannels();
+  const existing = current.find((channel) => channel.kind === "openai-compatibility");
+  const items = (existing?.entries ?? []).map((entry) => ({
+    name: entry.name ?? "",
+    "base-url": entry.base_url ?? "",
+    "api-key-entries": entry.api_key
+      ? [{ "api-key": entry.api_key, ...(entry.proxy_url ? { "proxy-url": entry.proxy_url } : {}) }]
+      : [],
+    ...(entry.prefix ? { prefix: entry.prefix } : {}),
+    ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+    ...(entry.disabled ? { disabled: true } : {}),
+    ...(entry.models && entry.models.length > 0 ? { models: entry.models } : {}),
+    ...(entry.headers ? { headers: entry.headers } : {}),
+  }));
+  items.push({
+    name: provider.name.trim(),
+    "base-url": provider.base_url.trim(),
+    "api-key-entries": [{ "api-key": provider.api_key.trim() }],
+  });
+  await putAIProviderChannel("openai-compatibility", items);
 }

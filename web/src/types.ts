@@ -1089,3 +1089,36 @@ export interface OpenCodeProbeResponse {
 export interface OpenCodeAccountsResponse {
   accounts: OpenCodeAccountView[];
 }
+
+export type AIProviderChannelKind =
+  | "openai-compatibility"
+  | "gemini-api-key"
+  | "interactions-api-key"
+  | "claude-api-key"
+  | "codex-api-key"
+  | "xai-api-key"
+  | "vertex-api-key"
+  | "api-keys";
+
+export interface AIProviderChannelEntry {
+  index: number;
+  name?: string;
+  api_key?: string;
+  base_url?: string;
+  proxy_url?: string;
+  prefix?: string;
+  priority?: number;
+  disabled?: boolean;
+  weight?: number | null;
+  headers?: Record<string, string>;
+  models?: Array<Record<string, unknown>>;
+  excluded_models?: string[];
+  auth_index?: string;
+}
+
+export interface AIProviderChannelSnapshot {
+  kind: AIProviderChannelKind;
+  count: number;
+  entries: AIProviderChannelEntry[];
+}
+

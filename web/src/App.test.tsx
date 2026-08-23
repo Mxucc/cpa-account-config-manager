@@ -1610,4 +1610,35 @@ describe("Agent Identity Session login mode", () => {
     expect(new Headers(request?.init.headers).get("Authorization")).toBe("Bearer management-secret");
     expect(localStorage.length).toBe(0);
   });
+
+  it("shows an experiment-disabled hint for GPT login while OpenCode login stays available", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.endsWith("/experiments")) {
+        return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: false } });
+      }
+      if (url.endsWith("/opencode/accounts")) {
+        return jsonResponse({
+          account: { id: "wrk_disabled_1", workspace_id: "wrk_disabled" },
+          result: { success: true, workspace: "wrk_disabled", rolling: { usage_percent: 12, percent_remaining: 88, reset_in_sec: 3600, reset_at: "2026-08-07T00:00:00Z" } },
+        });
+      }
+      return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 1, pages: 0 });
+    }));
+    window.history.replaceState({}, "", "/?agent_identity_login=login-state_123");
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    expect(await screen.findByText(/GPT 登录需要先在/)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "opencode" }));
+    expect(screen.queryByText(/GPT 登录需要先在/)).not.toBeInTheDocument();
+
+    await user.type(await screen.findByLabelText("Workspace ID"), "wrk_disabled");
+    await user.type(screen.getByLabelText("Auth Cookie（auth 的值）"), "opencode-cookie-secret");
+    await user.click(screen.getByRole("button", { name: "查询并保存" }));
+    expect(await screen.findByText("OpenCode Go 额度账号已绑定，可以关闭此窗口。")).toBeInTheDocument();
+  });
 });

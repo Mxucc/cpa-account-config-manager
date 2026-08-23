@@ -176,3 +176,27 @@ func testAgentIdentitySessionAccessToken(t *testing.T, now time.Time, email stri
 	})
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + ".test-signature"
 }
+
+func TestAgentIdentityLoginEntryStaysAvailableWhenExperimentDisabled(t *testing.T) {
+	// The login entry point must stay available even when the Agent Identity
+	// experiment is disabled: the host opens the plugin login page where the
+	// operator chooses GPT Session conversion or the independent OpenCode
+	// login. Only the actual GPT conversion stays gated by the experiment.
+	experiment := NewAgentIdentityExperiment(func() bool { return false }, &fakeAgentIdentityTransport{})
+	experiment.now = func() time.Time { return time.Date(2026, time.July, 23, 13, 55, 0, 0, time.UTC) }
+	defer experiment.Clear()
+
+	started, errStart := experiment.StartLogin(cpaapi.AuthLoginStartRequest{Provider: agentIdentityProvider})
+	if errStart != nil {
+		t.Fatalf("StartLogin() with experiment disabled error = %v", errStart)
+	}
+	if started.State == "" || !strings.HasPrefix(started.URL, agentIdentityLoginPagePath+"?agent_identity_login=") {
+		t.Fatalf("StartLogin() with experiment disabled = %#v", started)
+	}
+	if pending := experiment.PollLogin(cpaapi.AuthLoginPollRequest{State: started.State}); pending.Status != "pending" {
+		t.Fatalf("initial PollLogin() with experiment disabled = %#v", pending)
+	}
+	if _, errComplete := experiment.CompleteSessionLogin(t.Context(), "", started.State, []byte(`{"accessToken":"ignored-secret"}`)); !errors.Is(errComplete, ErrAgentIdentitySessionDisabled) {
+		t.Fatalf("CompleteSessionLogin() with experiment disabled error = %v, want ErrAgentIdentitySessionDisabled", errComplete)
+	}
+}

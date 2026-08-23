@@ -67,9 +67,13 @@ type agentIdentitySessionClaims struct {
 }
 
 func (e *AgentIdentityExperiment) StartLogin(_ cpaapi.AuthLoginStartRequest) (cpaapi.AuthLoginStartResponse, error) {
-	if e == nil || e.enabled == nil || !e.enabled() {
+	if e == nil {
 		return cpaapi.AuthLoginStartResponse{}, ErrAgentIdentitySessionDisabled
 	}
+	// The login entry point stays available even when the Agent Identity
+	// experiment is disabled: the login page offers both the GPT Session
+	// conversion (still gated by the experiment in CompleteSessionLogin) and
+	// the OpenCode login, which is independent of the experiment switch.
 	now := e.currentTime().UTC()
 	var state string
 	for range 3 {

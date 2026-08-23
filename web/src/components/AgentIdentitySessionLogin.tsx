@@ -30,6 +30,16 @@ export function AgentIdentitySessionLogin({ loginState }: AgentIdentitySessionLo
   const [opencodeCookie, setOpenCodeCookie] = useState("");
   const [opencodeVisible, setOpenCodeVisible] = useState(false);
   const [opencodeResult, setOpenCodeResult] = useState<{ account: { id: string; workspace_id: string }; result: OpenCodeQuotaResult } | null>(null);
+  const [agentIdentityEnabled, setAgentIdentityEnabled] = useState<boolean | null>(null);
+
+  const refreshAgentIdentityExperiment = async () => {
+    try {
+      const experiments = await api.getExperimentalSettings();
+      setAgentIdentityEnabled(experiments?.settings ? experiments.settings.agent_identity_enabled === true : null);
+    } catch {
+      setAgentIdentityEnabled(null);
+    }
+  };
 
   useEffect(() => {
     if (!loginState) return;
@@ -43,6 +53,7 @@ export function AgentIdentitySessionLogin({ loginState }: AgentIdentitySessionLo
       setSession(panelAuth.apiBase, panelAuth.managementKey);
       try {
         await api.verifySession();
+        await refreshAgentIdentityExperiment();
         if (active) setAuthentication("ready");
       } catch {
         clearSession();
@@ -59,6 +70,7 @@ export function AgentIdentitySessionLogin({ loginState }: AgentIdentitySessionLo
     setSession(baseURL, managementKey);
     try {
       await api.verifySession();
+      await refreshAgentIdentityExperiment();
       setAuthentication("ready");
     } catch (caught) {
       clearSession();
@@ -193,6 +205,9 @@ export function AgentIdentitySessionLogin({ loginState }: AgentIdentitySessionLo
             <a className="agent-login-session-link" href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">
               <ExternalLink size={16} />{tx("ui.open_chatgpt_session")}
             </a>
+            {agentIdentityEnabled === false ? (
+              <div className="agent-login-error" role="alert">{tx("ui.agent_identity_experiment_disabled")}</div>
+            ) : null}
             <label className="field-block agent-session-field">
               <span>{tx("ui.chatgpt_session_json")}</span>
               <span className="agent-session-input">

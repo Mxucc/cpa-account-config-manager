@@ -1641,6 +1641,59 @@ describe("Agent Identity Session login mode", () => {
     await user.click(screen.getByRole("button", { name: "查询并保存" }));
     expect(await screen.findByText("OpenCode Go 额度账号已绑定，可以关闭此窗口。")).toBeInTheDocument();
   });
+
+  it("adds an OpenCode Zen credential from the AI Providers view without leaking the API key", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const savedZen: Array<{ id: string; name?: string; base_url: string; key_set: boolean }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/opencode/zen/accounts")) {
+        if (!init.method || init.method === "GET") {
+          return jsonResponse({ accounts: savedZen });
+        }
+        const parsed = JSON.parse(String(init.body)) as { name?: string; base_url: string; zen_api_key: string };
+        savedZen.length = 0;
+        savedZen.push({ id: "zen_1", name: parsed.name, base_url: parsed.base_url, key_set: Boolean(parsed.zen_api_key) });
+        return jsonResponse({
+          account: savedZen[0],
+          result: { reachable: true, status_code: 200, detail: "reachable" },
+        });
+      }
+      if (url.endsWith("/accounts")) {
+        return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 1, pages: 0 });
+      }
+      return persistedSettingsResponse(url);
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    const nav = await screen.findByRole("navigation", { name: "账号管理视图" });
+    await user.click(within(nav).getByRole("button", { name: "AI 提供商" }));
+    await screen.findByRole("tabpanel", { name: "AI 提供商" });
+
+    await user.click(screen.getByRole("button", { name: "添加 AI 提供商" }));
+    await user.click(await screen.findByText("OpenCode Zen"));
+    await user.type(screen.getByLabelText("提供商名称"), "bridge");
+    await user.type(screen.getByLabelText("基地址（Zen 网关或 opencode-cc）"), "https://opencode.ai/zen");
+    await user.type(screen.getByLabelText("Zen API Key"), "sk-zen-secret-value");
+    await user.click(screen.getByRole("button", { name: "添加提供商" }));
+
+    expect(await screen.findByText("AI 提供商已添加")).toBeInTheDocument();
+    expect(await screen.findByText("bridge")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("sk-zen-secret-value");
+
+    const saveRequest = requests.find(({ url, init }) => url.endsWith("/opencode/zen/accounts") && init.method === "POST");
+    expect(saveRequest).toBeDefined();
+    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({
+      name: "bridge",
+      base_url: "https://opencode.ai/zen",
+      zen_api_key: "sk-zen-secret-value",
+    });
+  });
 });
 
 describe("primary navigation order", () => {
@@ -1667,7 +1720,7 @@ describe("primary navigation order", () => {
 
     const nav = await screen.findByRole("navigation", { name: "账号管理视图" });
     const tabs = within(nav).getAllByRole("button").map((button) => button.textContent);
-    expect(tabs).toEqual(["账号", "AI 提供商", "巡检与自动化", "操作日志", "其他配置"]);
+    expect(tabs).toEqual(["账号", "巡检与自动化", "AI 提供商", "操作日志", "其他配置"]);
 
     await user.click(within(nav).getByRole("button", { name: "AI 提供商" }));
     expect(await screen.findByRole("tabpanel", { name: "AI 提供商" })).toBeInTheDocument();

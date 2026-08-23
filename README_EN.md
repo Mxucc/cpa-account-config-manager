@@ -50,6 +50,11 @@ journal without exposing raw credentials to the browser.
   scrape the opencode.ai workspace dashboard for 5-hour / 7-day / 30-day usage
   and reset times, with quota queries, manual refresh, and per-account removal
   all available from the AI Providers view.
+- Manage OpenCode Zen credentials in the AI Providers view: store Zen API keys
+  (masked in the UI, kept when the edit key is left blank), point the base URL
+  at the Zen gateway (https://opencode.ai/zen) or a self-hosted
+  [opencode-cc](https://github.com/Kiowx/opencode-cc) bridge, and probe
+  connectivity on save, with per-account re-test, edit, and removal.
 - Follow the CPA Management Center language and theme. The UI supports English,
   Simplified Chinese, Traditional Chinese, and Russian.
 
@@ -216,6 +221,10 @@ embedded assets, and validates release metadata. Release tags are annotated as
   [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
 - OpenCode Go quota monitor:
   [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
+- OpenCode Zen and multi-protocol bridging:
+  [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
+- OpenCode Zen and multi-protocol bridging:
+  [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
 - Community link: [LINUX DO](https://linux.do/)
 
 These projects informed product behavior. Their code is not copied into this

@@ -26,7 +26,9 @@
 | 条件通知 | 每个通知策略拥有独立名称、嵌套匹配条件、全部满足/任意满足逻辑、低可用账号数和低可用率阈值，以及一个或多个有序通知地址。 |
 | 模型路由策略 | 单账号和批量编辑均支持全部模型、白名单和黑名单模式；新账号探测可识别只支持部分 Codex 模型的账号并应用兼容白名单。 |
 | 操作日志 | 对账号修改、导入导出、模型测试、策略扫描、巡检处置、通知和更新操作进行持久化脱敏审计，记录真实原因、结果、失败分类和安全账号样本。 |
-| OpenCode Go 额度监控 | 参考社区插件整合 OpenCode Go 多账号额度监控，入口并入「AI 提供商」视图：绑定 Workspace ID 与 auth Cookie 后，抓取 opencode.ai 工作区仪表盘，展示 5 小时 / 7 天 / 30 天使用率与重置时间，支持配额查询、手动刷新与单账号删除。 |
+| OpenCode Go 额度监控 | 参考社区插件整合 OpenCode Go 多账号额度监控，入口并入「AI 提供商」视图：绑定 Workspace ID 与 auth Cookie 后，抓取 opencode.ai 工作区仪表盘，展示 5 小时 / 7 天 / 30 天使用率与重置时间，支持配额测试、手动刷新与单账号删除。 |
+| OpenCode Zen 与 opencode-cc 桥接 | 参照 [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc) 的多协议桥接方案，在「AI 提供商」视图新增 OpenCode Zen 渠道：统一管理 Zen API Key（密钥脱敏、留空保留），指向 Zen 网关（https://opencode.ai/zen）或自建 opencode-cc 桥接地址，入库即探测连通性，支持单账号重新测试、编辑与删除。 |
+| OpenCode Zen 与 opencode-cc 桥接 | 参照 [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc) 的多协议桥接方案，在「AI 提供商」视图新增 OpenCode Zen 渠道：统一管理 Zen API Key（密钥脱敏、留空保留）、指向 Zen 网关（https://opencode.ai/zen）或自建 opencode-cc 桥接地址，入库即探测连通性，支持单账号重新测试、编辑与删除。 |
 | 多语言与主题 | 跟随 CPA Management Center 的语言和主题，支持 English、简体中文、繁体中文和俄语，不维护容易与宿主脱节的独立语言设置。 |
 
 ## 账号导入与导出
@@ -138,6 +140,8 @@ make package VERSION=X.Y.Z
   [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
 - OpenCode Go 额度监控：
   [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
+- OpenCode Zen 与多协议桥接：
+  [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
 - 社区友链：[LINUX DO](https://linux.do/)
 
 以上项目为产品行为提供了参考。除非仓库许可证历史中另有明确说明，本插件没有复制这些项目的代码。

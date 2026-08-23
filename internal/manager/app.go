@@ -79,6 +79,7 @@ type App struct {
 	experiments     *ExperimentalSettingsService
 	agentIdentity   *AgentIdentityExperiment
 	opencode        *OpenCodeQuotaService
+	opencodeZen     *OpenCodeZenService
 	indexHTML       []byte
 	quiesceOnce     sync.Once
 	quotaResetLocks [64]sync.Mutex
@@ -105,6 +106,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	})
 	quotaBootstrap := NewAccountQuotaMetadataBootstrap()
 	opencode := NewOpenCodeQuotaService()
+	opencodeZen := NewOpenCodeZenService()
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -155,6 +157,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		experiments:     experiments,
 		agentIdentity:   agentIdentity,
 		opencode:        opencode,
+		opencodeZen:     opencodeZen,
 		indexHTML:       append([]byte(nil), indexHTML...),
 	}
 	app.previews.SetAccountConcurrency(concurrency)
@@ -200,6 +203,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.force.SetBackgroundWorkOwner(a.runtime)
 	a.operations.Configure(config)
 	a.opencode.Configure(config)
+	a.opencodeZen.Configure(config)
 	a.experiments.Configure(config)
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
 	a.newAccountProbe.Configure(config)
@@ -452,6 +456,12 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/accounts", Description: "Save one OpenCode Go workspace credential and refresh its quota."},
 			{Method: http.MethodDelete, Path: managementRoutePrefix + "/opencode/accounts", Description: "Remove one bound OpenCode Go workspace credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/probe", Description: "Query one OpenCode Go workspace quota without saving its credential."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/zen/accounts", Description: "List redacted bound OpenCode Zen credentials."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/accounts", Description: "Save or update one OpenCode Zen credential and probe its endpoint."},
+			{Method: http.MethodDelete, Path: managementRoutePrefix + "/opencode/zen/accounts", Description: "Remove one bound OpenCode Zen credential."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe", Description: "Probe one OpenCode Zen or opencode-cc bridge endpoint without saving its credential."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 		},
 		Resources: []cpaapi.ResourceRoute{
 			{
@@ -642,6 +652,18 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeAccounts(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/probe":
 		return a.handleOpenCodeProbe(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/accounts":
+		return a.handleOpenCodeZenAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/accounts":
+		return a.handleOpenCodeZenAccounts(ctx, req)
+	case method == http.MethodDelete && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/accounts":
+		return a.handleOpenCodeZenAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe":
+		return a.handleOpenCodeZenProbe(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe-account":
+		return a.handleOpenCodeZenProbeAccount(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":
+		return a.handleAIProviderProbe(ctx, req)
 	case method == http.MethodGet && path == opencodeStatusResourcePath:
 		return a.handleOpenCodeStatusPage(ctx, req)
 	default:

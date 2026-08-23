@@ -164,8 +164,78 @@ describe("AIProvidersSettings", () => {
     // Delete the OpenAI-compatible (OpenRouter) row.
     const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
     expect(openaiRow).toBeDefined();
-    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "删除" }));
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "删除该渠道" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility?index=0") && init.method === "DELETE")).toBe(true));
     expect(onNotice).toHaveBeenCalledWith("渠道已删除");
+  });
+
+  it("views a provider channel in a detail dialog with masked secrets", async () => {
+    const user = userEvent.setup();
+    providerFetchMock();
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "查看 OpenRouter" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "查看 OpenRouter" });
+    expect(within(dialog).getByText("OpenAI 兼容")).toBeInTheDocument();
+    expect(within(dialog).getByText("https://openrouter.ai/api/v1")).toBeInTheDocument();
+    expect(within(dialog).queryByText("sk-or-live-1234abcd")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("sk-o••••abcd")).toBeInTheDocument();
+  });
+
+  it("tests a provider channel endpoint through the probe API", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/ai-providers/test")) {
+        return jsonResponse({ reachable: true, status_code: 200, detail: "reachable" });
+      }
+      if (url.endsWith("/openai-compatibility")) {
+        return jsonResponse({ "openai-compatibility": [{ name: "OpenRouter", "base-url": "https://openrouter.ai/api/v1", "api-key-entries": [{ "api-key": "sk-or-live-1234abcd" }] }] });
+      }
+      if (url.endsWith("/opencode/accounts")) return jsonResponse({ accounts: [] });
+      return jsonResponse({ "gemini-api-key": [], "interactions-api-key": [], "claude-api-key": [], "codex-api-key": [], "xai-api-key": [], "vertex-api-key": [], "api-keys": [] });
+    }));
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "测试 OpenRouter" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "测试渠道：OpenRouter" });
+    expect(await within(dialog).findByText("渠道可达")).toBeInTheDocument();
+    const probeRequest = requests.find(({ url }) => url.endsWith("/ai-providers/test"));
+    expect(probeRequest).toBeDefined();
+    const body = JSON.parse(String(probeRequest?.init.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ base_url: "https://openrouter.ai/api/v1" });
+  });
+
+  it("disables an OpenAI-compatible channel through the host PATCH API", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock();
+    const onNotice = vi.fn();
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "禁用该渠道" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PATCH")).toBe(true));
+    const patchRequest = requests.find(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PATCH");
+    expect(JSON.parse(String(patchRequest?.init.body))).toEqual({ index: 0, value: { disabled: true } });
+    expect(onNotice).toHaveBeenCalledWith("渠道已禁用");
   });
 });

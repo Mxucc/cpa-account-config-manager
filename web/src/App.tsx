@@ -211,7 +211,7 @@ export default function App() {
 function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"accounts" | "providers" | "inspection" | "operations" | "settings">("accounts");
+  const [activeView, setActiveView] = useState<"accounts" | "inspection" | "providers" | "operations" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -1115,8 +1115,8 @@ function AccountManagerApp() {
         <div className="workspace-bar">
           <nav className="workspace-tabs" aria-label={tx("ui.account_management_views")}>
             <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} />{tx("ui.accounts")}</button>
-            <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} />{tx("ui.ai_providers")}</button>
             <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} />{tx("ui.inspection_and_automation")}</button>
+            <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} />{tx("ui.ai_providers")}</button>
             <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} />{tx("ui.operation_log")}</button>
             <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} />{tx("ui.other_settings")}</button>
           </nav>
@@ -1310,10 +1310,10 @@ function AccountManagerApp() {
         </div>
           </main>
         </section>
-        ) : activeView === "providers" ? (
-          <AIProvidersSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "inspection" ? (
           <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} onAccountsChanged={requestInspectionAccountSync} />
+        ) : activeView === "providers" ? (
+          <AIProvidersSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "operations" ? (
           <OperationLogWorkspace
             activeJobIDs={[job?.id, forceJob?.id].filter((id): id is string => Boolean(id))}

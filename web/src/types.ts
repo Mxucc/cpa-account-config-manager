@@ -1086,6 +1086,37 @@ export interface OpenCodeProbeResponse {
   result: OpenCodeQuotaResult;
 }
 
+export interface OpenCodeZenAccountView {
+  id: string;
+  name?: string;
+  base_url: string;
+  key_set: boolean;
+}
+
+export interface OpenCodeZenAccountsResponse {
+  accounts: OpenCodeZenAccountView[];
+}
+
+export interface OpenCodeZenProbeResult {
+  reachable: boolean;
+  status_code?: number;
+  detail?: string;
+}
+
+export interface OpenCodeZenProbeResponse {
+  result: OpenCodeZenProbeResult;
+}
+
+export interface OpenCodeZenAccountSaveResponse {
+  account: OpenCodeZenAccountView;
+  result: OpenCodeZenProbeResult;
+}
+
+export interface OpenCodeZenProbeAccountResponse {
+  account: OpenCodeZenAccountView;
+  result: OpenCodeZenProbeResult;
+}
+
 export interface OpenCodeAccountsResponse {
   accounts: OpenCodeAccountView[];
 }
@@ -1099,7 +1130,27 @@ export type AIProviderChannelKind =
   | "xai-api-key"
   | "vertex-api-key"
   | "api-keys"
-  | "opencode-go";
+  | "opencode-go"
+  | "opencode-zen";
+
+export interface AIProviderChannelModel {
+  name: string;
+  alias?: string;
+  display_name?: string;
+  max_context_length?: number;
+  force_mapping?: boolean;
+  is_compat?: boolean;
+  image?: boolean;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  thinking?: unknown;
+}
+
+export interface AIProviderAPIKeyEntry {
+  api_key?: string;
+  weight?: number | null;
+  proxy_url?: string;
+}
 
 export interface AIProviderChannelEntry {
   index: number;
@@ -1112,11 +1163,18 @@ export interface AIProviderChannelEntry {
   disabled?: boolean;
   weight?: number | null;
   headers?: Record<string, string>;
-  models?: Array<Record<string, unknown>>;
+  models?: AIProviderChannelModel[];
   excluded_models?: string[];
+  api_key_entries?: AIProviderAPIKeyEntry[];
+  support_prompt_cache_key?: boolean;
+  disable_cooling?: boolean;
+  alpha_search?: boolean;
+  websockets?: boolean;
+  rebuild_mid_system_message?: boolean;
   auth_index?: string;
   account_id?: string;
   workspace_id?: string;
+  key_set?: boolean;
 }
 
 export interface AIProviderChannelSnapshot {

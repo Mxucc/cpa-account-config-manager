@@ -1764,3 +1764,22 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-table-secret { color: var(--muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); }
 .ai-provider-table-actions { display: flex; align-items: center; gap: 6px; }
 .ai-provider-table-actions .button { min-width: 0; }
+
+/* AI provider local loading (no full-screen overlay) */
+.ai-provider-loading { min-height: 220px; display: grid; place-items: center; color: var(--primary-color); }
+
+/* AI provider detail and test modals */
+.ai-provider-detail { display: grid; gap: 9px; }
+.ai-provider-detail-row { min-width: 0; display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; align-items: baseline; font-size: calc(12px * var(--font-size-scale)); }
+.ai-provider-detail-row > span { color: var(--text-secondary); }
+.ai-provider-detail-row > strong, .ai-provider-detail-row > code { min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.ai-provider-detail-row > code { font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); }
+.ai-provider-detail-models { grid-template-columns: 130px minmax(0, 1fr); }
+.ai-provider-detail-models > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-provider-detail-models code { padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); font-size: calc(10px * var(--font-size-scale)); }
+.ai-provider-test-running { min-height: 90px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); }
+.ai-provider-test-result { display: grid; gap: 6px; padding: 14px 16px; border-radius: var(--radius-md); font-size: calc(12px * var(--font-size-scale)); }
+.ai-provider-test-result strong { font-size: calc(13px * var(--font-size-scale)); }
+.ai-provider-test-result.is-reachable { background: var(--success-soft, var(--bg-tertiary)); color: var(--success, var(--text-primary)); }
+.ai-provider-test-result.is-failed { background: var(--danger-soft); color: var(--danger); }
+.ai-provider-test-result span { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); }

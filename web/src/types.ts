@@ -1098,7 +1098,8 @@ export type AIProviderChannelKind =
   | "codex-api-key"
   | "xai-api-key"
   | "vertex-api-key"
-  | "api-keys";
+  | "api-keys"
+  | "opencode-go";
 
 export interface AIProviderChannelEntry {
   index: number;
@@ -1114,6 +1115,8 @@ export interface AIProviderChannelEntry {
   models?: Array<Record<string, unknown>>;
   excluded_models?: string[];
   auth_index?: string;
+  account_id?: string;
+  workspace_id?: string;
 }
 
 export interface AIProviderChannelSnapshot {

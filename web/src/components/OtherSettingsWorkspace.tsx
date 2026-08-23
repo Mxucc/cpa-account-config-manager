@@ -27,7 +27,6 @@ import {
   writeTypographyDistinction,
   type FontSizePreset,
 } from "../store/fontSize";
-import { AIProvidersSettings } from "./AIProvidersSettings";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
@@ -47,7 +46,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "providers" | "experimental">("automation");
+  const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">("automation");
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [typographyDistinction, setTypographyDistinction] = useState(readTypographyDistinction);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
@@ -248,9 +247,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         <button type="button" role="tab" aria-selected={activeSection === "updates"} className={activeSection === "updates" ? "active" : ""} onClick={() => setActiveSection("updates")}>
           <Server size={15} />{tx("ui.plugin_configuration_and_version")}
         </button>
-        <button type="button" role="tab" aria-selected={activeSection === "providers"} className={activeSection === "providers" ? "active" : ""} onClick={() => setActiveSection("providers")}>
-          <ShieldCheck size={15} />{tx("ui.ai_providers")}
-        </button>
         <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
           <FlaskConical size={15} />{tx("ui.experimental_features")}
         </button>
@@ -332,9 +328,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
           </div>
         </section>
         </div>
-      </div> : activeSection === "providers" ? (
-        <AIProvidersSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
-      ) : (
+      </div> : (
         <section className="experimental-settings-section" role="tabpanel" aria-label={tx("ui.experimental_features")}>
           <div className="experimental-warning" role="note">
             <AlertTriangle size={20} />

@@ -459,11 +459,6 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 				Menu:        "CPA-A Manager",
 				Description: "List, filter, and safely batch-edit CLIProxyAPI account configuration.",
 			},
-			{
-				Path:        "/opencode-status",
-				Menu:        "OpenCode Go",
-				Description: "OpenCode Go quota monitor · configure credentials & view usage.",
-			},
 		},
 	}
 }

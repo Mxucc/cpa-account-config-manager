@@ -196,7 +196,7 @@ export function AgentIdentitySessionLogin({ loginState }: AgentIdentitySessionLo
             ) : (
               <div><span>{tx("ui.quota")}</span><strong>{opencodeResult.result.error || tx("ui.unknown")}</strong></div>
             )}
-            <a className="agent-login-session-link opencode-status-link" href="/v0/resource/plugins/cpa-account-config-manager/opencode-status" target="_blank" rel="noopener noreferrer">
+            <a className="agent-login-session-link opencode-status-link" href="/v0/resource/plugins/cpa-account-config-manager/index.html" target="_blank" rel="noopener noreferrer">
               <ExternalLink size={16} />{tx("ui.opencode_open_status")}
             </a>
           </div>

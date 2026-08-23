@@ -123,8 +123,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 	if len(expected) != 0 {
 		t.Fatalf("missing routes = %#v", expected)
 	}
-	if len(registration.Resources) != 2 {
-		t.Fatalf("resources len = %d, want 2", len(registration.Resources))
+	if len(registration.Resources) != 1 {
+		t.Fatalf("resources len = %d, want 1", len(registration.Resources))
 	}
 	resourceByPath := map[string]string{}
 	for _, resource := range registration.Resources {
@@ -133,7 +133,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		}
 		resourceByPath[resource.Path] = resource.Menu
 	}
-	if resourceByPath["/index.html"] != "CPA-A Manager" || resourceByPath["/opencode-status"] != "OpenCode Go" {
+	if resourceByPath["/index.html"] != "CPA-A Manager" {
 		t.Fatalf("resources = %#v", registration.Resources)
 	}
 }

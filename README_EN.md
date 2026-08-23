@@ -48,8 +48,8 @@ journal without exposing raw credentials to the browser.
   Identity and personal access token import, login, and native plugin auth.
 - Monitor multiple OpenCode Go accounts: bind a Workspace ID and auth Cookie,
   scrape the opencode.ai workspace dashboard for 5-hour / 7-day / 30-day usage
-  and reset times, and use a dedicated status page, quota JSON API, manual
-  refresh, and single-account probe.
+  and reset times, with quota queries, manual refresh, and per-account removal
+  all available from the AI Providers view.
 - Follow the CPA Management Center language and theme. The UI supports English,
   Simplified Chinese, Traditional Chinese, and Russian.
 

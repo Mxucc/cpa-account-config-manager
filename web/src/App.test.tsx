@@ -1642,3 +1642,35 @@ describe("Agent Identity Session login mode", () => {
     expect(await screen.findByText("OpenCode Go 额度账号已绑定，可以关闭此窗口。")).toBeInTheDocument();
   });
 });
+
+describe("primary navigation order", () => {
+  beforeEach(() => {
+    _resetSessionForTest();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.mocked(readPanelAuth).mockReturnValue(null);
+  });
+
+  it("shows AI Providers as a top-level view between Accounts and Inspection", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/accounts")) {
+        return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      return persistedSettingsResponse(url);
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    const nav = await screen.findByRole("navigation", { name: "账号管理视图" });
+    const tabs = within(nav).getAllByRole("button").map((button) => button.textContent);
+    expect(tabs).toEqual(["账号", "AI 提供商", "巡检与自动化", "操作日志", "其他配置"]);
+
+    await user.click(within(nav).getByRole("button", { name: "AI 提供商" }));
+    expect(await screen.findByRole("tabpanel", { name: "AI 提供商" })).toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel", { name: "AI 提供商" })).getByText("OpenCode Go")).toBeInTheDocument();
+  });
+});

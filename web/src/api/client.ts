@@ -956,6 +956,7 @@ export const AI_PROVIDER_CHANNELS: Array<{ kind: AIProviderChannelKind; labelKey
   { kind: "xai-api-key", labelKey: "ui.ai_provider_channel_xai", apiPath: "/xai-api-key" },
   { kind: "vertex-api-key", labelKey: "ui.ai_provider_channel_vertex", apiPath: "/vertex-api-key" },
   { kind: "api-keys", labelKey: "ui.ai_provider_channel_api_keys", apiPath: "/api-keys" },
+  { kind: "opencode-go", labelKey: "ui.ai_provider_channel_opencode", apiPath: "" },
 ];
 
 function channelEntriesFromResponse(kind: AIProviderChannelKind, payload: unknown): AIProviderChannelEntry[] {
@@ -991,6 +992,20 @@ function channelEntriesFromResponse(kind: AIProviderChannelKind, payload: unknow
 export async function listAIProviderChannels(): Promise<AIProviderChannelSnapshot[]> {
   const channels = await Promise.all(
     AI_PROVIDER_CHANNELS.map(async (channel) => {
+      if (channel.kind === "opencode-go") {
+        try {
+          const listed = await listOpenCodeAccounts();
+          const entries: AIProviderChannelEntry[] = (listed.accounts ?? []).map((account, index) => ({
+            index,
+            account_id: account.id,
+            workspace_id: account.workspace_id,
+            name: account.workspace_id,
+          }));
+          return { kind: channel.kind, entries };
+        } catch {
+          return { kind: channel.kind, entries: [] as AIProviderChannelEntry[] };
+        }
+      }
       try {
         const payload = await managementRequest<unknown>(channel.apiPath);
         return { kind: channel.kind, entries: channelEntriesFromResponse(channel.kind, payload) };
@@ -1009,7 +1024,12 @@ export async function putAIProviderChannel(kind: AIProviderChannelKind, items: u
   });
 }
 
-export async function deleteAIProviderChannelEntry(kind: AIProviderChannelKind, index: number): Promise<void> {
+export async function deleteAIProviderChannelEntry(kind: AIProviderChannelKind, index: number, accountID?: string): Promise<void> {
+  if (kind === "opencode-go") {
+    if (!accountID) throw new Error("OpenCode account id is required");
+    await removeOpenCodeAccount(accountID);
+    return;
+  }
   await managementRequest<void>(`/${kind}?index=${index}`, { method: "DELETE" });
 }
 
@@ -1026,25 +1046,77 @@ export interface NewOpenAICompatibilityProvider {
   api_key: string;
 }
 
-export async function addOpenAICompatibilityProvider(provider: NewOpenAICompatibilityProvider): Promise<void> {
+export interface NewOpenCodeGoProvider {
+  workspace_id: string;
+  auth_cookie: string;
+}
+
+export interface NewAPIKeyProvider {
+  api_key: string;
+  base_url?: string;
+}
+
+export type NewAIProvider = NewOpenAICompatibilityProvider | NewOpenCodeGoProvider | NewAPIKeyProvider;
+
+const apiKeyChannelKinds: AIProviderChannelKind[] = [
+  "gemini-api-key",
+  "interactions-api-key",
+  "claude-api-key",
+  "codex-api-key",
+  "xai-api-key",
+  "vertex-api-key",
+];
+
+export async function addAIProviderChannel(kind: AIProviderChannelKind, provider: NewAIProvider): Promise<void> {
+  if (kind === "opencode-go") {
+    const opencode = provider as NewOpenCodeGoProvider;
+    await saveOpenCodeAccount(opencode.workspace_id, opencode.auth_cookie);
+    return;
+  }
+  if (kind === "api-keys") {
+    const apiKey = (provider as NewAPIKeyProvider).api_key.trim();
+    const current = await listAIProviderChannels();
+    const existing = current.find((channel) => channel.kind === kind);
+    const items = [...(existing?.entries ?? []).map((entry) => entry.api_key ?? ""), apiKey];
+    await putAIProviderChannel(kind, items);
+    return;
+  }
+  const openai = provider as NewOpenAICompatibilityProvider;
   const current = await listAIProviderChannels();
-  const existing = current.find((channel) => channel.kind === "openai-compatibility");
+  const existing = current.find((channel) => channel.kind === kind);
+  if (kind === "openai-compatibility") {
+    const items = (existing?.entries ?? []).map((entry) => ({
+      name: entry.name ?? "",
+      "base-url": entry.base_url ?? "",
+      "api-key-entries": entry.api_key
+        ? [{ "api-key": entry.api_key, ...(entry.proxy_url ? { "proxy-url": entry.proxy_url } : {}) }]
+        : [],
+      ...(entry.prefix ? { prefix: entry.prefix } : {}),
+      ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+      ...(entry.disabled ? { disabled: true } : {}),
+      ...(entry.models && entry.models.length > 0 ? { models: entry.models } : {}),
+      ...(entry.headers ? { headers: entry.headers } : {}),
+    }));
+    items.push({
+      name: openai.name.trim(),
+      "base-url": openai.base_url.trim(),
+      "api-key-entries": [{ "api-key": openai.api_key.trim() }],
+    });
+    await putAIProviderChannel(kind, items);
+    return;
+  }
+  // Plain API-key channels (gemini / interactions / claude / codex / xai / vertex).
+  const apiKeyProvider = provider as NewAPIKeyProvider;
   const items = (existing?.entries ?? []).map((entry) => ({
-    name: entry.name ?? "",
-    "base-url": entry.base_url ?? "",
-    "api-key-entries": entry.api_key
-      ? [{ "api-key": entry.api_key, ...(entry.proxy_url ? { "proxy-url": entry.proxy_url } : {}) }]
-      : [],
+    "api-key": entry.api_key ?? "",
+    ...(entry.base_url ? { "base-url": entry.base_url } : {}),
+    ...(entry.proxy_url ? { "proxy-url": entry.proxy_url } : {}),
     ...(entry.prefix ? { prefix: entry.prefix } : {}),
     ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
-    ...(entry.disabled ? { disabled: true } : {}),
-    ...(entry.models && entry.models.length > 0 ? { models: entry.models } : {}),
-    ...(entry.headers ? { headers: entry.headers } : {}),
   }));
   items.push({
-    name: provider.name.trim(),
-    "base-url": provider.base_url.trim(),
-    "api-key-entries": [{ "api-key": provider.api_key.trim() }],
+    "api-key": apiKeyProvider.api_key.trim(),
+    ...(apiKeyProvider.base_url?.trim() ? { "base-url": apiKeyProvider.base_url.trim() } : {}),
   });
-  await putAIProviderChannel("openai-compatibility", items);
+  await putAIProviderChannel(kind, items);
 }

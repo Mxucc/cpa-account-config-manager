@@ -1755,3 +1755,15 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-form-actions { justify-content: flex-end; margin-top: 0; }
 .ai-provider-field-note { font-size: calc(10px * var(--font-size-scale)); color: var(--muted); }
 .ai-provider-switch { justify-self: start; }
+
+/* AI provider type selection */
+.ai-provider-type-select { display: grid; gap: 8px; padding: 4px 2px 10px; }
+.ai-provider-type-label { font-size: calc(11px * var(--font-size-scale)); font-weight: 700; color: var(--text-secondary); }
+.ai-provider-type-options { display: grid; gap: 8px; }
+.ai-provider-type-option { display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); cursor: pointer; transition: border-color var(--transition-fast), background var(--transition-fast); }
+.ai-provider-type-option:hover { border-color: var(--primary-color); }
+.ai-provider-type-option.active { border-color: var(--primary-color); background: var(--primary-10); }
+.ai-provider-type-option input { margin-top: 3px; accent-color: var(--primary-color); }
+.ai-provider-type-option-main { min-width: 0; display: grid; gap: 3px; }
+.ai-provider-type-option-main strong { font-size: calc(12px * var(--font-size-scale)); color: var(--text-primary); }
+.ai-provider-type-option-main small { font-size: calc(10px * var(--font-size-scale)); color: var(--text-secondary); line-height: 1.45; }

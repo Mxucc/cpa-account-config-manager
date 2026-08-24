@@ -74,6 +74,7 @@ type App struct {
 	managementDoer  HTTPDoer
 	requestHooks    *RequestHook
 	concurrency     *AccountConcurrencyService
+	providerRuntime *ProviderRuntimeTracker
 	hostSchema      uint32
 	runtime         *RuntimeOwnership
 	experiments     *ExperimentalSettingsService
@@ -116,7 +117,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	imports := NewImportService(host, mutations)
 	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled)
-	requestHooks := NewRequestHook(concurrency, weeklyOverdraft)
+	providerRuntime := NewProviderRuntimeTracker(creditUsage)
+	requestHooks := NewRequestHook(providerRuntime, concurrency, weeklyOverdraft)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -152,6 +154,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		quotaBootstrap:  quotaBootstrap,
 		requestHooks:    requestHooks,
 		concurrency:     concurrency,
+		providerRuntime: providerRuntime,
 		hostSchema:      cpaapi.SchemaVersion,
 		runtime:         runtime,
 		experiments:     experiments,
@@ -231,6 +234,7 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		return
 	}
 	a.usage.Observe(record)
+	a.providerRuntime.ObserveUsage(record)
 	a.inspection.Observe(record)
 }
 
@@ -261,6 +265,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.imports.Shutdown()
 		a.agentIdentity.Clear()
 		a.concurrency.Shutdown()
+		a.providerRuntime.Shutdown()
 		a.creditUsage.Close()
 		a.usage.Close()
 		if superseded {
@@ -325,14 +330,19 @@ func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.
 }
 
 func (a *App) HandleRequestComplete(completion cpaapi.RequestCompletion) {
-	if a == nil || a.concurrency == nil {
+	if a == nil {
 		return
 	}
-	a.concurrency.Complete(completion)
+	if a.concurrency != nil {
+		a.concurrency.Complete(completion)
+	}
+	if a.providerRuntime != nil {
+		a.providerRuntime.Complete(completion)
+	}
 }
 
 func (a *App) RequestCompletionActive() bool {
-	return a != nil && a.concurrency != nil && a.concurrency.RequestInterceptionActive()
+	return a != nil && ((a.concurrency != nil && a.concurrency.RequestInterceptionActive()) || a.providerRuntime != nil)
 }
 
 func (a *App) HandleAgentIdentityAuthParse(request cpaapi.AuthParseRequest) (cpaapi.AuthParseResponse, error) {
@@ -462,6 +472,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe", Description: "Probe one OpenCode Zen or opencode-cc bridge endpoint without saving its credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 		},
 		Resources: []cpaapi.ResourceRoute{
 			{
@@ -664,6 +675,11 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":
 		return a.handleAIProviderProbe(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/ai-providers/runtime":
+		if resolveManagementKey(req.Headers) == "" {
+			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+		}
+		return a.handleAIProviderRuntime()
 	case method == http.MethodGet && path == opencodeStatusResourcePath:
 		return a.handleOpenCodeStatusPage(ctx, req)
 	default:

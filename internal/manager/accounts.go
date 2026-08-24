@@ -309,6 +309,12 @@ func (s *AccountService) enrichAccountDetail(ctx context.Context, account *Accou
 		account.Editable = false
 		account.ReadOnlyReason = "physical auth file is invalid"
 	}
+	// Keep list/detail enrichment bounded to host.auth.get. Runtime credential
+	// metadata is fetched only by explicit credential/config detail requests.
+	if account.Credential == nil {
+		credential := credentialSummaryFromAccount(*account)
+		account.Credential = &credential
+	}
 }
 
 func markAccountDetailUnavailable(account *Account) {
@@ -538,6 +544,10 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 			})
 		}
 	}
+	credential := credentialSummaryFromAccount(account)
+	credential.AccountID = strings.TrimSpace(entry.Account)
+	credential.ProjectID = strings.TrimSpace(entry.ProjectID)
+	account.Credential = &credential
 	normalizeAgentIdentityNativeState(&account)
 	if !entry.NextRetryAfter.IsZero() {
 		nextRetryAfter := entry.NextRetryAfter.UTC()

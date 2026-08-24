@@ -54,12 +54,17 @@ export function AccountDetailsDialog({ account, creditUsageEnabled = false, week
           <DetailItem label={tx("ui.filename")} value={account.name} mono />
           <DetailItem label={tx("ui.account_index")} value={account.id} mono />
           <DetailItem label="Auth ID" value={account.auth_id} mono />
+          {account.credential?.account_id ? <DetailItem label={tx("ui.credential_account_id")} value={account.credential.account_id} mono /> : null}
+
           <DetailItem label={tx("ui.provider")} value={account.provider} />
           <DetailItem label={tx("ui.type")} value={account.type} />
           <DetailItem label={tx("ui.account_type")} value={account.account_type === "agent_identity" ? tx("ui.agent_identity") : account.account_type === "personal_access_token" ? tx("ui.codex_personal_access_token") : account.account_type} />
           <DetailItem label={tx("ui.plan_type")} value={account.plan_type} />
           <DetailItem label={tx("ui.source")} value={sourceLabel(account.source, locale)} />
           <DetailItem label={tx("ui.status")} value={accountStateLabel(account, locale)} />
+          {account.credential ? (
+            <DetailItem label={tx("ui.credential_runtime")} value={account.credential.runtime_loaded ? tx("ui.runtime_loaded") : account.credential.runtime_error || tx("ui.list_metadata_fallback")} wide />
+          ) : null}
           <DetailItem label={tx("ui.status_detail")} value={operatorMessage(account.status_message, locale)} />
           {!account.editable ? <DetailItem label={tx("ui.read_only_reason")} value={operatorMessage(account.read_only_reason, locale)} wide /> : null}
         </DetailSection>

@@ -1783,3 +1783,7 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-test-result.is-reachable { background: var(--success-soft, var(--bg-tertiary)); color: var(--success, var(--text-primary)); }
 .ai-provider-test-result.is-failed { background: var(--danger-soft); color: var(--danger); }
 .ai-provider-test-result span { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); }
+.ai-provider-runtime-detail { display: grid; gap: 10px; margin-top: 10px; }
+.ai-provider-runtime-models { width: 100%; min-width: 520px; }
+.ai-provider-runtime-models th, .ai-provider-runtime-models td { white-space: nowrap; }
+.ai-provider-table small { color: var(--text-secondary); font-family: var(--font-mono, ui-monospace, monospace); }

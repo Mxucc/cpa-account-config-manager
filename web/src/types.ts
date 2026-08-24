@@ -1,3 +1,35 @@
+export interface CredentialSummary {
+  id: string;
+  auth_id?: string;
+  name?: string;
+  provider?: string;
+  type?: string;
+  account_type?: string;
+  plan_type?: string;
+  label?: string;
+  email?: string;
+  project_id?: string;
+  account_id?: string;
+  status?: string;
+  status_message?: string;
+  disabled: boolean;
+  unavailable: boolean;
+  runtime_only: boolean;
+  editable: boolean;
+  source?: string;
+  path_available: boolean;
+  runtime_loaded: boolean;
+  runtime_error?: string;
+  success: number;
+  failed: number;
+  priority?: number;
+  websockets?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_refresh?: string;
+  next_retry_after?: string;
+}
+
 export interface Account {
   id: string;
   auth_id?: string;
@@ -37,6 +69,7 @@ export interface Account {
   automation?: AccountAutomationSummary;
 	model_policy?: AccountModelPolicySummary;
 	concurrency?: AccountConcurrencySummary;
+	credential?: CredentialSummary;
 }
 
 export interface AccountConcurrencyAvailability {
@@ -73,6 +106,7 @@ export interface AccountEditableConfig {
 	model_policy: AccountModelPolicySummary | null;
 	concurrency?: AccountConcurrencySummary;
 	account_concurrency?: AccountConcurrencyAvailability;
+	credential?: CredentialSummary;
 }
 
 export interface ModelPolicyPatch {
@@ -569,6 +603,7 @@ export interface ImportPreviewItem {
   source_path?: string;
   target_name: string;
   email?: string;
+  project_id?: string;
   account_id?: string;
   label: string;
   synthetic_id_token: boolean;
@@ -595,6 +630,7 @@ export interface ImportResultItem {
   source_path?: string;
   target_name: string;
   email?: string;
+  project_id?: string;
   account_id?: string;
   label: string;
   status: "imported" | "skipped" | "failed";
@@ -1175,6 +1211,44 @@ export interface AIProviderChannelEntry {
   account_id?: string;
   workspace_id?: string;
   key_set?: boolean;
+}
+
+export interface AIProviderRuntimeModelUsage {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  amount_usd: number;
+  rated: boolean;
+  rated_requests: number;
+  unrated_requests: number;
+}
+
+export interface AIProviderRuntimeSnapshot {
+  provider: string;
+  auth_index?: string;
+  identity: string;
+  supported: boolean;
+  reason?: string;
+  active: number;
+  limit: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  amount_usd: number;
+  rated_requests: number;
+  unrated_requests: number;
+  models?: AIProviderRuntimeModelUsage[];
+  updated_at: string;
+}
+
+export interface AIProviderRuntimeResponse {
+  snapshots: AIProviderRuntimeSnapshot[];
+  updated_at: string;
 }
 
 export interface AIProviderChannelSnapshot {

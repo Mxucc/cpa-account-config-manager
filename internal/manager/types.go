@@ -41,6 +41,7 @@ type Account struct {
 	Automation      *AccountAutomationSummary  `json:"automation,omitempty"`
 	ModelPolicy     *AccountModelPolicySummary `json:"model_policy,omitempty"`
 	Concurrency     AccountConcurrencySummary  `json:"concurrency"`
+	Credential      *CredentialSummary         `json:"credential,omitempty"`
 
 	detailAuthIndex string
 	path            string

@@ -31,6 +31,7 @@ import type {
 	AIProviderChannelEntry,
 	AIProviderAPIKeyEntry,
 	AIProviderChannelModel,
+	AIProviderRuntimeResponse,
 	ForceSyncJobSnapshot,
 	ForceSyncPreview,
   ExportFormat,
@@ -1072,6 +1073,10 @@ function channelEntriesFromResponse(kind: AIProviderChannelKind, payload: unknow
  * the CPA management API bans an IP after 5 failed attempts, so a wrong key
  * must surface once rather than as a burst.
  */
+export async function getAIProviderRuntime(): Promise<AIProviderRuntimeResponse> {
+  return managementRequest<AIProviderRuntimeResponse>("/ai-providers/runtime");
+}
+
 export async function listAIProviderChannels(): Promise<AIProviderChannelSnapshot[]> {
   const channels: AIProviderChannelSnapshot[] = [];
   for (const channel of AI_PROVIDER_CHANNELS) {

@@ -132,3 +132,17 @@ func (hostAdapter) AgentIdentityCloseStream(_ context.Context, request cpaapi.Ho
 	_, errCall := callHost(cpaapi.MethodHostStreamClose, request)
 	return errCall
 }
+
+// GetAuthRuntime is available in CPA schema v2 and intentionally remains an
+// optional manager capability so the plugin can run on older CPA releases.
+func (hostAdapter) GetAuthRuntime(_ context.Context, authIndex string) (cpaapi.HostAuthFileEntry, error) {
+	result, errCall := callHost(cpaapi.MethodHostAuthGetRuntime, cpaapi.HostAuthGetRequest{AuthIndex: authIndex})
+	if errCall != nil {
+		return cpaapi.HostAuthFileEntry{}, errCall
+	}
+	var response cpaapi.HostAuthGetRuntimeResponse
+	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+		return cpaapi.HostAuthFileEntry{}, fmt.Errorf("decode host auth runtime: %w", errUnmarshal)
+	}
+	return response.Auth, nil
+}

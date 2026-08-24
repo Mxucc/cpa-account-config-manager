@@ -10,6 +10,7 @@ import type {
   AIProviderChannelKind,
   AIProviderChannelModel,
   AIProviderChannelSnapshot,
+  AIProviderRuntimeSnapshot,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
@@ -287,6 +288,9 @@ function channelLabelKey(kind: AIProviderChannelKind): UIMessageKey {
 export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: AIProvidersSettingsProps) {
   const { locale, tx } = useI18n();
   const [channels, setChannels] = useState<AIProviderChannelSnapshot[]>([]);
+  const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
+  const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
+  const [runtimeError, setRuntimeError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -323,7 +327,38 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     }
   }, [handleError]);
 
+  const refreshRuntime = useCallback(async () => {
+    try {
+      const runtime = await api.getAIProviderRuntime();
+      setRuntimeSnapshots(runtime.snapshots ?? []);
+      setRuntimeUpdatedAt(runtime.updated_at ?? "");
+      setRuntimeError("");
+    } catch (caught) {
+      // Runtime metrics are observability only; never block provider editing.
+      setRuntimeError(caught instanceof Error ? caught.message : tx("ui.ai_provider_runtime_unavailable"));
+    }
+  }, [tx]);
+
   useEffect(() => { void refresh(); }, [refresh, refreshRevision]);
+  useEffect(() => {
+    void refreshRuntime();
+    const timer = window.setInterval(() => void refreshRuntime(), 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshRuntime, refreshRevision]);
+
+  const runtimeForEntry = (entry: AIProviderChannelEntry): AIProviderRuntimeSnapshot | undefined => {
+    const authIndex = (entry.auth_index ?? "").trim();
+    if (!authIndex) return undefined;
+    return runtimeSnapshots.find((snapshot) => snapshot.auth_index === authIndex);
+  };
+
+  const formatTokens = (value: number | undefined) => new Intl.NumberFormat(locale).format(Math.max(0, value ?? 0));
+  const formatAmount = (value: number | undefined) => {
+    const amount = Math.max(0, value ?? 0);
+    if (amount === 0) return "$0";
+    if (amount < 0.000001) return "<$0.000001";
+    return `$${amount.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+  };
 
   const resetForm = () => {
     setAdding(false);
@@ -782,6 +817,20 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
             {viewing.entry.headers && Object.keys(viewing.entry.headers).length > 0 ? (
               <div className="ai-provider-detail-row"><span>{tx("ui.headers")}</span><code>{Object.entries(viewing.entry.headers).map(([key, value]) => `${key}: ${maskSecret(value)}`).join("; ")}</code></div>
             ) : null}
+            {(() => {
+              const runtime = runtimeForEntry(viewing.entry);
+              if (!runtime) return <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_usage")}</span><strong>{tx("ui.ai_provider_identity_unavailable")}</strong></div>;
+              return (
+                <div className="ai-provider-runtime-detail">
+                  <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency")}</span><strong>{runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`}</strong></div>
+                  <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_total_tokens")}</span><strong>{formatTokens(runtime.total_tokens)}</strong></div>
+                  <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_estimated_cost")}</span><strong>{formatAmount(runtime.amount_usd)}</strong></div>
+                  {runtime.models && runtime.models.length > 0 ? (
+                    <table className="account-table ai-provider-runtime-models"><thead><tr><th>{tx("ui.ai_provider_model")}</th><th>{tx("ui.ai_provider_input_tokens")}</th><th>{tx("ui.ai_provider_output_tokens")}</th><th>{tx("ui.ai_provider_total")}</th><th>{tx("ui.ai_provider_cost")}</th></tr></thead><tbody>{runtime.models.map((model) => <tr key={model.model}><td>{model.model}</td><td>{formatTokens(model.input_tokens)}</td><td>{formatTokens(model.output_tokens)}</td><td>{formatTokens(model.total_tokens)}</td><td>{formatAmount(model.amount_usd)}</td></tr>)}</tbody></table>
+                  ) : <div className="ai-provider-field-note">{tx("ui.ai_provider_no_usage")}</div>}
+                </div>
+              );
+            })()}
           </div>
         </Modal>
       ) : null}
@@ -808,7 +857,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       ) : (
         <div className="ai-provider-table-wrap">
           <table className="account-table ai-provider-table">
-            <thead><tr><th>{tx("ui.ai_provider_type")}</th><th>{tx("ui.ai_provider_name")}</th><th>{tx("ui.ai_provider_base_url")}</th><th>{tx("ui.ai_provider_api_key")}</th><th>{tx("ui.status")}</th><th>{tx("ui.models")}</th><th>{tx("ui.actions")}</th></tr></thead>
+            <thead><tr><th>{tx("ui.ai_provider_type")}</th><th>{tx("ui.ai_provider_name")}</th><th>{tx("ui.ai_provider_base_url")}</th><th>{tx("ui.ai_provider_api_key")}</th><th>{tx("ui.status")}</th><th>{tx("ui.models")}</th><th>{tx("ui.ai_provider_concurrency")}</th><th>{tx("ui.ai_provider_usage")}</th><th>{tx("ui.actions")}</th></tr></thead>
             <tbody>
               {channels.flatMap((channel) => channel.entries.map((entry) => (
                 <tr key={`${channel.kind}-${entry.index}`}>
@@ -818,6 +867,13 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   <td className="ai-provider-table-secret">{maskSecret(entry.api_key) || (channel.kind === "opencode-go" ? tx("ui.opencode_auth_cookie") : channel.kind === "opencode-zen" ? (entry.key_set ? "••••" : "-") : "-")}</td>
                   <td>{entry.disabled ? <span className="ai-provider-entry-badge is-disabled">{tx("ui.disabled")}</span> : <span className="ai-provider-entry-badge">{tx("ui.enabled")}</span>}</td>
                   <td>{entry.models?.length ?? 0}</td>
+                  {(() => {
+                    const runtime = runtimeForEntry(entry);
+                    return <>
+                      <td title={runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : undefined}>{runtime ? (runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`) : "-"}</td>
+                      <td>{runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><br /><small>{formatAmount(runtime.amount_usd)}</small></> : <span title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</span>}</td>
+                    </>;
+                  })()}
                   <td className="ai-provider-table-actions">
                     <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                     <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={!entry.base_url || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>

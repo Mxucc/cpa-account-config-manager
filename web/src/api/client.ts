@@ -1134,6 +1134,16 @@ export async function putAIProviderChannel(kind: AIProviderChannelKind, items: u
   });
 }
 
+async function getRawAIProviderChannelItems(kind: AIProviderChannelKind): Promise<unknown[]> {
+  const payload = (await managementRequest<unknown>(`/${kind}`)) as Record<string, unknown>;
+  const raw = payload[kind];
+  if (!Array.isArray(raw)) throw new Error(kind + " channel is not available");
+  return raw.map((item) => {
+    if (typeof item === "string") return item;
+    return stripAuthIndex(item);
+  });
+}
+
 export async function deleteAIProviderChannelEntry(kind: AIProviderChannelKind, index: number, accountID?: string): Promise<void> {
   if (kind === "opencode-go") {
     if (!accountID) throw new Error("OpenCode account id is required");
@@ -1233,17 +1243,30 @@ export async function saveAIProviderChannelEntry(
   if (kind === "opencode-go" || kind === "opencode-zen") {
     throw new Error("saveAIProviderChannelEntry only supports host-managed channels");
   }
-  const payload = (await managementRequest<unknown>("/" + kind)) as Record<string, unknown>;
-  const raw = payload[kind];
-  if (!Array.isArray(raw)) throw new Error(kind + " channel is not available");
+  const raw = await getRawAIProviderChannelItems(kind);
   if (index < 0 || index >= raw.length) throw new Error(kind + " entry #" + (index + 1) + " was not found");
 
-  const items = raw.map((item) => stripAuthIndex(typeof item === "string" ? { "api-key": item } : (item as Record<string, unknown>)));
+  const items = raw.map((item) => typeof item === "string" ? { "api-key": item } : { ...(item as Record<string, unknown>) });
   const target = items[index];
   const patched: Record<string, unknown> = { ...target };
 
-  if (patch.api_key !== undefined && patch.api_key.trim() !== "") {
-    patched["api-key"] = patch.api_key.trim();
+  const replacementAPIKey = patch.api_key?.trim() ?? "";
+  if (kind === "openai-compatibility") {
+    const keyEntries = patch.api_key_entries !== undefined
+      ? (keyEntriesToJSON(patch.api_key_entries) ?? [])
+      : Array.isArray(patched["api-key-entries"])
+        ? (patched["api-key-entries"] as Record<string, unknown>[]).map((entry) => ({ ...entry }))
+        : [];
+    if (replacementAPIKey) {
+      if (keyEntries.length === 0) keyEntries.push({ "api-key": replacementAPIKey });
+      else keyEntries[0] = { ...keyEntries[0], "api-key": replacementAPIKey };
+    }
+    if (patch.api_key_entries !== undefined || replacementAPIKey) patched["api-key-entries"] = keyEntries;
+    // OpenAI-compatible credentials only exist inside api-key-entries. A
+    // top-level api-key is accepted by JSON but ignored by CPA.
+    delete patched["api-key"];
+  } else if (replacementAPIKey) {
+    patched["api-key"] = replacementAPIKey;
   }
   if (patch.name !== undefined) patched["name"] = patch.name.trim();
   if (patch.base_url !== undefined) patched["base-url"] = patch.base_url.trim();
@@ -1271,7 +1294,9 @@ export async function saveAIProviderChannelEntry(
     else delete patched["excluded-models"];
   }
   if (patch.models !== undefined) patched["models"] = patch.models.map(modelToJSON);
-  if (patch.api_key_entries !== undefined) patched["api-key-entries"] = keyEntriesToJSON(patch.api_key_entries);
+  if (patch.api_key_entries !== undefined && kind !== "openai-compatibility") {
+    patched["api-key-entries"] = keyEntriesToJSON(patch.api_key_entries);
+  }
 
   items[index] = patched;
   await putAIProviderChannel(kind, items);
@@ -1352,28 +1377,14 @@ export async function addAIProviderChannel(kind: AIProviderChannelKind, provider
   }
   if (kind === "api-keys") {
     const apiKey = (provider as NewAPIKeyProvider).api_key.trim();
-    const current = await listAIProviderChannels();
-    const existing = current.find((channel) => channel.kind === kind);
-    const items = [...(existing?.entries ?? []).map((entry) => entry.api_key ?? ""), apiKey];
+    const items = await getRawAIProviderChannelItems(kind);
+    items.push(apiKey);
     await putAIProviderChannel(kind, items);
     return;
   }
   const openai = provider as NewOpenAICompatibilityProvider;
-  const current = await listAIProviderChannels();
-  const existing = current.find((channel) => channel.kind === kind);
+  const items = await getRawAIProviderChannelItems(kind);
   if (kind === "openai-compatibility") {
-    const items = (existing?.entries ?? []).map((entry) => ({
-      name: entry.name ?? "",
-      "base-url": entry.base_url ?? "",
-      "api-key-entries": entry.api_key
-        ? [{ "api-key": entry.api_key, ...(entry.proxy_url ? { "proxy-url": entry.proxy_url } : {}) }]
-        : [],
-      ...(entry.prefix ? { prefix: entry.prefix } : {}),
-      ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
-      ...(entry.disabled ? { disabled: true } : {}),
-      ...(entry.models && entry.models.length > 0 ? { models: entry.models } : {}),
-      ...(entry.headers ? { headers: entry.headers } : {}),
-    }));
     items.push({
       name: openai.name.trim(),
       "base-url": openai.base_url.trim(),
@@ -1384,13 +1395,6 @@ export async function addAIProviderChannel(kind: AIProviderChannelKind, provider
   }
   // Plain API-key channels (gemini / interactions / claude / codex / xai / vertex).
   const apiKeyProvider = provider as NewAPIKeyProvider;
-  const items = (existing?.entries ?? []).map((entry) => ({
-    "api-key": entry.api_key ?? "",
-    ...(entry.base_url ? { "base-url": entry.base_url } : {}),
-    ...(entry.proxy_url ? { "proxy-url": entry.proxy_url } : {}),
-    ...(entry.prefix ? { prefix: entry.prefix } : {}),
-    ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
-  }));
   items.push({
     "api-key": apiKeyProvider.api_key.trim(),
     ...(apiKeyProvider.base_url?.trim() ? { "base-url": apiKeyProvider.base_url.trim() } : {}),

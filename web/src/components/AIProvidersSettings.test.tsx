@@ -52,7 +52,21 @@ describe("AIProvidersSettings", () => {
 
   it("lists provider channels with redacted keys and adds an OpenAI-compatible provider", async () => {
     const user = userEvent.setup();
-    const requests = providerFetchMock();
+    const requests = providerFetchMock({
+      "openai-compatibility": [
+        {
+          name: "OpenRouter",
+          "base-url": "https://openrouter.ai/api/v1",
+          "api-key-entries": [
+            { "api-key": "sk-or-live-1234abcd", weight: 2, "proxy-url": "https://key-proxy.example" },
+            { "api-key": "sk-or-backup-5678", weight: 1 },
+          ],
+          models: [{ name: "deepseek-chat", alias: "deepseek-chat" }],
+          "support-prompt-cache-key": true,
+          "disable-cooling": true,
+        },
+      ],
+    });
     const onNotice = vi.fn();
 
     render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
@@ -85,9 +99,56 @@ describe("AIProvidersSettings", () => {
     const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
     expect(body).toHaveLength(2);
     expect(body[0]).toMatchObject({ name: "OpenRouter", "base-url": "https://openrouter.ai/api/v1" });
+    expect(body[0]["api-key-entries"]).toEqual([
+      { "api-key": "sk-or-live-1234abcd", weight: 2, "proxy-url": "https://key-proxy.example" },
+      { "api-key": "sk-or-backup-5678", weight: 1 },
+    ]);
+    expect(body[0]).toMatchObject({ "support-prompt-cache-key": true, "disable-cooling": true });
     expect(body[1]).toMatchObject({ name: "MyProvider", "base-url": "https://my.example.com/v1" });
     expect(JSON.stringify(body)).toContain("sk-new-secret-1234");
     expect(onNotice).toHaveBeenCalledWith("AI 提供商已添加");
+  });
+
+  it("saves a replacement OpenAI-compatible API key inside api-key-entries", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock({
+      "openai-compatibility": [
+        {
+          name: "OpenRouter",
+          "base-url": "https://openrouter.ai/api/v1",
+          "api-key-entries": [
+            { "api-key": "sk-or-live-1234abcd", weight: 2, "proxy-url": "https://first-proxy.example" },
+            { "api-key": "sk-or-backup-5678", weight: 1, "proxy-url": "https://backup-proxy.example" },
+          ],
+        },
+      ],
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+    const passwordInputs = dialog.querySelectorAll<HTMLInputElement>('input[type="password"]');
+    expect(passwordInputs.length).toBeGreaterThanOrEqual(1);
+    await user.type(passwordInputs[0], "sk-replacement-5678");
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
+    expect(body[0]).toMatchObject({
+      name: "OpenRouter",
+      "api-key-entries": [
+        { "api-key": "sk-replacement-5678", weight: 2, "proxy-url": "https://first-proxy.example" },
+        { "api-key": "sk-or-backup-5678", weight: 1, "proxy-url": "https://backup-proxy.example" },
+      ],
+    });
+    expect(body[0]["api-key"]).toBeUndefined();
   });
 
   it("offers every provider type when adding a new provider", async () => {

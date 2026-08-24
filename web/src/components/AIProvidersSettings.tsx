@@ -458,8 +458,12 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         if (editing.kind === "openai-compatibility") {
           patch.support_prompt_cache_key = editing.supportPromptCacheKey;
           const apiKeyEntries = editing.apiKeyEntries
-            .map((keyEntry) => ({ apiKey: keyEntry.apiKey.trim(), weight: keyEntry.weight.trim(), proxyURL: keyEntry.proxyURL.trim() }))
-            .filter((keyEntry) => keyEntry.apiKey);
+            .map((keyEntry) => ({
+              api_key: keyEntry.apiKey.trim(),
+              weight: keyEntry.weight.trim(),
+              proxy_url: keyEntry.proxyURL.trim(),
+            }))
+            .filter((keyEntry) => keyEntry.api_key);
           if (apiKeyEntries.length > 0) patch.api_key_entries = apiKeyEntries;
         }
         if (editing.kind === "codex-api-key" || editing.kind === "xai-api-key") patch.alpha_search = editing.alphaSearch;

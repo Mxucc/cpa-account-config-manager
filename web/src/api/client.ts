@@ -1158,7 +1158,7 @@ export async function deleteAIProviderChannelEntry(kind: AIProviderChannelKind, 
   await managementRequest<void>(`/${kind}?index=${index}`, { method: "DELETE" });
 }
 
-export async function patchAIProviderChannelEntry(kind: AIProviderChannelKind, index: number, value: Record<string, unknown>): Promise<void> {
+export async function patchAIProviderChannelEntry(kind: AIProviderChannelKind, index: number, value: Record<string, unknown> | string): Promise<void> {
   await managementRequest<void>(`/${kind}`, {
     method: "PATCH",
     body: JSON.stringify({ index, value }),
@@ -1269,9 +1269,21 @@ export async function saveAIProviderChannelEntry(
     patched["api-key"] = replacementAPIKey;
   }
   if (patch.name !== undefined) patched["name"] = patch.name.trim();
-  if (patch.base_url !== undefined) patched["base-url"] = patch.base_url.trim();
-  if (patch.proxy_url !== undefined) patched["proxy-url"] = patch.proxy_url.trim();
-  if (patch.prefix !== undefined) patched["prefix"] = patch.prefix.trim();
+  if (patch.base_url !== undefined) {
+    const baseURL = patch.base_url.trim();
+    if (baseURL) patched["base-url"] = baseURL;
+    else delete patched["base-url"];
+  }
+  if (patch.proxy_url !== undefined) {
+    const proxyURL = patch.proxy_url.trim();
+    if (proxyURL) patched["proxy-url"] = proxyURL;
+    else delete patched["proxy-url"];
+  }
+  if (patch.prefix !== undefined) {
+    const prefix = patch.prefix.trim();
+    if (prefix) patched["prefix"] = prefix;
+    else delete patched["prefix"];
+  }
   const priority = normalizedNumber(patch.priority);
   if (priority !== undefined) {
     if (priority === null) delete patched["priority"];
@@ -1279,16 +1291,19 @@ export async function saveAIProviderChannelEntry(
   }
   const weight = normalizedNumber(patch.weight);
   if (weight !== undefined) {
-    if (weight === null) patched["weight"] = null;
+    if (weight === null) delete patched["weight"];
     else patched["weight"] = weight;
   }
-  if (patch.disabled !== undefined) patched["disabled"] = patch.disabled;
+  if (patch.disabled !== undefined && kind === "openai-compatibility") patched["disabled"] = patch.disabled;
   if (patch.support_prompt_cache_key !== undefined) patched["support-prompt-cache-key"] = patch.support_prompt_cache_key;
   if (patch.disable_cooling !== undefined) patched["disable-cooling"] = patch.disable_cooling;
   if (patch.alpha_search !== undefined) patched["alpha-search"] = patch.alpha_search;
   if (patch.websockets !== undefined) patched["websockets"] = patch.websockets;
   if (patch.rebuild_mid_system_message !== undefined) patched["rebuild-mid-system-message"] = patch.rebuild_mid_system_message;
-  if (patch.headers !== undefined) patched["headers"] = patch.headers;
+  if (patch.headers !== undefined) {
+    if (Object.keys(patch.headers).length > 0) patched["headers"] = patch.headers;
+    else delete patched["headers"];
+  }
   if (patch.excluded_models !== undefined) {
     if (patch.excluded_models.length > 0) patched["excluded-models"] = patch.excluded_models;
     else delete patched["excluded-models"];
@@ -1308,10 +1323,14 @@ export interface AIProviderProbeResult {
   detail?: string;
 }
 
-export async function testAIProviderChannel(baseURL: string, apiKey: string, timeoutSeconds = 15): Promise<AIProviderProbeResult> {
+export async function testAIProviderChannel(baseURL: string, apiKey: string, timeoutSeconds = 15, headers?: Record<string, string>): Promise<AIProviderProbeResult> {
+  return testAIProviderChannelForKind("openai-compatibility", baseURL, apiKey, timeoutSeconds, headers);
+}
+
+export async function testAIProviderChannelForKind(kind: AIProviderChannelKind, baseURL: string, apiKey: string, timeoutSeconds = 15, headers?: Record<string, string>): Promise<AIProviderProbeResult> {
   const response = await request<AIProviderProbeResult>("/ai-providers/test", {
     method: "POST",
-    body: JSON.stringify({ base_url: baseURL, api_key: apiKey, timeout_seconds: timeoutSeconds }),
+    body: JSON.stringify({ kind, base_url: baseURL, api_key: apiKey, timeout_seconds: timeoutSeconds, ...(headers && Object.keys(headers).length > 0 ? { headers } : {}) }),
   });
   return response;
 }
@@ -1324,7 +1343,13 @@ export async function setAIProviderChannelEnabled(kind: AIProviderChannelKind, i
     return;
   }
   // API-key channels gate credentials through weight (0 excludes the credential).
-  await patchAIProviderChannelEntry(kind, index, { weight: enabled ? 1 : 0 });
+  // Preserve the configured non-zero weight when re-enabling; blindly writing 1
+  // used to turn a weighted key (for example 100) into a different route.
+  const items = await getRawAIProviderChannelItems(kind);
+  const raw = items[index];
+  const current = typeof raw === "string" ? undefined : Number((raw as Record<string, unknown>)?.weight);
+  const restoredWeight = typeof current === "number" && Number.isFinite(current) && current > 0 ? current : 1;
+  await patchAIProviderChannelEntry(kind, index, { weight: enabled ? restoredWeight : 0 });
 }
 
 export interface NewOpenAICompatibilityProvider {

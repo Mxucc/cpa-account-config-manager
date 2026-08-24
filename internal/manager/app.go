@@ -315,11 +315,11 @@ func (a *App) HandleRequestBefore(request cpaapi.RequestInterceptRequest) cpaapi
 }
 
 func (a *App) RequestInterceptionActive() bool {
-	return a != nil && a.requestHooks != nil && a.requestHooks.Active()
+	return a != nil && a.requestLifecycleAvailable() && a.requestHooks != nil && a.requestHooks.Active()
 }
 
 func (a *App) RequestInterceptionAcceptsFormat(format string) bool {
-	return a != nil && a.requestHooks != nil && a.requestHooks.AcceptsFormat(format)
+	return a != nil && a.requestLifecycleAvailable() && a.requestHooks != nil && a.requestHooks.AcceptsFormat(format)
 }
 
 func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
@@ -342,7 +342,16 @@ func (a *App) HandleRequestComplete(completion cpaapi.RequestCompletion) {
 }
 
 func (a *App) RequestCompletionActive() bool {
-	return a != nil && ((a.concurrency != nil && a.concurrency.RequestInterceptionActive()) || a.providerRuntime != nil)
+	return a != nil && a.requestLifecycleAvailable() && ((a.concurrency != nil && a.concurrency.RequestInterceptionActive()) || a.providerRuntime != nil)
+}
+
+func (a *App) requestLifecycleAvailable() bool {
+	if a == nil {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return normalizeHostSchemaVersion(a.hostSchema) >= cpaapi.SchemaVersion
 }
 
 func (a *App) HandleAgentIdentityAuthParse(request cpaapi.AuthParseRequest) (cpaapi.AuthParseResponse, error) {

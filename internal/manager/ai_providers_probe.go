@@ -15,10 +15,11 @@ import (
 // test connectivity. Secrets are accepted only from the authenticated
 // management request and are never persisted or logged.
 type AIProviderProbeRequest struct {
-	Kind    string `json:"kind"`
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key,omitempty"`
-	Timeout int    `json:"timeout_seconds,omitempty"`
+	Kind    string            `json:"kind"`
+	BaseURL string            `json:"base_url"`
+	APIKey  string            `json:"api_key,omitempty"`
+	Timeout int               `json:"timeout_seconds,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // AIProviderProbeResult reports whether the channel endpoint is reachable and
@@ -45,15 +46,20 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid provider probe request"})
 	}
+	kind := normalizeAIProviderKind(request.Kind)
+	apiKey := strings.TrimSpace(request.APIKey)
+	if apiKey == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "api_key is required"})
+	}
 	baseURL := strings.TrimSpace(request.BaseURL)
 	if baseURL == "" {
-		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "base_url is required"})
+		baseURL = defaultAIProviderProbeURL(kind)
 	}
 	timeout := time.Duration(aiProviderProbeMaxTimeoutSeconds) * time.Second
 	if request.Timeout >= 1 && request.Timeout <= aiProviderProbeMaxTimeoutSeconds {
 		timeout = time.Duration(request.Timeout) * time.Second
 	}
-	result := a.probeAIProviderEndpoint(ctx, baseURL, strings.TrimSpace(request.APIKey), timeout)
+	result := a.probeAIProviderEndpoint(ctx, kind, baseURL, apiKey, request.Headers, timeout)
 	status := http.StatusOK
 	if !result.Reachable {
 		status = http.StatusBadGateway
@@ -61,7 +67,7 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	return jsonResponse(status, AIProviderProbeResult{Reachable: result.Reachable, StatusCode: result.StatusCode, Detail: result.Detail})
 }
 
-func (a *App) probeAIProviderEndpoint(ctx context.Context, baseURL, apiKey string, timeout time.Duration) AIProviderProbeResult {
+func (a *App) probeAIProviderEndpoint(ctx context.Context, kind, baseURL, apiKey string, customHeaders map[string]string, timeout time.Duration) AIProviderProbeResult {
 	probeURL, errParse := url.Parse(baseURL)
 	if errParse != nil || probeURL.Scheme == "" || probeURL.Host == "" {
 		return AIProviderProbeResult{Reachable: false, Detail: "invalid base URL"}
@@ -91,9 +97,15 @@ func (a *App) probeAIProviderEndpoint(ctx context.Context, baseURL, apiKey strin
 				"Accept": []string{"application/json"},
 			},
 		}
-		if strings.TrimSpace(apiKey) != "" {
-			request.Headers.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+		for key, value := range customHeaders {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key == "" || value == "" || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+				continue
+			}
+			request.Headers.Set(key, value)
 		}
+		applyAIProviderProbeAuth(request.Headers, kind, apiKey)
 		response, errDo := transport.AgentIdentityDo(probeCtx, "", request)
 		if errDo != nil {
 			lastDetail = sanitizeAIProviderProbeError(errDo)
@@ -109,6 +121,47 @@ func (a *App) probeAIProviderEndpoint(ctx context.Context, baseURL, apiKey strin
 		}
 	}
 	return AIProviderProbeResult{Reachable: false, StatusCode: lastStatus, Detail: lastDetail}
+}
+
+func normalizeAIProviderKind(kind string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		return "openai-compatibility"
+	}
+	return kind
+}
+
+func defaultAIProviderProbeURL(kind string) string {
+	switch normalizeAIProviderKind(kind) {
+	case "claude-api-key":
+		return "https://api.anthropic.com/v1/models"
+	case "gemini-api-key":
+		return "https://generativelanguage.googleapis.com/v1beta/models"
+	case "xai-api-key":
+		return "https://api.x.ai/v1/models"
+	case "vertex-api-key":
+		return "https://aiplatform.googleapis.com/v1/publishers/google/models"
+	case "opencode-go", "opencode-zen":
+		return "https://api.openai.com/v1/models"
+	default:
+		return "https://api.openai.com/v1/models"
+	}
+}
+
+func applyAIProviderProbeAuth(headers http.Header, kind, apiKey string) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return
+	}
+	switch normalizeAIProviderKind(kind) {
+	case "claude-api-key":
+		headers.Set("x-api-key", apiKey)
+		headers.Set("anthropic-version", "2023-06-01")
+	case "gemini-api-key", "vertex-api-key":
+		headers.Set("x-goog-api-key", apiKey)
+	default:
+		headers.Set("Authorization", "Bearer "+apiKey)
+	}
 }
 
 func aiProviderProbeStatusDetail(statusCode int) string {

@@ -108,7 +108,7 @@ func (s *AccountService) enrichRuntimeCredential(ctx context.Context, account *A
 		applyRuntimeCredentialSummary(summary, runtime)
 		return
 	}
-	summary.RuntimeError = "当前 CPA 版本不支持运行时凭据详情，已使用列表元数据"
+	summary.RuntimeError = "runtime credential details require CPA schema v2"
 }
 
 func applyRuntimeCredentialSummary(summary *CredentialSummary, runtime cpaapi.HostAuthFileEntry) {
@@ -170,7 +170,7 @@ func sanitizeCredentialRuntimeError(err error) string {
 	}
 	// Never echo a token-like value if a host accidentally includes one in an error.
 	if strings.Contains(strings.ToLower(message), "token") || strings.Contains(strings.ToLower(message), "secret") || strings.Contains(strings.ToLower(message), "apikey") {
-		return "运行时凭据详情不可用"
+		return "runtime credential details unavailable"
 	}
 	return message
 }

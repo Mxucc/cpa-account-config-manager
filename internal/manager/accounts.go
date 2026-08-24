@@ -545,7 +545,6 @@ func projectHostEntry(entry cpaapi.HostAuthFileEntry, pathCounts, indexCounts ma
 		}
 	}
 	credential := credentialSummaryFromAccount(account)
-	credential.AccountID = strings.TrimSpace(entry.Account)
 	credential.ProjectID = strings.TrimSpace(entry.ProjectID)
 	account.Credential = &credential
 	normalizeAgentIdentityNativeState(&account)

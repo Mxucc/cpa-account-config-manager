@@ -435,36 +435,34 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       } else if (editing.kind === "api-keys") {
         // api-keys is a plain string list: PATCH { index, value } is the only safe touch.
         if (editing.apiKey.trim()) {
-          await api.patchAIProviderChannelEntry(editing.kind, editing.index, { "api-key": editing.apiKey.trim() });
+          await api.patchAIProviderChannelEntry(editing.kind, editing.index, editing.apiKey.trim());
         }
         onNotice(tx("ui.ai_provider_saved"));
       } else {
-        const patch: api.AIProviderChannelEntryPatch = {};
-        if (editing.name.trim()) patch.name = editing.name.trim();
-        if (editing.baseURL.trim()) patch.base_url = editing.baseURL.trim();
+        const patch: api.AIProviderChannelEntryPatch = {
+          name: editing.name.trim(),
+          base_url: editing.baseURL.trim(),
+          prefix: editing.prefix.trim(),
+          proxy_url: editing.proxyURL.trim(),
+          headers: headersToMap(editing.headersText),
+          disabled: editing.disabled,
+          priority: editing.priority.trim() ? editing.priority.trim() : null,
+          weight: editing.weight.trim() ? editing.weight.trim() : null,
+        };
         if (editing.apiKey.trim()) patch.api_key = editing.apiKey.trim();
-        if (editing.disabled) patch.disabled = editing.disabled;
-        if (editing.prefix.trim()) patch.prefix = editing.prefix.trim();
-        if (editing.priority.trim()) patch.priority = editing.priority.trim();
-        if (editing.weight.trim()) patch.weight = editing.weight.trim();
-        if (editing.proxyURL.trim()) patch.proxy_url = editing.proxyURL.trim();
-        const headers = headersToMap(editing.headersText);
-        if (headers) patch.headers = headers;
         if (editing.kind !== "openai-compatibility") {
-          const excluded = listToArray(editing.excludedText);
-          if (excluded.length > 0) patch.excluded_models = excluded;
+          patch.excluded_models = listToArray(editing.excludedText);
           patch.disable_cooling = editing.disableCooling;
         }
         if (editing.kind === "openai-compatibility") {
           patch.support_prompt_cache_key = editing.supportPromptCacheKey;
-          const apiKeyEntries = editing.apiKeyEntries
+          patch.api_key_entries = editing.apiKeyEntries
             .map((keyEntry) => ({
               api_key: keyEntry.apiKey.trim(),
               weight: keyEntry.weight.trim(),
               proxy_url: keyEntry.proxyURL.trim(),
             }))
             .filter((keyEntry) => keyEntry.api_key);
-          if (apiKeyEntries.length > 0) patch.api_key_entries = apiKeyEntries;
         }
         if (editing.kind === "codex-api-key" || editing.kind === "xai-api-key") patch.alpha_search = editing.alphaSearch;
         if (editing.kind === "codex-api-key") patch.websockets = editing.websockets;
@@ -483,7 +481,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               ...(model.output_modalities && model.output_modalities.length > 0 ? { output_modalities: model.output_modalities } : {}),
             }))
             .filter((model) => model.name.trim());
-          if (models.length > 0) patch.models = models;
+          patch.models = models;
         }
         await api.saveAIProviderChannelEntry(editing.kind, editing.index, patch);
         onNotice(tx("ui.ai_provider_saved"));
@@ -529,7 +527,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
 
   const testChannel = async (entry: AIProviderChannelEntry, kind: AIProviderChannelKind) => {
     if (busy) return;
-    if (kind !== "opencode-zen" && !entry.base_url) return;
+    if (kind === "opencode-go") return;
     if (kind === "opencode-zen" && !entry.account_id) return;
     setBusy(true);
     setError("");
@@ -538,7 +536,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     try {
       const result = kind === "opencode-zen"
         ? (await api.probeOpenCodeZenAccount(entry.account_id as string)).result
-        : await api.testAIProviderChannel(entry.base_url ?? "", entry.api_key ?? "");
+        : await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers);
       setTestResult(result);
     } catch (caught) {
       handleError(caught);
@@ -880,7 +878,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   })()}
                   <td className="ai-provider-table-actions">
                     <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
-                    <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={!entry.base_url || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
+                    <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
                     <IconButton label={tx("ui.edit_ai_provider")} onClick={() => setEditing({ kind: channel.kind, index: entry.index, name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: (entry.api_key_entries ?? []).map((keyEntry) => ({ apiKey: keyEntry.api_key ?? "", weight: keyEntry.weight !== undefined && keyEntry.weight !== null ? String(keyEntry.weight) : "", proxyURL: keyEntry.proxy_url ?? "" })), supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, accountID: entry.account_id, workspaceID: entry.workspace_id })}><Save size={15} /></IconButton>
                     {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                       <>

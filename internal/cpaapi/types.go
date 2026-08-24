@@ -523,6 +523,11 @@ type HostAuthGetResponse struct {
 	JSON      json.RawMessage `json:"json"`
 }
 
+// HostAuthGetRuntimeResponse returns runtime credential information by auth index.
+type HostAuthGetRuntimeResponse struct {
+	Auth HostAuthFileEntry `json:"auth"`
+}
+
 type HostAuthSaveRequest struct {
 	Name string          `json:"name"`
 	JSON json.RawMessage `json:"json"`

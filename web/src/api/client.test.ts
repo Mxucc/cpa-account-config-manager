@@ -36,6 +36,10 @@ import {
   removeOpenCodeAccount,
   refreshOpenCodeQuota,
   probeOpenCodeQuota,
+  patchAIProviderChannelEntry,
+  saveAIProviderChannelEntry,
+  setAIProviderChannelEnabled,
+  testAIProviderChannelForKind,
 } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
@@ -44,6 +48,88 @@ describe("management API client", () => {
     _resetSessionForTest();
     localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  it("uses the host string-list PATCH shape for api keys", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await patchAIProviderChannelEntry("api-keys", 2, "sk-replacement");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cpa.example/v0/management/api-keys");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ index: 2, value: "sk-replacement" });
+  });
+
+  it("sends provider kind for provider probes", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ reachable: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await testAIProviderChannelForKind("claude-api-key", "", "sk-claude");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ kind: "claude-api-key", api_key: "sk-claude" });
+  });
+
+  it("preserves weighted API-key channels when toggled back on", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ "gemini-api-key": [{ "api-key": "AIza-test", weight: 100 }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await setAIProviderChannelEnabled("gemini-api-key", 0, true);
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ index: 0, value: { weight: 100 } });
+  });
+
+  it("clears optional provider fields without dropping unknown host configuration", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        "openai-compatibility": [{
+          name: "OpenRouter",
+          "base-url": "https://openrouter.example/v1",
+          prefix: "old-prefix",
+          "proxy-url": "https://proxy.example",
+          headers: { "X-Test": "old" },
+          priority: 8,
+          weight: 100,
+          models: [{ name: "old-model" }],
+          "api-key-entries": [{ "api-key": "sk-existing" }],
+          "future-host-field": { enabled: true },
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveAIProviderChannelEntry("openai-compatibility", 0, {
+      name: "OpenRouter",
+      base_url: "https://openrouter.example/v1",
+      prefix: "",
+      proxy_url: "",
+      headers: {},
+      priority: null,
+      weight: null,
+      models: [],
+      api_key_entries: [],
+      disabled: false,
+    });
+
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as Array<Record<string, unknown>>;
+    expect(body[0]).toMatchObject({
+      name: "OpenRouter",
+      "base-url": "https://openrouter.example/v1",
+      models: [],
+      "api-key-entries": [],
+      disabled: false,
+      "future-host-field": { enabled: true },
+    });
+    for (const removed of ["prefix", "proxy-url", "headers", "priority", "weight"]) {
+      expect(body[0][removed]).toBeUndefined();
+    }
   });
 
   it("adds the in-memory management key and serializes filters", async () => {

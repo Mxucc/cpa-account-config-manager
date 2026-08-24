@@ -72,7 +72,7 @@ func TestCredentialSummaryRuntimeFailureIsNonBlockingAndListDoesNotCallRuntime(t
 	if err != nil {
 		t.Fatalf("CredentialSummary() error = %v", err)
 	}
-	if summary.RuntimeError != "运行时凭据详情不可用" {
+	if summary.RuntimeError != "runtime credential details unavailable" {
 		t.Fatalf("runtime error = %q", summary.RuntimeError)
 	}
 }

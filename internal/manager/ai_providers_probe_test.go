@@ -13,10 +13,12 @@ import (
 type fakeProbeTransport struct {
 	responses []cpaapi.HostHTTPResponse
 	errors    []error
+	requests  []cpaapi.HostHTTPRequest
 	calls     int
 }
 
-func (t *fakeProbeTransport) AgentIdentityDo(_ context.Context, _ string, _ cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error) {
+func (t *fakeProbeTransport) AgentIdentityDo(_ context.Context, _ string, request cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error) {
+	t.requests = append(t.requests, request)
 	index := t.calls
 	t.calls++
 	if index < len(t.errors) && t.errors[index] != nil {
@@ -85,7 +87,36 @@ func TestAIProviderProbeRejectsUnauthorized(t *testing.T) {
 	}
 }
 
-func TestAIProviderProbeRequiresBaseURLAndKey(t *testing.T) {
+func TestAIProviderProbeUsesProviderSpecificAuthenticationAndDefaultEndpoint(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{StatusCode: http.StatusOK}}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/ai-providers/test",
+		Headers: http.Header{
+			"Authorization": []string{"Bearer management-secret"},
+		},
+		Body: []byte(`{"kind":"claude-api-key","api_key":"claude-secret"}`),
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("probe status = %d, body = %s", response.StatusCode, response.Body)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("probe requests = %d", len(transport.requests))
+	}
+	request := transport.requests[0]
+	if request.URL != "https://api.anthropic.com/v1/models" {
+		t.Fatalf("probe URL = %q", request.URL)
+	}
+	if request.Headers.Get("x-api-key") != "claude-secret" || request.Headers.Get("anthropic-version") == "" {
+		t.Fatalf("provider authentication headers were not applied")
+	}
+	if request.Headers.Get("Authorization") != "" {
+		t.Fatalf("Claude API key leaked into Authorization header")
+	}
+}
+
+func TestAIProviderProbeRequiresAPIKey(t *testing.T) {
 	app := &App{agentIdentity: &AgentIdentityExperiment{transport: &fakeProbeTransport{}}}
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPost,

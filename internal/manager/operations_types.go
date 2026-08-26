@@ -91,6 +91,18 @@ const (
 	OperationFailurePolicyModelPolicyApply       = "policy_model_policy_apply_failed"
 	OperationFailurePolicyQuotaMetadata          = "policy_quota_metadata_probe_failed"
 	OperationFailurePolicyStatePersist           = "policy_state_persist_failed"
+	OperationFailureInspectionAuthHost           = "inspection_auth_host_unavailable"
+	OperationFailureInspectionAccountReadOnly    = "inspection_account_not_editable"
+	OperationFailureInspectionOwnership          = "inspection_disable_ownership_changed"
+	OperationFailureInspectionAuthRead           = "inspection_auth_read_failed"
+	OperationFailureInspectionAuthIdentity       = "inspection_auth_identity_changed"
+	OperationFailureInspectionAuthSource         = "inspection_auth_source_changed"
+	OperationFailureInspectionAuthJSON           = "inspection_auth_json_invalid"
+	OperationFailureInspectionAuthField          = "inspection_auth_field_invalid"
+	OperationFailureInspectionAuthUpdate         = "inspection_auth_update_failed"
+	OperationFailureInspectionAuthSave           = "inspection_auth_save_failed"
+	OperationFailureInspectionMutation           = "inspection_mutation_failed"
+	OperationFailureModelTestInspectionRecord    = "model_test_inspection_record_failed"
 )
 
 type OperationFailureDetail struct {

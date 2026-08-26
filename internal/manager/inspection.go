@@ -19,6 +19,8 @@ const (
 	inspectionStartupDelay = 100 * time.Millisecond
 )
 
+var inspectionPersistRetryDelay = 30 * time.Second
+
 type InspectionEngine struct {
 	mu                         sync.RWMutex
 	scanMu                     sync.Mutex
@@ -81,8 +83,12 @@ type InspectionEngine struct {
 	activeCancel               context.CancelFunc
 	scanStarted                time.Time
 	storageErr                 string
+	loadFailed                 bool
 	dirty                      bool
 	generation                 uint64
+	persistedGeneration        uint64
+	retryTimer                 *time.Timer
+	retryScheduled             bool
 	scanWake                   chan struct{}
 	persistWake                chan struct{}
 	notificationWake           chan anomalyNotificationEvent
@@ -94,6 +100,7 @@ type InspectionEngine struct {
 
 type overdraftCycleTracker interface {
 	BeginOverdraftCycle(string, string, time.Time)
+	MarkOverdraftCycle(string, string, string, string, time.Time)
 	StopOverdraftCycle(string)
 }
 
@@ -183,7 +190,7 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.scanMu.Lock()
 	defer e.scanMu.Unlock()
 	e.mu.RLock()
-	sameStore := e.started && e.store == storePath
+	sameStore := e.started && e.store == storePath && !e.loadFailed
 	e.mu.RUnlock()
 	if sameStore {
 		e.mu.Lock()
@@ -196,13 +203,29 @@ func (e *InspectionEngine) Configure(config Config) {
 		}
 		e.mu.Unlock()
 		if hasConfiguredPolicy && errConfiguredPolicy == nil && !reflect.DeepEqual(currentPolicy, configuredPolicy) {
-			if _, errSave := e.SetPolicy(configuredPolicy); errSave != nil {
+			if _, errSave := e.setPolicyInternal(configuredPolicy); errSave != nil {
 				e.mu.Lock()
 				e.storageErr = "inspection state could not be persisted"
 				e.mu.Unlock()
 			}
 		}
 		return
+	}
+
+	// A data-directory change must not discard a dirty in-memory inspection
+	// snapshot. Persist the old store before replacing it; if that fails, keep
+	// the current store active so a later Configure or retry can recover.
+	e.mu.RLock()
+	needsFlush := e.started && e.store != storePath && e.dirty
+	e.mu.RUnlock()
+	if needsFlush {
+		e.persist()
+		e.mu.RLock()
+		stillDirty := e.dirty
+		e.mu.RUnlock()
+		if stillDirty {
+			return
+		}
 	}
 
 	state := persistedInspectionState{
@@ -275,8 +298,10 @@ func (e *InspectionEngine) Configure(config Config) {
 	e.stopRequested = state.StopRequested
 	e.managementKey = ""
 	e.storageErr = storageErr
+	e.loadFailed = storageErr == "inspection state could not be loaded"
 	e.dirty = false
 	e.generation++
+	e.persistedGeneration = e.generation
 	start := !e.started && !e.closed
 	startupScan := start && inspectionNativeScheduleEnabled(e.policy)
 	if start {
@@ -523,6 +548,15 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 	if e == nil {
 		return InspectionSnapshot{}, fmt.Errorf("inspection engine is unavailable")
 	}
+	e.scanMu.Lock()
+	defer e.scanMu.Unlock()
+	return e.setPolicyInternal(policy)
+}
+
+// setPolicyInternal serializes policy persistence with inspection scans.
+// Configure already owns scanMu while applying host configuration, so it calls
+// this helper directly instead of re-entering SetPolicy.
+func (e *InspectionEngine) setPolicyInternal(policy InspectionPolicy) (InspectionSnapshot, error) {
 	normalized, errValidate := validateInspectionPolicy(policy)
 	if errValidate != nil {
 		return InspectionSnapshot{}, errValidate
@@ -531,6 +565,7 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 	e.mu.RLock()
 	storePath := e.store
 	state := e.persistedStateLocked()
+	snapshotGeneration := e.generation
 	closed := e.closed
 	currentPolicy := e.policy
 	e.mu.RUnlock()
@@ -558,6 +593,9 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 	errSave := saveInspectionState(storePath, state)
 	e.storeMu.Unlock()
 	if errSave != nil {
+		e.mu.Lock()
+		e.storageErr = "inspection state could not be persisted"
+		e.mu.Unlock()
 		return InspectionSnapshot{}, fmt.Errorf("save inspection policy: %w", errSave)
 	}
 
@@ -593,7 +631,15 @@ func (e *InspectionEngine) SetPolicy(policy InspectionPolicy) (InspectionSnapsho
 		}
 	}
 	e.storageErr = ""
+	e.loadFailed = false
+	unchanged := e.generation == snapshotGeneration
 	e.generation++
+	if unchanged {
+		e.persistedGeneration = e.generation
+		e.dirty = false
+	} else {
+		e.dirty = true
+	}
 	e.mu.Unlock()
 	e.RequestScan()
 	return e.Snapshot(), nil
@@ -857,9 +903,15 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 
 	total := len(results)
 	remediation := summarizeInspectionRemediation(results)
-	start := (query.Page - 1) * query.PageSize
-	if start > total {
-		start = total
+	// Avoid multiplying an attacker-controlled page by pageSize before
+	// checking bounds; a very large page can overflow int and panic while
+	// slicing inspection results.
+	start := total
+	if query.Page == 1 || query.Page-1 <= total/query.PageSize {
+		start = (query.Page - 1) * query.PageSize
+		if start > total {
+			start = total
+		}
 	}
 	end := start + query.PageSize
 	if end > total {
@@ -867,7 +919,7 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 	}
 	pages := 0
 	if total > 0 {
-		pages = (total + query.PageSize - 1) / query.PageSize
+		pages = (total-1)/query.PageSize + 1
 	}
 	return InspectionResultList{
 		Results:  append([]InspectionResult{}, results[start:end]...),
@@ -1218,6 +1270,27 @@ func (e *InspectionEngine) Shutdown() {
 		cancel()
 	}
 	e.wait.Wait()
+	e.mu.Lock()
+	if e.retryTimer != nil {
+		e.retryTimer.Stop()
+		e.retryTimer = nil
+	}
+	e.retryScheduled = false
+	// A shutdown can cancel a probe/native scan before scanWithMode reaches
+	// finishScan.  Persisting that half-open run as "running" makes the next
+	// plugin instance show a scan that can never complete.  Close the run
+	// explicitly after all workers have stopped, then flush the terminal state.
+	if e.activeRunID != "" {
+		e.running = false
+		e.stopRequested = true
+		e.probePhase = InspectionProbePhaseStopped
+		e.probeSweepStatus = InspectionSweepStatusStopped
+		e.updateRunHistoryLocked(InspectionSweepStatusStopped, InspectionProbePhaseStopped, e.currentTime())
+		e.dirty = true
+		e.generation++
+	}
+	e.mu.Unlock()
+	e.persist()
 }
 
 func (e *InspectionEngine) scanLoop(ctx context.Context) {
@@ -1764,13 +1837,15 @@ func (e *InspectionEngine) persist() {
 	if e == nil {
 		return
 	}
+	// Serialize the snapshot and write together, and reject an older snapshot
+	// that was queued before a newer mutation. Without the generation guard,
+	// the delayed persist loop and an immediate manual persist could complete
+	// out of order and write stale inspection records back to disk.
+	e.storeMu.Lock()
+	defer e.storeMu.Unlock()
 	e.mu.RLock()
 	owner := e.backgroundOwner
-	if !backgroundWorkAllowed(owner) {
-		e.mu.RUnlock()
-		return
-	}
-	if !e.dirty || strings.TrimSpace(e.store) == "" {
+	if !backgroundWorkAllowed(owner) || !e.dirty || strings.TrimSpace(e.store) == "" {
 		e.mu.RUnlock()
 		return
 	}
@@ -1779,17 +1854,59 @@ func (e *InspectionEngine) persist() {
 	state := e.persistedStateLocked()
 	e.mu.RUnlock()
 
-	e.storeMu.Lock()
-	errSave := saveInspectionState(storePath, state)
-	e.storeMu.Unlock()
 	e.mu.Lock()
-	if errSave != nil {
-		e.storageErr = "inspection state could not be persisted"
-	} else if e.store == storePath && e.generation == generation {
-		e.dirty = false
-		e.storageErr = ""
+	if generation <= e.persistedGeneration {
+		if e.generation <= e.persistedGeneration && e.store == storePath {
+			e.dirty = false
+		}
+		e.mu.Unlock()
+		return
 	}
 	e.mu.Unlock()
+
+	if errSave := saveInspectionState(storePath, state); errSave != nil {
+		e.mu.Lock()
+		e.storageErr = "inspection state could not be persisted"
+		e.schedulePersistRetryLocked()
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Lock()
+	if e.store == storePath && generation > e.persistedGeneration {
+		e.persistedGeneration = generation
+	}
+	if e.store == storePath && e.generation == generation {
+		e.dirty = false
+		e.storageErr = ""
+		e.loadFailed = false
+		if e.retryTimer != nil {
+			e.retryTimer.Stop()
+			e.retryTimer = nil
+		}
+		e.retryScheduled = false
+	}
+	e.mu.Unlock()
+}
+
+func (e *InspectionEngine) schedulePersistRetryLocked() {
+	if e == nil || e.closed || e.retryScheduled || !e.dirty {
+		return
+	}
+	e.retryScheduled = true
+	e.retryTimer = time.AfterFunc(inspectionPersistRetryDelay, func() {
+		e.mu.Lock()
+		e.retryScheduled = false
+		e.retryTimer = nil
+		closed := e.closed
+		e.mu.Unlock()
+		if !closed {
+			// Retry the failed snapshot directly. Routing this through the normal
+			// debounce channel adds inspectionPersistDelay to every recovery and can
+			// leave the UI reporting a storage failure long after the volume is
+			// writable again.
+			e.persist()
+		}
+	})
 }
 
 func (e *InspectionEngine) persistedStateLocked() persistedInspectionState {

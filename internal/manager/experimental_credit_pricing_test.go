@@ -58,7 +58,10 @@ func TestEmbeddedCreditPricingPreservesTinyLunaChargesAtNanoUSDPrecision(t *test
 		Model:  "gpt-5.6-luna",
 		Detail: cpaapi.UsageDetail{InputTokens: 1, CacheReadTokens: 1, TotalTokens: 1},
 	})
-	wantNanos := int64(100) // One cached Luna input token costs USD 0.0000001.
+	// One cached Luna input token costs USD 0.00000002 in the current
+	// upstream rate card. The assertion still proves sub-cent nano-USD
+	// precision survives rounding.
+	wantNanos := int64(20)
 	if !charge.Enabled || !charge.Rated || charge.AmountNanos != wantNanos {
 		t.Fatalf("tiny Luna charge = %#v, want %d nano-USD", charge, wantNanos)
 	}
@@ -119,6 +122,36 @@ func TestCreditPricingUnknownAndFailedRequestsAreNotCharged(t *testing.T) {
 	failed := service.Calculate(cpaapi.UsageRecord{Model: "gpt-5.4", Failed: true, Detail: cpaapi.UsageDetail{TotalTokens: 10}})
 	if failed.Enabled || failed.Rated || failed.AmountNanos != 0 {
 		t.Fatalf("failed charge = %#v", failed)
+	}
+}
+
+func TestCreditPricingCoversRequestedNonGPTModelFamilies(t *testing.T) {
+	service := NewSub2APICreditUsage()
+	defer service.Close()
+	service.SetEnabled(true)
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{model: "claude-sonnet-4-6", want: true},
+		{model: "claude-opus-5-thinking", want: true},
+		{model: "gemini-2.5-flash", want: true},
+		{model: "deepseek-chat", want: true},
+		{model: "deepseek-reasoner", want: true},
+		{model: "claude-sonnet-4-5", want: true},
+		{model: "claude-opus-4-6-thinking", want: true},
+		{model: "gemini-3-pro-preview", want: true},
+		{model: "gemini-3.1-pro-high", want: true},
+		{model: "unknown-model", want: false},
+	}
+	for _, test := range tests {
+		charge := service.Calculate(cpaapi.UsageRecord{
+			Model:  test.model,
+			Detail: cpaapi.UsageDetail{InputTokens: 100, OutputTokens: 10},
+		})
+		if charge.Rated != test.want {
+			t.Fatalf("Calculate(%q) rated = %t, want %t", test.model, charge.Rated, test.want)
+		}
 	}
 }
 

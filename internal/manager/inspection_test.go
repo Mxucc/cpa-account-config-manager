@@ -1173,3 +1173,210 @@ func seedDueInspectionDeleteCandidate(engine *InspectionEngine, now time.Time) {
 	}
 	engine.mu.Unlock()
 }
+
+func TestInspectionActionFailureReasonPersistsOnlyAsBoundedCode(t *testing.T) {
+	path := inspectionStorePath(t.TempDir())
+	state := persistedInspectionState{
+		Version: inspectionStoreVersion,
+		Policy:  defaultInspectionPolicy(),
+		Records: map[string]inspectionRecord{},
+		Actions: []InspectionAction{
+			{ID: "valid", AccountID: "auth-1", Action: InspectionActionDisable, Status: InspectionActionFailed, ReasonCode: "quota_exhausted", FailureReason: OperationFailureInspectionAuthSave, CreatedAt: time.Now().UTC()},
+			{ID: "unsafe", AccountID: "auth-2", Action: InspectionActionDisable, Status: InspectionActionFailed, ReasonCode: "quota_exhausted", FailureReason: "save failed: Authorization secret", CreatedAt: time.Now().UTC()},
+		},
+	}
+	if errSave := saveInspectionState(path, state); errSave != nil {
+		t.Fatalf("save inspection state: %v", errSave)
+	}
+	raw, errRead := os.ReadFile(path)
+	if errRead != nil {
+		t.Fatalf("read inspection state: %v", errRead)
+	}
+	if bytes.Contains(bytes.ToLower(raw), []byte("authorization")) || bytes.Contains(bytes.ToLower(raw), []byte("secret")) {
+		t.Fatalf("inspection state leaked raw failure text: %s", raw)
+	}
+	loaded, errLoad := loadInspectionState(path)
+	if errLoad != nil {
+		t.Fatalf("load inspection state: %v", errLoad)
+	}
+	if len(loaded.Actions) != 2 || loaded.Actions[0].FailureReason != OperationFailureInspectionAuthSave || loaded.Actions[1].FailureReason != "" {
+		t.Fatalf("loaded failure reasons = %#v", loaded.Actions)
+	}
+
+	legacyPath := inspectionStorePath(t.TempDir())
+	legacy := []byte(`{"version":1,"policy":{},"records":{},"actions":[{"id":"legacy","account_id":"auth-3","action":"disable","status":"failed","reason_code":"quota_exhausted","created_at":"2026-08-25T02:00:00Z"}],"last_run":{}}`)
+	if errWrite := os.WriteFile(legacyPath, legacy, 0o600); errWrite != nil {
+		t.Fatalf("write legacy inspection state: %v", errWrite)
+	}
+	loadedLegacy, errLegacy := loadInspectionState(legacyPath)
+	if errLegacy != nil || len(loadedLegacy.Actions) != 1 || loadedLegacy.Actions[0].FailureReason != "" {
+		t.Fatalf("legacy inspection state = %#v error=%v", loadedLegacy.Actions, errLegacy)
+	}
+}
+
+func TestInspectionConfigureRetriesCorruptSameStore(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := inspectionStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte("{"), 0o600); errWrite != nil {
+		t.Fatalf("write corrupt inspection state: %v", errWrite)
+	}
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	if got := engine.Snapshot().StorageError; got != "inspection state could not be loaded" {
+		t.Fatalf("StorageError = %q", got)
+	}
+	want := persistedInspectionState{
+		Version: inspectionStoreVersion,
+		Policy:  defaultInspectionPolicy(),
+		Records: map[string]inspectionRecord{"recovered": {Result: InspectionResult{ID: "recovered", Health: InspectionHealthHealthy}}},
+	}
+	if errSave := saveInspectionState(storePath, want); errSave != nil {
+		t.Fatalf("save recovered inspection state: %v", errSave)
+	}
+	engine.Configure(Config{DataDir: dataDir})
+	if got := engine.Snapshot().StorageError; got != "" {
+		t.Fatalf("StorageError after recovery = %q", got)
+	}
+	engine.mu.RLock()
+	recovered, exists := engine.records["recovered"]
+	engine.mu.RUnlock()
+	if !exists || recovered.Result.ID != "recovered" {
+		t.Fatalf("recovered result = %#v exists=%v", recovered.Result, exists)
+	}
+}
+
+func TestInspectionRetriesFailedPersistence(t *testing.T) {
+	previousDelay := inspectionPersistRetryDelay
+	inspectionPersistRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() { inspectionPersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocking path: %v", errWrite)
+	}
+	engine.mu.Lock()
+	engine.store = filepath.Join(blockingPath, "inspection-state.json")
+	engine.records["persist-me"] = inspectionRecord{Result: InspectionResult{ID: "persist-me"}}
+	engine.dirty = true
+	engine.generation++
+	engine.mu.Unlock()
+	engine.persist()
+	if got := engine.Snapshot().StorageError; got != "inspection state could not be persisted" {
+		t.Fatalf("StorageError = %q", got)
+	}
+	if errRemove := os.Remove(blockingPath); errRemove != nil {
+		t.Fatalf("remove blocking path: %v", errRemove)
+	}
+	if errMkdir := os.MkdirAll(blockingPath, 0o700); errMkdir != nil {
+		t.Fatalf("restore blocking path: %v", errMkdir)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && engine.Snapshot().StorageError != "" {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := engine.Snapshot().StorageError; got != "" {
+		t.Fatalf("StorageError after retry = %q", got)
+	}
+	loaded, errLoad := loadInspectionState(filepath.Join(blockingPath, "inspection-state.json"))
+	if errLoad != nil {
+		t.Fatalf("load retried inspection state: %v", errLoad)
+	}
+	if _, exists := loaded.Records["persist-me"]; !exists {
+		t.Fatal("retried inspection state lost dirty record")
+	}
+}
+
+func TestInspectionDoesNotSwitchStoreWhenDirtyFlushFails(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: oldDir})
+	defer engine.Shutdown()
+	engine.mu.Lock()
+	engine.records["keep-me"] = inspectionRecord{Result: InspectionResult{ID: "keep-me"}}
+	engine.dirty = true
+	engine.generation++
+	engine.mu.Unlock()
+	if errRemove := os.RemoveAll(oldDir); errRemove != nil {
+		t.Fatalf("remove old data dir: %v", errRemove)
+	}
+	if errWrite := os.WriteFile(oldDir, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("replace old data dir with file: %v", errWrite)
+	}
+	engine.Configure(Config{DataDir: newDir})
+	engine.mu.RLock()
+	store, dirty := engine.store, engine.dirty
+	_, exists := engine.records["keep-me"]
+	engine.mu.RUnlock()
+	if store != inspectionStorePath(oldDir) || !dirty || !exists {
+		t.Fatalf("dirty state switched or was lost: store=%q dirty=%v exists=%v", store, dirty, exists)
+	}
+	if got := engine.Snapshot().StorageError; got != "inspection state could not be persisted" {
+		t.Fatalf("StorageError = %q", got)
+	}
+}
+
+func TestInspectionShutdownStopsPersistenceRetry(t *testing.T) {
+	previousDelay := inspectionPersistRetryDelay
+	inspectionPersistRetryDelay = time.Hour
+	t.Cleanup(func() { inspectionPersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: dataDir})
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocking path: %v", errWrite)
+	}
+	engine.mu.Lock()
+	engine.store = filepath.Join(blockingPath, "inspection-state.json")
+	engine.dirty = true
+	engine.generation++
+	engine.mu.Unlock()
+	engine.persist()
+	engine.mu.RLock()
+	scheduled := engine.retryScheduled && engine.retryTimer != nil
+	engine.mu.RUnlock()
+	if !scheduled {
+		t.Fatal("persistence retry was not scheduled")
+	}
+	engine.Shutdown()
+	engine.mu.RLock()
+	scheduled = engine.retryScheduled || engine.retryTimer != nil
+	engine.mu.RUnlock()
+	if scheduled {
+		t.Fatal("persistence retry survived shutdown")
+	}
+}
+
+func TestInspectionShutdownClosesPersistedActiveRun(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.Configure(Config{DataDir: dataDir})
+	engine.mu.Lock()
+	now := time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC)
+	engine.now = func() time.Time { return now }
+	engine.activeRunID = "inspection-shutdown-run"
+	engine.runs = []InspectionRunRecord{{ID: engine.activeRunID, Mode: InspectionRunModeFull, Source: InspectionSweepSourceManual, Status: InspectionSweepStatusRunning, StartedAt: now}}
+	engine.running = true
+	engine.dirty = true
+	engine.generation++
+	engine.mu.Unlock()
+
+	engine.Shutdown()
+	state, errLoad := loadInspectionState(inspectionStorePath(dataDir))
+	if errLoad != nil {
+		t.Fatalf("load shutdown state: %v", errLoad)
+	}
+	if state.ActiveRunID != "" {
+		t.Fatalf("active run id persisted after shutdown: %#v", state)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].Status != InspectionSweepStatusStopped || state.Runs[0].FinishedAt.IsZero() {
+		t.Fatalf("shutdown run state = %#v", state.Runs)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,5 +109,193 @@ func TestUpdatePolicyRouteRequiresExplicitAutoUpdateConfirmation(t *testing.T) {
 	})
 	if confirmed.StatusCode != http.StatusOK {
 		t.Fatalf("confirmed = %d %s", confirmed.StatusCode, confirmed.Body)
+	}
+}
+
+func TestUpdateCheckerConcurrentStateMutationsAreSerialized(t *testing.T) {
+	dataDir := t.TempDir()
+	checker := NewUpdateChecker("0.3.0")
+	checker.Configure(Config{DataDir: dataDir})
+	checker.now = func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }
+
+	const workers = 24
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			if index%2 == 0 {
+				policy := defaultUpdatePolicy()
+				policy.CheckIntervalHours = 24 + index
+				if _, errSet := checker.SetPolicy(policy); errSet != nil {
+					t.Errorf("SetPolicy() error = %v", errSet)
+				}
+				return
+			}
+			checker.RequestCheck()
+		}(i)
+	}
+	wg.Wait()
+
+	stored, errRead := loadUpdateState(updateStorePath(dataDir))
+	if errRead != nil {
+		t.Fatalf("loadUpdateState() error = %v", errRead)
+	}
+	if stored.CheckedAt.IsZero() {
+		t.Fatal("concurrent RequestCheck calls lost checked_at")
+	}
+	if stored.Policy.CheckIntervalHours < 24 || stored.Policy.CheckIntervalHours > 46 {
+		t.Fatalf("unexpected persisted policy: %#v", stored.Policy)
+	}
+	if snapshot := checker.Snapshot(); snapshot.Error != "" {
+		t.Fatalf("snapshot error = %q", snapshot.Error)
+	}
+}
+
+func TestUpdateCheckerSuccessfulPolicySaveClearsPersistedError(t *testing.T) {
+	dataDir := t.TempDir()
+	store := updateStorePath(dataDir)
+	state := persistedUpdateState{Version: updateStoreVersion, Policy: defaultUpdatePolicy(), Error: "update state could not be persisted"}
+	if errSave := saveUpdateState(store, state); errSave != nil {
+		t.Fatalf("seed update state: %v", errSave)
+	}
+	checker := NewUpdateChecker("0.3.0")
+	checker.Configure(Config{DataDir: dataDir})
+	policy := defaultUpdatePolicy()
+	policy.CheckIntervalHours = 48
+	if _, errSet := checker.SetPolicy(policy); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	stored, errLoad := loadUpdateState(store)
+	if errLoad != nil {
+		t.Fatalf("loadUpdateState() error = %v", errLoad)
+	}
+	if stored.Error != "" {
+		t.Fatalf("persisted error = %q, want empty", stored.Error)
+	}
+}
+
+func TestUpdateCheckerConfigureRetriesCorruptSameStore(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := updateStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte("{"), 0o600); errWrite != nil {
+		t.Fatalf("write corrupt update state: %v", errWrite)
+	}
+	checker := NewUpdateChecker("0.3.0")
+	checker.Configure(Config{DataDir: dataDir})
+	defer checker.Shutdown()
+	if got := checker.Snapshot().Error; got != "update state could not be loaded" {
+		t.Fatalf("load error = %q", got)
+	}
+	want := persistedUpdateState{Version: updateStoreVersion, Policy: defaultUpdatePolicy(), CheckedAt: time.Unix(1_800_000_000, 0).UTC()}
+	want.Policy.CheckIntervalHours = 72
+	if errSave := saveUpdateState(storePath, want); errSave != nil {
+		t.Fatalf("save recovered update state: %v", errSave)
+	}
+	checker.Configure(Config{DataDir: dataDir})
+	snapshot := checker.Snapshot()
+	if snapshot.Error != "" || snapshot.Policy.CheckIntervalHours != 72 || !snapshot.CheckedAt.Equal(want.CheckedAt) {
+		t.Fatalf("recovered snapshot = %#v", snapshot)
+	}
+}
+
+func TestUpdateCheckerRetriesFailedRequestCheckPersistence(t *testing.T) {
+	previousDelay := updatePersistRetryDelay
+	updatePersistRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() { updatePersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	checker := NewUpdateChecker("0.3.0")
+	checker.Configure(Config{DataDir: dataDir})
+	defer checker.Shutdown()
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocking path: %v", errWrite)
+	}
+	checker.mu.Lock()
+	checker.store = filepath.Join(blockingPath, "update-state.json")
+	checker.mu.Unlock()
+	checker.RequestCheck()
+	if got := checker.Snapshot().Error; got != "update state could not be persisted" {
+		t.Fatalf("persistence error = %q", got)
+	}
+	if errRemove := os.Remove(blockingPath); errRemove != nil {
+		t.Fatalf("remove blocking path: %v", errRemove)
+	}
+	if errMkdir := os.MkdirAll(blockingPath, 0o700); errMkdir != nil {
+		t.Fatalf("restore blocking path: %v", errMkdir)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && checker.Snapshot().Error != "" {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := checker.Snapshot().Error; got != "" {
+		t.Fatalf("persistence error after retry = %q", got)
+	}
+	loaded, errLoad := loadUpdateState(filepath.Join(blockingPath, "update-state.json"))
+	if errLoad != nil {
+		t.Fatalf("load retried update state: %v", errLoad)
+	}
+	if loaded.CheckedAt.IsZero() || loaded.Error != "" {
+		t.Fatalf("retried state = %#v", loaded)
+	}
+}
+
+func TestUpdateCheckerDoesNotSwitchStoreWhenDirtyFlushFails(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	checker := NewUpdateChecker("0.3.0")
+	checker.Configure(Config{DataDir: oldDir})
+	defer checker.Shutdown()
+	checker.mu.Lock()
+	checker.checkedAt = time.Unix(1_800_000_000, 0).UTC()
+	checker.dirty = true
+	checker.mu.Unlock()
+	if errRemove := os.RemoveAll(oldDir); errRemove != nil {
+		t.Fatalf("remove old data dir: %v", errRemove)
+	}
+	if errWrite := os.WriteFile(oldDir, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("replace old data dir with file: %v", errWrite)
+	}
+	checker.Configure(Config{DataDir: newDir})
+	checker.mu.RLock()
+	store, dirty, checkedAt := checker.store, checker.dirty, checker.checkedAt
+	checker.mu.RUnlock()
+	if store != updateStorePath(oldDir) || !dirty || checkedAt.IsZero() {
+		t.Fatalf("dirty state switched or was lost: store=%q dirty=%v checked_at=%v", store, dirty, checkedAt)
+	}
+	if got := checker.Snapshot().Error; got != "update state could not be persisted" {
+		t.Fatalf("persistence error = %q", got)
+	}
+}
+
+func TestUpdateCheckerShutdownStopsPersistenceRetry(t *testing.T) {
+	previousDelay := updatePersistRetryDelay
+	updatePersistRetryDelay = time.Hour
+	t.Cleanup(func() { updatePersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	checker := NewUpdateChecker("0.3.0")
+	checker.Configure(Config{DataDir: dataDir})
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocking path: %v", errWrite)
+	}
+	checker.mu.Lock()
+	checker.store = filepath.Join(blockingPath, "update-state.json")
+	checker.mu.Unlock()
+	checker.RequestCheck()
+	checker.mu.RLock()
+	scheduled := checker.retryScheduled && checker.retryTimer != nil
+	checker.mu.RUnlock()
+	if !scheduled {
+		t.Fatal("persistence retry was not scheduled")
+	}
+	checker.Shutdown()
+	checker.mu.RLock()
+	scheduled = checker.retryScheduled || checker.retryTimer != nil
+	checker.mu.RUnlock()
+	if scheduled {
+		t.Fatal("persistence retry survived shutdown")
 	}
 }

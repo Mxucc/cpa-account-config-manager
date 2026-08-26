@@ -183,7 +183,10 @@ func (o *RuntimeOwnership) AllowsBackgroundWork() bool {
 	}
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	return o.started && !o.closed && o.active && o.storageErr == ""
+	// A superseded instance may still receive a configuration refresh before
+	// CPA has finished unloading it.  Never let that stale instance resume
+	// background work (or re-assert its claim) during that small window.
+	return o.started && !o.closed && !o.retired && o.active && o.storageErr == ""
 }
 
 func (o *RuntimeOwnership) Snapshot() RuntimeOwnershipSnapshot {
@@ -245,7 +248,7 @@ func (o *RuntimeOwnership) refresh() {
 	}
 	now := o.currentTime()
 	o.mu.RLock()
-	if !o.started || o.closed {
+	if !o.started || o.closed || o.retired {
 		o.mu.RUnlock()
 		return
 	}

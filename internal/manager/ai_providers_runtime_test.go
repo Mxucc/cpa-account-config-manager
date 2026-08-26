@@ -58,3 +58,70 @@ func TestProviderRuntimeDoesNotExposeAPIKey(t *testing.T) {
 		t.Fatalf("secret leaked in snapshot: %s", encoded)
 	}
 }
+
+func TestProviderRuntimePrunesRequestsWithoutCompletion(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	now := time.Unix(10_000, 0).UTC()
+	tracker.now = func() time.Time { return now }
+	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{RequestID: "stale", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}})
+	if snapshots := tracker.Snapshot(); len(snapshots) != 1 || snapshots[0].Active != 1 {
+		t.Fatalf("initial snapshots = %+v", snapshots)
+	}
+	now = now.Add(providerRuntimeRequestLease + time.Minute)
+	// A later lifecycle event triggers the bounded cleanup even when CPA never
+	// delivered a completion callback for the stale request.
+	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{RequestID: "fresh", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].Active != 1 {
+		t.Fatalf("stale request was not pruned: %+v", snapshots)
+	}
+}
+
+func TestProviderRuntimeNormalizesProviderNames(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: " OpenAI ", AuthIndex: "same", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 2}})
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "same", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 3}})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].Provider != "openai" || snapshots[0].TotalTokens != 5 {
+		t.Fatalf("provider normalization failed: %+v", snapshots)
+	}
+}
+
+func TestProviderRuntimeEvictsOldestIdleAggregate(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.mu.Lock()
+	tracker.aggregates["old"] = &providerRuntimeAggregate{Provider: "old", Identity: "old", UpdatedAt: time.Unix(1, 0)}
+	tracker.aggregates["new"] = &providerRuntimeAggregate{Provider: "new", Identity: "new", UpdatedAt: time.Unix(2, 0)}
+	if !tracker.evictIdleAggregateLocked() {
+		t.Fatal("evictIdleAggregateLocked() returned false")
+	}
+	if _, exists := tracker.aggregates["old"]; exists {
+		t.Fatal("oldest idle aggregate was not evicted")
+	}
+	if _, exists := tracker.aggregates["new"]; !exists {
+		t.Fatal("newer aggregate was evicted")
+	}
+	tracker.mu.Unlock()
+}
+
+func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
+	concurrency := NewAccountConcurrencyService()
+	concurrency.Configure(Config{DataDir: t.TempDir()}, cpaapi.SchemaVersion)
+	if errSet := concurrency.SetLimit(Account{AuthID: "auth-a", ID: "account-a"}, 7); errSet != nil {
+		t.Fatalf("SetLimit() error = %v", errSet)
+	}
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.SetAccountConcurrency(concurrency)
+	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{
+		RequestID: "request-a",
+		ToFormat:  "openai",
+		Metadata:  map[string]any{"selected_auth_index": "auth-a"},
+	})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots = %#v", snapshots)
+	}
+	if snapshots[0].Active != 1 || snapshots[0].Limit != 7 {
+		t.Fatalf("runtime concurrency = active=%d limit=%d, want 1/7", snapshots[0].Active, snapshots[0].Limit)
+	}
+}

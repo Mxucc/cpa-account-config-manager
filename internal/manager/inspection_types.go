@@ -376,15 +376,16 @@ type AccountAutomationSummary struct {
 }
 
 type InspectionAction struct {
-	ID         string    `json:"id"`
-	AccountID  string    `json:"account_id"`
-	Name       string    `json:"name,omitempty"`
-	Provider   string    `json:"provider,omitempty"`
-	Action     string    `json:"action"`
-	Status     string    `json:"status"`
-	Source     string    `json:"source,omitempty"`
-	ReasonCode string    `json:"reason_code"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	AccountID     string    `json:"account_id"`
+	Name          string    `json:"name,omitempty"`
+	Provider      string    `json:"provider,omitempty"`
+	Action        string    `json:"action"`
+	Status        string    `json:"status"`
+	Source        string    `json:"source,omitempty"`
+	ReasonCode    string    `json:"reason_code"`
+	FailureReason string    `json:"failure_reason,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type InspectionDeleteResult struct {

@@ -598,15 +598,21 @@ func (e *InspectionEngine) recordNotificationTest(event anomalyNotificationEvent
 		return
 	}
 	status := OperationStatusFailed
-	succeeded, failed := 0, 1
-	if result.ReasonCode == "notification_delivered" {
+	succeeded, failed, skipped := 0, 1, 0
+	switch result.ReasonCode {
+	case "notification_delivered":
 		status = OperationStatusSucceeded
 		succeeded, failed = 1, 0
+	case "notification_superseded":
+		// A retired instance deliberately cancels its queued work. This is not
+		// a delivery failure and should not inflate failure counts.
+		status = OperationStatusSkipped
+		failed, skipped = 0, 1
 	}
 	journal.Record(OperationEntry{
 		Category: OperationCategoryInspection, Action: OperationActionNotificationTest,
 		Status: status, Source: OperationSourceManual, Scope: OperationScopeSystem,
-		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
+		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed, Skipped: skipped,
 		StartedAt: event.TriggeredAt, FinishedAt: e.currentTime(), ReasonCode: result.ReasonCode,
 		RelatedActionID: event.PolicyID, HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})
@@ -625,7 +631,7 @@ func inspectionNotificationReasons(policy InspectionPolicy, metrics anomalyNotif
 	if policy.NotificationAvailableEnabled && metrics.AvailableAccounts < policy.NotificationAvailableBelow {
 		reasons = append(reasons, "available_accounts_low")
 	}
-	if policy.NotificationPercentEnabled && metrics.AvailabilitySamples > 0 && metrics.AvailablePercent < policy.NotificationPercentBelow {
+	if policy.NotificationPercentEnabled && availabilityPercentTriggerable(metrics) && metrics.AvailablePercent < policy.NotificationPercentBelow {
 		reasons = append(reasons, "availability_percent_low")
 	}
 	return reasons
@@ -646,7 +652,7 @@ func inspectionNotificationPolicyReasons(policy InspectionNotificationPolicy, me
 		results = append(results, struct {
 			reason  string
 			matched bool
-		}{"availability_percent_low", metrics.AvailabilitySamples > 0 && metrics.AvailablePercent < policy.AvailabilityPercentBelow})
+		}{"availability_percent_low", availabilityPercentTriggerable(metrics) && metrics.AvailablePercent < policy.AvailabilityPercentBelow})
 	}
 	if len(results) == 0 {
 		return nil
@@ -672,6 +678,18 @@ func inspectionNotificationPolicyReasons(policy InspectionNotificationPolicy, me
 		}
 	}
 	return reasons
+}
+
+// availabilityPercentTriggerable distinguishes a real zero-availability
+// state from an initial state where no account has reported quota data yet.
+// Once the inspection has classified accounts and none of the enabled
+// accounts has a usable quota sample, their effective availability is 0% and
+// a low-availability notification must be allowed to fire.
+func availabilityPercentTriggerable(metrics anomalyNotificationMetrics) bool {
+	if metrics.AvailabilitySamples > 0 {
+		return true
+	}
+	return metrics.EligibleAccounts > 0 && metrics.AvailableAccounts == 0
 }
 
 func inspectionNotificationCohort(accounts map[string]Account, conditions PolicyConditionGroup) map[string]Account {
@@ -769,26 +787,59 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 		e.generation++
 	}
 	e.mu.Unlock()
-	for _, event := range events {
-		e.queueAnomalyNotification(event)
-	}
-	return len(events) > 0
+	return e.queueInspectionNotificationEvents(events, now, e.queueAnomalyNotification)
 }
 
-func (e *InspectionEngine) queueAnomalyNotification(event anomalyNotificationEvent) {
+func (e *InspectionEngine) queueInspectionNotificationEvents(
+	events []anomalyNotificationEvent,
+	now time.Time,
+	queue func(anomalyNotificationEvent) bool,
+) bool {
+	if e == nil || queue == nil {
+		return false
+	}
+	queued := false
+	for _, event := range events {
+		if queue(event) {
+			queued = true
+			continue
+		}
+		// Do not consume this endpoint's cooldown when it could not be queued
+		// (for example, a full queue or a retired runtime). Keep the global
+		// cooldown until all endpoints have been attempted: an early failure
+		// must not clear it when a later endpoint was queued successfully.
+		e.mu.Lock()
+		if last := e.lastNotificationByEndpoint[event.EndpointID]; last.Equal(event.TriggeredAt) {
+			delete(e.lastNotificationByEndpoint, event.EndpointID)
+		}
+		e.mu.Unlock()
+	}
+	if !queued {
+		e.mu.Lock()
+		if e.lastNotificationAt.Equal(now.UTC()) {
+			e.lastNotificationAt = time.Time{}
+		}
+		e.mu.Unlock()
+	}
+	return queued
+}
+
+func (e *InspectionEngine) queueAnomalyNotification(event anomalyNotificationEvent) bool {
 	if e == nil || e.notificationWake == nil {
-		return
+		return false
 	}
 	e.mu.RLock()
 	owner := e.backgroundOwner
 	e.mu.RUnlock()
 	if !backgroundWorkAllowed(owner) {
-		return
+		return false
 	}
 	select {
 	case e.notificationWake <- event:
+		return true
 	default:
 		e.recordAnomalyNotification(event, anomalyNotificationResult{ReasonCode: "notification_queue_full"})
+		return false
 	}
 }
 
@@ -887,16 +938,22 @@ func (e *InspectionEngine) recordAnomalyNotification(event anomalyNotificationEv
 		return
 	}
 	status := OperationStatusFailed
-	succeeded, failed := 0, 1
-	if result.ReasonCode == "notification_delivered" {
+	succeeded, failed, skipped := 0, 1, 0
+	switch result.ReasonCode {
+	case "notification_delivered":
 		status = OperationStatusSucceeded
 		succeeded, failed = 1, 0
+	case "notification_superseded":
+		// A retired instance deliberately cancels its queued work. This is not
+		// a delivery failure and should not inflate failure counts.
+		status = OperationStatusSkipped
+		failed, skipped = 0, 1
 	}
 	finishedAt := e.currentTime()
 	journal.Record(OperationEntry{
 		Category: OperationCategoryInspection, Action: OperationActionAnomalyNotification,
 		Status: status, Source: OperationSourceInspection, Scope: OperationScopeSystem,
-		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed,
+		TargetID: event.EndpointID, TargetCount: event.Metrics.TotalAccounts, Succeeded: succeeded, Failed: failed, Skipped: skipped,
 		StartedAt: event.TriggeredAt, FinishedAt: finishedAt, ReasonCode: result.ReasonCode,
 		RelatedActionID: event.PolicyID, HTTPStatus: result.StatusCode, Attempts: result.Attempts,
 	})

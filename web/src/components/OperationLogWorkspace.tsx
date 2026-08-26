@@ -204,6 +204,17 @@ const failureReasonLabels: Record<string, UIMessageKey> = {
   policy_model_policy_apply_failed: "ui.policy_failure_model_policy_apply",
   policy_quota_metadata_probe_failed: "ui.policy_failure_quota_metadata",
   policy_state_persist_failed: "ui.policy_failure_state_persist",
+  inspection_auth_host_unavailable: "ui.inspection_failure_auth_host",
+  inspection_account_not_editable: "ui.inspection_failure_account_not_editable",
+  inspection_disable_ownership_changed: "ui.inspection_failure_ownership_changed",
+  inspection_auth_read_failed: "ui.inspection_failure_auth_read",
+  inspection_auth_identity_changed: "ui.inspection_failure_auth_identity_changed",
+  inspection_auth_source_changed: "ui.inspection_failure_auth_source_changed",
+  inspection_auth_json_invalid: "ui.inspection_failure_auth_json_invalid",
+  inspection_auth_field_invalid: "ui.inspection_failure_auth_field_invalid",
+  inspection_auth_update_failed: "ui.inspection_failure_auth_update",
+  inspection_auth_save_failed: "ui.inspection_failure_auth_save",
+  inspection_mutation_failed: "ui.inspection_failure_mutation",
 };
 
 const scopeLabels: Record<string, UIMessageKey> = {
@@ -279,20 +290,16 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
 
   useEffect(() => {
     const controller = new AbortController();
-    let polling = false;
+    let timer = 0;
     const poll = async (quiet: boolean) => {
-      if (polling) return;
-      polling = true;
-      try {
-        await refresh(quiet, controller.signal);
-      } finally {
-        polling = false;
+      await refresh(quiet, controller.signal);
+      if (!controller.signal.aborted) {
+        timer = window.setTimeout(() => void poll(true), 5_000);
       }
     };
     void poll(false);
-    const timer = window.setInterval(() => void poll(true), 5_000);
     return () => {
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       controller.abort();
     };
   }, [refresh]);

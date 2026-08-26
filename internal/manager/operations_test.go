@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -17,6 +18,13 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+func TestOperationJournalClearWithErrorRequiresPersistence(t *testing.T) {
+	journal := NewOperationJournal()
+	if _, errClear := journal.ClearWithError(); errClear == nil {
+		t.Fatal("ClearWithError on an unconfigured journal unexpectedly succeeded")
+	}
+}
+
 func TestOperationJournalEmptyListUsesJSONArray(t *testing.T) {
 	var journal *OperationJournal
 	if response := journal.List(OperationQuery{Page: 1, PageSize: 50}); response.Operations == nil {
@@ -24,6 +32,49 @@ func TestOperationJournalEmptyListUsesJSONArray(t *testing.T) {
 	}
 	if response := (&OperationJournal{}).List(OperationQuery{Page: 1, PageSize: 50}); response.Operations == nil {
 		t.Fatal("empty journal Operations is nil, want an empty JSON array")
+	}
+}
+
+func TestOperationJournalPersistenceFailureIsVisibleAndRetainedInMemory(t *testing.T) {
+	dataDir := t.TempDir()
+	j := NewOperationJournal()
+	j.Configure(Config{DataDir: dataDir})
+	blocked := filepath.Join(dataDir, "not-a-directory")
+	if errWrite := os.WriteFile(blocked, []byte("blocked"), 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	j.mu.Lock()
+	j.store = blocked
+	j.mu.Unlock()
+	entry := j.Record(OperationEntry{Category: OperationCategoryBatch, Action: OperationActionBatchEdit, Status: OperationStatusSucceeded, Source: OperationSourceManual, TargetCount: 1, Succeeded: 1})
+	if entry.ID == "" {
+		t.Fatal("Record() dropped the in-memory operation after persistence failed")
+	}
+	response := j.List(OperationQuery{Page: 1, PageSize: 20})
+	if response.StorageError == "" || response.Total != 1 {
+		t.Fatalf("persistence failure response = %#v", response)
+	}
+	j.Close()
+}
+
+func TestOperationJournalCloseRejectsLateWritersAndCanBeReconfigured(t *testing.T) {
+	j := NewOperationJournal()
+	j.Configure(Config{DataDir: t.TempDir()})
+	j.Close()
+	if entry := j.Record(OperationEntry{Category: OperationCategoryBatch, Action: OperationActionBatchEdit, Status: OperationStatusSucceeded, Source: OperationSourceManual, Scope: OperationScopeSystem}); entry.ID != "" {
+		t.Fatalf("Record after Close returned %#v", entry)
+	}
+	if _, errClear := j.ClearWithError(); errClear == nil {
+		t.Fatal("ClearWithError after Close unexpectedly succeeded")
+	}
+
+	// A journal object may be reused by a host reload in tests or an embedding
+	// application. Configure must explicitly reopen it rather than leaving the
+	// closed flag set forever.
+	j.Configure(Config{DataDir: t.TempDir()})
+	entry := j.Record(OperationEntry{Category: OperationCategoryBatch, Action: OperationActionBatchEdit, Status: OperationStatusSucceeded, Source: OperationSourceManual, Scope: OperationScopeSystem})
+	if entry.ID == "" {
+		t.Fatal("Record after reconfigure was rejected")
 	}
 }
 
@@ -653,5 +704,43 @@ func TestInspectionAutoDeleteRecordsScheduledInspectionOperation(t *testing.T) {
 	if entry.Action != OperationActionAutoDelete || entry.Source != OperationSourceInspection ||
 		entry.Scope != OperationScopeScheduled || entry.TargetCount != 0 || entry.Status != OperationStatusSucceeded {
 		t.Fatalf("auto-delete operation = %#v", entry)
+	}
+}
+
+func TestOperationFromInspectionActionPreservesBusinessReasonAndMutationFailureBasis(t *testing.T) {
+	action := InspectionAction{
+		ID: "inspection-action-1", AccountID: "auth-1", Action: InspectionActionDisable,
+		Status: InspectionActionFailed, Source: OperationSourceInspection,
+		ReasonCode: "quota_exhausted", FailureReason: OperationFailureInspectionAuthSave,
+		CreatedAt: time.Date(2026, 8, 25, 2, 0, 0, 0, time.UTC),
+	}
+	entry, ok := operationFromInspectionAction(action)
+	if !ok || entry.Status != OperationStatusFailed || entry.ReasonCode != "quota_exhausted" || entry.Failed != 1 {
+		t.Fatalf("inspection failure operation = %#v ok=%t", entry, ok)
+	}
+	want := []OperationFailureDetail{{
+		ReasonCode: OperationFailureInspectionAuthSave, Count: 1, SampleAccountIDs: []string{"auth-1"},
+	}}
+	if !reflect.DeepEqual(entry.FailureDetails, want) {
+		t.Fatalf("inspection failure details = %#v, want %#v", entry.FailureDetails, want)
+	}
+}
+
+func TestOperationRecordReturnsUnavailableWhenJournalClosed(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
+
+	app.operations.Close()
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/operations/record",
+		Body:   []byte(`{"action":"update_install","status":"succeeded","version":"v0.3.0"}`),
+	})
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("closed journal status = %d body=%s, want %d", response.StatusCode, response.Body, http.StatusServiceUnavailable)
+	}
+	if !bytes.Contains(response.Body, []byte("operation journal is unavailable")) {
+		t.Fatalf("closed journal response = %s", response.Body)
 	}
 }

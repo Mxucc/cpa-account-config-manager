@@ -41,20 +41,21 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey, OperationSourceManual)
 	}
 	managementKey = ""
-	a.recordModelTest(result, OperationSourceManual)
-	_ = a.inspection.RecordManualModelTest(ctx, result)
+	inspectionErr := a.inspection.RecordManualModelTest(ctx, result)
+	a.recordModelTest(result, OperationSourceManual, inspectionErr)
 	return jsonResponse(http.StatusOK, result)
 }
 
-func (a *App) recordModelTest(result ModelTestResult, requestedSource ...string) {
+func (a *App) recordModelTest(result ModelTestResult, requestedSource string, inspectionErr error) {
 	source := OperationSourceManual
-	if len(requestedSource) > 0 && normalizeOperationSource(requestedSource[0]) != "" {
-		source = normalizeOperationSource(requestedSource[0])
+	if normalizeOperationSource(requestedSource) != "" {
+		source = normalizeOperationSource(requestedSource)
 	}
 	status := OperationStatusWarning
 	succeeded := 0
 	failed := 0
 	skipped := 0
+	failureDetails := []OperationFailureDetail(nil)
 	switch result.Status {
 	case "available":
 		status = OperationStatusSucceeded
@@ -66,12 +67,22 @@ func (a *App) recordModelTest(result ModelTestResult, requestedSource ...string)
 		status = OperationStatusSkipped
 		skipped = 1
 	}
+	if inspectionErr != nil {
+		// Keep the upstream model-test result intact, but make the auxiliary
+		// inspection-record failure visible without exposing its details.
+		status = OperationStatusWarning
+		failureDetails = []OperationFailureDetail{{
+			ReasonCode:       OperationFailureModelTestInspectionRecord,
+			Count:            1,
+			SampleAccountIDs: []string{result.AccountID},
+		}}
+	}
 	finishedAt := result.TestedAt.Add(time.Duration(result.LatencyMS) * time.Millisecond)
 	a.operations.Record(OperationEntry{
 		Category: OperationCategoryAccount, Action: OperationActionModelTest, Status: status,
 		Source: source, Scope: OperationScopeSingle, TargetID: result.AccountID, TargetCount: 1,
 		Succeeded: succeeded, Failed: failed, Skipped: skipped, StartedAt: result.TestedAt, FinishedAt: finishedAt,
-		ReasonCode: result.ReasonCode, Model: result.Model,
+		ReasonCode: result.ReasonCode, Model: result.Model, FailureDetails: failureDetails,
 	})
 }
 
@@ -85,7 +96,7 @@ func (a *App) runNewAccountModelProbe(ctx context.Context, account Account, mana
 	if a.experiments.AutoModelWhitelistEnabled() && len(result.CompatibleModels) > 0 {
 		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, a.configSnapshot(), managementKey, OperationSourceBackground)
 	}
-	a.recordModelTest(result, OperationSourceBackground)
-	_ = a.inspection.RecordModelTest(ctx, result, InspectionProbeSourceScan)
+	inspectionErr := a.inspection.RecordModelTest(ctx, result, InspectionProbeSourceScan)
+	a.recordModelTest(result, OperationSourceBackground, inspectionErr)
 	return result, nil
 }

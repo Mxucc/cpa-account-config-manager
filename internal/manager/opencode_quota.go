@@ -2,6 +2,7 @@ package manager
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -71,9 +72,10 @@ type OpenCodeQuotaResult struct {
 
 // OpenCodeQuotaSnapshot is the sanitized management-visible state.
 type OpenCodeQuotaSnapshot struct {
-	Accounts  []OpenCodeAccountView           `json:"accounts"`
-	Results   map[string]*OpenCodeQuotaResult `json:"results"`
-	FetchedAt time.Time                       `json:"fetched_at"`
+	Accounts     []OpenCodeAccountView           `json:"accounts"`
+	Results      map[string]*OpenCodeQuotaResult `json:"results"`
+	FetchedAt    time.Time                       `json:"fetched_at"`
+	StorageError string                          `json:"storage_error,omitempty"`
 }
 
 // OpenCodeQuotaService provides OpenCode Go quota monitoring. Its behavior is
@@ -86,6 +88,9 @@ type OpenCodeQuotaService struct {
 	cache          map[string]*OpenCodeQuotaResult
 	fetchedAt      time.Time
 	dataDir        string
+	loaded         bool
+	loadFailed     bool
+	storageErr     string
 	fetchMu        sync.Mutex
 	now            func() time.Time
 }
@@ -108,33 +113,76 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 	if s == nil {
 		return
 	}
+	storePath := openCodeQuotaStorePath(config.DataDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sameStore := s.loaded && s.dataDir == config.DataDir
+	if sameStore && !s.loadFailed {
+		return
+	}
+
 	timeout := openCodeQuotaDefaultTimeout
-	var loaded openCodeQuotaPersisted
-	if config.DataDir != "" {
-		if raw, errRead := os.ReadFile(openCodeQuotaStorePath(config.DataDir)); errRead == nil {
-			if errDecode := json.Unmarshal(raw, &loaded); errDecode == nil && loaded.Version == openCodeQuotaStoreVersion {
-				if loaded.TimeoutSeconds >= 1 && loaded.TimeoutSeconds <= openCodeQuotaMaxTimeoutSeconds {
-					timeout = loaded.TimeoutSeconds
-				}
+	loaded, errLoad := loadOpenCodeQuotaState(storePath, config.DataDir != "")
+	if errLoad != nil {
+		s.loaded = true
+		s.loadFailed = !errors.Is(errLoad, os.ErrNotExist)
+		if s.loadFailed {
+			s.storageErr = "OpenCode quota state could not be loaded"
+		} else {
+			s.storageErr = ""
+			if !sameStore {
+				s.accounts = nil
+				s.timeoutSeconds = timeout
 			}
 		}
+		s.dataDir = config.DataDir
+		return
 	}
-	s.mu.Lock()
+	if loaded.TimeoutSeconds >= 1 && loaded.TimeoutSeconds <= openCodeQuotaMaxTimeoutSeconds {
+		timeout = loaded.TimeoutSeconds
+	}
 	s.dataDir = config.DataDir
 	s.accounts = append([]OpenCodeAccount(nil), loaded.Accounts...)
 	s.timeoutSeconds = timeout
-	s.mu.Unlock()
+	s.loaded = true
+	s.loadFailed = false
+	s.storageErr = ""
+}
+
+func loadOpenCodeQuotaState(storePath string, enabled bool) (openCodeQuotaPersisted, error) {
+	var loaded openCodeQuotaPersisted
+	if !enabled {
+		return loaded, os.ErrNotExist
+	}
+	raw, errRead := os.ReadFile(storePath)
+	if errRead != nil {
+		return loaded, errRead
+	}
+	if errDecode := json.Unmarshal(raw, &loaded); errDecode != nil {
+		return loaded, fmt.Errorf("decode OpenCode quota state: %w", errDecode)
+	}
+	if loaded.Version != openCodeQuotaStoreVersion {
+		return loaded, fmt.Errorf("unsupported OpenCode quota state version")
+	}
+	return loaded, nil
 }
 
 func (s *OpenCodeQuotaService) persistLocked() error {
 	if s.dataDir == "" {
 		return nil
 	}
-	return savePrivateJSON(openCodeQuotaStorePath(s.dataDir), openCodeQuotaPersisted{
+	errPersist := savePrivateJSON(openCodeQuotaStorePath(s.dataDir), openCodeQuotaPersisted{
 		Version:        openCodeQuotaStoreVersion,
 		Accounts:       append([]OpenCodeAccount(nil), s.accounts...),
 		TimeoutSeconds: s.timeoutSeconds,
 	})
+	if errPersist != nil {
+		s.storageErr = "OpenCode quota state could not be persisted"
+		return errPersist
+	}
+	s.loadFailed = false
+	s.storageErr = ""
+	return nil
 }
 
 // ListAccounts returns the redacted account list.
@@ -246,9 +294,10 @@ func (s *OpenCodeQuotaService) Snapshot() OpenCodeQuotaSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot := OpenCodeQuotaSnapshot{
-		Accounts:  make([]OpenCodeAccountView, 0, len(s.accounts)),
-		Results:   make(map[string]*OpenCodeQuotaResult, len(s.cache)),
-		FetchedAt: s.fetchedAt,
+		Accounts:     make([]OpenCodeAccountView, 0, len(s.accounts)),
+		Results:      make(map[string]*OpenCodeQuotaResult, len(s.cache)),
+		FetchedAt:    s.fetchedAt,
+		StorageError: s.storageErr,
 	}
 	for _, account := range s.accounts {
 		snapshot.Accounts = append(snapshot.Accounts, OpenCodeAccountView{ID: account.ID, WorkspaceID: account.WorkspaceID})
@@ -362,6 +411,9 @@ func queryOpenCodeGoQuota(workspaceID, authCookie string, timeout time.Duration)
 	response, errDo := client.Do(request)
 	if errDo != nil {
 		return OpenCodeQuotaResult{Success: false, Workspace: workspaceID, Error: "OpenCode Go dashboard request failed: " + sanitizeOpenCodeError(errDo.Error()), FetchedAt: now}
+	}
+	if response == nil || response.Body == nil {
+		return OpenCodeQuotaResult{Success: false, Workspace: workspaceID, Error: "OpenCode Go dashboard returned an empty response", FetchedAt: now}
 	}
 	defer response.Body.Close()
 	body, errRead := io.ReadAll(io.LimitReader(response.Body, openCodeQuotaDashboardMaxBytes))

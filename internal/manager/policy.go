@@ -20,7 +20,6 @@ const (
 	defaultPolicyScanIntervalSeconds = 15
 	minPolicyScanIntervalSeconds     = 5
 	maxPolicyScanIntervalSeconds     = 300
-	policyMutationRetryInterval      = time.Second
 	policyFailureRetryInterval       = 5 * time.Minute
 	policyApplyModeMissing           = "missing"
 
@@ -32,6 +31,8 @@ const (
 	policyLocalStoreError    = "default policy scan status could not be persisted locally"
 	configuredPolicyError    = "configured default policy could not be loaded"
 )
+
+var policyPersistRetryDelay = 30 * time.Second
 
 var ErrPolicyStorageUnavailable = errors.New("default policy storage is unavailable; configure data_dir to a writable directory")
 
@@ -94,6 +95,7 @@ type policyQuotaMetadataProbe func(context.Context, Account, string) (string, er
 
 type policyQuotaMetadataProbeSummary struct {
 	planTypes map[string]string
+	failedIDs map[string]struct{}
 	failures  []OperationFailureDetail
 	attempted int
 	updated   int
@@ -124,6 +126,16 @@ type PolicyEngine struct {
 	cancel             context.CancelFunc
 	started            bool
 	closed             bool
+	loadFailed         bool
+	dirty              bool
+	retryTimer         *time.Timer
+	retryScheduled     bool
+	// initialScanPending coalesces a manual wake received while the engine is
+	// performing its first startup reconciliation.  Configure starts the
+	// worker before callers can finish applying a policy; without this guard a
+	// queued RequestScan could make the same account run twice back-to-back and
+	// overwrite the useful Changed=1 result with a no-op scan.
+	initialScanPending bool
 	now                func() time.Time
 }
 
@@ -211,38 +223,86 @@ func (e *PolicyEngine) Configure(config Config) {
 
 	e.operationMu.Lock()
 	e.mu.RLock()
-	sameStore := e.started && e.store == storePath
+	sameStore := e.started && e.store == storePath && !e.loadFailed
 	e.mu.RUnlock()
 
 	if sameStore {
 		e.mu.Lock()
 		e.config = config
+		if e.dirty {
+			e.mu.Unlock()
+			e.persistRuntimeStateLocked()
+			e.mu.RLock()
+			stillDirty := e.dirty
+			e.mu.RUnlock()
+			if stillDirty {
+				e.operationMu.Unlock()
+				return
+			}
+			e.mu.Lock()
+		}
+		currentPolicy := cloneDefaultPolicy(e.policy)
+		lastScan := e.lastScan
+		e.mu.Unlock()
 		if hasConfiguredPolicy {
 			if errConfiguredPolicy != nil {
-				fallback := normalizeDefaultPolicy(DefaultPolicy{})
-				e.policy = fallback
+				// Keep the last known-good policy active when a live config
+				// reload contains an invalid policy.  Falling back to an empty
+				// policy here silently disables automation until the next reload
+				// and makes the UI look as if the save succeeded.
+				e.mu.Lock()
 				e.lastScan.Error = configuredPolicyError
-				e.fingerprints = make(map[string]authFingerprint)
-				e.failures = make(map[string]policyFailureBackoff)
-			} else {
-				if e.lastScan.Error == configuredPolicyError {
-					e.lastScan.Error = ""
-				}
-				if !defaultPolicyEqual(e.policy, configuredPolicy) {
+				e.mu.Unlock()
+			} else if !defaultPolicyEqual(currentPolicy, configuredPolicy) {
+				if errSave := savePolicyRuntimeState(storePath, configuredPolicy, lastScan, nil); errSave != nil {
+					e.mu.Lock()
+					e.lastScan.Error = policyLocalStoreError
+					e.mu.Unlock()
+				} else {
+					e.mu.Lock()
 					e.policy = configuredPolicy
 					e.fingerprints = make(map[string]authFingerprint)
 					e.failures = make(map[string]policyFailureBackoff)
+					if e.lastScan.Error == configuredPolicyError || e.lastScan.Error == policyLocalStoreError {
+						e.lastScan.Error = ""
+					}
+					e.loadFailed = false
+					e.mu.Unlock()
 				}
+			} else {
+				e.mu.Lock()
+				if e.lastScan.Error == configuredPolicyError || e.lastScan.Error == policyLocalStoreError {
+					e.lastScan.Error = ""
+				}
+				e.mu.Unlock()
 			}
 		}
-		e.mu.Unlock()
 		e.operationMu.Unlock()
 		return
+	}
+
+	// Do not abandon a newer in-memory scan snapshot when data_dir changes.
+	// Keeping the old store active is safer than silently losing fingerprints
+	// and causing every account to be processed again after a transient mount
+	// failure.
+	e.mu.RLock()
+	needsFlush := e.started && e.store != storePath && e.dirty
+	e.mu.RUnlock()
+	if needsFlush {
+		e.persistRuntimeStateLocked()
+		e.mu.RLock()
+		stillDirty := e.dirty
+		e.mu.RUnlock()
+		if stillDirty {
+			e.operationMu.Unlock()
+			return
+		}
 	}
 
 	policy := normalizeDefaultPolicy(DefaultPolicy{})
 	lastScan := PolicyScanSummary{}
 	fingerprints := make(map[string]authFingerprint)
+	loadFailed := false
 	if hasConfiguredPolicy {
 		if errConfiguredPolicy != nil {
 			lastScan.Error = configuredPolicyError
@@ -254,6 +314,9 @@ func (e *PolicyEngine) Configure(config Config) {
 					fingerprints = loadedFingerprints
 				}
 			}
+			if errSave := savePolicyRuntimeState(storePath, policy, lastScan, fingerprints); errSave != nil {
+				lastScan.Error = policyLocalStoreError
+			}
 		}
 	} else {
 		loadedPolicy, loadedScan, loadedFingerprints, errLoad := loadPolicyRuntimeState(storePath)
@@ -263,7 +326,22 @@ func (e *PolicyEngine) Configure(config Config) {
 			fingerprints = loadedFingerprints
 		} else if !errors.Is(errLoad, os.ErrNotExist) {
 			lastScan.Error = "stored default policy could not be loaded"
+			loadFailed = true
 		}
+	}
+	// A repeated Configure on a store that failed to load must be recoverable,
+	// but another failed read must not replace the last known-good live policy.
+	e.mu.RLock()
+	startedSameStore := e.started && e.store == storePath
+	e.mu.RUnlock()
+	if loadFailed && startedSameStore {
+		e.mu.Lock()
+		e.config = config
+		e.loadFailed = true
+		e.lastScan.Error = "stored default policy could not be loaded"
+		e.mu.Unlock()
+		e.operationMu.Unlock()
+		return
 	}
 
 	e.mu.Lock()
@@ -273,8 +351,11 @@ func (e *PolicyEngine) Configure(config Config) {
 	e.lastScan = lastScan
 	e.fingerprints = fingerprints
 	e.failures = make(map[string]policyFailureBackoff)
+	e.loadFailed = loadFailed
+	e.dirty = false
 	start := !e.started && !e.closed
 	if start {
+		e.initialScanPending = true
 		ctx, cancel := context.WithCancel(context.Background())
 		e.cancel = cancel
 		e.started = true
@@ -354,15 +435,24 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 		fingerprints = nil
 	}
 	errSave := savePolicyRuntimeState(storePath, normalized, lastScan, fingerprints)
+	if errSave != nil {
+		// Do not publish a policy that was not durably saved.  Updating the
+		// in-memory copy first would make the UI report success while a restart
+		// silently restores the previous policy (and could also discard the
+		// previous fingerprint/backoff state).
+		e.mu.Lock()
+		e.lastScan.Error = policyLocalStoreError
+		e.mu.Unlock()
+		e.operationMu.Unlock()
+		return DefaultPolicy{}, fmt.Errorf("save default policy: %w", errSave)
+	}
 	e.mu.Lock()
 	e.policy = normalized
 	if changed {
 		e.fingerprints = make(map[string]authFingerprint)
 		e.failures = make(map[string]policyFailureBackoff)
 	}
-	if errSave != nil {
-		e.lastScan.Error = policyLocalStoreError
-	} else if e.lastScan.Error == policyLocalStoreError {
+	if e.lastScan.Error == policyLocalStoreError {
 		e.lastScan.Error = ""
 	}
 	e.mu.Unlock()
@@ -377,6 +467,16 @@ func (e *PolicyEngine) RequestScan() PolicySnapshot {
 	}
 	e.operationMu.Lock()
 	e.mu.Lock()
+	// The first startup scan is already implicit.  A wake sent before the
+	// goroutine starts, or while that first scan is running, is redundant and
+	// otherwise causes an immediate second full scan.  Policy changes made
+	// during the scan are still detected by the normal fingerprint pass on the
+	// next scheduler iteration.
+	if e.initialScanPending {
+		e.mu.Unlock()
+		e.operationMu.Unlock()
+		return e.Snapshot()
+	}
 	e.failures = make(map[string]policyFailureBackoff)
 	e.mu.Unlock()
 	e.operationMu.Unlock()
@@ -401,6 +501,16 @@ func (e *PolicyEngine) Shutdown() {
 		cancel()
 	}
 	e.wait.Wait()
+	e.operationMu.Lock()
+	e.persistRuntimeStateLocked()
+	e.operationMu.Unlock()
+	e.mu.Lock()
+	if e.retryTimer != nil {
+		e.retryTimer.Stop()
+		e.retryTimer = nil
+	}
+	e.retryScheduled = false
+	e.mu.Unlock()
 }
 
 func (e *PolicyEngine) run(ctx context.Context) {
@@ -410,11 +520,16 @@ func (e *PolicyEngine) run(ctx context.Context) {
 			return
 		}
 		retrySoon := e.reconcile(ctx)
+		e.mu.Lock()
+		e.initialScanPending = false
+		e.mu.Unlock()
 
+		// A policy pass deferred by another writer is intentionally retried on
+		// the normal scheduler interval.  Retrying every second made imports,
+		// batch jobs, and inspections generate a hot loop (and repeated stale
+		// operation entries) while the mutation coordinator was occupied.
 		interval := e.scanInterval()
-		if retrySoon {
-			interval = policyMutationRetryInterval
-		}
+		_ = retrySoon
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
@@ -476,8 +591,12 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 		return false
 	}
 	if applyDefaults {
+		// Do not even enumerate/probe accounts while another mutation is in
+		// progress.  This is a deferred pass, not a failed scan; the normal
+		// scheduler interval will retry after the writer has had a chance to
+		// finish.
 		if !e.mutations.TryAcquire(policyMutationOwner) {
-			return true
+			return false
 		}
 		e.mutations.Release(policyMutationOwner)
 	}
@@ -496,11 +615,8 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 		e.lastScan = summary
 		e.fingerprints = fingerprints
 		e.failures = failures
+		e.dirty = true
 	}
-	storePath := e.store
-	currentPolicy := cloneDefaultPolicy(e.policy)
-	lastScan := e.lastScan
-	currentFingerprints := clonePolicyFingerprints(e.fingerprints)
 	e.mu.Unlock()
 	if ctx.Err() != nil {
 		return false
@@ -511,13 +627,89 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	if observer != nil && observedAccounts != nil {
 		observer.ObserveAccounts(observedAccounts)
 	}
-	if errSave := savePolicyRuntimeState(storePath, currentPolicy, lastScan, currentFingerprints); errSave != nil {
+	e.persistRuntimeStateLocked()
+	return false
+}
+
+// persistRuntimeStateLocked saves the newest policy scan snapshot. The caller
+// must hold operationMu so a delayed retry cannot overwrite a newer policy or
+// fingerprint set.
+func (e *PolicyEngine) persistRuntimeStateLocked() {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	if !e.dirty || strings.TrimSpace(e.store) == "" || !backgroundWorkAllowed(e.backgroundOwner) {
+		e.mu.RUnlock()
+		return
+	}
+	storePath := e.store
+	policy := cloneDefaultPolicy(e.policy)
+	lastScan := policySummaryForPersistence(e.lastScan)
+	fingerprints := clonePolicyFingerprints(e.fingerprints)
+	e.mu.RUnlock()
+
+	if errSave := savePolicyRuntimeState(storePath, policy, lastScan, fingerprints); errSave != nil {
 		e.mu.Lock()
 		e.lastScan.Error = policyLocalStoreError
 		addPolicyFailureDetail(&e.lastScan.FailureDetails, OperationFailurePolicyStatePersist, "")
+		e.schedulePersistRetryLocked()
 		e.mu.Unlock()
+		return
 	}
-	return false
+	e.mu.Lock()
+	if e.store == storePath {
+		e.dirty = false
+		e.loadFailed = false
+		clearPolicyPersistenceFailureLocked(&e.lastScan)
+		if e.retryTimer != nil {
+			e.retryTimer.Stop()
+			e.retryTimer = nil
+		}
+		e.retryScheduled = false
+	}
+	e.mu.Unlock()
+}
+
+func (e *PolicyEngine) schedulePersistRetryLocked() {
+	if e == nil || e.closed || e.retryScheduled || !e.dirty {
+		return
+	}
+	e.retryScheduled = true
+	e.retryTimer = time.AfterFunc(policyPersistRetryDelay, func() {
+		e.operationMu.Lock()
+		e.mu.Lock()
+		e.retryScheduled = false
+		e.retryTimer = nil
+		closed := e.closed
+		e.mu.Unlock()
+		if !closed {
+			e.persistRuntimeStateLocked()
+		}
+		e.operationMu.Unlock()
+	})
+}
+
+func policySummaryForPersistence(summary PolicyScanSummary) PolicyScanSummary {
+	clean := summary
+	clearPolicyPersistenceFailureLocked(&clean)
+	return clean
+}
+
+func clearPolicyPersistenceFailureLocked(summary *PolicyScanSummary) {
+	if summary == nil {
+		return
+	}
+	if summary.Error == policyLocalStoreError {
+		summary.Error = ""
+	}
+	details := summary.FailureDetails[:0]
+	for _, detail := range summary.FailureDetails {
+		if detail.ReasonCode != OperationFailurePolicyStatePersist {
+			details = append(details, detail)
+		}
+	}
+	summary.FailureDetails = details
 }
 
 func (e *PolicyEngine) scan(ctx context.Context, policy DefaultPolicy, startedAt time.Time) (PolicyScanSummary, map[string]authFingerprint, []Account) {
@@ -572,6 +764,12 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 	for authIndex, failure := range e.failures {
 		previousFailures[authIndex] = failure
 	}
+	// Quota metadata is an optional integration. Only keep an account
+	// pending for the bootstrap probe when a probe is actually configured.
+	// A standalone engine (or an older CPA host without this hook) must still
+	// be able to apply ordinary policy fields and persist its fingerprint;
+	// otherwise every scheduler tick would rediscover the same account.
+	quotaProbeConfigured := e.quotaMetadataProbe != nil
 	e.mu.RUnlock()
 
 	type policyCandidate struct {
@@ -592,7 +790,13 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 			planType = account.PlanType
 		}
 		fingerprint := fingerprintForEntry(entry, planType)
-		if previous, exists := previousFingerprints[authIndex]; exists && samePolicyAccount(previous, fingerprint) {
+		metadataPending := false
+		if quotaProbeConfigured {
+			if account := accountsByID[authIndex]; account != nil {
+				metadataPending = quotaMetadataBootstrapEligible(*account) && !quotaMetadataAlreadyObserved(*account)
+			}
+		}
+		if previous, exists := previousFingerprints[authIndex]; exists && samePolicyAccount(previous, fingerprint) && !metadataPending {
 			nextFingerprints[authIndex] = fingerprint
 			summary.Skipped++
 			continue
@@ -621,13 +825,34 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 			account.PlanType = planType
 		}
 	}
+	for _, candidate := range candidates {
+		if _, failed := quotaSummary.failedIDs[candidate.authIndex]; failed {
+			nextFailures[candidate.authIndex] = policyFailureBackoff{Fingerprint: candidate.fingerprint, RetryAt: startedAt.Add(policyFailureRetryInterval)}
+			continue
+		}
+		// A configured quota probe without a management credential is not an
+		// account failure. Defer it with the normal policy backoff, however, so
+		// the scheduler does not run the same full candidate set every 15s while
+		// CPA credentials are unavailable. An explicit RequestScan clears this
+		// backoff after credentials are repaired.
+		if !quotaSummary.ready {
+			if account := accountsByID[candidate.authIndex]; account != nil && quotaMetadataBootstrapEligible(*account) {
+				nextFailures[candidate.authIndex] = policyFailureBackoff{Fingerprint: candidate.fingerprint, RetryAt: startedAt.Add(policyFailureRetryInterval)}
+			}
+		}
+	}
 
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
 			break
 		}
 		account := accountsByID[candidate.authIndex]
-		quotaDeferred := account != nil && quotaMetadataBootstrapEligible(*account) && !quotaSummary.ready
+		_, quotaProbeFailed := quotaSummary.failedIDs[candidate.authIndex]
+		quotaDeferred := account != nil && quotaMetadataBootstrapEligible(*account) && (!quotaSummary.ready || quotaProbeFailed)
+		if quotaDeferred {
+			summary.Skipped++
+			continue
+		}
 		if account != nil {
 			candidate.fingerprint.PlanType = safeAccountPlanType(account.PlanType)
 		}
@@ -667,7 +892,11 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 }
 
 func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Account) policyQuotaMetadataProbeSummary {
-	result := policyQuotaMetadataProbeSummary{planTypes: make(map[string]string), ready: true}
+	result := policyQuotaMetadataProbeSummary{
+		planTypes: make(map[string]string),
+		failedIDs: make(map[string]struct{}),
+		ready:     true,
+	}
 	eligible := make(map[string]Account, min(len(accounts), maxInspectionAccounts))
 	for _, account := range accounts {
 		if !quotaMetadataBootstrapEligible(account) || len(eligible) >= maxInspectionAccounts {
@@ -685,7 +914,12 @@ func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Accoun
 	probe := e.quotaMetadataProbe
 	managementKey := e.managementKey
 	e.mu.RUnlock()
-	if probe == nil || strings.TrimSpace(managementKey) == "" {
+	if probe == nil {
+		// Standalone policy engines may not have a host quota probe. Do not block
+		// ordinary policy reconciliation when that optional integration is absent.
+		return result
+	}
+	if strings.TrimSpace(managementKey) == "" {
 		result.ready = false
 		managementKey = ""
 		return result
@@ -734,6 +968,7 @@ func (e *PolicyEngine) probeQuotaMetadata(ctx context.Context, accounts []Accoun
 	for item := range outcomes {
 		if item.err != nil {
 			result.failed++
+			result.failedIDs[item.id] = struct{}{}
 			addPolicyFailureDetail(&result.failures, OperationFailurePolicyQuotaMetadata, item.id)
 			continue
 		}
@@ -840,7 +1075,12 @@ func containsString(values []string, target string) bool {
 }
 
 func samePolicyAccount(left, right authFingerprint) bool {
-	return left.Name == right.Name && left.Path == right.Path
+	// A plan transition (for example free -> plus/k12/team) changes the
+	// inputs used by conditional policies. Treat it as a new policy state
+	// while intentionally ignoring file size/mtime churn from CPA rewrites.
+	return left.Name == right.Name &&
+		left.Path == right.Path &&
+		left.PlanType == right.PlanType
 }
 
 func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuthFileEntry, policy DefaultPolicy, refreshedPlanType string) (bool, error) {

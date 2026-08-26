@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,6 +15,7 @@ import (
 type fakeProbeTransport struct {
 	responses []cpaapi.HostHTTPResponse
 	errors    []error
+	statuses  map[int]int
 	requests  []cpaapi.HostHTTPRequest
 	calls     int
 }
@@ -28,6 +31,12 @@ func (t *fakeProbeTransport) AgentIdentityDo(_ context.Context, _ string, reques
 		// When any error is configured, keep failing so multi-candidate
 		// probing cannot accidentally fall through to a default 200.
 		return cpaapi.HostHTTPResponse{}, t.errors[len(t.errors)-1]
+	}
+	if status, ok := t.statuses[index]; ok {
+		if status == http.StatusOK {
+			return cpaapi.HostHTTPResponse{StatusCode: status}, nil
+		}
+		return cpaapi.HostHTTPResponse{}, fmt.Errorf("upstream returned %d", status)
 	}
 	if index < len(t.responses) {
 		return t.responses[index], nil
@@ -131,6 +140,33 @@ func TestAIProviderProbeRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestAIProviderProbeFallsBackFromModelsPathToBaseURL(t *testing.T) {
+	transport := &fakeProbeTransport{statuses: map[int]int{0: http.StatusNotFound}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderEndpoint(context.Background(), "openai-compatibility", "https://kimi.example/v1", "key", "", nil, time.Second)
+	if !result.Reachable || result.StatusCode != http.StatusOK {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(transport.requests) != 2 || transport.requests[0].URL != "https://kimi.example/v1/models" || transport.requests[1].URL != "https://kimi.example/v1" {
+		t.Fatalf("requests = %#v", transport.requests)
+	}
+	if transport.requests[1].Headers.Get("Authorization") != "Bearer key" {
+		t.Fatalf("fallback authentication headers missing: %#v", transport.requests[1].Headers)
+	}
+}
+
+func TestAIProviderProbeStopsAfterUnauthorizedWithoutFallback(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{StatusCode: http.StatusUnauthorized}, {StatusCode: http.StatusOK}}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderEndpoint(context.Background(), "openai-compatibility", "https://provider.example/v1", "bad", "", nil, time.Second)
+	if result.Reachable || result.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("unauthorized probe retried unexpectedly: %d", len(transport.requests))
+	}
+}
+
 func TestAIProviderProbeTimeout(t *testing.T) {
 	app := &App{agentIdentity: &AgentIdentityExperiment{transport: &fakeProbeTransport{errors: []error{context.DeadlineExceeded}}}}
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
@@ -148,4 +184,95 @@ func TestAIProviderProbeTimeout(t *testing.T) {
 		t.Fatalf("probe body = %s", response.Body)
 	}
 	_ = time.Second
+}
+
+func TestAIProviderProbeUsesInteractionsDefaultEndpoint(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{StatusCode: http.StatusOK}}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderEndpoint(context.Background(), "interactions-api-key", defaultAIProviderProbeURL("interactions-api-key"), "google-secret", "", nil, time.Second)
+	if !result.Reachable {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %#v", transport.requests)
+	}
+	request := transport.requests[0]
+	if request.URL != "https://generativelanguage.googleapis.com/v1beta/models" {
+		t.Fatalf("probe URL = %q", request.URL)
+	}
+	if request.Headers.Get("x-goog-api-key") != "google-secret" {
+		t.Fatalf("interactions API key header missing: %#v", request.Headers)
+	}
+}
+
+func TestAIProviderProbeUsesVertexOriginWithoutCatalogPath(t *testing.T) {
+	transport := &fakeProbeTransport{}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderEndpoint(
+		context.Background(),
+		"vertex-api-key",
+		defaultAIProviderProbeURL("vertex-api-key"),
+		"vertex-secret",
+		"",
+		nil,
+		time.Second,
+	)
+	if !result.Reachable {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(transport.requests) != 1 || transport.requests[0].URL != "https://aiplatform.googleapis.com" {
+		t.Fatalf("requests = %#v", transport.requests)
+	}
+	if transport.requests[0].Headers.Get("x-goog-api-key") != "vertex-secret" {
+		t.Fatalf("vertex API key header missing: %#v", transport.requests[0].Headers)
+	}
+}
+
+func TestAIProviderCodexProbeUsesStableConvergedIdentity(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{StatusCode: http.StatusOK}}}
+	host := &fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{
+		"provider-auth": {Name: "provider.json", Path: "/auths/provider.json", JSON: json.RawMessage(`{"account_type":"api_key","api_key":"redacted"}`)},
+	}}
+	accounts := NewAccountService(host)
+	app := &App{
+		agentIdentity: &AgentIdentityExperiment{transport: transport},
+	}
+	run := func(mode string) cpaapi.HostHTTPRequest {
+		settings := ExperimentalCodexIdentitySettings{OutboundConvergenceEnabled: true, ConvergenceMode: mode}
+		app.requestHooks = NewRequestHook(NewCodexIdentityExperiment(stubCodexSettings{settings}, accounts))
+		response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+			Method:  http.MethodPost,
+			Path:    "/v0/management/plugins/cpa-account-config-manager/ai-providers/test",
+			Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+			Body:    []byte(`{"kind":"codex-api-key","api_key":"codex-secret","auth_id":"provider-auth","timeout_seconds":1}`),
+		})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("mode %s probe status = %d body = %s", mode, response.StatusCode, response.Body)
+		}
+		return transport.requests[len(transport.requests)-1]
+	}
+	off := run("off")
+	for _, name := range []string{"X-Codex-Installation-Id", "X-Codex-Window-Id", "Session-Id", "Thread-Id", "X-Codex-Turn-Metadata"} {
+		if off.Headers.Get(name) != "" {
+			t.Fatalf("codex probe off identity changed %s = %#v", name, off.Headers.Get(name))
+		}
+	}
+
+	device := run("device")
+	deviceInstall := device.Headers.Get("X-Codex-Installation-Id")
+	if deviceInstall == "" || device.Headers.Get("Session-Id") != "" ||
+		device.Headers.Get("X-Codex-Window-Id") != "" ||
+		device.Headers.Get("X-Codex-Turn-Metadata") == "" {
+		t.Fatalf("codex probe device identity = %#v", device.Headers)
+	}
+
+	full := run("full")
+	if full.Headers.Get("X-Codex-Installation-Id") != deviceInstall ||
+		full.Headers.Get("Session-Id") == "" ||
+		full.Headers.Get("Session-Id") != full.Headers.Get("Thread-Id") {
+		t.Fatalf("codex probe full identity = %#v", full.Headers)
+	}
+	if len(host.saves) != 0 {
+		t.Fatalf("AI-provider credential writes = %d, want 0", len(host.saves))
+	}
 }

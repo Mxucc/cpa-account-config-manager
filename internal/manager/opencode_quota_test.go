@@ -275,3 +275,60 @@ func TestOpenCodeWriteRoutesRequireManagementKey(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCodeQuotaConfigureRetriesCorruptStoreWithoutDroppingAccounts(t *testing.T) {
+	firstDir := t.TempDir()
+	service := NewOpenCodeQuotaService()
+	service.Configure(Config{DataDir: firstDir})
+	if _, errSave := service.SaveAccount("wrk_existing", "cookie-existing"); errSave != nil {
+		t.Fatalf("SaveAccount() error = %v", errSave)
+	}
+
+	secondDir := t.TempDir()
+	storePath := openCodeQuotaStorePath(secondDir)
+	if errWrite := os.WriteFile(storePath, []byte(`{"version":`), 0o600); errWrite != nil {
+		t.Fatalf("write corrupt store: %v", errWrite)
+	}
+	service.Configure(Config{DataDir: secondDir})
+	if got := service.ListAccounts(); len(got) != 1 || got[0].WorkspaceID != "wrk_existing" {
+		t.Fatalf("corrupt store replaced live accounts: %+v", got)
+	}
+	if got := service.Snapshot().StorageError; got != "OpenCode quota state could not be loaded" {
+		t.Fatalf("StorageError = %q", got)
+	}
+
+	persisted := openCodeQuotaPersisted{
+		Version:        openCodeQuotaStoreVersion,
+		Accounts:       []OpenCodeAccount{{ID: "restored", WorkspaceID: "wrk_restored", AuthCookie: "cookie-restored"}},
+		TimeoutSeconds: openCodeQuotaDefaultTimeout,
+	}
+	if errSave := savePrivateJSON(storePath, persisted); errSave != nil {
+		t.Fatalf("repair store: %v", errSave)
+	}
+	service.Configure(Config{DataDir: secondDir})
+	if got := service.ListAccounts(); len(got) != 1 || got[0].WorkspaceID != "wrk_restored" {
+		t.Fatalf("recovered accounts = %+v", got)
+	}
+	if got := service.Snapshot().StorageError; got != "" {
+		t.Fatalf("StorageError after recovery = %q", got)
+	}
+}
+
+func TestOpenCodeQuotaPersistenceFailureIsSanitized(t *testing.T) {
+	blockingPath := filepath.Join(t.TempDir(), "not-a-directory")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocker: %v", errWrite)
+	}
+	service := NewOpenCodeQuotaService()
+	service.Configure(Config{DataDir: blockingPath})
+	_, errSave := service.SaveAccount("wrk_secret", "cookie-super-secret")
+	if errSave == nil {
+		t.Fatal("SaveAccount() error = nil")
+	}
+	if got := service.Snapshot().StorageError; got != "OpenCode quota state could not be persisted" {
+		t.Fatalf("StorageError = %q", got)
+	}
+	if strings.Contains(service.Snapshot().StorageError, blockingPath) || strings.Contains(service.Snapshot().StorageError, "cookie-super-secret") {
+		t.Fatalf("StorageError leaked sensitive details: %q", service.Snapshot().StorageError)
+	}
+}

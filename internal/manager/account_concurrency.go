@@ -34,6 +34,7 @@ type AccountConcurrencyAvailability struct {
 	HostSchemaVersion     uint32 `json:"host_schema_version"`
 	RequiredSchemaVersion uint32 `json:"required_schema_version"`
 	Reason                string `json:"reason,omitempty"`
+	StorageError          string `json:"storage_error,omitempty"`
 }
 
 type AccountConcurrencySummary struct {
@@ -62,6 +63,8 @@ type AccountConcurrencyService struct {
 	mu         sync.Mutex
 	store      string
 	loaded     bool
+	loadFailed bool
+	storageErr string
 	hostSchema uint32
 	limits     map[string]accountConcurrencyRecord
 	active     map[string]int
@@ -94,8 +97,19 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 	storePath := accountConcurrencyStorePath(config.DataDir)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previousSchema := s.hostSchema
 	s.hostSchema = hostSchema
-	if s.loaded && s.store == storePath {
+	sameStore := s.loaded && s.store == storePath
+	// A service instance can survive a CPA/plugin reconfiguration.  Admission
+	// leases belong to the request-lifecycle instance that created them; when
+	// the backing store or host schema changes, carrying those leases forward
+	// makes the UI report phantom active requests and can reject new traffic.
+	if (s.loaded && !sameStore) || previousSchema != hostSchema {
+		s.active = make(map[string]int)
+		s.requests = make(map[string]accountConcurrencyAdmission)
+		s.nextPrune = time.Time{}
+	}
+	if sameStore && !s.loadFailed {
 		s.updateActiveGateLocked()
 		return
 	}
@@ -103,11 +117,21 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 	s.loaded = true
 	loaded, errLoad := loadAccountConcurrency(storePath)
 	if errLoad != nil {
-		s.limits = make(map[string]accountConcurrencyRecord)
+		if !sameStore {
+			s.limits = make(map[string]accountConcurrencyRecord)
+		}
+		s.loadFailed = !errors.Is(errLoad, os.ErrNotExist)
+		if s.loadFailed {
+			s.storageErr = "account concurrency state could not be loaded"
+		} else {
+			s.storageErr = ""
+		}
 		s.updateActiveGateLocked()
 		return
 	}
 	s.limits = loaded
+	s.loadFailed = false
+	s.storageErr = ""
 	s.updateActiveGateLocked()
 }
 
@@ -128,6 +152,7 @@ func (s *AccountConcurrencyService) Availability() AccountConcurrencyAvailabilit
 	s.mu.Lock()
 	availability.HostSchemaVersion = s.hostSchema
 	availability.Supported = s.hostSchema >= cpaapi.SchemaVersion
+	availability.StorageError = s.storageErr
 	s.mu.Unlock()
 	if !availability.Supported {
 		availability.Reason = "host_schema_v2_required"
@@ -142,6 +167,7 @@ func (s *AccountConcurrencyService) Summary(authID string) AccountConcurrencySum
 	authID = strings.TrimSpace(authID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(s.now().UTC())
 	record := s.limits[authID]
 	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, Active: s.active[authID]}
 }
@@ -176,6 +202,8 @@ func (s *AccountConcurrencyService) SetLimit(account Account, limit int) error {
 		return fmt.Errorf("persist account concurrency: %w", errSave)
 	}
 	s.limits = next
+	s.loadFailed = false
+	s.storageErr = ""
 	s.updateActiveGateLocked()
 	return nil
 }

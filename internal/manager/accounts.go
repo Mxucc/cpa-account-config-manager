@@ -40,6 +40,14 @@ type UsageStorageDiscoverer interface {
 	DiscoverAuthStorage([]cpaapi.HostAuthFileEntry)
 }
 
+// UsageStorageErrorReader lets the account endpoint surface a non-fatal
+// persistence problem instead of making a stale/empty usage value look like a
+// successful collection.  Keep this optional so lightweight callers and test
+// doubles do not need to implement it.
+type UsageStorageErrorReader interface {
+	StorageError() string
+}
+
 type UsageIdentityReader interface {
 	UsageIdentity(string) string
 }
@@ -88,40 +96,55 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 	if errAccounts != nil {
 		return ListResponse{}, errAccounts
 	}
+	detailsEnriched := false
 	if filtersRequireAccountDetail(query.Filters) {
 		s.enrichAccountDetails(ctx, accounts)
+		detailsEnriched = true
 	}
 	accounts = filterAccounts(accounts, query.Filters)
 	if sortRequiresAccountDetail(query.SortBy) && !filtersRequireAccountDetail(query.Filters) {
 		s.enrichAccountDetails(ctx, accounts)
+		detailsEnriched = true
 	}
 	sortAccountsBy(accounts, query.SortBy, query.SortOrder)
 
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	total := len(accounts)
-	start := (page - 1) * pageSize
-	if start > total {
-		start = total
+	// Avoid multiplying an attacker-controlled page by pageSize before
+	// checking bounds; a very large page can overflow int and panic while
+	// slicing the account list.
+	start := total
+	if page == 1 || page-1 <= total/pageSize {
+		start = (page - 1) * pageSize
+		if start > total {
+			start = total
+		}
 	}
 	end := start + pageSize
 	if end > total {
 		end = total
 	}
 	pageAccounts := append([]Account{}, accounts[start:end]...)
-	s.enrichAccountDetails(ctx, pageAccounts)
+	if !detailsEnriched {
+		s.enrichAccountDetails(ctx, pageAccounts)
+	}
 
 	pages := 0
 	if total > 0 {
-		pages = (total + pageSize - 1) / pageSize
+		pages = (total-1)/pageSize + 1
 	}
-	return ListResponse{
+	response := ListResponse{
 		Accounts:           pageAccounts,
 		Total:              total,
 		Page:               page,
 		PageSize:           pageSize,
 		Pages:              pages,
 		AccountConcurrency: s.accountConcurrencyAvailability(),
-	}, nil
+	}
+	if reader, ok := s.usage.(UsageStorageErrorReader); ok {
+		response.UsageStorageError = strings.TrimSpace(reader.StorageError())
+	}
+	return response, nil
 }
 
 func (s *AccountService) accountConcurrencyAvailability() AccountConcurrencyAvailability {
@@ -150,6 +173,7 @@ func (s *AccountService) ResolveTargets(ctx context.Context, scope TargetScope) 
 
 	resolved := make([]Account, 0, len(accounts))
 	missing := make([]string, 0)
+	detailsEnriched := false
 	if scope.Mode == "selected" {
 		byID := make(map[string]Account, len(accounts))
 		for _, account := range accounts {
@@ -166,12 +190,15 @@ func (s *AccountService) ResolveTargets(ctx context.Context, scope TargetScope) 
 	} else {
 		if filtersRequireAccountDetail(scope.Filters) {
 			s.enrichAccountDetails(ctx, accounts)
+			detailsEnriched = true
 		}
 		resolved = filterAccounts(accounts, scope.Filters)
 		sortAccounts(resolved)
 	}
 
-	s.enrichAccountDetails(ctx, resolved)
+	if !detailsEnriched {
+		s.enrichAccountDetails(ctx, resolved)
+	}
 	paths := make(map[string]struct{}, len(resolved))
 	for index := range resolved {
 		account := &resolved[index]
@@ -222,6 +249,20 @@ func (s *AccountService) CurrentAuthDocument(ctx context.Context, account Accoun
 		return currentAuthDocument{}, fmt.Errorf("decode physical auth file: %w", errDecode)
 	}
 	return currentAuthDocument{Revision: revisionFor(raw), Metadata: metadata}, nil
+}
+
+func (s *AccountService) GetAuth(ctx context.Context, authIndex string) (cpaapi.HostAuthGetResponse, error) {
+	if s == nil || s.host == nil {
+		return cpaapi.HostAuthGetResponse{}, fmt.Errorf("auth host is unavailable")
+	}
+	return s.host.GetAuth(ctx, authIndex)
+}
+
+func (s *AccountService) SaveAuth(ctx context.Context, name string, rawJSON json.RawMessage) (cpaapi.HostAuthSaveResponse, error) {
+	if s == nil || s.host == nil {
+		return cpaapi.HostAuthSaveResponse{}, fmt.Errorf("auth host is unavailable")
+	}
+	return s.host.SaveAuth(ctx, name, rawJSON)
 }
 
 func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
@@ -681,6 +722,9 @@ func enrichAccount(account *Account, detail cpaapi.HostAuthGetResponse) error {
 	account.HeaderNames = safeHeaderNames(metadata["headers"])
 	account.HeaderCount = len(account.HeaderNames)
 	account.ModelPolicy = modelPolicySummary(metadata)
+	if deviceID, ok := metadata["device_id"].(string); ok && strings.TrimSpace(deviceID) != "" {
+		account.DeviceID = strings.TrimSpace(deviceID)
+	}
 	applyQuotaPlanType(account)
 	return nil
 }

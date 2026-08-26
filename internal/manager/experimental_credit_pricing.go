@@ -104,6 +104,7 @@ type Sub2APICreditUsage struct {
 	wake       chan struct{}
 	stop       chan struct{}
 	done       chan struct{}
+	cancel     context.CancelFunc
 	closeOnce  sync.Once
 }
 
@@ -119,10 +120,12 @@ func NewSub2APICreditUsage() *Sub2APICreditUsage {
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.cancel = cancel
 	if table, err := parseCreditPricingTable(embeddedCreditPricingJSON, time.Time{}, creditPricingSource+" (embedded)"); err == nil {
 		service.table.Store(table)
 	}
-	go service.run()
+	go service.run(ctx)
 	return service
 }
 
@@ -257,11 +260,16 @@ func (s *Sub2APICreditUsage) Close() {
 	if s == nil {
 		return
 	}
-	s.closeOnce.Do(func() { close(s.stop) })
+	s.closeOnce.Do(func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		close(s.stop)
+	})
 	<-s.done
 }
 
-func (s *Sub2APICreditUsage) run() {
+func (s *Sub2APICreditUsage) run(ctx context.Context) {
 	defer close(s.done)
 	ticker := time.NewTicker(creditPricingSyncInterval)
 	defer ticker.Stop()
@@ -269,11 +277,11 @@ func (s *Sub2APICreditUsage) run() {
 		select {
 		case <-s.wake:
 			if s.enabled.Load() {
-				_ = s.syncRemote(context.Background())
+				_ = s.syncRemote(ctx)
 			}
 		case <-ticker.C:
 			if s.enabled.Load() {
-				_ = s.syncRemote(context.Background())
+				_ = s.syncRemote(ctx)
 			}
 		case <-s.stop:
 			return
@@ -327,6 +335,9 @@ func (s *Sub2APICreditUsage) fetchBounded(ctx context.Context, rawURL string, ma
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, errors.New("pricing endpoint returned an empty response")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -426,7 +437,81 @@ func parseCreditPricingTable(raw []byte, updatedAt time.Time, source string) (*c
 	if len(models) == 0 {
 		return nil, errors.New("model pricing table is empty")
 	}
+	mergeStaticCreditFallbackPrices(models)
 	return &creditPricingTable{Models: models, UpdatedAt: updatedAt.UTC(), Source: strings.TrimSpace(source)}, nil
+}
+
+// mergeStaticCreditFallbackPrices fills provider rate cards that are absent
+// from the upstream LiteLLM snapshot. Remote entries always win so this map is
+// only a deterministic fallback for newly released SKUs.
+func mergeStaticCreditFallbackPrices(models map[string]creditModelPricing) {
+	fallbacks := map[string]creditModelPricing{
+		// DeepSeek V4 (USD per token).
+		"deepseek-v4-pro":   {Input: 4.35e-7, Output: 8.70e-7, CacheRead: 3.625e-9},
+		"deepseek-v4-flash": {Input: 1.40e-7, Output: 2.80e-7, CacheRead: 2.80e-9},
+		"deepseek-chat":     {Input: 1.40e-7, Output: 2.80e-7, CacheRead: 2.80e-9},
+		"deepseek-reasoner": {Input: 1.40e-7, Output: 2.80e-7, CacheRead: 2.80e-9},
+
+		// Z.ai GLM public USD SKUs. Cache creation is not published and stays zero.
+		"glm-5.2":             {Input: 1.40e-6, Output: 4.40e-6, CacheRead: 0.26e-6},
+		"glm-5.1":             {Input: 1.40e-6, Output: 4.40e-6, CacheRead: 0.26e-6},
+		"glm-5":               {Input: 1.00e-6, Output: 3.20e-6, CacheRead: 0.20e-6},
+		"glm-5-turbo":         {Input: 1.20e-6, Output: 4.00e-6, CacheRead: 0.24e-6},
+		"glm-4.7":             {Input: 0.60e-6, Output: 2.20e-6, CacheRead: 0.11e-6},
+		"glm-4.7-flashx":      {Input: 0.07e-6, Output: 0.40e-6, CacheRead: 0.01e-6},
+		"glm-4.7-flash":       {},
+		"glm-4.6":             {Input: 0.60e-6, Output: 2.20e-6, CacheRead: 0.11e-6},
+		"glm-4.5":             {Input: 0.60e-6, Output: 2.20e-6, CacheRead: 0.11e-6},
+		"glm-4.5-x":           {Input: 2.20e-6, Output: 8.90e-6, CacheRead: 0.45e-6},
+		"glm-4.5-air":         {Input: 0.20e-6, Output: 1.10e-6, CacheRead: 0.03e-6},
+		"glm-4.5-airx":        {Input: 1.10e-6, Output: 4.50e-6, CacheRead: 0.22e-6},
+		"glm-4.5-flash":       {},
+		"glm-4-32b-0414-128k": {Input: 0.10e-6, Output: 0.10e-6},
+		"glm-4":               {Input: 0.10e-6, Output: 0.10e-6},
+
+		// Moonshot Kimi K-series public USD rate cards.
+		"kimi-k3":          {Input: 3.00e-6, Output: 15.00e-6, CacheRead: 0.30e-6},
+		"kimi-k2.6":        {Input: 0.95e-6, Output: 4.00e-6, CacheRead: 0.15e-6},
+		"kimi-for-coding":  {Input: 0.95e-6, Output: 4.00e-6, CacheRead: 0.15e-6},
+		"kimi-k2.5":        {Input: 0.60e-6, Output: 3.00e-6, CacheRead: 0.098e-6},
+		"kimi-k2-thinking": {Input: 0.56e-6, Output: 2.24e-6, CacheRead: 0.14e-6},
+		"kimi-k2":          {Input: 0.56e-6, Output: 2.24e-6, CacheRead: 0.14e-6},
+		"moonshot-v1-8k":   {Input: 0.20e-6, Output: 0.20e-6},
+
+		// MiniMax M-series public USD cards. M3 uses its standard <=512K tier;
+		// the long-context multiplier is intentionally omitted until usage
+		// records expose that context boundary consistently.
+		"minimax-m3":             {Input: 0.60e-6, Output: 2.40e-6, CacheRead: 0.12e-6},
+		"minimax-m2.7":           {Input: 0.30e-6, Output: 1.20e-6, CacheRead: 0.06e-6},
+		"minimax-m2.7-highspeed": {Input: 0.60e-6, Output: 2.40e-6, CacheRead: 0.06e-6},
+		"minimax-m2.5":           {Input: 0.30e-6, Output: 1.20e-6, CacheRead: 0.03e-6},
+		"minimax-m2.1":           {Input: 0.30e-6, Output: 1.20e-6, CacheRead: 0.03e-6},
+		"minimax-m2":             {Input: 0.30e-6, Output: 1.20e-6, CacheRead: 0.03e-6},
+
+		// Volcengine multimodal embeddings are text-plus-image inputs. The
+		// host usage record currently reports only aggregate prompt tokens, so
+		// this conservative card uses the text rate rather than guessing the
+		// image-token split.
+		"doubao-embedding-vision": {Input: 0.098e-6},
+
+		// xAI Grok text-model cards. Grok 4.x doubles both rates at >=200K.
+		"grok-4.5":         {Input: 2.00e-6, Output: 6.00e-6, CacheRead: 0.30e-6, LongContextThreshold: 200000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 2},
+		"grok-4.6":         {Input: 2.00e-6, Output: 6.00e-6, CacheRead: 0.50e-6, LongContextThreshold: 200000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 2},
+		"grok-4.3":         {Input: 1.25e-6, Output: 2.50e-6, CacheRead: 0.20e-6, LongContextThreshold: 200000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 2},
+		"grok-4.20":        {Input: 1.25e-6, Output: 2.50e-6, CacheRead: 0.20e-6, LongContextThreshold: 200000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 2},
+		"grok-3-mini":      {Input: 0.30e-6, Output: 0.50e-6, CacheRead: 0.075e-6},
+		"grok-3-mini-fast": {Input: 0.60e-6, Output: 4.00e-6, CacheRead: 0.15e-6},
+		"grok-build-0.1":   {Input: 1.00e-6, Output: 2.00e-6, CacheRead: 0.20e-6, LongContextThreshold: 200000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 2},
+
+		// Antigravity exposes Gemini 3.6 Flash thinking-tier IDs that share the
+		// public base-model token rate.
+		"gemini-3.6-flash": {Input: 1.50e-6, Output: 7.50e-6, CacheRead: 0.15e-6},
+	}
+	for name, pricing := range fallbacks {
+		if _, exists := models[name]; !exists {
+			models[name] = pricing
+		}
+	}
 }
 
 func safePrice(value float64) float64 {
@@ -471,6 +556,152 @@ func resolveCreditModelPricing(models map[string]creditModelPricing, model strin
 		candidates = append(candidates, "gpt-5.3-codex-spark")
 	case strings.Contains(normalized, "gpt-5.3") || strings.Contains(normalized, "codex"):
 		candidates = append(candidates, "gpt-5.3-codex")
+	case strings.Contains(normalized, "claude-opus-5") || strings.Contains(normalized, "claude-opus5"):
+		candidates = append(candidates, "claude-opus-5", "claude-opus-4-8")
+	case strings.Contains(normalized, "claude-opus-4-8") || strings.Contains(normalized, "claude-opus-4.8"):
+		candidates = append(candidates, "claude-opus-4-8", "claude-opus-4-7")
+	case strings.Contains(normalized, "claude-opus-4-7") || strings.Contains(normalized, "claude-opus-4.7"):
+		candidates = append(candidates, "claude-opus-4-7", "claude-opus-4-6")
+	case strings.Contains(normalized, "claude-opus-4-6") || strings.Contains(normalized, "claude-opus-4.6"):
+		candidates = append(candidates, "claude-opus-4-6")
+	case strings.Contains(normalized, "claude-opus-4-5") || strings.Contains(normalized, "claude-opus-4.5"):
+		candidates = append(candidates, "claude-opus-4-5")
+	case strings.Contains(normalized, "claude-opus"):
+		candidates = append(candidates, "claude-opus-4-1")
+	case strings.Contains(normalized, "claude-sonnet-4-6") || strings.Contains(normalized, "claude-sonnet-4.6"):
+		candidates = append(candidates, "claude-sonnet-4-6")
+	case strings.Contains(normalized, "claude-sonnet-4-5") || strings.Contains(normalized, "claude-sonnet-4.5"):
+		candidates = append(candidates, "claude-sonnet-4-5")
+	case strings.Contains(normalized, "claude-sonnet-4"):
+		candidates = append(candidates, "claude-sonnet-4-20250514", "claude-sonnet-4-5")
+	case strings.Contains(normalized, "claude-sonnet"):
+		candidates = append(candidates, "claude-sonnet-4-20250514")
+	case strings.Contains(normalized, "claude-haiku-4"):
+		candidates = append(candidates, "claude-haiku-4-5")
+	case strings.Contains(normalized, "claude-3-5-haiku") || strings.Contains(normalized, "claude-3.5-haiku"):
+		candidates = append(candidates, "claude-3-haiku-20240307")
+	case strings.Contains(normalized, "claude-3-haiku") || strings.Contains(normalized, "claude-haiku"):
+		candidates = append(candidates, "claude-3-haiku-20240307")
+	case strings.Contains(normalized, "claude"):
+		candidates = append(candidates, "claude-sonnet-4-5")
+
+	// Gemini aliases are normalized before lookup so provider-specific suffixes
+	// reuse the closest embedded LiteLLM rate card.
+	case strings.Contains(normalized, "gemini-3.1-pro") || strings.Contains(normalized, "gemini-3-1-pro"):
+		candidates = append(candidates, "gemini-3.1-pro-preview")
+	case strings.Contains(normalized, "gemini-3.6-flash") || strings.Contains(normalized, "gemini-3-6-flash"):
+		candidates = append(candidates, "gemini-3.6-flash")
+	case strings.Contains(normalized, "gemini-3-pro") && !strings.Contains(normalized, "gemini-3.1-pro"):
+		candidates = append(candidates, "gemini-3-pro-preview")
+	case strings.Contains(normalized, "gemini-3-flash"):
+		candidates = append(candidates, "gemini-3-flash")
+	case strings.Contains(normalized, "gemini-2.5-flash-lite") || strings.Contains(normalized, "gemini-2-5-flash-lite"):
+		candidates = append(candidates, "gemini-2.5-flash-lite")
+	case strings.Contains(normalized, "gemini-2.5-flash") || strings.Contains(normalized, "gemini-2-5-flash"):
+		candidates = append(candidates, "gemini-2.5-flash")
+	case strings.Contains(normalized, "gemini-2.5-pro") || strings.Contains(normalized, "gemini-2-5-pro"):
+		candidates = append(candidates, "gemini-2.5-pro")
+	case strings.Contains(normalized, "gemini-2.0-flash") || strings.Contains(normalized, "gemini-2-0-flash"):
+		candidates = append(candidates, "gemini-2.0-flash")
+
+	case strings.Contains(normalized, "deepseek-v4-pro"):
+		candidates = []string{"deepseek-v4-pro"}
+	case strings.Contains(normalized, "deepseek-v4-flash"):
+		candidates = []string{"deepseek-v4-flash"}
+	case strings.Contains(normalized, "deepseek-chat"):
+		candidates = []string{"deepseek-v4-flash", "deepseek-chat"}
+	case strings.Contains(normalized, "deepseek-reasoner"):
+		candidates = []string{"deepseek-v4-flash", "deepseek-reasoner"}
+	case strings.Contains(normalized, "deepseek-v3"), strings.Contains(normalized, "deepseek-r1"):
+		candidates = []string{"deepseek-v3-2-251201"}
+
+	// Match the most specific SKU first. In particular, bare glm-5 must not
+	// capture numbered or turbo GLM variants.
+	case strings.Contains(normalized, "glm-5.2"):
+		candidates = []string{"glm-5.2"}
+	case strings.Contains(normalized, "glm-5.1"):
+		candidates = []string{"glm-5.1"}
+	case strings.Contains(normalized, "glm-5-turbo"), strings.Contains(normalized, "glm-5turbo"):
+		candidates = []string{"glm-5-turbo"}
+	case strings.Contains(normalized, "glm-5"):
+		candidates = []string{"glm-5"}
+	case strings.Contains(normalized, "glm-4.7-flashx"):
+		candidates = []string{"glm-4.7-flashx"}
+	case strings.Contains(normalized, "glm-4.7-flash"):
+		candidates = []string{"glm-4.7-flash"}
+	case strings.Contains(normalized, "glm-4.7"):
+		candidates = []string{"glm-4.7"}
+	case strings.Contains(normalized, "glm-4.6"):
+		candidates = []string{"glm-4.6"}
+	case strings.Contains(normalized, "glm-4.5-x"), strings.Contains(normalized, "glm-4.5x"):
+		candidates = []string{"glm-4.5-x"}
+	case strings.Contains(normalized, "glm-4.5-airx"), strings.Contains(normalized, "glm-4.5airx"):
+		candidates = []string{"glm-4.5-airx"}
+	case strings.Contains(normalized, "glm-4.5-air"), strings.Contains(normalized, "glm-4.5air"):
+		candidates = []string{"glm-4.5-air"}
+	case strings.Contains(normalized, "glm-4.5-flash"):
+		candidates = []string{"glm-4.5-flash"}
+	case strings.Contains(normalized, "glm-4.5"):
+		candidates = []string{"glm-4.5"}
+	case strings.Contains(normalized, "glm-4-32b"):
+		candidates = []string{"glm-4-32b-0414-128k"}
+	case normalized == "glm-4" || strings.HasPrefix(normalized, "glm-4-") && !strings.Contains(normalized, "glm-4.5") && !strings.Contains(normalized, "glm-4.6") && !strings.Contains(normalized, "glm-4.7"):
+		candidates = []string{"glm-4", "glm-4-32b-0414-128k"}
+
+	case strings.Contains(normalized, "kimi-for-coding"):
+		candidates = []string{"kimi-for-coding"}
+	case strings.Contains(normalized, "kimi-k3"),
+		normalized == "k3", normalized == "k3-256k",
+		strings.HasSuffix(normalized, "/k3"), strings.HasSuffix(normalized, "/k3-256k"):
+		candidates = []string{"kimi-k3"}
+	case strings.Contains(normalized, "kimi-k2.6"), strings.Contains(normalized, "kimi-k2-6"):
+		candidates = []string{"kimi-k2.6"}
+	case strings.Contains(normalized, "kimi-k2.5"), strings.Contains(normalized, "kimi-k2-5"):
+		candidates = []string{"kimi-k2.5"}
+	case strings.Contains(normalized, "kimi-k2-thinking"):
+		candidates = []string{"kimi-k2-thinking"}
+	case strings.Contains(normalized, "kimi-k2"), strings.Contains(normalized, "kimi/k2"):
+		candidates = []string{"kimi-k2"}
+	case strings.Contains(normalized, "moonshot-v1-8k"):
+		candidates = []string{"moonshot-v1-8k"}
+
+	// Match highspeed before its base version so MiniMax variants keep their
+	// distinct latency-tier prices. Doubao matching is deliberately specific:
+	// generic embedding names should resolve through the upstream table.
+	case strings.Contains(normalized, "minimax-m3"), strings.Contains(normalized, "minimax-m-3"):
+		candidates = []string{"minimax-m3"}
+	case strings.Contains(normalized, "minimax-m2.7-highspeed"),
+		strings.Contains(normalized, "minimax-m2-7-highspeed"):
+		candidates = []string{"minimax-m2.7-highspeed"}
+	case strings.Contains(normalized, "minimax-m2.7"), strings.Contains(normalized, "minimax-m2-7"):
+		candidates = []string{"minimax-m2.7"}
+	case strings.Contains(normalized, "minimax-m2.5"), strings.Contains(normalized, "minimax-m2-5"):
+		candidates = []string{"minimax-m2.5"}
+	case strings.Contains(normalized, "minimax-m2.1"), strings.Contains(normalized, "minimax-m2-1"):
+		candidates = []string{"minimax-m2.1"}
+	case strings.Contains(normalized, "minimax-m2"), strings.Contains(normalized, "minimax-m-2"):
+		candidates = []string{"minimax-m2"}
+	case strings.Contains(normalized, "doubao-embedding-vision"):
+		candidates = []string{"doubao-embedding-vision"}
+
+	case isKnownGrokCreditModel(normalized):
+		switch {
+		case normalized == "grok", normalized == "grok-latest",
+			normalized == "grok-4.6", normalized == "grok-4.6-latest":
+			candidates = []string{"grok-4.6"}
+		case normalized == "grok-4.5", normalized == "grok-4.5-latest":
+			candidates = []string{"grok-4.5"}
+		case normalized == "grok-3-mini":
+			candidates = []string{"grok-3-mini"}
+		case normalized == "grok-3-mini-fast":
+			candidates = []string{"grok-3-mini-fast"}
+		case normalized == "grok-4.3":
+			candidates = []string{"grok-4.3"}
+		case normalized == "grok-4.20", strings.HasPrefix(normalized, "grok-4.20-"):
+			candidates = []string{"grok-4.20"}
+		default:
+			candidates = []string{"grok-build-0.1"}
+		}
 	}
 	seen := map[string]struct{}{}
 	for _, candidate := range candidates {
@@ -487,4 +718,33 @@ func resolveCreditModelPricing(models map[string]creditModelPricing, model strin
 		}
 	}
 	return creditModelPricing{}, false
+}
+
+// isKnownGrokCreditModel matches token-billed xAI text models while excluding
+// media products that are billed per generated unit instead of per token.
+func isKnownGrokCreditModel(model string) bool {
+	switch {
+	case model == "grok", model == "grok-latest", model == "composer-2.5":
+		return true
+	case model == "grok-3-mini", model == "grok-3-mini-fast",
+		model == "grok-4.5", model == "grok-4.5-latest",
+		model == "grok-4.6", model == "grok-4.6-latest",
+		model == "grok-4.3", model == "grok-4.20":
+		return true
+	case strings.HasPrefix(model, "grok-4.20-"):
+		return true
+	case strings.HasPrefix(model, "grok-build"),
+		strings.HasPrefix(model, "grok-composer"):
+		return true
+	}
+	for _, marker := range []string{"imagine", "image", "video", "audio", "speech", "tts", "transcribe", "realtime"} {
+		if strings.Contains(model, marker) {
+			return false
+		}
+	}
+	if rest, found := strings.CutPrefix(model, "grok-"); found && len(rest) > 0 &&
+		rest[0] >= '0' && rest[0] <= '9' {
+		return true
+	}
+	return false
 }

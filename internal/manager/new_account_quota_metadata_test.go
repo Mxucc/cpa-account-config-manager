@@ -141,3 +141,193 @@ func testQuotaBootstrapAccount(id, provider string, observedAt time.Time) Accoun
 	}
 	return account
 }
+
+func TestQuotaMetadataRepeatedAccountObservationDoesNotScheduleWork(t *testing.T) {
+	engine := NewAccountQuotaMetadataBootstrap()
+	account := Account{ID: "stable-account", AuthID: "stable-account", Provider: "codex", Type: "codex"}
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("initial account observation did not schedule reconciliation")
+	}
+
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+		t.Fatal("repeated account observation scheduled reconciliation")
+	default:
+	}
+}
+
+func TestQuotaMetadataBootstrapStartIsIdempotent(t *testing.T) {
+	engine := NewAccountQuotaMetadataBootstrap()
+	defer engine.Shutdown()
+	engine.Start()
+	select {
+	case <-engine.wake:
+		t.Fatal("initial Start unexpectedly scheduled metadata collection")
+	default:
+	}
+	engine.Start()
+	select {
+	case <-engine.wake:
+		t.Fatal("repeated Start scheduled metadata collection")
+	default:
+	}
+}
+
+func TestQuotaMetadataBootstrapStopsAfterMaximumFailures(t *testing.T) {
+	engine := NewAccountQuotaMetadataBootstrap()
+	now := time.Date(2026, time.July, 27, 6, 0, 0, 0, time.UTC)
+	engine.now = func() time.Time { return now }
+	calls := 0
+	engine.SetHandler(func(context.Context, Account, string) error {
+		calls++
+		return ErrQuotaMetadataUnavailable
+	})
+	engine.Arm("management-secret")
+	account := testQuotaBootstrapAccount("exhausted", "codex", time.Time{})
+	engine.ObserveAccounts([]Account{account})
+	identity := newAccountModelProbeIdentity(account)
+	for attempt := 0; attempt < quotaMetadataBootstrapMaxAttempts; attempt++ {
+		engine.reconcile(context.Background())
+		engine.mu.Lock()
+		retry, pending := engine.pending[identity]
+		engine.mu.Unlock()
+		if attempt+1 < quotaMetadataBootstrapMaxAttempts {
+			if !pending {
+				t.Fatalf("attempt %d removed pending before exhaustion", attempt+1)
+			}
+			now = retry.RetryAfter
+		}
+	}
+	if calls != quotaMetadataBootstrapMaxAttempts {
+		t.Fatalf("handler calls = %d, want %d", calls, quotaMetadataBootstrapMaxAttempts)
+	}
+	engine.mu.Lock()
+	_, pending := engine.pending[identity]
+	_, exhausted := engine.exhausted[identity]
+	engine.mu.Unlock()
+	if pending || !exhausted {
+		t.Fatalf("terminal retry state pending=%v exhausted=%v", pending, exhausted)
+	}
+	// Re-observing the same account must not requeue a terminal failure.
+	engine.ObserveAccounts([]Account{account})
+	engine.reconcile(context.Background())
+	if calls != quotaMetadataBootstrapMaxAttempts {
+		t.Fatalf("terminal account was retried: calls=%d", calls)
+	}
+	// An explicit Arm is the documented operator retry path.
+	engine.Arm("management-secret")
+	engine.reconcile(context.Background())
+	if calls != quotaMetadataBootstrapMaxAttempts+1 {
+		t.Fatalf("explicit Arm did not retry exhausted account: calls=%d", calls)
+	}
+}
+
+func TestQuotaMetadataBootstrapRequeuesWhenAccountMetadataChanges(t *testing.T) {
+	engine := NewAccountQuotaMetadataBootstrap()
+	account := testQuotaBootstrapAccount("stable", "codex", time.Date(2026, time.July, 27, 5, 0, 0, 0, time.UTC))
+	account.PlanType = "free"
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+	default:
+	}
+	engine.mu.Lock()
+	identity := newAccountModelProbeIdentity(account)
+	engine.completed[identity] = struct{}{}
+	engine.mu.Unlock()
+
+	changed := account
+	changed.PlanType = "plus"
+	engine.ObserveAccounts([]Account{changed})
+	if _, pending := engine.pending[identity]; !pending {
+		t.Fatal("metadata change did not requeue quota collection")
+	}
+}
+
+func TestQuotaMetadataBootstrapDoesNotRequeueAfterProbeRefresh(t *testing.T) {
+	engine := NewAccountQuotaMetadataBootstrap()
+	before := testQuotaBootstrapAccount("probe-refresh", "codex", time.Time{})
+	before.PlanType = "k12"
+	engine.ObserveAccounts([]Account{before})
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("initial account observation did not schedule reconciliation")
+	}
+	identity := newAccountModelProbeIdentity(before)
+	engine.mu.Lock()
+	delete(engine.pending, identity)
+	engine.completed[identity] = struct{}{}
+	engine.mu.Unlock()
+
+	after := before
+	after.PlanType = "free"
+	after.Usage = &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{
+		PlanType:           "free",
+		MetadataObservedAt: time.Date(2026, time.July, 27, 6, 0, 0, 0, time.UTC),
+	}}
+	engine.ObserveAccounts([]Account{after})
+	if _, pending := engine.pending[identity]; pending {
+		t.Fatal("successful probe refresh was requeued")
+	}
+	select {
+	case <-engine.wake:
+		t.Fatal("successful probe refresh woke the worker again")
+	default:
+	}
+}
+
+func TestQuotaMetadataBootstrapIgnoresStaleResultAfterReauthentication(t *testing.T) {
+	engine := NewAccountQuotaMetadataBootstrap()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine.SetHandler(func(ctx context.Context, account Account, _ string) error {
+		if account.AuthID != "old-auth" {
+			t.Errorf("stale test handler received auth %q", account.AuthID)
+		}
+		close(started)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	engine.Start()
+	engine.Arm("management-secret")
+	oldAccount := testQuotaBootstrapAccount("auth-index", "codex", time.Time{})
+	oldAccount.AuthID = "old-auth"
+	engine.ObserveAccounts([]Account{oldAccount})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		engine.Shutdown()
+		t.Fatal("quota metadata probe did not start")
+	}
+
+	newAccount := oldAccount
+	newAccount.AuthID = "new-auth"
+	engine.ObserveAccounts([]Account{newAccount})
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for {
+		engine.mu.Lock()
+		_, oldCompleted := engine.completed[newAccountModelProbeIdentity(oldAccount)]
+		newIdentity := newAccountModelProbeIdentity(newAccount)
+		_, newPending := engine.pending[newIdentity]
+		engine.mu.Unlock()
+		if !oldCompleted && newPending {
+			break
+		}
+		if time.Now().After(deadline) {
+			engine.Shutdown()
+			t.Fatalf("stale result state old_completed=%v new_pending=%v", oldCompleted, newPending)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	engine.Shutdown()
+}

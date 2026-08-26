@@ -28,12 +28,24 @@ function sourceFiles(root: string, extensions: Set<string>): string[] {
 }
 
 describe("English-source localization contract", () => {
+  const placeholders = (value: string): string[] => [...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((match) => match[1]).sort();
+
   it("uses stable English semantic IDs with complete locale catalogs", () => {
     const expected = Object.keys(enUI).sort();
     expect(expected.every((key) => /^ui\.[a-z0-9_]+$/.test(key))).toBe(true);
     expect(Object.keys(zhCNUI).sort()).toEqual(expected);
     expect(Object.keys(zhTWUI).sort()).toEqual(expected);
     expect(Object.keys(ruUI).sort()).toEqual(expected);
+  });
+
+  it("keeps interpolation placeholders intact in every locale", () => {
+    for (const key of Object.keys(enUI) as Array<keyof typeof enUI>) {
+      const source = enUI[key];
+      const expected = placeholders(source);
+      for (const [locale, catalog] of [["ru", ruUI], ["zh-CN", zhCNUI], ["zh-TW", zhTWUI]] as const) {
+        expect(placeholders(catalog[key]), `${locale} placeholder mismatch for ${key}`).toEqual(expected);
+      }
+    }
   });
 
   it("keeps localized display text out of frontend runtime logic", () => {

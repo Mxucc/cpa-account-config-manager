@@ -30,6 +30,42 @@ func TestNewAccountModelProbeBaselinesExistingAccounts(t *testing.T) {
 	}
 }
 
+func TestNewAccountModelProbeSetManagementKeyDoesNotScheduleWork(t *testing.T) {
+	engine := newTestAccountModelProbeEngine(t)
+	engine.SetManagementKey("management-secret", "host-callback")
+
+	select {
+	case <-engine.wake:
+		t.Fatal("setting management credentials unexpectedly scheduled a probe")
+	default:
+	}
+
+	engine.mu.Lock()
+	key, callbackID := engine.managementKey, engine.hostCallbackID
+	engine.mu.Unlock()
+	if key != "management-secret" || callbackID != "host-callback" {
+		t.Fatalf("stored credentials = %q/%q", key, callbackID)
+	}
+}
+
+func TestNewAccountModelProbeRepeatedAccountObservationDoesNotScheduleWork(t *testing.T) {
+	engine := newTestAccountModelProbeEngine(t)
+	account := testProbeAccount("stable-account", "stable@example.com")
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("initial account observation did not schedule reconciliation")
+	}
+
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+		t.Fatal("repeated account observation scheduled reconciliation")
+	default:
+	}
+}
+
 func TestNewAccountModelProbeDetectsFirstAccountAfterEmptyBaseline(t *testing.T) {
 	engine := newTestAccountModelProbeEngine(t)
 	var mu sync.Mutex
@@ -240,5 +276,137 @@ func newTestAccountModelProbeEngine(t *testing.T) *newAccountModelProbeEngine {
 func testProbeAccount(id string, email string) Account {
 	return Account{
 		ID: id, AuthID: id, Name: id + ".json", Provider: "codex", Type: "codex", Email: email,
+	}
+}
+
+func TestNewAccountModelProbeConfigureSameStoreDoesNotScheduleWork(t *testing.T) {
+	engine := newTestAccountModelProbeEngine(t)
+	defer engine.Shutdown()
+	config := Config{DataDir: filepath.Dir(engine.store)}
+	engine.Configure(config)
+	select {
+	case <-engine.wake:
+		t.Fatal("initial Configure unexpectedly scheduled a probe")
+	default:
+	}
+	engine.Configure(config)
+	select {
+	case <-engine.wake:
+		t.Fatal("repeated Configure for the same store scheduled a probe")
+	default:
+	}
+}
+
+func TestNewAccountModelProbeWakesWhenProbeMetadataChanges(t *testing.T) {
+	engine := newTestAccountModelProbeEngine(t)
+	account := testProbeAccount("stable-account", "stable@example.com")
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("initial account observation did not schedule a probe")
+	}
+	engine.ObserveAccounts([]Account{account})
+	select {
+	case <-engine.wake:
+		t.Fatal("unchanged account metadata scheduled a probe")
+	default:
+	}
+	changedPlan := account
+	changedPlan.PlanType = "plus"
+	engine.ObserveAccounts([]Account{changedPlan})
+	select {
+	case <-engine.wake:
+	default:
+		t.Fatal("plan change did not schedule a probe")
+	}
+	// Usage and timestamps are intentionally not part of the probe summary.
+	select {
+	case <-engine.wake:
+	default:
+	}
+	usageOnly := changedPlan
+	usageOnly.UpdatedAt = timePtr(time.Now())
+	usageOnly.Usage = &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{MetadataObservedAt: time.Now()}}
+	engine.ObserveAccounts([]Account{usageOnly})
+	select {
+	case <-engine.wake:
+		t.Fatal("usage-only change scheduled a probe")
+	default:
+	}
+}
+
+func timePtr(value time.Time) *time.Time { return &value }
+
+func TestNewAccountModelProbeConfigureRetriesFailedLoadForSameStore(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := newAccountModelProbeStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte("{"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	engine := NewAccountModelProbeEngine(func() bool { return true })
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	if got := engine.StorageError(); got != "new-account model-probe state could not be loaded" {
+		t.Fatalf("StorageError() = %q", got)
+	}
+	knownIdentity := strings.Repeat("a", 64)
+	want := persistedNewAccountModelProbeState{Version: newAccountModelProbeStoreVersion, Initialized: true, Known: []string{knownIdentity}, Pending: map[string]newAccountModelProbeRetry{}}
+	if errSave := saveNewAccountModelProbeState(storePath, want); errSave != nil {
+		t.Fatalf("saveNewAccountModelProbeState() error = %v", errSave)
+	}
+	engine.Configure(Config{DataDir: dataDir})
+	if got := engine.StorageError(); got != "" {
+		t.Fatalf("StorageError() after recovery = %q", got)
+	}
+	engine.mu.Lock()
+	_, exists := engine.known[knownIdentity]
+	engine.mu.Unlock()
+	if !exists {
+		t.Fatal("recovered known identity is missing")
+	}
+}
+
+func TestNewAccountModelProbeRetriesFailedPersistence(t *testing.T) {
+	previousDelay := newAccountModelProbePersistRetryDelay
+	newAccountModelProbePersistRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() { newAccountModelProbePersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	engine := NewAccountModelProbeEngine(func() bool { return true })
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	engine.mu.Lock()
+	engine.store = filepath.Join(blockingPath, "state.json")
+	engine.observed = true
+	engine.initialized = true
+	engine.mu.Unlock()
+	engine.requestRun()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && engine.StorageError() == "" {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := engine.StorageError(); got != "new-account model-probe state could not be persisted" {
+		t.Fatalf("StorageError() = %q", got)
+	}
+	if errRemove := os.Remove(blockingPath); errRemove != nil {
+		t.Fatalf("Remove() error = %v", errRemove)
+	}
+	if errMkdir := os.MkdirAll(blockingPath, 0o700); errMkdir != nil {
+		t.Fatalf("MkdirAll() error = %v", errMkdir)
+	}
+	for time.Now().Before(deadline) && engine.StorageError() != "" {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := engine.StorageError(); got != "" {
+		t.Fatalf("StorageError() after retry = %q", got)
+	}
+	if _, errStat := os.Stat(filepath.Join(blockingPath, "state.json")); errStat != nil {
+		t.Fatalf("persisted state after retry: %v", errStat)
 	}
 }

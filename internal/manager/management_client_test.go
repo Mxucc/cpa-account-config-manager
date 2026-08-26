@@ -115,6 +115,33 @@ func TestManagementClientDeletesSafeAuthFile(t *testing.T) {
 	}
 }
 
+type managementNilResponseDoer struct{}
+
+func (managementNilResponseDoer) Do(*http.Request) (*http.Response, error) { return nil, nil }
+
+func TestManagementClientRejectsUnsafePatchNamesAndNilResponses(t *testing.T) {
+	client, errClient := newManagementClient("http://127.0.0.1:8317", "management-secret", managementNilResponseDoer{})
+	if errClient != nil {
+		t.Fatalf("newManagementClient() error = %v", errClient)
+	}
+	note := "test"
+	patch, errPatch := (BatchPatch{Note: &note}).Validate()
+	if errPatch != nil {
+		t.Fatalf("Validate() error = %v", errPatch)
+	}
+	for _, name := range []string{"../account.json", "account", ""} {
+		if errFields := client.PatchFields(context.Background(), name, patch); errFields == nil || !strings.Contains(errFields.Error(), "auth file name is invalid") {
+			t.Fatalf("PatchFields(%q) error = %v", name, errFields)
+		}
+		if errDisabled := client.PatchDisabled(context.Background(), name, true); errDisabled == nil || !strings.Contains(errDisabled.Error(), "auth file name is invalid") {
+			t.Fatalf("PatchDisabled(%q) error = %v", name, errDisabled)
+		}
+	}
+	if errFields := client.PatchFields(context.Background(), "account.json", patch); errFields == nil || !strings.Contains(errFields.Error(), "empty response") {
+		t.Fatalf("PatchFields() nil response error = %v", errFields)
+	}
+}
+
 func TestManagementBaseURLRejectsNonLoopbackDestinations(t *testing.T) {
 	for _, value := range []string{
 		"https://example.com",
@@ -138,6 +165,20 @@ func TestResolveManagementBaseURLIgnoresRemoteGenericBaseURL(t *testing.T) {
 
 	if got := resolveManagementBaseURL(""); got != "http://127.0.0.1:9417" {
 		t.Fatalf("resolveManagementBaseURL() = %q", got)
+	}
+}
+
+func TestResolveManagementBaseURLIgnoresInvalidEnvironmentPorts(t *testing.T) {
+	t.Setenv("CPA_MANAGEMENT_BASE_URL", "")
+	t.Setenv("CPA_BASE_URL", "")
+	t.Setenv("PORT", "0")
+	t.Setenv("CPA_PORT", "70000")
+	if got := resolveManagementBaseURL(""); got != defaultManagementBaseURL {
+		t.Fatalf("resolveManagementBaseURL() = %q, want %q", got, defaultManagementBaseURL)
+	}
+	t.Setenv("PORT", "9417")
+	if got := resolveManagementBaseURL(""); got != "http://127.0.0.1:9417" {
+		t.Fatalf("resolveManagementBaseURL() valid port = %q", got)
 	}
 }
 

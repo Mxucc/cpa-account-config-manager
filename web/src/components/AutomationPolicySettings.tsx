@@ -10,16 +10,18 @@ import {
   Trash2,
   Workflow,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
+import type { UIMessageKey } from "../i18n/uiText";
 import type {
   ConditionalPolicyActions,
   ConditionalPolicyRule,
   DefaultPolicy,
   ModelPolicyMode,
   PolicySnapshot,
+  OperationFailureDetail,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
@@ -42,31 +44,55 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   const [scanning, setScanning] = useState(false);
   const [confirmRunAfterSave, setConfirmRunAfterSave] = useState(false);
   const [error, setError] = useState("");
+  const refreshRequest = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const invalidateRefresh = () => {
+    refreshRequest.current += 1;
+  };
+
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const requestID = ++refreshRequest.current;
     try {
-      const next = await api.getDefaultPolicy();
+      const next = await api.getDefaultPolicy(signal);
+      if (requestID !== refreshRequest.current) return;
       if (!next?.policy || !next.last_scan) throw new Error("ui.policy_unavailable");
       setSnapshot(next);
       setDraft((current) => current ?? clonePolicy(next.policy));
     } catch (caught) {
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+      if (requestID !== refreshRequest.current) return;
       if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
       else setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
     } finally {
-      setLoading(false);
+      if (requestID === refreshRequest.current) setLoading(false);
     }
   }, [locale, onAPIError, tx]);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setDraft(null);
-    void refresh();
+    void refresh(controller.signal);
+    return () => {
+      controller.abort();
+      invalidateRefresh();
+    };
   }, [refresh, refreshRevision]);
 
   useEffect(() => {
     if (!snapshot?.running) return;
-    const timer = window.setInterval(() => void refresh(), 1500);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    let timer = 0;
+    const poll = async () => {
+      await refresh(controller.signal);
+      if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 1500);
+    };
+    timer = window.setTimeout(() => void poll(), 1500);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      invalidateRefresh();
+    };
   }, [refresh, snapshot?.running]);
 
   const dirty = useMemo(() => Boolean(snapshot && draft && JSON.stringify(draft) !== JSON.stringify(clonePolicy(snapshot.policy))), [draft, snapshot]);
@@ -76,6 +102,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
 
   const save = async () => {
     if (!draft) return;
+    invalidateRefresh();
     setError("");
     if (draft.enabled && !draft.new_account_model_probe_enabled && draft.priority === null && draft.websockets === null && rules.length === 0) {
       setError(tx("ui.select_at_least_one_default_field_before_enabling_the_policy"));
@@ -101,6 +128,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   };
 
   const scan = async () => {
+    invalidateRefresh();
     setScanning(true);
     setError("");
     try {
@@ -137,6 +165,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
           <PolicyMetric label={tx("ui.skipped")} value={lastScan.skipped} />
           <PolicyMetric label={tx("ui.failed")} value={lastScan.failed} tone={lastScan.failed ? "danger" : ""} />
         </div>
+        {lastScan.failure_details?.length ? <PolicyFailureDetails details={lastScan.failure_details} /> : null}
       </div>
 
       <section className="automation-policy-section" aria-label={tx("ui.global_default_policy")}>
@@ -264,6 +293,30 @@ function OptionalBooleanAction({ label, present, value, disabled, onChange }: { 
 
 function OptionalNumberAction({ label, present, value, disabled, onChange }: { label: string; present: boolean; value: number; disabled: boolean; onChange: (present: boolean, value: number) => void }) {
   return <div className={`conditional-action ${present ? "is-managed" : ""}`}><label><input type="checkbox" checked={present} disabled={disabled} onChange={(event) => onChange(event.target.checked, value)} /><span>{label}</span></label><input type="number" value={value} disabled={disabled || !present} onChange={(event) => onChange(true, Number(event.target.value))} /></div>;
+}
+
+const policyFailureReasonKeys: Record<string, UIMessageKey> = {
+  policy_auth_scan_failed: "ui.policy_failure_auth_scan",
+  policy_auth_read_failed: "ui.policy_failure_auth_read",
+  policy_account_identity_changed: "ui.policy_failure_account_identity_changed",
+  policy_auth_source_changed: "ui.policy_failure_auth_source_changed",
+  policy_auth_filename_invalid: "ui.policy_failure_auth_filename_invalid",
+  policy_auth_projection_failed: "ui.policy_failure_auth_projection",
+  policy_auth_json_invalid: "ui.policy_failure_auth_json_invalid",
+  policy_auth_update_failed: "ui.policy_failure_auth_update",
+  policy_auth_save_failed: "ui.policy_failure_auth_save",
+  policy_model_policy_unavailable: "ui.policy_failure_model_policy_unavailable",
+  policy_model_policy_apply_failed: "ui.policy_failure_model_policy_apply",
+  policy_quota_metadata_probe_failed: "ui.policy_failure_quota_metadata",
+  policy_state_persist_failed: "ui.policy_failure_state_persist",
+};
+
+function PolicyFailureDetails({ details }: { details: OperationFailureDetail[] }) {
+  const { tx } = useI18n();
+  return <section className="policy-failure-details" aria-label={tx("ui.failure_basis")}>
+    <div className="policy-failure-heading"><ShieldAlert size={15} /><strong>{tx("ui.failure_basis")}</strong></div>
+    <ul>{details.map((detail, index) => <li key={`${detail.reason_code}-${index}`}><span>{tx(policyFailureReasonKeys[detail.reason_code] || "ui.policy_failure_unknown")}</span><b>{tx("ui.policy_failure_account_count", { count: detail.count })}</b>{detail.sample_account_ids?.length ? <code>{detail.sample_account_ids.join(", ")}</code> : null}</li>)}</ul>
+  </section>;
 }
 
 function PolicyMetric({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {

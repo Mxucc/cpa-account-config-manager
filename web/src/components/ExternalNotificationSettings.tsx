@@ -79,6 +79,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const endpointCounter = useRef(0);
+  const loadRequest = useRef(0);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
 
   const handleError = useCallback((caught: unknown) => {
@@ -118,21 +119,31 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     setResults({});
   }, [tx]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const requestID = ++loadRequest.current;
     setLoading(true);
     setError("");
     try {
-      const snapshot = await api.getInspection();
+      const snapshot = await api.getInspection(signal);
+      if (signal?.aborted || requestID !== loadRequest.current) return;
       if (!snapshot?.policy) throw new Error(tx("ui.policy_unavailable"));
       applyPolicy(snapshot.policy);
     } catch (caught) {
+      if (signal?.aborted || requestID !== loadRequest.current) return;
       handleError(caught);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && requestID === loadRequest.current) setLoading(false);
     }
-  }, [applyPolicy, handleError]);
+  }, [applyPolicy, handleError, tx]);
 
-  useEffect(() => { void load(); }, [load, refreshRevision]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => {
+      loadRequest.current += 1;
+      controller.abort();
+    };
+  }, [load, refreshRevision]);
 
   const updateEndpoint = (id: string, patch: Partial<InspectionNotificationEndpoint>) => {
     setEndpoints((current) => current.map((endpoint) => endpoint.id === id ? { ...endpoint, ...patch } : endpoint));

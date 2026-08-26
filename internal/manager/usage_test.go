@@ -303,6 +303,70 @@ func TestUsageTrackerLoadsPersistedSnapshotAndExpiresQuotaWindows(t *testing.T) 
 	}
 }
 
+func TestUsageTrackerOverdraftGateResolvesCredentialIDMetadataKey(t *testing.T) {
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: t.TempDir()})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "index-0", ID: "cred-0", Provider: "codex", Type: "codex", Email: "overdraft@example.com",
+	}})
+	now := time.Date(2026, time.August, 25, 6, 0, 0, 0, time.UTC)
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex:       "index-0",
+		ResponseHeaders: codexUsageObservationHeaders(now, 100, 100),
+	})
+
+	byIndex := tracker.OverdraftGateState("index-0")
+	if !byIndex.Has || byIndex.FiveHourUsedPercent != 100 || byIndex.SevenDayUsedPercent != 100 {
+		t.Fatalf("gate by auth index = %#v", byIndex)
+	}
+	byCredentialID := tracker.OverdraftGateState("cred-0")
+	if !byCredentialID.Has || byCredentialID.FiveHourUsedPercent != 100 || byCredentialID.SevenDayUsedPercent != 100 {
+		t.Fatalf("gate by credential id (selected_auth_id) = %#v", byCredentialID)
+	}
+	if state := tracker.OverdraftGateState("unrelated"); state.Has {
+		t.Fatalf("unrelated identifier resolved usage state: %#v", state)
+	}
+}
+
+func TestUsageTrackerOverdraftInjectionEvidenceResolvesCredentialID(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 8, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "index-0", ID: "cred-0", Provider: "codex", Type: "codex", Email: "overdraft-evidence@example.com",
+	}})
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex:       "index-0",
+		ResponseHeaders: codexUsageObservationHeaders(now, 100, 100),
+	})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("index-0", InspectionQuotaWindowFiveHour, now)
+	// The request interceptor notes the injection with the credential ID it
+	// reads from selected_auth_id metadata; the host reports usage with the
+	// auth index. Both must reach the same evidence key for the success to
+	// confirm the cycle.
+	tracker.NoteOverdraftInjection("cred-0")
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "index-0", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 10}})
+	if window := tracker.Snapshot("index-0").Codex.FiveHour; window.OverdraftStatus != overdraftStatusPassed || !window.OverdraftActive {
+		t.Fatalf("credential-id injection did not confirm the cycle by auth index: %#v", window)
+	}
+	// And the reverse: note by auth index, observe with only the credential ID
+	// (hosts that report AuthID without the auth index).
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("index-0", InspectionQuotaWindowSevenDay, now)
+	tracker.NoteOverdraftInjection("index-0")
+	tracker.Observe(cpaapi.UsageRecord{AuthID: "cred-0", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 10}})
+	if window := tracker.Snapshot("index-0").Codex.SevenDay; window.OverdraftStatus != overdraftStatusPassed || !window.OverdraftActive {
+		t.Fatalf("auth-index injection did not confirm the cycle by credential id: %#v", window)
+	}
+}
+
 func TestUsageTrackerUsesEmailIdentityAcrossAuthIndexChanges(t *testing.T) {
 	tracker := NewUsageTracker()
 	defer tracker.Close()
@@ -923,5 +987,450 @@ func TestUsageTrackerBoundsAccountsAndIgnoresMissingAuthIndex(t *testing.T) {
 	}
 	if tracker.Snapshot("auth-10000") == nil {
 		t.Fatal("newest usage account is missing")
+	}
+}
+
+func TestUsageTrackerRetriesPersistenceAfterTransientStorageFailure(t *testing.T) {
+	dataDir := t.TempDir()
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.persistRetryDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "transient", Detail: cpaapi.UsageDetail{TotalTokens: 7}})
+
+	if errRemove := os.RemoveAll(dataDir); errRemove != nil {
+		t.Fatalf("remove data dir: %v", errRemove)
+	}
+	if errWrite := os.WriteFile(dataDir, []byte("blocking file"), 0o600); errWrite != nil {
+		t.Fatalf("create blocking data path: %v", errWrite)
+	}
+	tracker.persist()
+	if got := tracker.StorageError(); got != "usage state could not be persisted" {
+		t.Fatalf("StorageError() = %q, want sanitized persistence error", got)
+	}
+	tracker.mu.RLock()
+	dirty := tracker.dirty
+	tracker.mu.RUnlock()
+	if !dirty {
+		t.Fatal("dirty state cleared after failed persistence")
+	}
+
+	if errRemove := os.Remove(dataDir); errRemove != nil {
+		t.Fatalf("remove blocking path: %v", errRemove)
+	}
+	if errMkdir := os.MkdirAll(dataDir, 0o700); errMkdir != nil {
+		t.Fatalf("restore data dir: %v", errMkdir)
+	}
+	tracker.persist()
+	if got := tracker.StorageError(); got != "" {
+		t.Fatalf("StorageError() after recovery = %q", got)
+	}
+	tracker.mu.RLock()
+	dirty = tracker.dirty
+	tracker.mu.RUnlock()
+	if dirty {
+		t.Fatal("dirty state remained after successful retry")
+	}
+	if _, errStat := os.Stat(usageStorePath(dataDir)); errStat != nil {
+		t.Fatalf("usage state was not persisted after recovery: %v", errStat)
+	}
+}
+
+func TestUsageTrackerConfigureDoesNotDiscardDirtyStateWhenSwitchPersistenceFails(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	tracker := NewUsageTracker()
+	defer tracker.Close()
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: oldDir})
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "keep-me", Detail: cpaapi.UsageDetail{TotalTokens: 11}})
+
+	if errRemove := os.RemoveAll(oldDir); errRemove != nil {
+		t.Fatalf("remove old data dir: %v", errRemove)
+	}
+	if errWrite := os.WriteFile(oldDir, []byte("blocking file"), 0o600); errWrite != nil {
+		t.Fatalf("create old blocking path: %v", errWrite)
+	}
+	tracker.Configure(Config{DataDir: newDir})
+	if got := tracker.StorageError(); got != "usage state could not be persisted" {
+		t.Fatalf("StorageError() = %q, want persistence error", got)
+	}
+	tracker.mu.RLock()
+	store, dirty, loaded := tracker.store, tracker.dirty, tracker.loaded
+	tracker.mu.RUnlock()
+	if store != usageStorePath(oldDir) || !dirty || !loaded {
+		t.Fatalf("tracker switched or lost dirty state: store=%q dirty=%v loaded=%v", store, dirty, loaded)
+	}
+	if snapshot := tracker.Snapshot("keep-me"); snapshot == nil || snapshot.TotalTokens != 11 {
+		t.Fatalf("dirty in-memory usage lost: %#v", snapshot)
+	}
+}
+
+func TestUsageTrackerMarkOverdraftCycleStateMachine(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 0, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "cycle", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("cycle", InspectionQuotaWindowFiveHour, now)
+	window := tracker.Snapshot("cycle").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusPending || !window.OverdraftActive {
+		t.Fatalf("after begin = status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.MarkOverdraftCycle("cycle", InspectionQuotaWindowFiveHour, overdraftStatusPassed, "probe_available", now)
+	window = tracker.Snapshot("cycle").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusPassed || !window.OverdraftActive {
+		t.Fatalf("after passed = status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.MarkOverdraftCycle("cycle", InspectionQuotaWindowFiveHour, overdraftStatusFailed, "probe_exhausted", now.Add(time.Minute))
+	window = tracker.Snapshot("cycle").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusFailed || window.OverdraftActive {
+		t.Fatalf("after failed = status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.MarkOverdraftCycle("cycle", InspectionQuotaWindowFiveHour, overdraftStatusPassed, "business_request_ok", now.Add(2*time.Minute))
+	if window = tracker.Snapshot("cycle").Codex.FiveHour; window.OverdraftStatus != overdraftStatusFailed || window.OverdraftActive {
+		t.Fatalf("late passed evidence reopened a failed cycle: %#v", window)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerBusinessSuccessConfirmsActiveOverdraftCycle(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 1, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "business", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("business", InspectionQuotaWindowFiveHour, now)
+	tracker.NoteOverdraftInjection("business")
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "business", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 50}})
+	window := tracker.Snapshot("business").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusPassed || !window.OverdraftActive {
+		t.Fatalf("successful injected business request did not confirm the active cycle: status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerBusinessSuccessRequiresInjectionEvidence(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 4, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "plain", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("plain", InspectionQuotaWindowFiveHour, now)
+	// No interceptor injection happened for this account: a plain successful
+	// request must not fabricate passed evidence, mirroring the reference fork
+	// which only calls observeBusinessSuccess for injected requests.
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "plain", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 50}})
+	window := tracker.Snapshot("plain").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusPending || !window.OverdraftActive {
+		t.Fatalf("uninjected success changed the cycle: status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerBusinessSuccessRequiresExhaustedWindow(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 5, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	exhausted := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "cooling", RequestedAt: now, ResponseHeaders: exhausted})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("cooling", InspectionQuotaWindowFiveHour, now)
+	tracker.NoteOverdraftInjection("cooling")
+	// The window dropped below 100% (but not to 0%): the cycle stays open yet
+	// no longer counts as exhausted, so success must not mark it passed.
+	cooling := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"80"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"1800"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "cooling", RequestedAt: now, ResponseHeaders: cooling})
+	window := tracker.Snapshot("cooling").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusPending || !window.OverdraftActive {
+		t.Fatalf("success on a sub-100%% window confirmed the cycle: status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerBusinessSuccessInjectionEvidenceExpires(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 6, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"14400"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "stale", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("stale", InspectionQuotaWindowFiveHour, now)
+	tracker.NoteOverdraftInjection("stale")
+	now = now.Add(weeklyOverdraftInjectionTTL + time.Minute)
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "stale", RequestedAt: now, Detail: cpaapi.UsageDetail{TotalTokens: 10}})
+	window := tracker.Snapshot("stale").Codex.FiveHour
+	if window.OverdraftStatus != overdraftStatusPending || !window.OverdraftActive {
+		t.Fatalf("expired injection evidence confirmed the cycle: status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerExplicitQuota429MarksCycleFailed(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 2, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "quota429", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("quota429", InspectionQuotaWindowFiveHour, now)
+	// The interceptor appended the overdraft payload to this request, so its
+	// 429 proves the overdraft does not work for this cycle.
+	tracker.NoteOverdraftInjection("quota429")
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "quota429", RequestedAt: now, Failed: true,
+		Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `{"error":{"type":"usage_limit_reached","message":"you have reached your usage limit"}}`},
+	})
+	if window := tracker.Snapshot("quota429").Codex.FiveHour; window.OverdraftStatus != overdraftStatusFailed || window.OverdraftActive {
+		t.Fatalf("explicit quota 429 did not fail the cycle: %#v", window)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerQuota429WithoutInjectionStaysPending(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 7, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "unproven", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("unproven", InspectionQuotaWindowFiveHour, now)
+	// This failing request never carried the overdraft payload: mirroring the
+	// reference fork, it cannot confirm the overdraft fails, so the cycle stays
+	// pending for the probe path to decide.
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "unproven", RequestedAt: now, Failed: true,
+		Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `{"error":{"type":"usage_limit_reached","message":"you have reached your usage limit"}}`},
+	})
+	if window := tracker.Snapshot("unproven").Codex.FiveHour; window.OverdraftStatus != overdraftStatusPending || !window.OverdraftActive {
+		t.Fatalf("uninjected quota 429 changed the cycle: status:%q active:%t", window.OverdraftStatus, window.OverdraftActive)
+	}
+	tracker.Close()
+}
+
+func TestUsageTrackerTransientRateLimit429DoesNotFailCycle(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 3, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Secondary-Used-Percent":        []string{"100"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "transient", RequestedAt: now, ResponseHeaders: headers})
+	now = now.Add(time.Minute)
+	tracker.BeginOverdraftCycle("transient", InspectionQuotaWindowFiveHour, now)
+	tracker.Observe(cpaapi.UsageRecord{
+		AuthIndex: "transient", RequestedAt: now, Failed: true,
+		Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `{"error":{"type":"rate_limit_error","message":"request_rate_limited"}}`},
+	})
+	if window := tracker.Snapshot("transient").Codex.FiveHour; window.OverdraftStatus != overdraftStatusPending || !window.OverdraftActive {
+		t.Fatalf("transient rate-limit 429 failed or closed the cycle: %#v", window)
+	}
+	tracker.Close()
+}
+
+func TestUsageFailureIsQuotaLimitedClassifiesExplicitAndTransient(t *testing.T) {
+	now := time.Date(2026, time.August, 25, 4, 0, 0, 0, time.UTC)
+	explicit := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `weekly limit reached`}}
+	if !usageFailureIsQuotaLimited(explicit, now) {
+		t.Fatal("weekly limit reached was not classified as quota limited")
+	}
+	insufficient := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `{"error":{"code":"insufficient_quota"}}`}}
+	if !usageFailureIsQuotaLimited(insufficient, now) {
+		t.Fatal("insufficient quota was not classified as quota limited")
+	}
+	transient := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `{"error":{"type":"rate_limit_error"}}`}}
+	if usageFailureIsQuotaLimited(transient, now) {
+		t.Fatal("rate-limit 429 was classified as quota limited")
+	}
+	not429 := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusBadGateway, Body: `usage_limit_reached`}}
+	if usageFailureIsQuotaLimited(not429, now) {
+		t.Fatal("non-429 status was classified as quota limited")
+	}
+	headerLimited := cpaapi.UsageRecord{
+		Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: `{"error":{"message":"slow down"}}`},
+		ResponseHeaders: http.Header{
+			"X-Codex-Secondary-Used-Percent":   []string{"100"},
+			"X-Codex-Secondary-Window-Minutes": []string{"300"},
+		},
+	}
+	if !usageFailureIsQuotaLimited(headerLimited, now) {
+		t.Fatal("used_percent >= 100 header was not classified as quota limited")
+	}
+}
+
+func TestUsageTrackerGateStateReportsPercentagesAndCycleStatuses(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, time.August, 25, 5, 0, 0, 0, time.UTC)
+	tracker := NewUsageTracker()
+	tracker.now = func() time.Time { return now }
+	tracker.persistDelay = time.Hour
+	tracker.Configure(Config{DataDir: dataDir})
+	headers := http.Header{
+		"X-Codex-Primary-Used-Percent":          []string{"96"},
+		"X-Codex-Primary-Reset-After-Seconds":   []string{"86400"},
+		"X-Codex-Primary-Window-Minutes":        []string{"10080"},
+		"X-Codex-Secondary-Used-Percent":        []string{"40"},
+		"X-Codex-Secondary-Reset-After-Seconds": []string{"3600"},
+		"X-Codex-Secondary-Window-Minutes":      []string{"300"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "gate", RequestedAt: now, ResponseHeaders: headers})
+	state := tracker.OverdraftGateState("gate")
+	if !state.Has || state.FiveHourUsedPercent != 40 || state.SevenDayUsedPercent != 96 {
+		t.Fatalf("gate state = %#v", state)
+	}
+	if state.FiveHourCycleStatus != "" || state.SevenDayCycleStatus != "" {
+		t.Fatalf("unexpected cycle statuses: %#v", state)
+	}
+	exhaustedHeaders := http.Header{
+		"X-Codex-Primary-Used-Percent":        []string{"100"},
+		"X-Codex-Primary-Reset-After-Seconds": []string{"86400"},
+		"X-Codex-Primary-Window-Minutes":      []string{"10080"},
+	}
+	tracker.Observe(cpaapi.UsageRecord{AuthIndex: "gate", RequestedAt: now, ResponseHeaders: exhaustedHeaders})
+	tracker.BeginOverdraftCycle("gate", InspectionQuotaWindowSevenDay, now)
+	state = tracker.OverdraftGateState("gate")
+	if state.SevenDayCycleStatus != overdraftStatusPending {
+		t.Fatalf("7d cycle status = %q", state.SevenDayCycleStatus)
+	}
+	if empty := tracker.OverdraftGateState(""); empty.Has {
+		t.Fatal("empty auth index produced gate state")
+	}
+	tracker.Close()
+}
+
+func TestUsageFailureIsQuotaLimitedClassifiesJSONStructuralEvidence(t *testing.T) {
+	now := time.Date(2026, time.August, 25, 4, 0, 0, 0, time.UTC)
+	quotaBody := func(body string) cpaapi.UsageRecord {
+		return cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusTooManyRequests, Body: body}}
+	}
+	for _, body := range []string{
+		`{"error":{"type":"insufficient_quota"}}`,
+		`{"error":{"code":"monthly_limit_reached"}}`,
+		`{"error":{"reason":"billing_hard_limit_reached"}}`,
+		`{"error":{"error_code":"quota_exhausted"}}`,
+		`{"error":{"limit_reached":true}}`,
+		`{"error":{"used_percent":100}}`,
+		`{"error":{"message":"billing_hard_limit_reached"}}`,
+	} {
+		if !usageFailureIsQuotaLimited(quotaBody(body), now) {
+			t.Fatalf("quota JSON evidence was not classified: %s", body)
+		}
+	}
+	transient := quotaBody(`{"error":{"type":"rate_limit_error","limit_reached":true}}`)
+	if usageFailureIsQuotaLimited(transient, now) {
+		t.Fatal("transient rate-limit JSON evidence was classified as quota limited")
+	}
+	for _, body := range []string{
+		`{"error":{"type":"rate_limit_exceeded"}}`,
+		`{"error":{"code":"too_many_requests"}}`,
+		`{"error":{"reason":"request_rate_limited"}}`,
+		`{"error":{"error_code":"token_rate_limited"}}`,
+	} {
+		if usageFailureIsQuotaLimited(quotaBody(body), now) {
+			t.Fatalf("transient rate-limit JSON was classified as quota limited: %s", body)
+		}
+	}
+	// Structural recursion is bounded: evidence nested deeper than six levels
+	// must not flip the classification. billing_hard_limit_reached only
+	// matches the JSON structural code list, so the text pre-scan cannot
+	// shadow the depth guard.
+	withinDepth := quotaBody(`{"a":{"b":{"c":{"d":{"e":{"f":{"type":"billing_hard_limit_reached"}}}}}}}`)
+	if !usageFailureIsQuotaLimited(withinDepth, now) {
+		t.Fatal("quota marker within the recursion bound was not classified")
+	}
+	deep := quotaBody(`{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"type":"billing_hard_limit_reached"}}}}}}}}`)
+	if usageFailureIsQuotaLimited(deep, now) {
+		t.Fatal("deeply nested quota marker was classified as quota limited")
+	}
+}
+
+func TestAccountQuotaLimitedFreezesFailedCycleRecoveryTime(t *testing.T) {
+	now := time.Date(2026, time.August, 25, 4, 0, 0, 0, time.UTC)
+	mutableResetAt := now.Add(9 * time.Hour)
+	frozenRecoverAt := now.Add(5 * time.Hour)
+	// A confirmed-failed cycle still freezes the recovery deadline to the
+	// cycle RecoverAt (mirroring the sub2api-overdraft pause until recover),
+	// not the mutable window reset time.
+	limited, recoverAt, quotaWindow := accountQuotaLimited(Account{Usage: &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{
+		SevenDay: &UsageWindowSnapshot{
+			UsedPercent: 100, ResetAt: &mutableResetAt, WindowMinutes: 7 * 24 * 60,
+			OverdraftActive: false, OverdraftStatus: overdraftStatusFailed, OverdraftRecoverAt: &frozenRecoverAt,
+		},
+	}}}, now)
+	if !limited || quotaWindow != InspectionQuotaWindowSevenDay || !recoverAt.Equal(frozenRecoverAt) {
+		t.Fatalf("failed cycle recovery = limited:%t window:%q at:%v, want frozen %v", limited, quotaWindow, recoverAt, frozenRecoverAt)
+	}
+	// A recovered window falls back to the mutable window reset time.
+	laterResetAt := now.Add(2 * time.Hour)
+	limited, recoverAt, _ = accountQuotaLimited(Account{Usage: &AccountUsageSnapshot{Codex: &CodexUsageSnapshot{
+		FiveHour: &UsageWindowSnapshot{
+			UsedPercent: 100, ResetAt: &laterResetAt, WindowMinutes: 300,
+			OverdraftActive: false, OverdraftStatus: overdraftStatusRecovered, OverdraftRecoverAt: &frozenRecoverAt,
+		},
+	}}}, now)
+	if !limited || !recoverAt.Equal(laterResetAt) {
+		t.Fatalf("recovered window recovery = limited:%t at:%v, want reset %v", limited, recoverAt, laterResetAt)
 	}
 }

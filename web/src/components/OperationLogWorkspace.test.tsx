@@ -124,6 +124,39 @@ describe("OperationLogWorkspace", () => {
     expect(within(basis).queryByText("policy_auth_save_failed")).not.toBeInTheDocument();
   });
 
+  it("shows the concrete write failure basis for failed inspection automation", async () => {
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [{
+        ...operationResponse.operations[0],
+        id: "inspection-write-failure-1",
+        category: "inspection",
+        action: "auto_disable",
+        status: "failed",
+        source: "inspection",
+        scope: "single",
+        target_id: "auth-1",
+        target_count: 1,
+        succeeded: 0,
+        failed: 1,
+        skipped: 0,
+        reason_code: "quota_exhausted",
+        related_job_id: undefined,
+        failure_details: [{ reason_code: "inspection_auth_save_failed", count: 1, sample_account_ids: ["auth-1"] }],
+      }],
+      summary: { total: 1, running: 0, succeeded: 0, failed: 1, attention: 0, interrupted: 0 },
+    });
+    const user = userEvent.setup();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("无法保存账号 Auth 文件（1）")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看操作详情" }));
+    const basis = within(screen.getByRole("dialog", { name: "操作详情" })).getByRole("region", { name: "失败依据" });
+    expect(within(basis).getByText("无法保存账号 Auth 文件")).toBeInTheDocument();
+    expect(within(basis).getByText("auth-1")).toBeInTheDocument();
+    expect(within(basis).queryByText("inspection_auth_save_failed")).not.toBeInTheDocument();
+  });
+
   it("uses fixed 500-entry pages and persists extended history", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();

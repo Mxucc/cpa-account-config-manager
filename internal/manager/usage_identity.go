@@ -22,6 +22,7 @@ type usageIdentityFingerprint struct {
 
 type usageBinding struct {
 	Key       string
+	AuthID    string
 	Identity  usageIdentityFingerprint
 	Disabled  bool
 	CreatedAt time.Time
@@ -46,6 +47,7 @@ func usageBindingForEntry(entry cpaapi.HostAuthFileEntry) (usageBinding, bool) {
 	if identity.EmailHash != "" {
 		return usageBinding{
 			Key:       usageEmailKeyPrefix + usageIdentityDigest(provider+"\x00"+email),
+			AuthID:    strings.TrimSpace(entry.ID),
 			Identity:  identity,
 			Disabled:  entry.Disabled,
 			CreatedAt: entry.CreatedAt,
@@ -56,6 +58,7 @@ func usageBindingForEntry(entry cpaapi.HostAuthFileEntry) (usageBinding, bool) {
 	if identity.AccountIDHash != "" {
 		return usageBinding{
 			Key:       usageAccountKeyPrefix + usageIdentityDigest(provider+"\x00"+identity.AccountIDHash),
+			AuthID:    strings.TrimSpace(entry.ID),
 			Identity:  identity,
 			Disabled:  entry.Disabled,
 			CreatedAt: entry.CreatedAt,

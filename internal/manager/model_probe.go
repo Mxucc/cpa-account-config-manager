@@ -112,6 +112,14 @@ type ModelTestService struct {
 	semaphore               chan struct{}
 	now                     func() time.Time
 	experimentalTransformer RequestTransformer
+	codexIdentity           *CodexIdentityExperiment
+}
+
+func (s *ModelTestService) SetCodexIdentityExperiment(experiment *CodexIdentityExperiment) {
+	if s == nil {
+		return
+	}
+	s.codexIdentity = experiment
 }
 
 type credentialUsageObserver interface {
@@ -419,8 +427,12 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		if s.experimentalTransformer == nil {
 			return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment is unavailable")
 		}
+		// Carry the selected account identity so the 95% pre-arm gate can
+		// resolve the usage-backed cycle state for the account being probed,
+		// mirroring the sub2api-overdraft eligibility check on the probe path.
 		modification, changed := s.experimentalTransformer.InterceptRequest(cpaapi.RequestInterceptRequest{
 			ToFormat: "codex",
+			Metadata: map[string]any{"selected_auth_index": account.ID},
 			Body:     []byte(probe.data),
 		})
 		callID := experimentalToolCallID(modification.Body)
@@ -528,7 +540,8 @@ func shouldFallbackCodexModel(probe modelProbe, model string, response modelProb
 
 func (s *ModelTestService) callAccountProbe(ctx context.Context, managementBaseURL, managementKey, callbackID string, account Account, probe modelProbe) (modelProbeHTTPResponse, error) {
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type)))
-	if provider != agentIdentityProvider {
+	if provider != "codex-agent-identity" {
+		probe = s.applyCodexFingerprintToProbe(ctx, account, probe)
 		return s.callManagementAPI(ctx, managementBaseURL, managementKey, account.ID, probe)
 	}
 	if s == nil || s.agentIdentity == nil || s.accounts == nil || s.accounts.host == nil {
@@ -544,10 +557,61 @@ func (s *ModelTestService) callAccountProbe(ctx context.Context, managementBaseU
 	return s.agentIdentity.probeHTTP(ctx, callbackID, detail.JSON, probe)
 }
 
+func (s *ModelTestService) applyCodexFingerprintToProbe(ctx context.Context, account Account, probe modelProbe) modelProbe {
+	if s == nil || s.codexIdentity == nil || !s.codexIdentity.RequestInterceptionActive() ||
+		strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type))) != "codex" {
+		return probe
+	}
+	settings := s.codexIdentity.settings.codexIdentitySnapshot()
+	mode := effectiveCodexFingerprintMode(settings.ConvergenceMode)
+	var seed string
+	var ok bool
+	if s.codexIdentity.seeds != nil {
+		seed, ok = ensureCodexFingerprintSeed(ctx, s.codexIdentity.seeds, account)
+	}
+	if !ok {
+		return probe
+	}
+	ids := resolveCodexFingerprintIDs(account, seed, "", mode)
+	if ids == nil {
+		return probe
+	}
+	header := make(http.Header, len(probe.headers)+8)
+	for key, value := range probe.headers {
+		header.Set(key, value)
+	}
+	applyCodexFingerprintHeaders(header, ids)
+	for _, name := range []string{
+		"X-Codex-Installation-Id", "X-Codex-Window-Id", "X-Client-Request-Id",
+		"Session-Id", "Session_Id", "Thread-Id", codexFingerprintHeader,
+	} {
+		if value := header.Get(name); value != "" {
+			probe.headers[name] = value
+			probe.headers[http.CanonicalHeaderKey(name)] = value
+		}
+	}
+	if strings.TrimSpace(probe.data) == "" {
+		return probe
+	}
+	var decoded map[string]any
+	if errDecode := json.Unmarshal([]byte(probe.data), &decoded); errDecode != nil || decoded == nil ||
+		!applyCodexFingerprintClientMetadata(decoded, ids) {
+		return probe
+	}
+	encoded, errEncode := json.Marshal(decoded)
+	if errEncode != nil {
+		return probe
+	}
+	probe.data = string(encoded)
+	return probe
+}
+
 func buildCodexCredentialProbe(metadata modelTestAuthMetadata) modelProbe {
 	headers := bearerJSONHeaders(false)
 	headers["Originator"] = "codex_cli_rs"
-	headers["User-Agent"] = "codex_cli_rs/0.1.0"
+	headers["User-Agent"] = defaultCodexCLIUserAgent
+	headers["Version"] = codexCLIVersion
+	headers["OpenAI-Beta"] = "responses=experimental"
 	if metadata.accountID != "" {
 		headers["Chatgpt-Account-Id"] = metadata.accountID
 	}
@@ -710,9 +774,10 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		}
 		data, errMarshal := marshal(openAIResponsesProbePayload(model, true))
 		headers := bearerJSONHeaders(true)
-		headers["OpenAI-Beta"] = "responses=experimental"
 		headers["Originator"] = "codex_cli_rs"
-		headers["User-Agent"] = "codex_cli_rs/0.1.0"
+		headers["User-Agent"] = defaultCodexCLIUserAgent
+		headers["Version"] = codexCLIVersion
+		headers["OpenAI-Beta"] = "responses=experimental"
 		if metadata.accountID != "" {
 			headers["Chatgpt-Account-Id"] = metadata.accountID
 		}
@@ -917,6 +982,9 @@ func (s *ModelTestService) callManagementAPI(ctx context.Context, managementBase
 	response, errDo := doer.Do(request)
 	if errDo != nil {
 		return modelProbeHTTPResponse{}, fmt.Errorf("management model-test request failed: %w", errDo)
+	}
+	if response == nil || response.Body == nil {
+		return modelProbeHTTPResponse{}, fmt.Errorf("management model-test request returned an empty response")
 	}
 	defer func() { _ = response.Body.Close() }()
 	outerBody, errRead := io.ReadAll(io.LimitReader(response.Body, maxModelTestResponseBytes+1))

@@ -1,5 +1,5 @@
 import { Activity, Eye, EyeOff, LoaderCircle, Plus, Power, PowerOff, RefreshCw, Save, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
@@ -10,6 +10,7 @@ import type {
   AIProviderChannelKind,
   AIProviderChannelModel,
   AIProviderChannelSnapshot,
+  AIProviderRuntimeModelUsage,
   AIProviderRuntimeSnapshot,
 } from "../types";
 import { IconButton } from "./IconButton";
@@ -59,12 +60,16 @@ type EditingEntry = {
   headersText: string;
   excludedText: string;
   models: AIProviderChannelModel[];
-  apiKeyEntries: Array<{ apiKey: string; weight: string; proxyURL: string }>;
+  apiKeyEntries: Array<{ apiKey: string; weight: string; proxyURL: string; raw?: Record<string, unknown> }>;
+  apiKeyEntriesDirty: boolean;
   supportPromptCacheKey: boolean;
   disableCooling: boolean;
+  requestRetry: string;
+  requestScopedErrorsText: string;
   alphaSearch: boolean;
   websockets: boolean;
   rebuildMidSystemMessage: boolean;
+  fingerprintProfile: string;
   accountID?: string;
   workspaceID?: string;
 };
@@ -74,6 +79,24 @@ function maskSecret(value: string | undefined): string {
   if (!trimmed) return "";
   if (trimmed.length <= 8) return "••••••••";
   return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
+}
+
+function apiKeyEntriesForEditing(entry: AIProviderChannelEntry): Array<{ apiKey: string; weight: string; proxyURL: string; raw?: Record<string, unknown> }> {
+  const entries = (entry.api_key_entries ?? [])
+    .map((keyEntry) => ({
+      apiKey: keyEntry.api_key ?? "",
+      weight: keyEntry.weight !== undefined && keyEntry.weight !== null ? String(keyEntry.weight) : "",
+      proxyURL: keyEntry.proxy_url ?? "",
+      raw: { ...(keyEntry.raw ?? {}) },
+    }))
+    .filter((keyEntry) => keyEntry.apiKey.trim());
+  if (entries.length > 0) return entries;
+
+  // Older CPA versions persist an OpenAI-compatible key only in the legacy
+  // top-level `api-key` field. Keep that key visible in the editor so saving
+  // an unrelated field never silently clears credentials.
+  const legacyAPIKey = (entry.api_key ?? "").trim();
+  return legacyAPIKey ? [{ apiKey: legacyAPIKey, weight: "", proxyURL: "" }] : [];
 }
 
 function headersToMap(text: string): Record<string, string> {
@@ -94,6 +117,23 @@ function mapToHeadersText(headers: Record<string, string> | undefined): string {
   return Object.entries(headers)
     .map(([key, value]) => key + ": " + value)
     .join("\n");
+}
+
+function requestScopedErrorsToText(errors: unknown[] | undefined): string {
+  if (!errors?.length) return "";
+  return errors.map((error) => JSON.stringify(error)).join("\n");
+}
+
+function parseRequestScopedErrors(text: string): unknown[] | undefined {
+  const rows = text.split(/\r?\n/).map((row) => row.trim()).filter(Boolean);
+  if (!rows.length) return [];
+  return rows.map((row, index) => {
+    const parsed = JSON.parse(row) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`request scoped error #${index + 1} must be a JSON object`);
+    }
+    return parsed;
+  });
 }
 
 function listToArray(text: string): string[] {
@@ -131,10 +171,10 @@ function RichChannelFields({
   const removeModelsRow = (index: number) => set({ models: entry.models.filter((_, i) => i !== index) });
   const setKeyRow = (index: number, patch: { apiKey?: string; weight?: string; proxyURL?: string }) => {
     const apiKeyEntries = entry.apiKeyEntries.map((keyEntry, i) => (i === index ? { ...keyEntry, ...patch } : keyEntry));
-    set({ apiKeyEntries });
+    set({ apiKeyEntries, apiKeyEntriesDirty: true });
   };
-  const addKeyEntryRow = () => set({ apiKeyEntries: [...entry.apiKeyEntries, { apiKey: "", weight: "", proxyURL: "" }] });
-  const removeKeyEntryRow = (index: number) => set({ apiKeyEntries: entry.apiKeyEntries.filter((_, i) => i !== index) });
+  const addKeyEntryRow = () => set({ apiKeyEntries: [...entry.apiKeyEntries, { apiKey: "", weight: "", proxyURL: "" }], apiKeyEntriesDirty: true });
+  const removeKeyEntryRow = (index: number) => set({ apiKeyEntries: entry.apiKeyEntries.filter((_, i) => i !== index), apiKeyEntriesDirty: true });
 
   return (
     <>
@@ -149,21 +189,34 @@ function RichChannelFields({
         <div className="secret-input">
           <input
             value={entry.apiKey}
-            onChange={(event) => set({ apiKey: event.target.value })}
+            onChange={(event) => set({ apiKey: event.target.value, ...(kind === "openai-compatibility" ? { apiKeyEntriesDirty: true } : {}) })}
             type={showSecret ? "text" : "password"}
-            placeholder={tx("ui.ai_provider_key_placeholder")}
+            placeholder={entry.apiKeyEntries[0]?.apiKey ? tx("ui.ai_provider_key_keep_placeholder") : tx("ui.ai_provider_key_placeholder")}
             autoComplete="off"
           />
           <button type="button" aria-label={tx(showSecret ? "ui.hide_key" : "ui.show_key")} title={tx(showSecret ? "ui.hide_key" : "ui.show_key")} onClick={onToggleSecret}>
             {showSecret ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
-        <span className="ai-provider-field-note">{tx("ui.ai_provider_edit_key_note")}</span>
+        <span className="ai-provider-field-note">
+          {entry.apiKeyEntries[0]?.apiKey
+            ? `${tx("ui.ai_provider_current_key")}: ${maskSecret(entry.apiKeyEntries[0].apiKey)}`
+            : tx("ui.ai_provider_edit_key_note")}
+        </span>
       </label>
       <label className="field-block">
         <span>{tx("ui.ai_provider_base_url")}</span>
         <input value={entry.baseURL} onChange={(event) => set({ baseURL: event.target.value })} placeholder="https://api.example.com/v1" autoComplete="off" />
       </label>
+      {kind === "claude-api-key" ? (
+        <label className="field-block">
+          <span>{tx("ui.ai_provider_field_fingerprint_profile")}</span>
+          <select value={entry.fingerprintProfile} onChange={(event) => set({ fingerprintProfile: event.target.value })}>
+            <option value="">{tx("ui.ai_provider_field_fingerprint_default")}</option>
+            <option value="claude-code-cli">{tx("ui.ai_provider_field_fingerprint_claude_code")}</option>
+          </select>
+        </label>
+      ) : null}
       <div className="ai-provider-form-grid">
         <label className="field-block">
           <span>{tx("ui.ai_provider_field_prefix")}</span>
@@ -253,6 +306,14 @@ function RichChannelFields({
             <span>{tx("ui.ai_provider_field_disable_cooling")}</span>
           </label>
         ) : null}
+        <label className="field-block">
+          <span>{tx("ui.ai_provider_field_request_retry")}</span>
+          <input value={entry.requestRetry} onChange={(event) => set({ requestRetry: event.target.value })} type="number" min={0} placeholder="3" autoComplete="off" />
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.ai_provider_field_request_scoped_errors")}</span>
+          <textarea value={entry.requestScopedErrorsText} onChange={(event) => set({ requestScopedErrorsText: event.target.value })} rows={3} placeholder='{"match":"rate limited"}' autoComplete="off" spellCheck={false} />
+        </label>
         {kind === "codex-api-key" || kind === "xai-api-key" ? (
           <label className="switch-control ai-provider-switch">
             <input type="checkbox" checked={entry.alphaSearch} onChange={(event) => set({ alphaSearch: event.target.checked })} />
@@ -306,6 +367,8 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const [newWorkspace, setNewWorkspace] = useState("");
   const [newCookie, setNewCookie] = useState("");
   const [showSecret, setShowSecret] = useState(false);
+  const refreshRequest = useRef(0);
+  const runtimeRequest = useRef(0);
 
   const handleError = useCallback((caught: unknown) => {
     if (caught instanceof api.APIError && caught.status === 401) {
@@ -315,41 +378,125 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
   }, [locale, onAPIError, tx]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const requestID = refreshRequest.current + 1;
+    refreshRequest.current = requestID;
     setLoading(true);
     setError("");
     try {
-      setChannels(await api.listAIProviderChannels());
+      const nextChannels = await api.listAIProviderChannels(signal);
+      if (requestID !== refreshRequest.current) return;
+      setChannels(nextChannels);
     } catch (caught) {
-      handleError(caught);
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+      if (requestID === refreshRequest.current) handleError(caught);
     } finally {
-      setLoading(false);
+      if (requestID === refreshRequest.current) setLoading(false);
     }
   }, [handleError]);
 
-  const refreshRuntime = useCallback(async () => {
+  const refreshRuntime = useCallback(async (signal?: AbortSignal) => {
+    const requestID = runtimeRequest.current + 1;
+    runtimeRequest.current = requestID;
     try {
-      const runtime = await api.getAIProviderRuntime();
+      const runtime = await api.getAIProviderRuntime(signal);
+      if (requestID !== runtimeRequest.current) return;
       setRuntimeSnapshots(runtime.snapshots ?? []);
       setRuntimeUpdatedAt(runtime.updated_at ?? "");
       setRuntimeError("");
     } catch (caught) {
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       // Runtime metrics are observability only; never block provider editing.
-      setRuntimeError(caught instanceof Error ? caught.message : tx("ui.ai_provider_runtime_unavailable"));
+      if (requestID === runtimeRequest.current) {
+        setRuntimeError(caught instanceof Error ? caught.message : tx("ui.ai_provider_runtime_unavailable"));
+      }
     }
   }, [tx]);
 
-  useEffect(() => { void refresh(); }, [refresh, refreshRevision]);
   useEffect(() => {
-    void refreshRuntime();
-    const timer = window.setInterval(() => void refreshRuntime(), 5000);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => {
+      controller.abort();
+      refreshRequest.current += 1;
+    };
+  }, [refresh, refreshRevision]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer = 0;
+    const poll = async () => {
+      await refreshRuntime(controller.signal);
+      if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 5000);
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      runtimeRequest.current += 1;
+    };
   }, [refreshRuntime, refreshRevision]);
 
   const runtimeForEntry = (entry: AIProviderChannelEntry): AIProviderRuntimeSnapshot | undefined => {
-    const authIndex = (entry.auth_index ?? "").trim();
-    if (!authIndex) return undefined;
-    return runtimeSnapshots.find((snapshot) => snapshot.auth_index === authIndex);
+    // A provider may have one runtime identity per API key. CPA exposes those
+    // identities as auth-index metadata on api-key-entries; aggregate all of
+    // them for a truthful provider-level view instead of showing only the
+    // first key (or no metrics at all).
+    const authIndexes = new Set<string>();
+    const topLevel = (entry.auth_index ?? "").trim();
+    if (topLevel) authIndexes.add(topLevel);
+    for (const keyEntry of entry.api_key_entries ?? []) {
+      const authIndex = (keyEntry.auth_index ?? "").trim();
+      if (authIndex) authIndexes.add(authIndex);
+    }
+    if (authIndexes.size === 0) return undefined;
+    const matches = runtimeSnapshots.filter((snapshot) => {
+      const authIndex = (snapshot.auth_index ?? "").trim();
+      return authIndex !== "" && authIndexes.has(authIndex);
+    });
+    if (matches.length === 0) return undefined;
+    if (matches.length === 1) return matches[0];
+    const models = new Map<string, AIProviderRuntimeModelUsage>();
+    for (const snapshot of matches) {
+      for (const usage of snapshot.models ?? []) {
+        const previous = models.get(usage.model);
+        if (!previous) {
+          models.set(usage.model, { ...usage });
+          continue;
+        }
+        previous.input_tokens += usage.input_tokens;
+        previous.output_tokens += usage.output_tokens;
+        previous.reasoning_tokens += usage.reasoning_tokens;
+        previous.cached_tokens += usage.cached_tokens;
+        previous.total_tokens += usage.total_tokens;
+        previous.amount_usd += usage.amount_usd;
+        previous.rated_requests += usage.rated_requests;
+        previous.unrated_requests += usage.unrated_requests;
+        previous.rated = previous.rated || usage.rated;
+      }
+    }
+    const limit = matches.some((snapshot) => !Number.isFinite(snapshot.limit) || snapshot.limit < 0)
+      ? Number.POSITIVE_INFINITY
+      : matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.limit), 0);
+    const latest = matches.reduce((latestSnapshot, snapshot) =>
+      snapshot.updated_at > latestSnapshot.updated_at ? snapshot : latestSnapshot,
+    matches[0]);
+    return {
+      ...latest,
+      auth_index: undefined,
+      identity: `provider:${entry.name ?? entry.index}`,
+      supported: matches.some((snapshot) => snapshot.supported),
+      active: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.active), 0),
+      limit,
+      input_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.input_tokens), 0),
+      output_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.output_tokens), 0),
+      reasoning_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.reasoning_tokens), 0),
+      cached_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.cached_tokens), 0),
+      total_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.total_tokens), 0),
+      amount_usd: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.amount_usd), 0),
+      rated_requests: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.rated_requests), 0),
+      unrated_requests: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.unrated_requests), 0),
+      models: Array.from(models.values()),
+    };
   };
 
   const formatTokens = (value: number | undefined) => new Intl.NumberFormat(locale).format(Math.max(0, value ?? 0));
@@ -447,38 +594,59 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
           headers: headersToMap(editing.headersText),
           disabled: editing.disabled,
           priority: editing.priority.trim() ? editing.priority.trim() : null,
-          weight: editing.weight.trim() ? editing.weight.trim() : null,
+          ...(editing.kind === "openai-compatibility" ? {} : { weight: editing.weight.trim() ? editing.weight.trim() : null }),
         };
         if (editing.apiKey.trim()) patch.api_key = editing.apiKey.trim();
         if (editing.kind !== "openai-compatibility") {
           patch.excluded_models = listToArray(editing.excludedText);
           patch.disable_cooling = editing.disableCooling;
         }
+        if (editing.requestRetry.trim()) {
+          const requestRetry = Number(editing.requestRetry.trim());
+          if (!Number.isInteger(requestRetry) || requestRetry < 0) {
+            throw new Error("request retry must be a non-negative integer");
+          }
+          patch.request_retry = requestRetry;
+        } else {
+          patch.request_retry = null;
+        }
+        patch.request_scoped_errors = parseRequestScopedErrors(editing.requestScopedErrorsText);
         if (editing.kind === "openai-compatibility") {
           patch.support_prompt_cache_key = editing.supportPromptCacheKey;
-          patch.api_key_entries = editing.apiKeyEntries
-            .map((keyEntry) => ({
-              api_key: keyEntry.apiKey.trim(),
-              weight: keyEntry.weight.trim(),
-              proxy_url: keyEntry.proxyURL.trim(),
-            }))
-            .filter((keyEntry) => keyEntry.api_key);
+          // The simple replacement field targets the first credential row. Keep
+          // the remaining weighted keys untouched so a single-key edit cannot
+          // delete the rest of the pool.
+          const replacementAPIKey = editing.apiKey.trim();
+          const nextFirstKey = replacementAPIKey || (editing.apiKeyEntries[0]?.apiKey ?? "").trim();
+          const apiKeyEntries = editing.apiKeyEntries.length > 0
+            ? editing.apiKeyEntries.map((keyEntry, index) => ({ ...keyEntry, ...(index === 0 && nextFirstKey ? { apiKey: nextFirstKey } : {}), raw: { ...(keyEntry.raw ?? {}) } }))
+            : [{ apiKey: nextFirstKey, weight: "", proxyURL: "", raw: undefined }];
+          if (editing.apiKeyEntriesDirty || replacementAPIKey) {
+            patch.api_key_entries = apiKeyEntries
+              .map((keyEntry) => ({
+                api_key: keyEntry.apiKey.trim(),
+                weight: keyEntry.weight.trim(),
+                proxy_url: keyEntry.proxyURL.trim(),
+                ...(keyEntry.raw ? { raw: { ...keyEntry.raw } } : {}),
+              }))
+              .filter((keyEntry) => keyEntry.api_key);
+          }
         }
         if (editing.kind === "codex-api-key" || editing.kind === "xai-api-key") patch.alpha_search = editing.alphaSearch;
         if (editing.kind === "codex-api-key") patch.websockets = editing.websockets;
         if (editing.kind === "claude-api-key") patch.rebuild_mid_system_message = editing.rebuildMidSystemMessage;
+        if (editing.kind === "claude-api-key") patch.fingerprint_profile = editing.fingerprintProfile;
         if (hasModelEditor(editing.kind)) {
           const models = editing.models
             .map((model) => ({
+              // Keep the original model metadata while normalizing only the
+              // fields exposed by this editor. The API serializer removes
+              // intentionally cleared known fields but preserves CPA fields
+              // this UI does not yet render.
+              ...model,
               name: model.name.trim(),
-              ...(model.alias && model.alias.trim() ? { alias: model.alias.trim() } : {}),
-              ...(model.display_name && model.display_name.trim() ? { display_name: model.display_name.trim() } : {}),
-              ...(model.max_context_length !== undefined && model.max_context_length > 0 ? { max_context_length: model.max_context_length } : {}),
-              ...(model.force_mapping ? { force_mapping: true } : {}),
-              ...(model.is_compat ? { is_compat: true } : {}),
-              ...(model.image ? { image: true } : {}),
-              ...(model.input_modalities && model.input_modalities.length > 0 ? { input_modalities: model.input_modalities } : {}),
-              ...(model.output_modalities && model.output_modalities.length > 0 ? { output_modalities: model.output_modalities } : {}),
+              alias: typeof model.alias === "string" ? model.alias.trim() : model.alias,
+              display_name: typeof model.display_name === "string" ? model.display_name.trim() : model.display_name,
             }))
             .filter((model) => model.name.trim());
           patch.models = models;
@@ -536,7 +704,14 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     try {
       const result = kind === "opencode-zen"
         ? (await api.probeOpenCodeZenAccount(entry.account_id as string)).result
-        : await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers);
+        : await api.testAIProviderChannelForKind(
+            kind,
+            entry.base_url ?? "",
+            entry.api_key ?? "",
+            15,
+            entry.headers,
+            entry.auth_index || entry.account_id,
+          );
       setTestResult(result);
     } catch (caught) {
       handleError(caught);
@@ -861,7 +1036,16 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
           <table className="account-table ai-provider-table">
             <thead><tr><th>{tx("ui.ai_provider_type")}</th><th>{tx("ui.ai_provider_name")}</th><th>{tx("ui.ai_provider_base_url")}</th><th>{tx("ui.ai_provider_api_key")}</th><th>{tx("ui.status")}</th><th>{tx("ui.models")}</th><th>{tx("ui.ai_provider_concurrency")}</th><th>{tx("ui.ai_provider_usage")}</th><th>{tx("ui.actions")}</th></tr></thead>
             <tbody>
-              {channels.flatMap((channel) => channel.entries.map((entry) => (
+              {channels.flatMap((channel) => [
+                ...(channel.error || channel.storage_error ? [
+                  <tr key={`${channel.kind}-issue`} className="ai-provider-channel-issue">
+                    <td colSpan={9}>
+                      <strong>{tx(channelLabelKey(channel.kind))}</strong>{" "}
+                      <span>{tx(channel.storage_error ? "ui.ai_provider_storage_unavailable" : channel.error === "provider_channel_response_invalid" ? "ui.ai_provider_response_invalid" : "ui.ai_provider_channel_unavailable")}</span>
+                    </td>
+                  </tr>,
+                ] : []),
+                ...channel.entries.map((entry) => (
                 <tr key={`${channel.kind}-${entry.index}`}>
                   <td><strong>{tx(channelLabelKey(channel.kind))}</strong></td>
                   <td>{entry.name || entry.workspace_id || maskSecret(entry.api_key) || `#${entry.index + 1}`}</td>
@@ -879,7 +1063,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   <td className="ai-provider-table-actions">
                     <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                     <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
-                    <IconButton label={tx("ui.edit_ai_provider")} onClick={() => setEditing({ kind: channel.kind, index: entry.index, name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: (entry.api_key_entries ?? []).map((keyEntry) => ({ apiKey: keyEntry.api_key ?? "", weight: keyEntry.weight !== undefined && keyEntry.weight !== null ? String(keyEntry.weight) : "", proxyURL: keyEntry.proxy_url ?? "" })), supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, accountID: entry.account_id, workspaceID: entry.workspace_id })}><Save size={15} /></IconButton>
+                    <IconButton label={tx("ui.edit_ai_provider")} onClick={() => setEditing({ kind: channel.kind, index: entry.index, name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id })}><Save size={15} /></IconButton>
                     {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                       <>
                         <IconButton label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>
@@ -889,10 +1073,11 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                     <IconButton className="button-danger" label={tx("ui.delete_ai_provider")} onClick={() => void deleteEntry(entry, channel.kind)}><Trash2 size={15} /></IconButton>
                   </td>
                 </tr>
-              )))}
+                )),
+              ])}
             </tbody>
           </table>
-          {channels.every((channel) => channel.entries.length === 0) ? <div className="ai-provider-empty">{tx("ui.ai_provider_channel_empty")}</div> : null}
+          {channels.every((channel) => channel.entries.length === 0 && !channel.error && !channel.storage_error) ? <div className="ai-provider-empty">{tx("ui.ai_provider_channel_empty")}</div> : null}
         </div>
       )}
     </section>

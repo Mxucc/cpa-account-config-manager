@@ -23,13 +23,19 @@ type OperationJournal struct {
 	nextSegmentID   uint64
 	extendedHistory bool
 	storageErr      string
+	dirty           bool
+	retryTimer      *time.Timer
+	retryScheduled  bool
 	configured      bool
+	closed          bool
 	now             func() time.Time
 }
 
 func NewOperationJournal() *OperationJournal {
 	return &OperationJournal{now: time.Now}
 }
+
+const operationPersistRetryDelay = 30 * time.Second
 
 func (j *OperationJournal) Configure(config Config) {
 	if j == nil {
@@ -38,7 +44,7 @@ func (j *OperationJournal) Configure(config Config) {
 	dataDir := normalizeConfig(config).DataDir
 	store := operationStoreDirectory(dataDir)
 	j.mu.RLock()
-	sameStore := j.configured && j.store == store
+	sameStore := j.configured && !j.closed && j.store == store
 	j.mu.RUnlock()
 	if sameStore {
 		if config.OperationSettings != nil {
@@ -89,6 +95,7 @@ func (j *OperationJournal) Configure(config Config) {
 	j.extendedHistory = manifest.ExtendedHistory
 	j.storageErr = storageErr
 	j.configured = true
+	j.closed = false
 	j.mu.Unlock()
 	if storageErr == "" && (migrated || configuredSettingsChanged) {
 		if errPersist := j.persistLocked(); errPersist == nil {
@@ -108,8 +115,36 @@ func (j *OperationJournal) Configure(config Config) {
 	}
 }
 
+// Close stops a deferred persistence retry.  The journal is intentionally
+// best-effort during shutdown, but it must not leave a timer holding the
+// plugin instance alive after CPA has retired it.
+func (j *OperationJournal) Close() {
+	if j == nil {
+		return
+	}
+	// Serialize shutdown with writers.  Without taking storeMu first, a
+	// Record/Upsert that had already passed its initial checks could continue
+	// persisting after Close returned and resurrect a retired plugin's journal.
+	j.storeMu.Lock()
+	defer j.storeMu.Unlock()
+	j.mu.Lock()
+	j.closed = true
+	if j.retryTimer != nil {
+		j.retryTimer.Stop()
+		j.retryTimer = nil
+	}
+	j.retryScheduled = false
+	j.mu.Unlock()
+}
+
 func (j *OperationJournal) Record(entry OperationEntry) OperationEntry {
 	if j == nil {
+		return OperationEntry{}
+	}
+	j.mu.RLock()
+	closed := j.closed
+	j.mu.RUnlock()
+	if closed {
 		return OperationEntry{}
 	}
 	normalized, ok := normalizeOperationEntry(entry, j.currentTime())
@@ -119,6 +154,10 @@ func (j *OperationJournal) Record(entry OperationEntry) OperationEntry {
 	j.storeMu.Lock()
 	defer j.storeMu.Unlock()
 	j.mu.Lock()
+	if j.closed {
+		j.mu.Unlock()
+		return OperationEntry{}
+	}
 	j.operations = append(j.operations, normalized)
 	j.trimLocked()
 	j.mu.Unlock()
@@ -128,6 +167,12 @@ func (j *OperationJournal) Record(entry OperationEntry) OperationEntry {
 
 func (j *OperationJournal) Upsert(eventID string, entry OperationEntry) OperationEntry {
 	if j == nil {
+		return OperationEntry{}
+	}
+	j.mu.RLock()
+	closed := j.closed
+	j.mu.RUnlock()
+	if closed {
 		return OperationEntry{}
 	}
 	entry.EventID = safeOperationIdentifier(eventID, 160)
@@ -141,6 +186,10 @@ func (j *OperationJournal) Upsert(eventID string, entry OperationEntry) Operatio
 	j.storeMu.Lock()
 	defer j.storeMu.Unlock()
 	j.mu.Lock()
+	if j.closed {
+		j.mu.Unlock()
+		return OperationEntry{}
+	}
 	for index := range j.operations {
 		if j.operations[index].EventID != normalized.EventID {
 			continue
@@ -175,7 +224,9 @@ func (j *OperationJournal) Upsert(eventID string, entry OperationEntry) Operatio
 				}
 				operations[entryIndex] = normalized
 				if errSave := saveOperationSegment(store, segments[index].ID, operations); errSave != nil {
-					j.setStorageError("operation journal could not be persisted")
+					j.mu.Lock()
+					j.markPersistFailureLocked("operation journal could not be persisted")
+					j.mu.Unlock()
 					return OperationEntry{}
 				}
 				j.setStorageError("")
@@ -261,9 +312,15 @@ func (j *OperationJournal) ExportSnapshot(query OperationQuery) ([]OperationEntr
 	return operations, nil
 }
 
-func (j *OperationJournal) Clear() OperationEntry {
+func (j *OperationJournal) ClearWithError() (OperationEntry, error) {
 	if j == nil {
-		return OperationEntry{}
+		return OperationEntry{}, fmt.Errorf("operation journal is unavailable")
+	}
+	j.mu.RLock()
+	closed := j.closed
+	j.mu.RUnlock()
+	if closed {
+		return OperationEntry{}, fmt.Errorf("operation journal is closed")
 	}
 	now := j.currentTime()
 	entry, _ := normalizeOperationEntry(OperationEntry{
@@ -278,15 +335,41 @@ func (j *OperationJournal) Clear() OperationEntry {
 	j.storeMu.Lock()
 	defer j.storeMu.Unlock()
 	j.mu.Lock()
+	if j.closed {
+		j.mu.Unlock()
+		return OperationEntry{}, fmt.Errorf("operation journal is closed")
+	}
+	previousOperations := cloneOperationEntries(j.operations)
+	previousSegments := append([]persistedOperationSegment(nil), j.segments...)
+	previousNextSegmentID := j.nextSegmentID
+	previousDirty := j.dirty
+	previousStorageErr := j.storageErr
 	j.operations = []OperationEntry{entry}
 	j.segments = nil
 	j.mu.Unlock()
-	if errPersist := j.persistLocked(); errPersist == nil {
-		if errRemove := removeOperationSegmentFiles(j.store); errRemove != nil {
-			j.setStorageError("operation journal could not remove archived segments")
-		}
+	if errPersist := j.persistLocked(); errPersist != nil {
+		j.mu.Lock()
+		j.operations = previousOperations
+		j.segments = previousSegments
+		j.nextSegmentID = previousNextSegmentID
+		j.dirty = previousDirty
+		j.storageErr = previousStorageErr
+		j.mu.Unlock()
+		return OperationEntry{}, fmt.Errorf("operation journal could not be persisted: %w", errPersist)
 	}
-	return cloneOperationEntry(entry)
+	if errRemove := removeOperationSegmentFiles(j.store); errRemove != nil {
+		j.setStorageError("operation journal could not remove archived segments")
+		return cloneOperationEntry(entry), fmt.Errorf("operation journal archived segments could not be removed: %w", errRemove)
+	}
+	return cloneOperationEntry(entry), nil
+}
+
+// Clear is kept for internal callers that historically treated journal cleanup
+// as best-effort. HTTP handlers should use ClearWithError so persistence errors
+// cannot be reported as a successful destructive operation.
+func (j *OperationJournal) Clear() OperationEntry {
+	entry, _ := j.ClearWithError()
+	return entry
 }
 
 func (j *OperationJournal) RetentionSettings() OperationRetentionSettings {
@@ -302,9 +385,19 @@ func (j *OperationJournal) UpdateRetentionSettings(enabled bool) (OperationReten
 	if j == nil {
 		return OperationRetentionSettings{PageSize: operationPageSize}, fmt.Errorf("operation journal is unavailable")
 	}
+	j.mu.RLock()
+	closed := j.closed
+	j.mu.RUnlock()
+	if closed {
+		return j.RetentionSettings(), fmt.Errorf("operation journal is closed")
+	}
 	j.storeMu.Lock()
 	defer j.storeMu.Unlock()
 	j.mu.RLock()
+	if j.closed {
+		j.mu.RUnlock()
+		return j.RetentionSettings(), fmt.Errorf("operation journal is closed")
+	}
 	current := j.extendedHistory
 	j.mu.RUnlock()
 	if current == enabled {
@@ -354,7 +447,7 @@ func (j *OperationJournal) persistLocked() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if !j.configured || strings.TrimSpace(j.store) == "" {
-		j.storageErr = "operation journal storage is unavailable"
+		j.markPersistFailureLocked("operation journal storage is unavailable")
 		return fmt.Errorf("operation journal storage is unavailable")
 	}
 	if !j.extendedHistory {
@@ -367,7 +460,7 @@ func (j *OperationJournal) persistLocked() error {
 			segmentID = 1
 		}
 		if errSave := saveOperationSegment(j.store, segmentID, segmentOperations); errSave != nil {
-			j.storageErr = "operation journal could not be persisted"
+			j.markPersistFailureLocked("operation journal could not be persisted")
 			return errSave
 		}
 		j.segments = append(j.segments, persistedOperationSegment{ID: segmentID, Count: operationPageSize})
@@ -382,10 +475,16 @@ func (j *OperationJournal) persistLocked() error {
 		Operations:      cloneOperationEntries(j.operations),
 	}
 	if errSave := saveOperationManifest(j.store, manifest); errSave != nil {
-		j.storageErr = "operation journal could not be persisted"
+		j.markPersistFailureLocked("operation journal could not be persisted")
 		return errSave
 	}
 	j.storageErr = ""
+	j.dirty = false
+	if j.retryTimer != nil {
+		j.retryTimer.Stop()
+		j.retryTimer = nil
+	}
+	j.retryScheduled = false
 	return nil
 }
 
@@ -530,6 +629,30 @@ func (j *OperationJournal) setStorageError(message string) {
 	j.mu.Unlock()
 }
 
+// markPersistFailureLocked records a sanitized error and arranges one bounded
+// retry.  The caller must hold j.mu; retryPersist acquires storeMu before
+// calling persistLocked so it cannot race Record/Upsert/Configure.
+func (j *OperationJournal) markPersistFailureLocked(message string) {
+	j.storageErr = message
+	j.dirty = true
+	if j.retryScheduled || !j.configured || strings.TrimSpace(j.store) == "" {
+		return
+	}
+	j.retryScheduled = true
+	j.retryTimer = time.AfterFunc(operationPersistRetryDelay, func() {
+		j.storeMu.Lock()
+		defer j.storeMu.Unlock()
+		j.mu.Lock()
+		j.retryScheduled = false
+		dirty := j.dirty
+		closed := j.closed
+		j.mu.Unlock()
+		if dirty && !closed {
+			_ = j.persistLocked()
+		}
+	})
+}
+
 func mergeOperationEntry(existing, replacement OperationEntry) OperationEntry {
 	if replacement.Scope == "" {
 		replacement.Scope = existing.Scope
@@ -542,6 +665,27 @@ func mergeOperationEntry(existing, replacement OperationEntry) OperationEntry {
 	}
 	if replacement.Version == "" {
 		replacement.Version = existing.Version
+	}
+	if replacement.ReasonCode == "" {
+		replacement.ReasonCode = existing.ReasonCode
+	}
+	if replacement.RelatedJobID == "" {
+		replacement.RelatedJobID = existing.RelatedJobID
+	}
+	if replacement.RelatedActionID == "" {
+		replacement.RelatedActionID = existing.RelatedActionID
+	}
+	if replacement.Model == "" {
+		replacement.Model = existing.Model
+	}
+	if replacement.HTTPStatus == 0 {
+		replacement.HTTPStatus = existing.HTTPStatus
+	}
+	if replacement.Attempts == 0 {
+		replacement.Attempts = existing.Attempts
+	}
+	if len(replacement.FailureDetails) == 0 {
+		replacement.FailureDetails = cloneOperationFailureDetails(existing.FailureDetails)
 	}
 	replacement.ID = existing.ID
 	return replacement
@@ -658,7 +802,13 @@ func safeOperationFailureReason(value string) string {
 		OperationFailurePolicyAuthSource, OperationFailurePolicyAuthFilename, OperationFailurePolicyAuthProjection,
 		OperationFailurePolicyAuthJSON, OperationFailurePolicyAuthUpdate, OperationFailurePolicyAuthSave,
 		OperationFailurePolicyModelPolicyUnavailable, OperationFailurePolicyModelPolicyApply,
-		OperationFailurePolicyQuotaMetadata, OperationFailurePolicyStatePersist:
+		OperationFailurePolicyQuotaMetadata, OperationFailurePolicyStatePersist,
+		OperationFailureInspectionAuthHost, OperationFailureInspectionAccountReadOnly,
+		OperationFailureInspectionOwnership, OperationFailureInspectionAuthRead,
+		OperationFailureInspectionAuthIdentity, OperationFailureInspectionAuthSource,
+		OperationFailureInspectionAuthJSON, OperationFailureInspectionAuthField,
+		OperationFailureInspectionAuthUpdate, OperationFailureInspectionAuthSave,
+		OperationFailureInspectionMutation, OperationFailureModelTestInspectionRecord:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""

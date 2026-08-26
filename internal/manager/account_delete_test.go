@@ -8,17 +8,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+type accountDeleteHTTPDoer func(*http.Request) (*http.Response, error)
+
+func (d accountDeleteHTTPDoer) Do(request *http.Request) (*http.Response, error) { return d(request) }
+
 func TestAccountDeleteServicePreviewsAndDeletesOneAccount(t *testing.T) {
 	host := editableAccountDeleteHost()
 	deleteCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	doer := accountDeleteHTTPDoer(func(request *http.Request) (*http.Response, error) {
 		deleteCalls++
 		if request.Method != http.MethodDelete {
 			t.Errorf("method = %s", request.Method)
@@ -29,12 +33,11 @@ func TestAccountDeleteServicePreviewsAndDeletesOneAccount(t *testing.T) {
 		if request.Header.Get("Authorization") != "Bearer management-secret" {
 			t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
 		}
-		_, _ = io.WriteString(writer, `{"status":"ok","detail":"response-secret"}`)
-	}))
-	defer server.Close()
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"ok","detail":"response-secret"}`))}, nil
+	})
 
 	service := NewAccountDeleteService(NewAccountService(host), NewMutationCoordinator())
-	service.doer = server.Client()
+	service.doer = doer
 	preview, errPreview := service.Preview(context.Background(), AccountDeletePreviewRequest{ID: "auth-1"})
 	if errPreview != nil {
 		t.Fatalf("Preview() error = %v", errPreview)
@@ -44,7 +47,7 @@ func TestAccountDeleteServicePreviewsAndDeletesOneAccount(t *testing.T) {
 	}
 	assertDeletePayloadRedacted(t, preview)
 
-	result, errStart := service.Start(context.Background(), preview.ID, server.URL, "management-secret")
+	result, errStart := service.Start(context.Background(), preview.ID, defaultManagementBaseURL, "management-secret")
 	if errStart != nil {
 		t.Fatalf("Start() error = %v", errStart)
 	}
@@ -52,7 +55,7 @@ func TestAccountDeleteServicePreviewsAndDeletesOneAccount(t *testing.T) {
 		t.Fatalf("result = %#v calls=%d", result, deleteCalls)
 	}
 	assertDeletePayloadRedacted(t, result)
-	if _, errSecond := service.Start(context.Background(), preview.ID, server.URL, "management-secret"); !errors.Is(errSecond, ErrAccountDeletePreviewNotFound) {
+	if _, errSecond := service.Start(context.Background(), preview.ID, defaultManagementBaseURL, "management-secret"); !errors.Is(errSecond, ErrAccountDeletePreviewNotFound) {
 		t.Fatalf("second Start() error = %v", errSecond)
 	}
 }
@@ -96,13 +99,12 @@ func TestAccountDeleteServiceRejectsReadOnlyMissingExpiredStaleAndBusyTargets(t 
 	t.Run("stale revision", func(t *testing.T) {
 		host := editableAccountDeleteHost()
 		calls := 0
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		doer := accountDeleteHTTPDoer(func(_ *http.Request) (*http.Response, error) {
 			calls++
-			writer.WriteHeader(http.StatusOK)
-		}))
-		defer server.Close()
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		})
 		service := NewAccountDeleteService(NewAccountService(host), NewMutationCoordinator())
-		service.doer = server.Client()
+		service.doer = doer
 		preview, errPreview := service.Preview(context.Background(), AccountDeletePreviewRequest{ID: "auth-1"})
 		if errPreview != nil {
 			t.Fatalf("Preview() error = %v", errPreview)
@@ -112,7 +114,7 @@ func TestAccountDeleteServiceRejectsReadOnlyMissingExpiredStaleAndBusyTargets(t 
 		detail.JSON = json.RawMessage(`{"type":"codex","access_token":"changed-secret"}`)
 		host.details["auth-1"] = detail
 		host.mu.Unlock()
-		if _, errStart := service.Start(context.Background(), preview.ID, server.URL, "management-secret"); !errors.Is(errStart, ErrAccountDeletePreviewStale) {
+		if _, errStart := service.Start(context.Background(), preview.ID, defaultManagementBaseURL, "management-secret"); !errors.Is(errStart, ErrAccountDeletePreviewStale) {
 			t.Fatalf("Start() error = %v", errStart)
 		}
 		if calls != 0 {
@@ -140,24 +142,20 @@ func TestAccountDeleteServiceRejectsReadOnlyMissingExpiredStaleAndBusyTargets(t 
 func TestHandleManagementAccountDeleteRoutesAreAuthenticatedAndRedacted(t *testing.T) {
 	host := editableAccountDeleteHost()
 	deleteCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	doer := accountDeleteHTTPDoer(func(request *http.Request) (*http.Response, error) {
 		deleteCalls++
 		if request.Header.Get("Authorization") != "Bearer management-secret" {
-			writer.WriteHeader(http.StatusUnauthorized)
-			return
+			return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(`{"error":"unauthorized"}`))}, nil
 		}
 		if deleteCalls == 1 {
-			writer.WriteHeader(http.StatusBadGateway)
-			_, _ = io.WriteString(writer, `{"error":"Bearer response-secret"}`)
-			return
+			return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader(`{"error":"Bearer response-secret"}`))}, nil
 		}
-		_, _ = io.WriteString(writer, `{"status":"ok"}`)
-	}))
-	defer server.Close()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":"ok"}`))}, nil
+	})
 
 	app := NewApp(host, []byte("index"))
-	app.deletions.doer = server.Client()
-	app.Configure([]byte(fmt.Sprintf("management_base_url: %q\n", server.URL)))
+	app.deletions.doer = doer
+	app.Configure([]byte(fmt.Sprintf("management_base_url: %q\n", defaultManagementBaseURL)))
 	defer app.Close()
 
 	previewResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{

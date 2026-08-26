@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var updatePersistRetryDelay = 30 * time.Second
+
 type UpdateChecker struct {
 	mu             sync.RWMutex
 	storeMu        sync.Mutex
@@ -20,6 +22,10 @@ type UpdateChecker struct {
 	checkedAt      time.Time
 	error          string
 	configured     bool
+	loadFailed     bool
+	dirty          bool
+	retryTimer     *time.Timer
+	retryScheduled bool
 	closed         bool
 	now            func() time.Time
 }
@@ -51,10 +57,28 @@ func (c *UpdateChecker) Configure(config Config) {
 	config = normalizeConfig(config)
 	storePath := updateStorePath(config.DataDir)
 	configuredPolicy, hasConfiguredPolicy, errConfiguredPolicy := updatePolicyFromConfig(config)
+	// Serialize the complete read-modify-write cycle.  The update state is
+	// shared by the UI check endpoint, policy updates, and configuration
+	// reloads; protecting only the file write allowed an older in-memory
+	// snapshot to overwrite a newer policy or checked_at value.
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
 	c.mu.RLock()
-	sameStore := c.configured && c.store == storePath
+	sameStore := c.configured && c.store == storePath && !c.loadFailed
 	c.mu.RUnlock()
 	if sameStore {
+		c.mu.RLock()
+		dirty := c.dirty
+		c.mu.RUnlock()
+		if dirty {
+			c.persistDirtyLocked()
+			c.mu.RLock()
+			stillDirty := c.dirty
+			c.mu.RUnlock()
+			if stillDirty {
+				return
+			}
+		}
 		c.mu.Lock()
 		c.config = config
 		currentPolicy := c.policy
@@ -63,35 +87,67 @@ func (c *UpdateChecker) Configure(config Config) {
 		} else if hasConfiguredPolicy && c.error == "update state could not be loaded" {
 			c.error = ""
 		}
-		c.mu.Unlock()
 		if hasConfiguredPolicy && errConfiguredPolicy == nil && currentPolicy != configuredPolicy {
-			if _, errSave := c.SetPolicy(configuredPolicy); errSave != nil {
-				c.mu.Lock()
+			state := c.persistedStateLocked()
+			state.Policy = configuredPolicy
+			state.Error = ""
+			if errSave := saveUpdateState(storePath, state); errSave != nil {
 				c.error = "update state could not be persisted"
-				c.mu.Unlock()
+			} else {
+				c.policy = configuredPolicy
+				c.loadFailed = false
+				if c.error == "update state could not be persisted" {
+					c.error = ""
+				}
 			}
 		}
+		c.mu.Unlock()
 		return
 	}
 
+	c.mu.RLock()
+	needsFlush := c.configured && c.store != storePath && c.dirty
+	c.mu.RUnlock()
+	if needsFlush {
+		c.persistDirtyLocked()
+		c.mu.RLock()
+		stillDirty := c.dirty
+		c.mu.RUnlock()
+		if stillDirty {
+			return
+		}
+	}
+
 	state := persistedUpdateState{Version: updateStoreVersion, Policy: defaultUpdatePolicy()}
+	loadFailed := false
 	loaded, errLoad := loadUpdateState(storePath)
 	if errLoad == nil {
 		state = loaded
 	} else if !errors.Is(errLoad, os.ErrNotExist) {
 		state.Error = "update state could not be loaded"
+		loadFailed = true
 	}
 	if hasConfiguredPolicy {
 		if errConfiguredPolicy != nil {
 			state.Error = "update state could not be loaded"
 		} else {
 			state.Policy = configuredPolicy
-			c.storeMu.Lock()
+			state.Error = ""
 			if errSave := saveUpdateState(storePath, state); errSave != nil {
 				state.Error = "update state could not be persisted"
 			}
-			c.storeMu.Unlock()
 		}
+	}
+	c.mu.RLock()
+	configuredSameStore := c.configured && c.store == storePath
+	c.mu.RUnlock()
+	if loadFailed && configuredSameStore {
+		c.mu.Lock()
+		c.config = config
+		c.loadFailed = true
+		c.error = "update state could not be loaded"
+		c.mu.Unlock()
+		return
 	}
 	c.mu.Lock()
 	c.config = config
@@ -99,7 +155,12 @@ func (c *UpdateChecker) Configure(config Config) {
 	c.policy = state.Policy
 	c.checkedAt = state.CheckedAt
 	c.error = retainedUpdateStateError(state.Error)
+	c.loadFailed = loadFailed
+	c.dirty = c.error == "update state could not be persisted"
 	c.configured = true
+	if c.dirty {
+		c.schedulePersistRetryLocked()
+	}
 	c.mu.Unlock()
 }
 
@@ -148,24 +209,28 @@ func (c *UpdateChecker) SetPolicy(policy UpdatePolicy) (UpdateSnapshot, error) {
 	if errValidate != nil {
 		return UpdateSnapshot{}, errValidate
 	}
-	c.mu.RLock()
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
+	c.mu.Lock()
 	storePath := c.store
 	state := c.persistedStateLocked()
 	closed := c.closed
-	c.mu.RUnlock()
 	if closed || strings.TrimSpace(storePath) == "" {
+		c.mu.Unlock()
 		return UpdateSnapshot{}, fmt.Errorf("update storage is unavailable")
 	}
 	state.Policy = normalized
-	c.storeMu.Lock()
+	state.Error = ""
 	errSave := saveUpdateState(storePath, state)
-	c.storeMu.Unlock()
 	if errSave != nil {
+		c.mu.Unlock()
 		return UpdateSnapshot{}, fmt.Errorf("save update policy: %w", errSave)
 	}
-	c.mu.Lock()
 	c.policy = normalized
 	c.error = ""
+	c.loadFailed = false
+	c.dirty = false
+	c.stopPersistRetryLocked()
 	c.mu.Unlock()
 	return c.Snapshot(), nil
 }
@@ -176,26 +241,19 @@ func (c *UpdateChecker) RequestCheck() UpdateSnapshot {
 	if c == nil {
 		return UpdateSnapshot{Policy: defaultUpdatePolicy()}
 	}
+	c.storeMu.Lock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
+		c.storeMu.Unlock()
 		return c.Snapshot()
 	}
 	c.checkedAt = c.currentTime()
 	c.error = ""
-	state := c.persistedStateLocked()
-	storePath := c.store
+	c.dirty = true
 	c.mu.Unlock()
-	if strings.TrimSpace(storePath) != "" {
-		c.storeMu.Lock()
-		errSave := saveUpdateState(storePath, state)
-		c.storeMu.Unlock()
-		if errSave != nil {
-			c.mu.Lock()
-			c.error = "update state could not be persisted"
-			c.mu.Unlock()
-		}
-	}
+	c.persistDirtyLocked()
+	c.storeMu.Unlock()
 	return c.Snapshot()
 }
 
@@ -203,9 +261,82 @@ func (c *UpdateChecker) Shutdown() {
 	if c == nil {
 		return
 	}
+	c.storeMu.Lock()
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		c.storeMu.Unlock()
+		return
+	}
 	c.closed = true
 	c.mu.Unlock()
+	c.persistDirtyLocked()
+	c.mu.Lock()
+	c.stopPersistRetryLocked()
+	c.mu.Unlock()
+	c.storeMu.Unlock()
+}
+
+// persistDirtyLocked writes the latest check timestamp after transient storage
+// failures. The caller must hold storeMu so policy saves and Configure cannot
+// be overwritten by an older retry snapshot.
+func (c *UpdateChecker) persistDirtyLocked() {
+	if c == nil {
+		return
+	}
+	c.mu.RLock()
+	if !c.dirty || strings.TrimSpace(c.store) == "" {
+		c.mu.RUnlock()
+		return
+	}
+	storePath := c.store
+	state := c.persistedStateLocked()
+	state.Error = ""
+	c.mu.RUnlock()
+	if errSave := saveUpdateState(storePath, state); errSave != nil {
+		c.mu.Lock()
+		c.error = "update state could not be persisted"
+		c.schedulePersistRetryLocked()
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Lock()
+	if c.store == storePath {
+		c.dirty = false
+		c.loadFailed = false
+		if c.error == "update state could not be persisted" || c.error == "update state could not be loaded" {
+			c.error = ""
+		}
+		c.stopPersistRetryLocked()
+	}
+	c.mu.Unlock()
+}
+
+func (c *UpdateChecker) schedulePersistRetryLocked() {
+	if c == nil || c.closed || c.retryScheduled || !c.dirty {
+		return
+	}
+	c.retryScheduled = true
+	c.retryTimer = time.AfterFunc(updatePersistRetryDelay, func() {
+		c.storeMu.Lock()
+		c.mu.Lock()
+		c.retryScheduled = false
+		c.retryTimer = nil
+		closed := c.closed
+		c.mu.Unlock()
+		if !closed {
+			c.persistDirtyLocked()
+		}
+		c.storeMu.Unlock()
+	})
+}
+
+func (c *UpdateChecker) stopPersistRetryLocked() {
+	if c.retryTimer != nil {
+		c.retryTimer.Stop()
+		c.retryTimer = nil
+	}
+	c.retryScheduled = false
 }
 
 func (c *UpdateChecker) persistedStateLocked() persistedUpdateState {

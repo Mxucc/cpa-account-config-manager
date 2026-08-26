@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -138,7 +139,14 @@ func TestExperimentalSettingsEnableTransformationAndSurviveAppRestart(t *testing
 	path := "/v0/management/plugins/cpa-account-config-manager/experiments"
 	request := cpaapi.RequestInterceptRequest{
 		ToFormat: "codex",
+		Metadata: map[string]any{"selected_auth_id": "overdraft-account"},
 		Body:     []byte(`{"input":[{"type":"message","role":"user","content":"continue"}]}`),
+	}
+	seedUsage := func(app *App) {
+		app.usage.Observe(cpaapi.UsageRecord{
+			Provider: "codex", AuthIndex: "overdraft-account",
+			ResponseHeaders: codexUsageObservationHeaders(time.Now(), 100, 100),
+		})
 	}
 
 	first := NewApp(&fakeAuthHost{}, []byte("index"))
@@ -160,6 +168,7 @@ func TestExperimentalSettingsEnableTransformationAndSurviveAppRestart(t *testing
 		first.Close()
 		t.Fatal("enabled experiment did not expose the live request-interceptor gate")
 	}
+	seedUsage(first)
 	if transformed := first.HandleRequestAfter(request); !containsExperimentalToolPair(transformed.Body) {
 		first.Close()
 		t.Fatalf("enabled Hook body = %s", transformed.Body)
@@ -172,6 +181,7 @@ func TestExperimentalSettingsEnableTransformationAndSurviveAppRestart(t *testing
 	if !restarted.RequestInterceptionActive() || !restarted.RequestInterceptionAcceptsFormat("codex") {
 		t.Fatal("persisted experiment did not re-arm the request interceptor")
 	}
+	seedUsage(restarted)
 	if transformed := restarted.HandleRequestAfter(request); !containsExperimentalToolPair(transformed.Body) {
 		t.Fatalf("restarted Hook body = %s", transformed.Body)
 	}
@@ -216,4 +226,27 @@ func containsExperimentalToolPair(body []byte) bool {
 	output := document.Input[len(document.Input)-1]
 	return call.Type == "custom_tool_call" && output.Type == "custom_tool_call_output" &&
 		strings.HasPrefix(call.CallID, "call_cpa_overdraft_") && call.CallID == output.CallID
+}
+
+func TestExperimentalSettingsConfigureRetriesCorruptSameStore(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := experimentalSettingsStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte("{"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	service := NewExperimentalSettingsService()
+	service.Configure(Config{DataDir: dataDir})
+	if got := service.Snapshot().StorageError; got != "experimental settings could not be loaded" {
+		t.Fatalf("storage_error = %q", got)
+	}
+
+	want := normalizeExperimentalSettings(ExperimentalSettings{WeeklyOverdraftEnabled: true})
+	if errSave := saveExperimentalSettings(storePath, want); errSave != nil {
+		t.Fatalf("saveExperimentalSettings() error = %v", errSave)
+	}
+	service.Configure(Config{DataDir: dataDir})
+	got := service.Snapshot()
+	if got.StorageError != "" || !got.Settings.WeeklyOverdraftEnabled {
+		t.Fatalf("recovered snapshot = %#v", got)
+	}
 }

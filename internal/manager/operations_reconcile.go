@@ -53,7 +53,7 @@ func operationFromJob(snapshot JobSnapshot) OperationEntry {
 	} else if snapshot.ParentJobID != "" {
 		action = OperationActionBatchRetry
 	}
-	return OperationEntry{
+	entry := OperationEntry{
 		Category:     OperationCategoryBatch,
 		Action:       action,
 		Status:       operationStatusFromJobState(snapshot.State),
@@ -67,6 +67,7 @@ func operationFromJob(snapshot JobSnapshot) OperationEntry {
 		ReasonCode:   operationReasonFromJobState(snapshot.State),
 		RelatedJobID: snapshot.ID,
 	}
+	return entry
 }
 
 func operationFromForceSync(snapshot ForceSyncJobSnapshot) OperationEntry {
@@ -205,7 +206,7 @@ func operationFromInspectionAction(action InspectionAction) (OperationEntry, boo
 	case OperationStatusSkipped:
 		skipped = 1
 	}
-	return OperationEntry{
+	entry := OperationEntry{
 		Category:        OperationCategoryInspection,
 		Action:          journalAction,
 		Status:          status,
@@ -220,7 +221,15 @@ func operationFromInspectionAction(action InspectionAction) (OperationEntry, boo
 		FinishedAt:      action.CreatedAt,
 		ReasonCode:      action.ReasonCode,
 		RelatedActionID: action.ID,
-	}, true
+	}
+	if status == OperationStatusFailed && action.FailureReason != "" {
+		entry.FailureDetails = []OperationFailureDetail{{
+			ReasonCode:       action.FailureReason,
+			Count:            1,
+			SampleAccountIDs: []string{action.AccountID},
+		}}
+	}
+	return entry, true
 }
 
 func operationFromUpdateCheck(snapshot UpdateSnapshot) OperationEntry {

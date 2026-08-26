@@ -128,13 +128,13 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
-  const [autoDeleting, setAutoDeleting] = useState(false);
   const [remediationPlan, setRemediationPlan] = useState<RemediationPlan | null>(null);
   const [remediating, setRemediating] = useState(false);
   const [remediationError, setRemediationError] = useState("");
   const [error, setError] = useState("");
-  const autoDeleteBusy = useRef(false);
   const livePollCount = useRef(0);
+  const overviewRequest = useRef(0);
+  const resultsRequest = useRef(0);
 
   const handleError = useCallback((caught: unknown, target: "page" | "settings" = "page") => {
     if (caught instanceof api.APIError && caught.status === 401) {
@@ -146,26 +146,32 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
     else setError(message);
   }, [locale, onAPIError]);
 
-  const refreshOverview = useCallback(async () => {
+  const refreshOverview = useCallback(async (signal?: AbortSignal) => {
+    const requestID = ++overviewRequest.current;
     try {
       const [nextSnapshot, nextActions] = await Promise.all([
-        api.getInspection(),
-        api.listInspectionActions(50),
+        api.getInspection(signal),
+        api.listInspectionActions(50, signal),
       ]);
+      if (requestID !== overviewRequest.current) return;
       setSnapshot(nextSnapshot);
       setActions(nextActions);
     } catch (caught) {
-      handleError(caught);
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+      if (requestID === overviewRequest.current) handleError(caught);
     }
   }, [handleError]);
 
-  const refreshResults = useCallback(async () => {
+  const refreshResults = useCallback(async (signal?: AbortSignal) => {
+    const requestID = ++resultsRequest.current;
     try {
-      const next = await api.listInspectionResults(page, pageSize, health, search);
+      const next = await api.listInspectionResults(page, pageSize, health, search, signal);
+      if (requestID !== resultsRequest.current) return;
       setResults(next);
       if (next.pages > 0 && page > next.pages) setPage(next.pages);
     } catch (caught) {
-      handleError(caught);
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+      if (requestID === resultsRequest.current) handleError(caught);
     }
   }, [handleError, health, page, pageSize, search]);
 
@@ -178,72 +184,53 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
   }, [searchDraft]);
 
   useEffect(() => {
-    let active = true;
+    const controller = new AbortController();
     const load = async () => {
       setLoading(true);
-      await Promise.all([refreshOverview(), refreshResults()]);
-      if (active) setLoading(false);
+      await Promise.all([refreshOverview(controller.signal), refreshResults(controller.signal)]);
+      if (!controller.signal.aborted) setLoading(false);
     };
     void load();
-    return () => { active = false; };
+    return () => {
+      controller.abort();
+      overviewRequest.current += 1;
+      resultsRequest.current += 1;
+    };
   }, [refreshOverview, refreshResults]);
 
   useEffect(() => {
     const active = Boolean(snapshot?.running || snapshot?.pending || snapshot?.probe_sweep_status === "running");
     if (!active) return;
-    let polling = false;
+    const controller = new AbortController();
+    let timer = 0;
     const poll = async () => {
-      if (polling) return;
-      polling = true;
       try {
-        const next = await api.getLiveInspection();
+        const next = await api.getLiveInspection(controller.signal);
+        if (controller.signal.aborted) return;
         setSnapshot(next);
         livePollCount.current += 1;
         if (livePollCount.current % 2 === 0) {
           const [nextResults, nextActions] = await Promise.all([
-            api.listInspectionResults(page, pageSize, health, search),
-            api.listInspectionActions(50),
+            api.listInspectionResults(page, pageSize, health, search, controller.signal),
+            api.listInspectionActions(50, controller.signal),
           ]);
+          if (controller.signal.aborted) return;
           setResults(nextResults);
           setActions(nextActions);
           if (nextResults.pages > 0 && page > nextResults.pages) setPage(nextResults.pages);
         }
       } catch (caught) {
-        handleError(caught);
+        if (!controller.signal.aborted && !(caught instanceof DOMException && caught.name === "AbortError")) handleError(caught);
       } finally {
-        polling = false;
+        if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 700);
       }
     };
-    const timer = window.setInterval(() => void poll(), 700);
-    return () => window.clearInterval(timer);
+    timer = window.setTimeout(() => void poll(), 700);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
   }, [handleError, health, page, pageSize, search, snapshot?.pending, snapshot?.probe_sweep_status, snapshot?.running]);
-
-  const runAutoDelete = useCallback(async () => {
-    if (!snapshot?.policy.auto_delete || autoDeleteBusy.current) return;
-    autoDeleteBusy.current = true;
-    setAutoDeleting(true);
-    try {
-      const run = await api.executeInspectionAutoDelete();
-      if (run.succeeded > 0) {
-        onNotice(tx("ui.inspection_auto_deleted_count_expired_accounts", { count: run.succeeded }));
-        await Promise.all([refreshOverview(), refreshResults()]);
-      } else if (run.failed > 0) {
-        setError(tx("ui.count_auto_delete_operations_failed_and_will_retry_later", { count: run.failed }));
-      }
-    } catch (caught) {
-      handleError(caught);
-    } finally {
-      autoDeleteBusy.current = false;
-      setAutoDeleting(false);
-    }
-  }, [handleError, locale, onNotice, refreshOverview, refreshResults, snapshot?.policy.auto_delete]);
-
-  useEffect(() => {
-    if (!snapshot?.policy.auto_delete) return;
-    void runAutoDelete();
-    const timer = window.setInterval(() => void runAutoDelete(), 60_000);
-    return () => window.clearInterval(timer);
-  }, [runAutoDelete, snapshot?.policy.auto_delete]);
 
   const runNativeScan = async () => {
     setScanningMode("native");
@@ -767,7 +754,7 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
 
       <div className="automation-lower-grid automation-history-only">
         <section className="action-history">
-          <header><div><strong>{tx("ui.automation_history")}</strong><span>{tx("ui.latest_count", { count: Math.min(actions.length, 8) })}</span></div>{autoDeleting ? <LoaderCircle className="spin" size={15} /> : <Clock3 size={15} />}</header>
+          <header><div><strong>{tx("ui.automation_history")}</strong><span>{tx("ui.latest_count", { count: Math.min(actions.length, 8) })}</span></div><Clock3 size={15} /></header>
           <div className="action-history-list">
             {actions.slice(0, 8).map((action) => <ActionHistoryRow key={action.id} action={action} />)}
             {actions.length === 0 ? <div className="automation-empty">{tx("ui.no_automation_actions")}</div> : null}

@@ -388,6 +388,15 @@ func TestInspectionInvalidCredentialDeletionAllowList(t *testing.T) {
 	if !inspectionDeleteReasonAllowed(policy, base) {
 		t.Fatal("persistent invalid credentials were not allowed")
 	}
+	modelProbe401 := base
+	modelProbe401.Result.SignalSource = InspectionSignalActiveProbe
+	modelProbe401.Result.ProbeKind = InspectionProbeKindModel
+	modelProbe401.Result.StatusCode = http.StatusUnauthorized
+	modelProbe401.Result.ReasonCode = "authentication_failed"
+	modelProbe401.DisableReason = "authentication_failed"
+	if !inspectionDeleteReasonAllowed(policy, modelProbe401) {
+		t.Fatal("a model probe HTTP 401 should be eligible after high-confidence failures")
+	}
 	for name, mutate := range map[string]func(*inspectionRecord){
 		"opt out":         func(record *inspectionRecord) { policy.AutoDeleteInvalidCredentials = false },
 		"low confidence":  func(record *inspectionRecord) { record.Result.Confidence = InspectionConfidenceLow },

@@ -96,12 +96,22 @@ func (e *InspectionEngine) applyAutomaticDisableProbeGates(
 	for outcome := range outcomes {
 		record := records[outcome.id]
 		record.Result = outcome.result
-		if outcome.result.AutoDisableProbeStatus == InspectionAutoDisableProbePassed {
-			startedAt := e.currentTime()
-			if outcome.result.AutoDisableProbeTestedAt != nil && !outcome.result.AutoDisableProbeTestedAt.IsZero() {
-				startedAt = outcome.result.AutoDisableProbeTestedAt.UTC()
-			}
+		startedAt := e.currentTime()
+		if outcome.result.AutoDisableProbeTestedAt != nil && !outcome.result.AutoDisableProbeTestedAt.IsZero() {
+			startedAt = outcome.result.AutoDisableProbeTestedAt.UTC()
+		}
+		// Mirror the overdraft probe outcome onto the usage-backed cycle state
+		// machine: a successful probe opens and passes the cycle, an exhausted
+		// probe run confirms failure (terminal), and transient outcomes stay
+		// inconclusive without releasing the auto-disable veto.
+		switch outcome.result.AutoDisableProbeStatus {
+		case InspectionAutoDisableProbePassed:
 			e.beginOverdraftCycle(outcome.id, outcome.result.QuotaWindow, startedAt)
+			e.markOverdraftCycle(outcome.id, outcome.result.QuotaWindow, overdraftStatusPassed, "probe_available", startedAt)
+		case InspectionAutoDisableProbeFailed:
+			e.markOverdraftCycle(outcome.id, outcome.result.QuotaWindow, overdraftStatusFailed, "probe_exhausted", startedAt)
+		case InspectionAutoDisableProbeInconclusive:
+			e.markOverdraftCycle(outcome.id, outcome.result.QuotaWindow, overdraftStatusInconclusive, outcome.result.AutoDisableProbeReasonCode, startedAt)
 		}
 		records[outcome.id] = record
 		e.publishAutomaticDisableProbeRecord(outcome.id, record)

@@ -28,7 +28,8 @@ type openCodeProbeResponse struct {
 }
 
 type openCodeAccountsResponse struct {
-	Accounts []OpenCodeAccountView `json:"accounts"`
+	Accounts     []OpenCodeAccountView `json:"accounts"`
+	StorageError string                `json:"storage_error,omitempty"`
 }
 
 func (a *App) handleOpenCodeAccounts(_ context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
@@ -38,7 +39,8 @@ func (a *App) handleOpenCodeAccounts(_ context.Context, req cpaapi.ManagementReq
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	switch method {
 	case http.MethodGet:
-		return jsonResponse(http.StatusOK, openCodeAccountsResponse{Accounts: a.opencode.ListAccounts()})
+		snapshot := a.opencode.Snapshot()
+		return jsonResponse(http.StatusOK, openCodeAccountsResponse{Accounts: snapshot.Accounts, StorageError: snapshot.StorageError})
 	case http.MethodPost, http.MethodDelete:
 		if resolveManagementKey(req.Headers) == "" {
 			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
@@ -229,9 +231,7 @@ func (a *App) handleOpenCodeStatusPage(_ context.Context, req cpaapi.ManagementR
 		}
 	}
 
-	results := a.opencode.RefreshAll(false)
 	snapshot := a.opencode.Snapshot()
-	snapshot.Results = results
 	body := renderOpenCodeStatusPage(snapshot, message)
 	return cpaapi.ManagementResponse{
 		StatusCode: http.StatusOK,

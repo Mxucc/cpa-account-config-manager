@@ -108,6 +108,10 @@ func (e *InspectionEngine) applyAutomaticActions(
 			action := newInspectionAction(record.Result, InspectionActionEnable, inspectionAutoEnableReason(account, record, now), now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
+				action.FailureReason = inspectionMutationFailureReason(errMutation)
+				if inspectionMutationFailureRetryable(action.FailureReason) {
+					summary.Deferred = true
+				}
 				record.Result.AutoAction = InspectionActionEnable
 				record.Result.AutoActionStatus = InspectionActionFailed
 				summary.Failed++
@@ -142,6 +146,10 @@ func (e *InspectionEngine) applyAutomaticActions(
 			action := newInspectionAction(record.Result, InspectionActionDisable, disableReason, now)
 			if errMutation != nil {
 				action.Status = InspectionActionFailed
+				action.FailureReason = inspectionMutationFailureReason(errMutation)
+				if inspectionMutationFailureRetryable(action.FailureReason) {
+					summary.Deferred = true
+				}
 				record.Result.AutoAction = InspectionActionDisable
 				record.Result.AutoActionStatus = InspectionActionFailed
 				summary.Failed++
@@ -220,6 +228,18 @@ func (e *InspectionEngine) beginOverdraftCycle(accountID, quotaWindow string, ex
 	e.mu.RUnlock()
 	if tracker != nil {
 		tracker.BeginOverdraftCycle(accountID, quotaWindow, exhaustedAt)
+	}
+}
+
+func (e *InspectionEngine) markOverdraftCycle(accountID, quotaWindow, status, reason string, testedAt time.Time) {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	tracker := e.overdraftCycles
+	e.mu.RUnlock()
+	if tracker != nil {
+		tracker.MarkOverdraftCycle(accountID, quotaWindow, status, reason, testedAt)
 	}
 }
 
@@ -375,7 +395,14 @@ func inspectionDeleteReasonAllowed(policy InspectionPolicy, record inspectionRec
 		record.Result.FailureStreak < policy.FailureThreshold {
 		return false
 	}
-	if record.Result.SignalSource == InspectionSignalActiveProbe && record.Result.ProbeKind != InspectionProbeKindCredential {
+	// A model probe that receives a real HTTP 401 is also strong credential
+	// evidence. Restricting deletion to the dedicated credential probe left
+	// expired/invalid accounts stuck in review even though the active probe had
+	// already confirmed authentication failure. Keep the confirmation helper as
+	// the guard so model-unavailable, 403, and transient probes remain
+	// conservative.
+	if record.Result.SignalSource == InspectionSignalActiveProbe &&
+		!inspectionProbeConfirmsCredentialFailure(record.Result.ProbeKind, record.Result.ReasonCode, record.Result.StatusCode) {
 		return false
 	}
 	switch record.DisableReason {
@@ -478,6 +505,51 @@ func (e *InspectionEngine) setInspectionDisabled(ctx context.Context, account Ac
 		Path:     path,
 		Revision: revisionFor(updated),
 	}, nil
+}
+
+// inspectionMutationFailureReason converts a private mutation error into a
+// bounded diagnostic code. The raw error can contain host paths or upstream
+// details and must never be persisted in the operation journal.
+func inspectionMutationFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.HasPrefix(message, "auth host is unavailable"):
+		return OperationFailureInspectionAuthHost
+	case strings.HasPrefix(message, "account is not safely editable"):
+		return OperationFailureInspectionAccountReadOnly
+	case strings.HasPrefix(message, "inspection disable ownership changed"):
+		return OperationFailureInspectionOwnership
+	case strings.HasPrefix(message, "get auth file:"):
+		return OperationFailureInspectionAuthRead
+	case strings.HasPrefix(message, "auth index changed"):
+		return OperationFailureInspectionAuthIdentity
+	case strings.HasPrefix(message, "auth source changed"):
+		return OperationFailureInspectionAuthSource
+	case strings.HasPrefix(message, "auth json is invalid"), strings.HasPrefix(message, "auth json must be an object"):
+		return OperationFailureInspectionAuthJSON
+	case strings.HasPrefix(message, "disabled field is invalid"), strings.HasPrefix(message, "priority field is invalid"):
+		return OperationFailureInspectionAuthField
+	case strings.HasPrefix(message, "encode auth update:"), strings.HasPrefix(message, "update cpa account priority:"), strings.HasPrefix(message, "update cpa account status:"):
+		return OperationFailureInspectionAuthUpdate
+	case strings.HasPrefix(message, "save auth file:"):
+		return OperationFailureInspectionAuthSave
+	default:
+		return OperationFailureInspectionMutation
+	}
+}
+
+func inspectionMutationFailureRetryable(reason string) bool {
+	switch safeOperationFailureReason(reason) {
+	case OperationFailureInspectionAuthHost, OperationFailureInspectionAuthRead,
+		OperationFailureInspectionAuthUpdate, OperationFailureInspectionAuthSave,
+		OperationFailureInspectionMutation:
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *InspectionEngine) ExecuteManualDeletes(

@@ -32,36 +32,37 @@ export function AgentIdentitySessionLogin({ loginState }: AgentIdentitySessionLo
   const [opencodeResult, setOpenCodeResult] = useState<{ account: { id: string; workspace_id: string }; result: OpenCodeQuotaResult } | null>(null);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState<boolean | null>(null);
 
-  const refreshAgentIdentityExperiment = async () => {
+  const refreshAgentIdentityExperiment = async (signal?: AbortSignal) => {
     try {
-      const experiments = await api.getExperimentalSettings();
-      setAgentIdentityEnabled(experiments?.settings ? experiments.settings.agent_identity_enabled === true : null);
+      const experiments = await api.getExperimentalSettings(signal);
+      if (!signal?.aborted) setAgentIdentityEnabled(experiments?.settings ? experiments.settings.agent_identity_enabled === true : null);
     } catch {
-      setAgentIdentityEnabled(null);
+      if (!signal?.aborted) setAgentIdentityEnabled(null);
     }
   };
 
   useEffect(() => {
     if (!loginState) return;
-    let active = true;
+    const controller = new AbortController();
     const bootstrap = async () => {
       const panelAuth = readPanelAuth({ allowStandalone: true });
       if (!panelAuth) {
-        if (active) setAuthentication("login");
+        if (!controller.signal.aborted) setAuthentication("login");
         return;
       }
       setSession(panelAuth.apiBase, panelAuth.managementKey);
       try {
-        await api.verifySession();
-        await refreshAgentIdentityExperiment();
-        if (active) setAuthentication("ready");
+        await api.verifySession(controller.signal);
+        await refreshAgentIdentityExperiment(controller.signal);
+        if (!controller.signal.aborted) setAuthentication("ready");
       } catch {
+        if (controller.signal.aborted) return;
         clearSession();
-        if (active) setAuthentication("login");
+        setAuthentication("login");
       }
     };
     void bootstrap();
-    return () => { active = false; };
+    return () => controller.abort();
   }, [loginState]);
 
   const authenticate = async (baseURL: string, managementKey: string) => {

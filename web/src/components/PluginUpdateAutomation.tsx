@@ -28,13 +28,15 @@ export function PluginUpdateAutomation({ onAPIError, onNotice }: PluginUpdateAut
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const attemptedUpdate = useRef("");
   const refreshInFlight = useRef(false);
+  const refreshSequence = useRef(0);
 
-  const refresh = useCallback(async (checkNow = false) => {
+  const refresh = useCallback(async (checkNow = false, signal?: AbortSignal) => {
     if (refreshInFlight.current) return null;
+    const sequence = ++refreshSequence.current;
     refreshInFlight.current = true;
     try {
-      const next = await api.getEffectiveUpdateStatus(checkNow);
-      setUpdates(next);
+      const next = await api.getEffectiveUpdateStatus(checkNow, signal);
+      if (!signal?.aborted && sequence === refreshSequence.current) setUpdates(next);
       return next;
     } finally {
       refreshInFlight.current = false;
@@ -42,22 +44,20 @@ export function PluginUpdateAutomation({ onAPIError, onNotice }: PluginUpdateAut
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     const bootstrap = async () => {
       try {
-        let next = await api.getEffectiveUpdateStatus();
-        if (next.policy?.check_enabled && !next.checked_at && !next.checking && !next.pending) {
-          next = await api.getEffectiveUpdateStatus(true);
-        }
-        if (!cancelled) setUpdates(next);
+        const next = await api.getEffectiveUpdateStatus(false, controller.signal);
+        if (!controller.signal.aborted) setUpdates(next);
       } catch (error) {
-        if (!cancelled && error instanceof api.APIError && error.status === 401) onAPIError(error);
+        if (!controller.signal.aborted && error instanceof api.APIError && error.status === 401) onAPIError(error);
       }
     };
     const unsubscribe = subscribePluginUpdateStatus(setUpdates);
-    void bootstrap();
+    void bootstrap().catch(() => undefined);
     return () => {
-      cancelled = true;
+      controller.abort();
+      refreshSequence.current += 1;
       unsubscribe();
     };
   }, [onAPIError]);
@@ -68,12 +68,30 @@ export function PluginUpdateAutomation({ onAPIError, onNotice }: PluginUpdateAut
 
   useEffect(() => {
     if (!updates?.checking && !updates?.pending) return;
-    const timer = window.setInterval(() => {
-      void refresh().catch((error) => {
+    const controller = new AbortController();
+    let timer = 0;
+    let active = true;
+    const poll = async () => {
+      try {
+        const next = await refresh(false, controller.signal);
+        if (!active || controller.signal.aborted) return;
+        // Poll only after the previous request has completed. This prevents
+        // slow update checks from piling up and racing each other.
+        if (next === null || next.checking || next.pending) {
+          timer = window.setTimeout(() => void poll(), 1_200);
+        }
+      } catch (error) {
+        if (!active || controller.signal.aborted) return;
         if (error instanceof api.APIError && error.status === 401) onAPIError(error);
-      });
-    }, 1_200);
-    return () => window.clearInterval(timer);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 1_200);
+    return () => {
+      active = false;
+      controller.abort();
+      refreshSequence.current += 1;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [onAPIError, refresh, updates?.checking, updates?.pending]);
 
   useEffect(() => {
@@ -82,12 +100,17 @@ export function PluginUpdateAutomation({ onAPIError, onNotice }: PluginUpdateAut
     if (!Number.isFinite(checkedAt)) return;
     const intervalHours = Math.min(168, Math.max(1, updates.policy.check_interval_hours || 24));
     const dueAt = checkedAt + intervalHours * 60 * 60 * 1_000;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void refresh(true).catch((error) => {
-        if (error instanceof api.APIError && error.status === 401) onAPIError(error);
+      void refresh(true, controller.signal).catch((error) => {
+        if (!controller.signal.aborted && error instanceof api.APIError && error.status === 401) onAPIError(error);
       });
     }, Math.max(1_000, dueAt - Date.now()));
-    return () => window.clearTimeout(timer);
+    return () => {
+      controller.abort();
+      refreshSequence.current += 1;
+      window.clearTimeout(timer);
+    };
   }, [onAPIError, refresh, updates?.checked_at, updates?.checking, updates?.pending, updates?.policy?.check_enabled, updates?.policy?.check_interval_hours]);
 
   useEffect(() => {

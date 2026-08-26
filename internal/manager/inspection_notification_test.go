@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -866,6 +867,20 @@ func successfulNotificationDoer() anomalyNotificationDoerFunc {
 	}
 }
 
+func TestInspectionNotificationAvailabilityZeroSamplesTriggersAfterClassification(t *testing.T) {
+	policy := InspectionPolicy{NotificationPercentEnabled: true, NotificationPercentBelow: 20}
+	if reasons := inspectionNotificationReasons(policy, anomalyNotificationMetrics{
+		TotalAccounts: 3, EligibleAccounts: 3, AvailableAccounts: 0, AvailablePercent: 0,
+	}); !reflect.DeepEqual(reasons, []string{"availability_percent_low"}) {
+		t.Fatalf("zero availability reasons = %#v", reasons)
+	}
+	if reasons := inspectionNotificationReasons(policy, anomalyNotificationMetrics{
+		TotalAccounts: 3, EligibleAccounts: 0, AvailableAccounts: 0, AvailablePercent: 0,
+	}); len(reasons) != 0 {
+		t.Fatalf("unclassified zero-sample state unexpectedly triggered: %#v", reasons)
+	}
+}
+
 func TestAnomalyNotificationQueueFullRecordsSanitizedFailure(t *testing.T) {
 	journal := NewOperationJournal()
 	journal.Configure(Config{DataDir: t.TempDir()})
@@ -1093,5 +1108,59 @@ func TestAnomalyNotificationDoesNotSendFromSupersededInstance(t *testing.T) {
 	})
 	if attempts != 0 || result.ReasonCode != "notification_superseded" {
 		t.Fatalf("attempts=%d result=%#v", attempts, result)
+	}
+}
+
+func TestInspectionNotificationPartialQueueFailureKeepsGlobalCooldown(t *testing.T) {
+	engine := NewInspectionEngine(nil, nil, nil)
+	now := time.Date(2026, time.July, 28, 8, 0, 0, 0, time.UTC)
+	engine.lastNotificationAt = now
+	engine.lastNotificationByEndpoint = map[string]time.Time{
+		"primary": now,
+		"backup":  now,
+	}
+	events := []anomalyNotificationEvent{
+		{EndpointID: "primary", TriggeredAt: now},
+		{EndpointID: "backup", TriggeredAt: now},
+	}
+	attempt := 0
+	queued := engine.queueInspectionNotificationEvents(events, now, func(anomalyNotificationEvent) bool {
+		attempt++
+		return attempt == 2
+	})
+	if !queued {
+		t.Fatal("partial fan-out queue result = false, want true")
+	}
+	if !engine.lastNotificationAt.Equal(now) {
+		t.Fatalf("global cooldown = %v, want %v", engine.lastNotificationAt, now)
+	}
+	if _, exists := engine.lastNotificationByEndpoint["primary"]; exists {
+		t.Fatal("failed endpoint consumed its cooldown")
+	}
+	if got := engine.lastNotificationByEndpoint["backup"]; !got.Equal(now) {
+		t.Fatalf("queued endpoint cooldown = %v, want %v", got, now)
+	}
+}
+
+func TestSupersededAnomalyNotificationIsLoggedAsSkipped(t *testing.T) {
+	journal := NewOperationJournal()
+	journal.Configure(Config{DataDir: t.TempDir()})
+	engine := NewInspectionEngine(nil, nil, nil)
+	engine.SetOperationJournal(journal)
+	now := time.Date(2026, time.July, 28, 8, 0, 0, 0, time.UTC)
+	engine.recordAnomalyNotification(anomalyNotificationEvent{
+		EndpointID:  "primary",
+		TriggeredAt: now,
+		Metrics:     anomalyNotificationMetrics{TotalAccounts: 20},
+	}, anomalyNotificationResult{ReasonCode: "notification_superseded"})
+
+	operations := journal.List(OperationQuery{Page: 1}).Operations
+	if len(operations) != 1 {
+		t.Fatalf("operation count = %d, want 1", len(operations))
+	}
+	entry := operations[0]
+	if entry.Status != OperationStatusSkipped || entry.Succeeded != 0 || entry.Failed != 0 || entry.Skipped != 1 ||
+		entry.ReasonCode != "notification_superseded" {
+		t.Fatalf("superseded notification operation = %#v", entry)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,9 +38,10 @@ type ManagementAuthFileDeleter interface {
 }
 
 type managementClient struct {
-	baseURL string
-	key     string
-	doer    HTTPDoer
+	baseURL          string
+	key              string
+	doer             HTTPDoer
+	fingerprintStore fingerprintSeedStore
 }
 
 func (c *managementClient) clearSecrets() {
@@ -50,6 +52,10 @@ func (c *managementClient) clearSecrets() {
 }
 
 func newManagementClient(baseURL, key string, doer HTTPDoer) (*managementClient, error) {
+	return newManagementClientWithStore(baseURL, key, doer, nil)
+}
+
+func newManagementClientWithStore(baseURL, key string, doer HTTPDoer, store fingerprintSeedStore) (*managementClient, error) {
 	validatedBaseURL, errBaseURL := validateManagementBaseURL(baseURL)
 	if errBaseURL != nil {
 		return nil, errBaseURL
@@ -61,12 +67,15 @@ func newManagementClient(baseURL, key string, doer HTTPDoer) (*managementClient,
 	if doer == nil {
 		doer = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &managementClient{baseURL: validatedBaseURL, key: key, doer: doer}, nil
+	return &managementClient{baseURL: validatedBaseURL, key: key, doer: doer, fingerprintStore: store}, nil
 }
 
 func (c *managementClient) PatchFields(ctx context.Context, name string, patch BatchPatch) error {
 	if !patch.HasFieldUpdates() {
 		return nil
+	}
+	if !safeAuthJSONName(name) {
+		return fmt.Errorf("auth file name is invalid")
 	}
 	if patch.ModelPolicy != nil && len(patch.resolvedModelFields) == 0 {
 		return fmt.Errorf("model policy fields were not resolved")
@@ -95,6 +104,9 @@ func (c *managementClient) GetAuthFileModels(ctx context.Context, name string) (
 }
 
 func (c *managementClient) PatchDisabled(ctx context.Context, name string, disabled bool) error {
+	if !safeAuthJSONName(name) {
+		return fmt.Errorf("auth file name is invalid")
+	}
 	return c.patch(ctx, "/v0/management/auth-files/status", map[string]any{
 		"name":     name,
 		"disabled": disabled,
@@ -152,6 +164,12 @@ func (c *managementClient) requestJSON(ctx context.Context, method, path string,
 	if errDo != nil {
 		return fmt.Errorf("management API request failed: %w", errDo)
 	}
+	if response == nil {
+		return fmt.Errorf("management API returned an empty response")
+	}
+	if response.Body == nil {
+		return fmt.Errorf("management API returned an empty response body")
+	}
 	defer func() {
 		_ = response.Body.Close()
 	}()
@@ -191,7 +209,9 @@ func resolveManagementBaseURL(configured string) string {
 	}
 	for _, environmentName := range []string{"PORT", "CPA_PORT"} {
 		if value := strings.TrimSpace(os.Getenv(environmentName)); value != "" {
-			return "http://127.0.0.1:" + value
+			if port, errPort := strconv.Atoi(value); errPort == nil && port > 0 && port <= 65535 {
+				return fmt.Sprintf("http://127.0.0.1:%d", port)
+			}
 		}
 	}
 	return defaultManagementBaseURL

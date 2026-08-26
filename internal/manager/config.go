@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -29,11 +30,21 @@ type OperationSettingsConfig struct {
 }
 
 func ParseConfig(raw []byte) Config {
+	cfg, _ := ParseConfigStrict(raw)
+	return cfg
+}
+
+// ParseConfigStrict parses plugin configuration without silently replacing an
+// invalid document with defaults. The host lifecycle path uses this function
+// so a malformed live reconfiguration cannot disable persisted automation.
+func ParseConfigStrict(raw []byte) (Config, error) {
 	cfg := Config{}
 	if len(raw) > 0 {
-		_ = yaml.Unmarshal(raw, &cfg)
+		if errUnmarshal := yaml.Unmarshal(raw, &cfg); errUnmarshal != nil {
+			return normalizeConfig(Config{}), fmt.Errorf("invalid plugin configuration")
+		}
 	}
-	return normalizeConfig(cfg)
+	return normalizeConfig(cfg), nil
 }
 
 func normalizeConfig(cfg Config) Config {

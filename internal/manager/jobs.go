@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,8 @@ const (
 	ResultConflict    = "conflict"
 	ResultSkipped     = "skipped"
 	ResultInterrupted = "interrupted"
+
+	jobPersistRetryDelay = 30 * time.Second
 )
 
 var (
@@ -69,6 +72,7 @@ type JobSnapshot struct {
 	FinishedAt     time.Time    `json:"finished_at,omitempty"`
 	RetryAvailable bool         `json:"retry_available"`
 	Persisted      bool         `json:"persisted"`
+	StorageError   string       `json:"storage_error,omitempty"`
 	Results        []JobResult  `json:"results,omitempty"`
 }
 
@@ -88,22 +92,29 @@ type jobRun struct {
 }
 
 type JobEngine struct {
-	mu              sync.Mutex
-	wait            sync.WaitGroup
-	accounts        *AccountService
-	concurrency     *AccountConcurrencyService
-	mutations       *MutationCoordinator
-	backgroundOwner BackgroundWorkOwner
-	config          Config
-	doer            HTTPDoer
-	newWriter       func(string, string, HTTPDoer) (ManagementWriter, error)
-	now             func() time.Time
-	cancel          context.CancelFunc
-	running         bool
-	snapshot        JobSnapshot
-	retry           *retryIntent
-	store           string
-	loaded          bool
+	mu                sync.Mutex
+	wait              sync.WaitGroup
+	accounts          *AccountService
+	concurrency       *AccountConcurrencyService
+	mutations         *MutationCoordinator
+	backgroundOwner   BackgroundWorkOwner
+	config            Config
+	doer              HTTPDoer
+	newWriter         func(string, string, HTTPDoer) (ManagementWriter, error)
+	now               func() time.Time
+	cancel            context.CancelFunc
+	running           bool
+	snapshot          JobSnapshot
+	retry             *retryIntent
+	store             string
+	loaded            bool
+	loadFailed        bool
+	storageErr        string
+	dirty             bool
+	retryTimer        *time.Timer
+	retryScheduled    bool
+	closed            bool
+	persistRetryDelay time.Duration
 }
 
 func (e *JobEngine) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
@@ -130,8 +141,9 @@ func NewJobEngineWithCoordinator(accounts *AccountService, mutations *MutationCo
 		newWriter: func(baseURL, key string, doer HTTPDoer) (ManagementWriter, error) {
 			return newManagementClient(baseURL, key, doer)
 		},
-		now:      time.Now,
-		snapshot: JobSnapshot{State: JobStateIdle},
+		now:               time.Now,
+		snapshot:          JobSnapshot{State: JobStateIdle},
+		persistRetryDelay: jobPersistRetryDelay,
 	}
 	engine.Configure(engine.config)
 	return engine
@@ -154,14 +166,23 @@ func (e *JobEngine) Configure(config Config) {
 	storePath := jobStorePath(config.DataDir)
 	e.mu.Lock()
 	e.config = config
-	if e.running || e.loaded && e.store == storePath {
+	if e.running || e.loaded && e.store == storePath && !e.loadFailed {
 		e.mu.Unlock()
 		return
 	}
+	if e.retryTimer != nil {
+		e.retryTimer.Stop()
+		e.retryTimer = nil
+	}
+	e.retryScheduled = false
+	e.closed = false
 	e.store = storePath
 	e.loaded = true
 	snapshot, errLoad := loadJobSnapshot(storePath)
 	if errLoad == nil {
+		e.loadFailed = false
+		e.storageErr = ""
+		e.dirty = false
 		e.snapshot = snapshot
 		if e.snapshot.ID != "" && e.snapshot.Operation == "" {
 			e.snapshot.Operation = BatchOperationPatch
@@ -175,6 +196,16 @@ func (e *JobEngine) Configure(config Config) {
 	} else {
 		e.snapshot = JobSnapshot{State: JobStateIdle}
 		e.retry = nil
+		if !errors.Is(errLoad, os.ErrNotExist) {
+			e.loadFailed = true
+			e.storageErr = "job result storage could not be loaded"
+			e.snapshot.StorageError = e.storageErr
+			e.snapshot.Persisted = false
+		} else {
+			e.loadFailed = false
+			e.storageErr = ""
+			e.dirty = false
+		}
 	}
 	e.mu.Unlock()
 }
@@ -277,7 +308,12 @@ func (e *JobEngine) Start(preview previewSnapshot, managementKey, parentJobID st
 		e.running = false
 		e.cancel = nil
 		cancel()
-		e.snapshot = JobSnapshot{State: JobStateIdle}
+		e.snapshot = JobSnapshot{
+			State:        JobStateIdle,
+			Persisted:    false,
+			StorageError: e.storageErr,
+		}
+		e.dirty = true
 		e.mu.Unlock()
 		return JobSnapshot{}, ErrJobStorageUnavailable
 	}
@@ -339,6 +375,12 @@ func (e *JobEngine) Shutdown() {
 	if e.snapshot.ID != "" {
 		_ = e.persistLocked()
 	}
+	e.closed = true
+	if e.retryTimer != nil {
+		e.retryTimer.Stop()
+		e.retryTimer = nil
+	}
+	e.retryScheduled = false
 	e.mu.Unlock()
 }
 
@@ -620,16 +662,56 @@ func (e *JobEngine) markLoadedJobInterruptedLocked() {
 
 func (e *JobEngine) persistLocked() error {
 	if e.store == "" {
+		e.markPersistFailureLocked("job result storage is unavailable")
 		return fmt.Errorf("job store path is unavailable")
 	}
 	snapshot := cloneJobSnapshot(e.snapshot, true)
 	snapshot.Persisted = true
+	// Storage errors describe the current process state and must not be
+	// persisted as if they were a successful job result.
+	snapshot.StorageError = ""
 	if errSave := saveJobSnapshot(e.store, snapshot); errSave != nil {
-		e.snapshot.Persisted = false
+		e.markPersistFailureLocked("job result storage could not be persisted")
 		return errSave
 	}
+	e.storageErr = ""
+	e.loadFailed = false
+	e.dirty = false
+	e.retryScheduled = false
+	if e.retryTimer != nil {
+		e.retryTimer.Stop()
+		e.retryTimer = nil
+	}
 	e.snapshot.Persisted = true
+	e.snapshot.StorageError = ""
 	return nil
+}
+
+// markPersistFailureLocked preserves the latest in-memory job snapshot and
+// schedules one bounded retry so a transient filesystem failure cannot leave
+// a completed job permanently absent from disk. The caller must hold e.mu.
+func (e *JobEngine) markPersistFailureLocked(message string) {
+	e.storageErr = message
+	e.snapshot.Persisted = false
+	e.snapshot.StorageError = message
+	e.dirty = true
+	if e.retryScheduled || e.closed || strings.TrimSpace(e.store) == "" {
+		return
+	}
+	delay := e.persistRetryDelay
+	if delay <= 0 {
+		delay = jobPersistRetryDelay
+	}
+	e.retryScheduled = true
+	e.retryTimer = time.AfterFunc(delay, func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.retryScheduled = false
+		if e.closed || !e.dirty {
+			return
+		}
+		_ = e.persistLocked()
+	})
 }
 
 func cloneJobSnapshot(snapshot JobSnapshot, includeResults bool) JobSnapshot {

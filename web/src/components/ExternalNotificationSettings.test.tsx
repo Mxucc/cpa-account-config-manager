@@ -2,8 +2,18 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/client";
-import type { InspectionPolicy } from "../types";
+import type { InspectionPolicy, InspectionSnapshot } from "../types";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function inspectionPolicy(): InspectionPolicy {
   return {
@@ -23,6 +33,32 @@ function inspectionPolicy(): InspectionPolicy {
 
 describe("ExternalNotificationSettings", () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it("ignores stale notification settings after a refresh revision changes", async () => {
+    const first = deferred<Awaited<ReturnType<typeof api.getInspection>>>();
+    const second = deferred<Awaited<ReturnType<typeof api.getInspection>>>();
+    vi.spyOn(api, "getInspection")
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const view = render(<ExternalNotificationSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    view.rerender(<ExternalNotificationSettings refreshRevision={1} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const newer = inspectionPolicy();
+    newer.notification_endpoints = [{ id: "new", url: "https://new.example/hook", enabled: true }];
+    const makeSnapshot = (nextPolicy: InspectionPolicy): InspectionSnapshot => ({
+      policy: nextPolicy, running: false, pending: false, last_run: { scanned: 0, healthy: 0, quota_limited: 0, invalid_credentials: 0, deactivated: 0, review: 0, unavailable: 0, disabled: 0, unknown: 0, auto_disabled: 0, auto_enabled: 0, delete_pending: 0, failed: 0, truncated: 0 },
+      total: 0, action_count: 0, active_probe_armed: false, probe_sweep_remaining: 0, anomaly_eligible: 0, anomaly_count: 0, anomaly_percent: 0, anomaly_trigger_pending: false,
+    });
+    second.resolve(makeSnapshot(newer));
+    expect(await screen.findByDisplayValue("https://new.example/hook")).toBeInTheDocument();
+
+    const older = inspectionPolicy();
+    older.notification_endpoints = [{ id: "old", url: "https://old.example/hook", enabled: true }];
+    first.resolve(makeSnapshot(older));
+    await waitFor(() => expect(screen.getByDisplayValue("https://new.example/hook")).toBeInTheDocument());
+    expect(screen.queryByDisplayValue("https://old.example/hook")).not.toBeInTheDocument();
+  });
 
   it("loads a legacy URL, adds another endpoint, tests it independently, and persists the endpoint list", async () => {
     const user = userEvent.setup();

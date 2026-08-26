@@ -316,3 +316,73 @@ func TestRegistrationNegotiatesRequestLifecycleSchema(t *testing.T) {
 		t.Fatalf("current registration = %#v", current)
 	}
 }
+
+func TestAccountConcurrencyConfigureSurfacesAndRecoversFromCorruptStore(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := accountConcurrencyStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte("{"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	service := NewAccountConcurrencyService()
+	service.Configure(Config{DataDir: dataDir}, cpaapi.SchemaVersion)
+	if got := service.Availability().StorageError; got != "account concurrency state could not be loaded" {
+		t.Fatalf("storage_error = %q", got)
+	}
+
+	if errWrite := saveAccountConcurrency(storePath, map[string]accountConcurrencyRecord{
+		"auth-one": {AuthID: "auth-one", AccountID: "one", Limit: 7},
+	}); errWrite != nil {
+		t.Fatalf("saveAccountConcurrency() error = %v", errWrite)
+	}
+	service.Configure(Config{DataDir: dataDir}, cpaapi.SchemaVersion)
+	if got := service.Availability().StorageError; got != "" {
+		t.Fatalf("storage_error after recovery = %q", got)
+	}
+	if got := service.Summary("auth-one").Limit; got != 7 {
+		t.Fatalf("recovered limit = %d, want 7", got)
+	}
+}
+
+func TestAccountConcurrencySummaryPrunesExpiredLeases(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	clock := time.Now().UTC()
+	service.mu.Lock()
+	service.now = func() time.Time { return clock }
+	service.mu.Unlock()
+	if errSet := service.SetLimit(Account{ID: "index-a", AuthID: "auth-a"}, 1); errSet != nil {
+		t.Fatalf("SetLimit() error = %v", errSet)
+	}
+	service.InterceptRequest(concurrencyRequest("request-a", "auth-a"))
+	if got := service.Summary("auth-a"); got.Active != 1 {
+		t.Fatalf("active before expiry = %d, want 1", got.Active)
+	}
+	clock = clock.Add(accountConcurrencyLeaseTTL + time.Second)
+	if got := service.Summary("auth-a"); got.Active != 0 {
+		t.Fatalf("active after expiry = %d, want 0", got.Active)
+	}
+	if _, changed := service.InterceptRequest(concurrencyRequest("request-b", "auth-a")); changed {
+		t.Fatal("expired lease continued to reject a new request")
+	}
+}
+
+func TestAccountConcurrencyConfigureClearsLeasesAcrossRuntimeChange(t *testing.T) {
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+	service := NewAccountConcurrencyService()
+	service.Configure(Config{DataDir: firstDir}, cpaapi.SchemaVersion)
+	if errSet := service.SetLimit(Account{ID: "index-a", AuthID: "auth-a"}, 1); errSet != nil {
+		t.Fatalf("SetLimit() error = %v", errSet)
+	}
+	service.InterceptRequest(concurrencyRequest("request-a", "auth-a"))
+	if got := service.Summary("auth-a"); got.Active != 1 {
+		t.Fatalf("active before reconfigure = %d, want 1", got.Active)
+	}
+
+	service.Configure(Config{DataDir: secondDir}, cpaapi.SchemaVersion)
+	if got := service.Summary("auth-a"); got.Active != 0 {
+		t.Fatalf("active after store change = %d, want 0", got.Active)
+	}
+	if _, changed := service.InterceptRequest(concurrencyRequest("request-b", "auth-a")); changed {
+		t.Fatal("stale lease from previous store rejected a request")
+	}
+}

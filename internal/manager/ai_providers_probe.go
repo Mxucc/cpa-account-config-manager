@@ -18,6 +18,7 @@ type AIProviderProbeRequest struct {
 	Kind    string            `json:"kind"`
 	BaseURL string            `json:"base_url"`
 	APIKey  string            `json:"api_key,omitempty"`
+	AuthID  string            `json:"auth_id,omitempty"`
 	Timeout int               `json:"timeout_seconds,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
@@ -59,7 +60,9 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	if request.Timeout >= 1 && request.Timeout <= aiProviderProbeMaxTimeoutSeconds {
 		timeout = time.Duration(request.Timeout) * time.Second
 	}
-	result := a.probeAIProviderEndpoint(ctx, kind, baseURL, apiKey, request.Headers, timeout)
+	result := a.probeAIProviderEndpoint(
+		ctx, kind, baseURL, apiKey, request.AuthID, request.Headers, timeout,
+	)
 	status := http.StatusOK
 	if !result.Reachable {
 		status = http.StatusBadGateway
@@ -67,17 +70,31 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	return jsonResponse(status, AIProviderProbeResult{Reachable: result.Reachable, StatusCode: result.StatusCode, Detail: result.Detail})
 }
 
-func (a *App) probeAIProviderEndpoint(ctx context.Context, kind, baseURL, apiKey string, customHeaders map[string]string, timeout time.Duration) AIProviderProbeResult {
+func (a *App) probeAIProviderEndpoint(
+	ctx context.Context,
+	kind, baseURL, apiKey, authID string,
+	customHeaders map[string]string,
+	timeout time.Duration,
+) AIProviderProbeResult {
 	probeURL, errParse := url.Parse(baseURL)
 	if errParse != nil || probeURL.Scheme == "" || probeURL.Host == "" {
 		return AIProviderProbeResult{Reachable: false, Detail: "invalid base URL"}
 	}
 	// Build a candidate endpoint: the base URL itself or the common models
 	// listing path when the base URL looks like a plain origin.
-	candidates := []string{baseURL}
-	trimmed := strings.TrimRight(baseURL, "/")
-	if !strings.HasSuffix(trimmed, "/models") {
-		candidates = append([]string{trimmed + "/models"}, candidates...)
+	// Build a candidate endpoint: the common model catalog first, then the
+	// configured origin as a compatibility fallback. Vertex-compatible
+	// channels do not expose a catalog listing path, so probe their origin
+	// directly to avoid a guaranteed 404 round trip.
+	var candidates []string
+	if normalizeAIProviderKind(kind) == "vertex-api-key" {
+		candidates = []string{baseURL}
+	} else {
+		trimmed := strings.TrimRight(baseURL, "/")
+		if !strings.HasSuffix(trimmed, "/models") {
+			candidates = append(candidates, trimmed+"/models")
+		}
+		candidates = append(candidates, baseURL)
 	}
 
 	transport := a.agentIdentity.transport
@@ -106,6 +123,7 @@ func (a *App) probeAIProviderEndpoint(ctx context.Context, kind, baseURL, apiKey
 			request.Headers.Set(key, value)
 		}
 		applyAIProviderProbeAuth(request.Headers, kind, apiKey)
+		a.applyAIProviderCodexFingerprint(request.Headers, kind, authID)
 		response, errDo := transport.AgentIdentityDo(probeCtx, "", request)
 		if errDo != nil {
 			lastDetail = sanitizeAIProviderProbeError(errDo)
@@ -135,12 +153,16 @@ func defaultAIProviderProbeURL(kind string) string {
 	switch normalizeAIProviderKind(kind) {
 	case "claude-api-key":
 		return "https://api.anthropic.com/v1/models"
-	case "gemini-api-key":
+	case "gemini-api-key", "interactions-api-key":
+		// CPA's native Gemini and Interactions API-key channels both use the
+		// Google Generative Language model catalog and x-goog-api-key auth.
 		return "https://generativelanguage.googleapis.com/v1beta/models"
 	case "xai-api-key":
 		return "https://api.x.ai/v1/models"
 	case "vertex-api-key":
-		return "https://aiplatform.googleapis.com/v1/publishers/google/models"
+		// Vertex-compatible requests append the model action to this origin;
+		// probing a catalog path would reject otherwise-valid third-party hosts.
+		return "https://aiplatform.googleapis.com"
 	case "opencode-go", "opencode-zen":
 		return "https://api.openai.com/v1/models"
 	default:
@@ -149,6 +171,11 @@ func defaultAIProviderProbeURL(kind string) string {
 }
 
 func applyAIProviderProbeAuth(headers http.Header, kind, apiKey string) {
+	if normalizeAIProviderKind(kind) == "codex-api-key" {
+		// CPA's codex-api-key channel reaches the Responses-compatible OpenAI
+		// edge. Keep its health checks on the same converged official identity.
+		ensureCodexIdentityHeaders(headers)
+	}
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return
@@ -157,7 +184,7 @@ func applyAIProviderProbeAuth(headers http.Header, kind, apiKey string) {
 	case "claude-api-key":
 		headers.Set("x-api-key", apiKey)
 		headers.Set("anthropic-version", "2023-06-01")
-	case "gemini-api-key", "vertex-api-key":
+	case "gemini-api-key", "interactions-api-key", "vertex-api-key":
 		headers.Set("x-goog-api-key", apiKey)
 	default:
 		headers.Set("Authorization", "Bearer "+apiKey)

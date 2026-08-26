@@ -654,7 +654,11 @@ func accountQuotaLimited(account Account, now time.Time) (bool, time.Time, strin
 			quotaWindow = windowKind
 		}
 		windowRecoverAt := window.ResetAt
-		if window.OverdraftActive && window.OverdraftRecoverAt != nil {
+		// A live cycle (pending/passed/inconclusive) and a confirmed-failed
+		// cycle both freeze the recovery deadline to the cycle RecoverAt,
+		// mirroring the sub2api-overdraft pause-until-recover behavior. Only a
+		// recovered window falls back to the mutable window reset time.
+		if (window.OverdraftActive || window.OverdraftStatus == overdraftStatusFailed) && window.OverdraftRecoverAt != nil {
 			windowRecoverAt = window.OverdraftRecoverAt
 		}
 		if windowRecoverAt != nil && windowRecoverAt.After(recoverAfter) {

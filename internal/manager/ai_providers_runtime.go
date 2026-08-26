@@ -15,6 +15,11 @@ import (
 const (
 	providerRuntimeMaxIdentities = 10000
 	providerRuntimeMaxModels     = 512
+	// A missing completion callback must not leave the runtime dashboard's
+	// active count (or request map) growing forever. CPA requests can be long
+	// lived, so use a generous lease and prune at a lower cadence.
+	providerRuntimeRequestLease  = 30 * time.Minute
+	providerRuntimePruneInterval = time.Minute
 )
 
 // ProviderRuntimeSnapshot is intentionally redacted. It contains no API key,
@@ -54,6 +59,7 @@ type ProviderModelUsage struct {
 
 type providerRuntimeRequest struct {
 	AggregateKey string
+	AdmittedAt   time.Time
 }
 
 type providerRuntimeModel struct {
@@ -81,11 +87,13 @@ type providerRuntimeAggregate struct {
 // participating in routing or admission. Missing CPA identities are exposed as
 // unsupported rather than being guessed into a configured channel.
 type ProviderRuntimeTracker struct {
-	mu         sync.RWMutex
-	requests   map[string]providerRuntimeRequest
-	aggregates map[string]*providerRuntimeAggregate
-	calculator UsageCreditCalculator
-	now        func() time.Time
+	mu          sync.RWMutex
+	requests    map[string]providerRuntimeRequest
+	aggregates  map[string]*providerRuntimeAggregate
+	calculator  UsageCreditCalculator
+	concurrency *AccountConcurrencyService
+	now         func() time.Time
+	nextPrune   time.Time
 }
 
 func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntimeTracker {
@@ -95,6 +103,19 @@ func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntim
 		calculator: calculator,
 		now:        time.Now,
 	}
+}
+
+// SetAccountConcurrency attaches the configured per-account limits to runtime
+// snapshots. Runtime tracking remains observational and does not participate
+// in admission, so a missing/unsupported service simply reports an unlimited
+// display (Limit=0) rather than fabricating a limit.
+func (t *ProviderRuntimeTracker) SetAccountConcurrency(service *AccountConcurrencyService) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.concurrency = service
+	t.mu.Unlock()
 }
 
 // RequestInterceptionActive keeps the lifecycle observer attached even when no
@@ -116,18 +137,23 @@ func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptR
 	}
 	provider := runtimeProviderFromMetadata(request.Metadata)
 	if provider == "" {
-		provider = strings.TrimSpace(request.ToFormat)
+		provider = normalizeRuntimeProvider(request.ToFormat)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := t.now().UTC()
+	t.pruneExpiredLocked(now)
 	if _, exists := t.requests[request.RequestID]; exists {
 		return
 	}
 	aggregateKey := runtimeAggregateKey(provider, identity)
-	t.requests[request.RequestID] = providerRuntimeRequest{AggregateKey: aggregateKey}
 	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
+	if aggregate == nil {
+		return
+	}
+	t.requests[request.RequestID] = providerRuntimeRequest{AggregateKey: aggregateKey, AdmittedAt: now}
 	aggregate.Active++
-	aggregate.UpdatedAt = t.now().UTC()
+	aggregate.UpdatedAt = now
 }
 
 func (t *ProviderRuntimeTracker) Complete(completion cpaapi.RequestCompletion) {
@@ -136,6 +162,7 @@ func (t *ProviderRuntimeTracker) Complete(completion cpaapi.RequestCompletion) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.pruneExpiredLocked(t.now().UTC())
 	admission, exists := t.requests[completion.RequestID]
 	if !exists {
 		return
@@ -164,14 +191,12 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	aggregateKey := runtimeAggregateKey(strings.TrimSpace(record.Provider), identity)
-	if len(t.aggregates) >= providerRuntimeMaxIdentities {
-		if _, exists := t.aggregates[aggregateKey]; !exists {
-			return
-		}
-	}
-	provider := strings.TrimSpace(record.Provider)
+	provider := normalizeRuntimeProvider(record.Provider)
+	aggregateKey := runtimeAggregateKey(provider, identity)
 	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
+	if aggregate == nil {
+		return
+	}
 	input := nonNegative(record.Detail.InputTokens)
 	output := nonNegative(record.Detail.OutputTokens)
 	reasoning := nonNegative(record.Detail.ReasoningTokens)
@@ -228,8 +253,9 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	if t == nil {
 		return nil
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	t.pruneExpiredLocked(t.now().UTC())
+	defer t.mu.Unlock()
 	out := make([]ProviderRuntimeSnapshot, 0, len(t.aggregates))
 	for _, aggregate := range t.aggregates {
 		models := make([]ProviderModelUsage, 0, len(aggregate.Models))
@@ -242,7 +268,11 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 		if !supported {
 			reason = "provider_runtime_identity_unavailable"
 		}
-		out = append(out, ProviderRuntimeSnapshot{Provider: aggregate.Provider, AuthIndex: aggregate.AuthIndex, Identity: aggregate.Identity, Supported: supported, Reason: reason, Active: aggregate.Active, Limit: 0, InputTokens: aggregate.InputTokens, OutputTokens: aggregate.OutputTokens, ReasoningTokens: aggregate.ReasoningTokens, CachedTokens: aggregate.CachedTokens, TotalTokens: aggregate.TotalTokens, AmountUSD: float64(aggregate.AmountNanos) / creditNanosPerUSD, RatedRequests: aggregate.RatedRequests, UnratedRequests: aggregate.UnratedRequests, Models: models, UpdatedAt: aggregate.UpdatedAt})
+		limit := 0
+		if t.concurrency != nil && aggregate.AuthIndex != "" {
+			limit = t.concurrency.Summary(aggregate.AuthIndex).Limit
+		}
+		out = append(out, ProviderRuntimeSnapshot{Provider: aggregate.Provider, AuthIndex: aggregate.AuthIndex, Identity: aggregate.Identity, Supported: supported, Reason: reason, Active: aggregate.Active, Limit: limit, InputTokens: aggregate.InputTokens, OutputTokens: aggregate.OutputTokens, ReasoningTokens: aggregate.ReasoningTokens, CachedTokens: aggregate.CachedTokens, TotalTokens: aggregate.TotalTokens, AmountUSD: float64(aggregate.AmountNanos) / creditNanosPerUSD, RatedRequests: aggregate.RatedRequests, UnratedRequests: aggregate.UnratedRequests, Models: models, UpdatedAt: aggregate.UpdatedAt})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Provider == out[j].Provider {
@@ -263,13 +293,59 @@ func (t *ProviderRuntimeTracker) Shutdown() {
 	t.mu.Unlock()
 }
 
+func (t *ProviderRuntimeTracker) pruneExpiredLocked(now time.Time) {
+	if t == nil || (!t.nextPrune.IsZero() && now.Before(t.nextPrune)) {
+		return
+	}
+	t.nextPrune = now.Add(providerRuntimePruneInterval)
+	cutoff := now.Add(-providerRuntimeRequestLease)
+	for requestID, request := range t.requests {
+		if request.AdmittedAt.IsZero() || request.AdmittedAt.After(cutoff) {
+			continue
+		}
+		delete(t.requests, requestID)
+		if aggregate := t.aggregates[request.AggregateKey]; aggregate != nil {
+			if aggregate.Active > 0 {
+				aggregate.Active--
+			}
+			aggregate.UpdatedAt = now
+		}
+	}
+}
+
+func normalizeRuntimeProvider(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
 func runtimeAggregateKey(provider, identity string) string {
-	return strings.TrimSpace(provider) + "\x00" + identity
+	return normalizeRuntimeProvider(provider) + "\x00" + identity
+}
+
+func (t *ProviderRuntimeTracker) evictIdleAggregateLocked() bool {
+	var oldestKey string
+	var oldest time.Time
+	for key, aggregate := range t.aggregates {
+		if aggregate == nil || aggregate.Active > 0 {
+			continue
+		}
+		if oldestKey == "" || aggregate.UpdatedAt.Before(oldest) {
+			oldestKey, oldest = key, aggregate.UpdatedAt
+		}
+	}
+	if oldestKey == "" {
+		return false
+	}
+	delete(t.aggregates, oldestKey)
+	return true
 }
 
 func (t *ProviderRuntimeTracker) ensureAggregateLocked(key, identity, provider, authIndex string) *providerRuntimeAggregate {
+	provider = normalizeRuntimeProvider(provider)
 	aggregate := t.aggregates[key]
 	if aggregate == nil {
+		if len(t.aggregates) >= providerRuntimeMaxIdentities && !t.evictIdleAggregateLocked() {
+			return nil
+		}
 		aggregate = &providerRuntimeAggregate{Provider: provider, AuthIndex: authIndex, Identity: identity, Models: make(map[string]*providerRuntimeModel)}
 		t.aggregates[key] = aggregate
 	}
@@ -285,7 +361,7 @@ func (t *ProviderRuntimeTracker) ensureAggregateLocked(key, identity, provider, 
 func runtimeProviderFromMetadata(metadata map[string]any) string {
 	for _, key := range []string{"provider", "selected_provider", "provider_name", "auth_provider"} {
 		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
+			return normalizeRuntimeProvider(value)
 		}
 	}
 	return ""
@@ -311,7 +387,7 @@ func runtimeIdentityFromUsage(record cpaapi.UsageRecord) (string, string) {
 	if authID := strings.TrimSpace(record.AuthID); authID != "" {
 		return "auth-id:" + authID, ""
 	}
-	provider, key := strings.TrimSpace(record.Provider), strings.TrimSpace(record.APIKey)
+	provider, key := normalizeRuntimeProvider(record.Provider), strings.TrimSpace(record.APIKey)
 	if provider == "" || key == "" {
 		return "", ""
 	}

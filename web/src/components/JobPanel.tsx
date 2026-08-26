@@ -30,6 +30,7 @@ interface ResultJobSnapshot {
 	conflicts: number;
 	skipped: number;
 	retry_available?: boolean;
+	storage_error?: string;
 	results?: JobResult[];
 }
 
@@ -67,6 +68,7 @@ export function JobPanel({ job, title = "ui.batch_job", ariaLabel = "ui.batch_jo
           <code>{job.id?.slice(0, 12) || "-"}</code>
         </div>
       </header>
+      {job.storage_error ? <div className="notice-bar warning-notice" role="alert">{tx("ui.job_storage_error")}</div> : null}
       <div className="job-progress" aria-label={tx("ui.job_progress_progress_percent", { progress })}>
         <div style={{ width: `${progress}%` }} />
       </div>

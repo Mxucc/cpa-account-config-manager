@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -222,6 +221,9 @@ func TestNewerAppInstanceQuiescesSupersededBackgroundServices(t *testing.T) {
 	if retiredResponse.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(retiredResponse.Body), "superseded") {
 		t.Fatalf("retired response = %d %s", retiredResponse.StatusCode, retiredResponse.Body)
 	}
+	if older.RequestCompletionActive() {
+		t.Fatal("superseded app still advertises request completion handling")
+	}
 }
 
 func TestInspectionLiveRouteDisablesCaching(t *testing.T) {
@@ -234,6 +236,37 @@ func TestInspectionLiveRouteDisablesCaching(t *testing.T) {
 	})
 	if response.StatusCode != http.StatusOK || response.Headers.Get("Cache-Control") != "no-store" {
 		t.Fatalf("live response = %d headers=%v body=%s", response.StatusCode, response.Headers, response.Body)
+	}
+}
+
+func TestInspectionReadRoutesDoNotArmPendingModelProbes(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+
+	app.inspection.mu.Lock()
+	app.inspection.anomalyTriggerPending = true
+	app.inspection.pendingProbe = false
+	app.inspection.pendingProbeSweep = false
+	app.inspection.mu.Unlock()
+
+	for _, path := range []string{
+		"/v0/management/plugins/cpa-account-config-manager/inspection",
+		"/v0/management/plugins/cpa-account-config-manager/inspection/live",
+	} {
+		response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+			Method:  http.MethodGet,
+			Path:    path,
+			Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d body=%s", path, response.StatusCode, response.Body)
+		}
+		app.inspection.mu.RLock()
+		pending, pendingSweep, anomalyPending := app.inspection.pendingProbe, app.inspection.pendingProbeSweep, app.inspection.anomalyTriggerPending
+		app.inspection.mu.RUnlock()
+		if pending || pendingSweep || !anomalyPending {
+			t.Fatalf("GET %s changed probe state: pending=%t sweep=%t anomaly=%t", path, pending, pendingSweep, anomalyPending)
+		}
 	}
 }
 
@@ -461,18 +494,16 @@ func TestHandleManagementRunsPreviewStartStatusAndRedactedExports(t *testing.T) 
 			},
 		},
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	doer := accountDeleteHTTPDoer(func(request *http.Request) (*http.Response, error) {
 		if request.Header.Get("Authorization") != "Bearer management-secret" {
-			writer.WriteHeader(http.StatusUnauthorized)
-			return
+			return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(`{"error":"unauthorized"}`))}, nil
 		}
-		_, _ = io.WriteString(writer, `{"status":"ok"}`)
-	}))
-	defer server.Close()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":"ok"}`))}, nil
+	})
 
 	app := NewApp(host, []byte("index"))
-	app.jobs.doer = server.Client()
-	app.Configure([]byte(fmt.Sprintf("workers: 1\ndata_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), server.URL)))
+	app.jobs.doer = doer
+	app.Configure([]byte(fmt.Sprintf("workers: 1\ndata_dir: %q\nmanagement_base_url: %q\n", t.TempDir(), defaultManagementBaseURL)))
 	defer app.Close()
 	proxyURL := "http://new-user:new-proxy-secret@127.0.0.1:7890"
 	disabled := true
@@ -738,7 +769,7 @@ func TestHandleDefaultPolicyUsesSafeBestEffortLocalStorageAndValidationErrors(t 
 		Path:   "/v0/management/plugins/cpa-account-config-manager/defaults",
 		Body:   []byte(`{"enabled":false,"priority":0,"websockets":null}`),
 	})
-	if storageResponse.StatusCode != http.StatusOK || !bytes.Contains(storageResponse.Body, []byte(policyLocalStoreError)) {
+	if storageResponse.StatusCode != http.StatusBadRequest || !bytes.Contains(storageResponse.Body, []byte("save default policy")) {
 		t.Fatalf("storage response = %d %s", storageResponse.StatusCode, storageResponse.Body)
 	}
 	if bytes.Contains(storageResponse.Body, []byte(dataDir)) {
@@ -752,5 +783,43 @@ func TestHandleDefaultPolicyUsesSafeBestEffortLocalStorageAndValidationErrors(t 
 	})
 	if validationResponse.StatusCode != http.StatusBadRequest || bytes.Contains(validationResponse.Body, []byte("secret-value")) {
 		t.Fatalf("validation response = %d %s", validationResponse.StatusCode, validationResponse.Body)
+	}
+}
+
+func TestAppRejectsMalformedLiveConfigurationWithoutReplacingLastKnownGoodState(t *testing.T) {
+	app := NewApp(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}}, []byte("index"))
+	app.Configure([]byte("workers: 2\ndata_dir: " + t.TempDir() + "\n"))
+	defer app.Close()
+
+	before := app.configSnapshot()
+	app.Configure([]byte("workers: [\n"))
+	if got := app.configSnapshot(); got.Workers != before.Workers || got.DataDir != before.DataDir {
+		t.Fatalf("invalid configuration replaced last known-good state: before=%#v after=%#v", before, got)
+	}
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/accounts",
+	})
+	if response.StatusCode != http.StatusServiceUnavailable || !bytes.Contains(response.Body, []byte("plugin configuration is invalid")) {
+		t.Fatalf("invalid configuration response = %d %s", response.StatusCode, response.Body)
+	}
+	resource := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   resourceRoutePrefix + "/index.html",
+	})
+	if resource.StatusCode != http.StatusOK || string(resource.Body) != "index" {
+		t.Fatalf("resource response = %d %s", resource.StatusCode, resource.Body)
+	}
+
+	app.Configure([]byte("workers: 3\ndata_dir: " + before.DataDir + "\n"))
+	response = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/cpa-account-config-manager/accounts",
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("corrected configuration response = %d %s", response.StatusCode, response.Body)
+	}
+	if got := app.configSnapshot().Workers; got != 3 {
+		t.Fatalf("corrected workers = %d, want 3", got)
 	}
 }

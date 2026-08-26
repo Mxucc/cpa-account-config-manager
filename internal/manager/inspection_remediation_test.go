@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,11 +156,16 @@ func TestAutomaticQuotaRecoveryRaisesPriorityThroughCPAFieldsAPI(t *testing.T) {
 
 type recordingOverdraftCycleStopper struct {
 	started []string
+	marked  []string
 	stopped []string
 }
 
 func (s *recordingOverdraftCycleStopper) BeginOverdraftCycle(accountID, _ string, _ time.Time) {
 	s.started = append(s.started, accountID)
+}
+
+func (s *recordingOverdraftCycleStopper) MarkOverdraftCycle(accountID, _, status, _ string, _ time.Time) {
+	s.marked = append(s.marked, accountID+":"+status)
 }
 
 func (s *recordingOverdraftCycleStopper) StopOverdraftCycle(accountID string) {
@@ -275,5 +281,45 @@ func TestManualInspectionDeleteRequiresConfirmationAndHighConfidenceRecommendati
 	}
 	if inspectionManualDeleteAllowed(activeProbe) {
 		t.Fatal("an active model probe became manual bulk-deletion evidence")
+	}
+}
+
+func TestInspectionMutationFailureReasonIsSafeAndRetryableOnlyWhenTransient(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		want      string
+		retryable bool
+	}{
+		{name: "nil", err: nil, want: ""},
+		{name: "host", err: errors.New("auth host is unavailable: /private/path"), want: OperationFailureInspectionAuthHost, retryable: true},
+		{name: "read only", err: errors.New("account is not safely editable"), want: OperationFailureInspectionAccountReadOnly},
+		{name: "ownership", err: errors.New("inspection disable ownership changed"), want: OperationFailureInspectionOwnership},
+		{name: "read", err: errors.New("get auth file: Authorization: secret"), want: OperationFailureInspectionAuthRead, retryable: true},
+		{name: "identity", err: errors.New("auth index changed"), want: OperationFailureInspectionAuthIdentity},
+		{name: "source", err: errors.New("auth source changed"), want: OperationFailureInspectionAuthSource},
+		{name: "json syntax", err: errors.New("auth json is invalid"), want: OperationFailureInspectionAuthJSON},
+		{name: "json shape", err: errors.New("auth json must be an object"), want: OperationFailureInspectionAuthJSON},
+		{name: "disabled field", err: errors.New("disabled field is invalid"), want: OperationFailureInspectionAuthField},
+		{name: "priority field", err: errors.New("priority field is invalid"), want: OperationFailureInspectionAuthField},
+		{name: "encode", err: errors.New("encode auth update: secret"), want: OperationFailureInspectionAuthUpdate, retryable: true},
+		{name: "priority patch", err: errors.New("update CPA account priority: upstream secret"), want: OperationFailureInspectionAuthUpdate, retryable: true},
+		{name: "status patch", err: errors.New("update CPA account status: upstream secret"), want: OperationFailureInspectionAuthUpdate, retryable: true},
+		{name: "save", err: errors.New("save auth file: /private/path"), want: OperationFailureInspectionAuthSave, retryable: true},
+		{name: "unknown", err: errors.New("unexpected private error"), want: OperationFailureInspectionMutation, retryable: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := inspectionMutationFailureReason(test.err)
+			if got != test.want {
+				t.Fatalf("reason = %q, want %q", got, test.want)
+			}
+			if retryable := inspectionMutationFailureRetryable(got); retryable != test.retryable {
+				t.Fatalf("retryable = %t, want %t for %q", retryable, test.retryable, got)
+			}
+			if strings.Contains(got, "secret") || strings.Contains(got, "/private/") {
+				t.Fatalf("classified reason leaked private error text: %q", got)
+			}
+		})
 	}
 }

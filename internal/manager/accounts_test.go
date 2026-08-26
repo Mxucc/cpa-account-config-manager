@@ -25,6 +25,7 @@ type fakeAuthHost struct {
 	errors     map[string]error
 	saveErrors map[string]error
 	saveCalls  map[string]int
+	getCalls   map[string]int
 	saves      []cpaapi.HostAuthSaveRequest
 }
 
@@ -41,6 +42,10 @@ func (f *fakeAuthHost) ListAuth(context.Context) ([]cpaapi.HostAuthFileEntry, er
 func (f *fakeAuthHost) GetAuth(_ context.Context, authIndex string) (cpaapi.HostAuthGetResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getCalls == nil {
+		f.getCalls = make(map[string]int)
+	}
+	f.getCalls[authIndex]++
 	if err := f.errors[authIndex]; err != nil {
 		return cpaapi.HostAuthGetResponse{}, err
 	}
@@ -92,6 +97,22 @@ func TestAccountServiceListReturnsEmptyJSONArray(t *testing.T) {
 	}
 	if !bytes.Contains(encoded, []byte(`"accounts":[]`)) {
 		t.Fatalf("encoded response = %s, want accounts array", encoded)
+	}
+}
+
+type accountUsageStorageErrorReader struct{ err string }
+
+func (r accountUsageStorageErrorReader) Snapshot(string) *AccountUsageSnapshot { return nil }
+func (r accountUsageStorageErrorReader) StorageError() string                  { return r.err }
+
+func TestAccountServiceListSurfacesUsageStorageErrorWithoutFailingAccountLoad(t *testing.T) {
+	host := &fakeAuthHost{}
+	response, errList := NewAccountService(host, accountUsageStorageErrorReader{err: " usage state could not be persisted "}).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if response.UsageStorageError != "usage state could not be persisted" {
+		t.Fatalf("UsageStorageError = %q", response.UsageStorageError)
 	}
 }
 
@@ -157,6 +178,53 @@ func TestAccountServiceSortsFullFilteredCollectionBeforePagination(t *testing.T)
 	}
 	if got := []string{firstPage.Accounts[0].Label, firstPage.Accounts[1].Label, secondPage.Accounts[0].Label}; !slices.Equal(got, []string{"Charlie", "Bravo", "alpha"}) {
 		t.Fatalf("paged descending accounts = %v", got)
+	}
+}
+
+func TestAccountServiceListEnrichesDetailOnlyOnceForFilteredPages(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "alpha", Name: "alpha.json", Label: "Alpha", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/alpha.json"},
+		{AuthIndex: "bravo", Name: "bravo.json", Label: "Bravo", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/bravo.json"},
+		{AuthIndex: "charlie", Name: "charlie.json", Label: "Charlie", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/charlie.json"},
+	}, details: map[string]cpaapi.HostAuthGetResponse{
+		"alpha":   {AuthIndex: "alpha", Name: "alpha.json", Path: "/auths/alpha.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"k12"}`)},
+		"bravo":   {AuthIndex: "bravo", Name: "bravo.json", Path: "/auths/bravo.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"free"}`)},
+		"charlie": {AuthIndex: "charlie", Name: "charlie.json", Path: "/auths/charlie.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"team"}`)},
+	}}
+	service := NewAccountService(host)
+	response, errList := service.List(t.Context(), ListQuery{Page: 1, PageSize: 1, Filters: AccountFilters{Type: "k12"}})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if response.Total != 1 || len(response.Accounts) != 1 || response.Accounts[0].ID != "alpha" {
+		t.Fatalf("filtered page = %#v", response)
+	}
+	for _, id := range []string{"alpha", "bravo", "charlie"} {
+		if got := host.getCalls[id]; got != 1 {
+			t.Fatalf("GetAuth(%s) calls = %d, want 1", id, got)
+		}
+	}
+}
+
+func TestAccountServiceResolveTargetsDoesNotReloadDetailAfterFiltering(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "alpha", Name: "alpha.json", Label: "Alpha", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/alpha.json"},
+		{AuthIndex: "bravo", Name: "bravo.json", Label: "Bravo", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/bravo.json"},
+	}, details: map[string]cpaapi.HostAuthGetResponse{
+		"alpha": {AuthIndex: "alpha", Name: "alpha.json", Path: "/auths/alpha.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"k12"}`)},
+		"bravo": {AuthIndex: "bravo", Name: "bravo.json", Path: "/auths/bravo.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"free"}`)},
+	}}
+	resolved, errResolve := NewAccountService(host).ResolveTargets(t.Context(), TargetScope{Mode: "filtered", Filters: AccountFilters{Type: "k12"}})
+	if errResolve != nil {
+		t.Fatalf("ResolveTargets() error = %v", errResolve)
+	}
+	if len(resolved.Accounts) != 1 || resolved.Accounts[0].ID != "alpha" {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+	for _, id := range []string{"alpha", "bravo"} {
+		if got := host.getCalls[id]; got != 1 {
+			t.Fatalf("GetAuth(%s) calls = %d, want 1", id, got)
+		}
 	}
 }
 
@@ -718,5 +786,18 @@ func TestAccountServiceResolvesFilteredReadOnlyScopeAfterPhysicalPreflight(t *te
 	}
 	if len(resolved.Accounts) != 1 || resolved.Accounts[0].Editable || resolved.Accounts[0].ReadOnlyReason == "" {
 		t.Fatalf("resolved = %#v", resolved)
+	}
+}
+
+func TestAccountServiceLargePageDoesNotOverflow(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "one", Name: "one.json", Provider: "codex", Source: "file", Path: "/auths/one.json",
+	}}}
+	response, errList := NewAccountService(host).List(t.Context(), ListQuery{Page: int(^uint(0) >> 1), PageSize: 1000})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if response.Total != 1 || len(response.Accounts) != 0 {
+		t.Fatalf("large page response = total:%d accounts:%d", response.Total, len(response.Accounts))
 	}
 }

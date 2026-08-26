@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +23,8 @@ const (
 	newAccountModelProbeMaxAttempts  = 8
 	newAccountModelProbeMaxBackoff   = 30 * time.Minute
 )
+
+var newAccountModelProbePersistRetryDelay = 30 * time.Second
 
 type newAccountModelProbeRetry struct {
 	Attempts   int       `json:"attempts"`
@@ -52,6 +55,9 @@ type newAccountModelProbeEngine struct {
 	managementKey   string
 	hostCallbackID  string
 	storageErr      string
+	loadFailed      bool
+	retryTimer      *time.Timer
+	retryScheduled  bool
 	enabled         func() bool
 	eligible        func(Account) bool
 	handler         newAccountModelProbeHandler
@@ -107,10 +113,9 @@ func (e *newAccountModelProbeEngine) Configure(config Config) {
 	storePath := newAccountModelProbeStorePath(config.DataDir)
 
 	e.mu.Lock()
-	if e.started && e.store == storePath {
+	if e.started && e.store == storePath && !e.loadFailed {
 		e.config = config
 		e.mu.Unlock()
-		e.requestRun()
 		return
 	}
 	e.mu.Unlock()
@@ -130,6 +135,7 @@ func (e *newAccountModelProbeEngine) Configure(config Config) {
 	e.known = stringSet(state.Known)
 	e.pending = cloneNewAccountModelProbePending(state.Pending)
 	e.storageErr = storageErr
+	e.loadFailed = storageErr == "new-account model-probe state could not be loaded"
 	start := !e.started && !e.closed
 	if start {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -157,6 +163,22 @@ func (e *newAccountModelProbeEngine) Arm(managementKey string, requestedCallback
 	if e == nil {
 		return
 	}
+	if strings.TrimSpace(managementKey) == "" {
+		return
+	}
+	e.SetManagementKey(managementKey, requestedCallbackID...)
+	e.requestRun()
+}
+
+// SetManagementKey updates the credentials used by a future probe without
+// scheduling a probe run. Management GET requests use this method so merely
+// opening or polling the UI cannot wake the new-account worker repeatedly.
+// Explicit actions (imports, policy changes, or a manual scan) should use
+// Arm, which also schedules pending work.
+func (e *newAccountModelProbeEngine) SetManagementKey(managementKey string, requestedCallbackID ...string) {
+	if e == nil {
+		return
+	}
 	managementKey = strings.TrimSpace(managementKey)
 	if managementKey == "" {
 		return
@@ -173,7 +195,6 @@ func (e *newAccountModelProbeEngine) Arm(managementKey string, requestedCallback
 	e.mu.Unlock()
 	managementKey = ""
 	callbackID = ""
-	e.requestRun()
 }
 
 func (e *newAccountModelProbeEngine) ObserveAccounts(accounts []Account) {
@@ -198,12 +219,47 @@ func (e *newAccountModelProbeEngine) ObserveAccounts(accounts []Account) {
 		}
 	}
 	e.mu.Lock()
+	wake := false
 	if !e.closed {
+		wake = !e.observed || !sameAccountIdentitySet(e.latest, latest)
 		e.latest = latest
 		e.observed = true
 	}
 	e.mu.Unlock()
-	e.requestRun()
+	if wake {
+		e.requestRun()
+	}
+}
+
+func sameAccountIdentitySet(left, right map[string]Account) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for identity, account := range left {
+		other, exists := right[identity]
+		if !exists || !sameNewAccountProbeAccount(account, other) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameNewAccountProbeAccount deliberately compares only the metadata that
+// changes how a newly discovered account should be probed. Usage, timestamps
+// and request counters are intentionally excluded so routine quota refreshes
+// do not retrigger model tests.
+func sameNewAccountProbeAccount(left, right Account) bool {
+	return left.ID == right.ID &&
+		left.AuthID == right.AuthID &&
+		left.Name == right.Name &&
+		left.Provider == right.Provider &&
+		left.Type == right.Type &&
+		left.Email == right.Email &&
+		left.AccountType == right.AccountType &&
+		left.PlanType == right.PlanType &&
+		left.Disabled == right.Disabled &&
+		left.RuntimeOnly == right.RuntimeOnly &&
+		reflect.DeepEqual(left.ModelPolicy, right.ModelPolicy)
 }
 
 func (e *newAccountModelProbeEngine) Shutdown() {
@@ -219,7 +275,13 @@ func (e *newAccountModelProbeEngine) Shutdown() {
 	e.managementKey = ""
 	e.hostCallbackID = ""
 	cancel := e.cancel
+	retryTimer := e.retryTimer
+	e.retryTimer = nil
+	e.retryScheduled = false
 	e.mu.Unlock()
+	if retryTimer != nil {
+		retryTimer.Stop()
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -426,11 +488,38 @@ func (e *newAccountModelProbeEngine) persist(path string, state persistedNewAcco
 	if e.store == path {
 		if errSave != nil {
 			e.storageErr = "new-account model-probe state could not be persisted"
+			e.schedulePersistRetryLocked()
 		} else {
 			e.storageErr = ""
+			e.loadFailed = false
+			if e.retryTimer != nil {
+				e.retryTimer.Stop()
+				e.retryTimer = nil
+			}
+			e.retryScheduled = false
 		}
 	}
 	e.mu.Unlock()
+}
+
+func (e *newAccountModelProbeEngine) schedulePersistRetryLocked() {
+	if e == nil || e.closed || e.retryScheduled {
+		return
+	}
+	e.retryScheduled = true
+	e.retryTimer = time.AfterFunc(newAccountModelProbePersistRetryDelay, func() {
+		e.mu.Lock()
+		if e.closed {
+			e.retryScheduled = false
+			e.retryTimer = nil
+			e.mu.Unlock()
+			return
+		}
+		e.retryScheduled = false
+		e.retryTimer = nil
+		e.mu.Unlock()
+		e.requestRun()
+	})
 }
 
 func (e *newAccountModelProbeEngine) currentTime() time.Time {

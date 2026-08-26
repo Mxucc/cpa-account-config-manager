@@ -1,7 +1,9 @@
 package manager
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -21,6 +23,34 @@ const (
 	usageWindowWithoutReset = 15 * time.Minute
 	usageWindowResetDrift   = 2 * time.Minute
 	usagePersistDelay       = 2 * time.Second
+	usagePersistRetryDelay  = 30 * time.Second
+	overdraftPrearmPercent  = 95.0
+)
+
+// Overdraft cycle states mirror the quota-overdraft evidence states used by the
+// sub2api-overdraft fork: pending (cycle opened but no evidence yet), passed
+// (an injected request or probe proved overdraft works), failed (an explicit
+// quota 429 or exhausted probe run proved it does not for this cycle),
+// inconclusive (transient evidence that neither proves nor disproves), and
+// recovered (the quota window returned to 0% or was reset).
+const (
+	overdraftStatusPending      = "pending"
+	overdraftStatusPassed       = "passed"
+	overdraftStatusFailed       = "failed"
+	overdraftStatusInconclusive = "inconclusive"
+	overdraftStatusRecovered    = "recovered"
+)
+
+// weeklyOverdraftInjectionTTL bounds how long a successful request-interceptor
+// injection is treated as evidence that a later usage record for the same
+// account carried the overdraft payload. The CPA usage ABI reports AuthIndex
+// without the originating RequestID, so the plugin approximates the
+// sub2api-overdraft per-request injectedAccounts set with a bounded per-account
+// timestamp. Two hours comfortably covers a long Codex task while keeping the
+// correlation window tight enough to avoid crediting unrelated requests.
+const (
+	weeklyOverdraftInjectionTTL   = 2 * time.Hour
+	maxTrackedOverdraftInjections = 256
 )
 
 type CreditUsageSnapshot struct {
@@ -65,6 +95,7 @@ type UsageWindowSnapshot struct {
 	ResetAt            *time.Time `json:"reset_at,omitempty"`
 	WindowMinutes      int        `json:"window_minutes,omitempty"`
 	OverdraftActive    bool       `json:"overdraft_active,omitempty"`
+	OverdraftStatus    string     `json:"overdraft_status,omitempty"`
 	OverdraftTokens    int64      `json:"overdraft_tokens,omitempty"`
 	OverdraftRequests  int64      `json:"overdraft_requests,omitempty"`
 	OverdraftAmountUSD float64    `json:"overdraft_amount_usd,omitempty"`
@@ -72,6 +103,20 @@ type UsageWindowSnapshot struct {
 	OverdraftUnrated   int64      `json:"overdraft_unrated_requests,omitempty"`
 	OverdraftStartedAt *time.Time `json:"overdraft_started_at,omitempty"`
 	OverdraftRecoverAt *time.Time `json:"overdraft_recover_at,omitempty"`
+}
+
+// overdraftGateState is the read-only view the request interceptor uses to
+// decide whether business traffic should carry the overdraft payload.
+type overdraftGateState struct {
+	FiveHourUsedPercent float64
+	SevenDayUsedPercent float64
+	FiveHourCycleStatus string
+	SevenDayCycleStatus string
+	FiveHourResetAt     time.Time
+	SevenDayResetAt     time.Time
+	FiveHourRecoverAt   time.Time
+	SevenDayRecoverAt   time.Time
+	Has                 bool
 }
 
 type usageAggregate struct {
@@ -107,48 +152,60 @@ type accountLifecycleState struct {
 }
 
 type overdraftCycleState struct {
-	Active                    bool      `json:"active"`
-	BaselineTokens            int64     `json:"baseline_tokens,omitempty"`
-	BaselineRequests          int64     `json:"baseline_requests,omitempty"`
-	BaselineCreditAmountNanos int64     `json:"baseline_credit_amount_nanos,omitempty"`
-	BaselineCreditRated       int64     `json:"baseline_credit_rated_requests,omitempty"`
-	BaselineCreditUnrated     int64     `json:"baseline_credit_unrated_requests,omitempty"`
-	StartedAt                 time.Time `json:"started_at,omitempty"`
-	RecoverAt                 time.Time `json:"recover_at,omitempty"`
-	WindowMinutes             int       `json:"window_minutes,omitempty"`
-	ChangedAt                 time.Time `json:"changed_at"`
+	Active                    bool       `json:"active"`
+	Status                    string     `json:"status,omitempty"`
+	CycleKey                  string     `json:"cycle_key,omitempty"`
+	Attempts                  int        `json:"attempts,omitempty"`
+	ReasonCode                string     `json:"reason_code,omitempty"`
+	VerifiedAt                *time.Time `json:"verified_at,omitempty"`
+	BaselineTokens            int64      `json:"baseline_tokens,omitempty"`
+	BaselineRequests          int64      `json:"baseline_requests,omitempty"`
+	BaselineCreditAmountNanos int64      `json:"baseline_credit_amount_nanos,omitempty"`
+	BaselineCreditRated       int64      `json:"baseline_credit_rated_requests,omitempty"`
+	BaselineCreditUnrated     int64      `json:"baseline_credit_unrated_requests,omitempty"`
+	StartedAt                 time.Time  `json:"started_at,omitempty"`
+	RecoverAt                 time.Time  `json:"recover_at,omitempty"`
+	WindowMinutes             int        `json:"window_minutes,omitempty"`
+	ChangedAt                 time.Time  `json:"changed_at"`
 }
 
 type UsageTracker struct {
-	mu               sync.RWMutex
-	storeMu          sync.Mutex
-	accounts         map[string]usageAggregate
-	bindings         map[string]usageBinding
-	bindingsReady    bool
-	now              func() time.Time
-	store            string
-	durableStore     string
-	allowDurable     bool
-	loaded           bool
-	dirty            bool
-	generation       uint64
-	persistDelay     time.Duration
-	wake             chan struct{}
-	stop             chan struct{}
-	done             chan struct{}
-	closeOnce        sync.Once
-	creditCalculator UsageCreditCalculator
+	mu                sync.RWMutex
+	storeMu           sync.Mutex
+	accounts          map[string]usageAggregate
+	bindings          map[string]usageBinding
+	bindingsReady     bool
+	now               func() time.Time
+	store             string
+	durableStore      string
+	allowDurable      bool
+	loaded            bool
+	dirty             bool
+	generation        uint64
+	persistDelay      time.Duration
+	persistRetryDelay time.Duration
+	retryScheduled    bool
+	retryTimer        *time.Timer
+	storageErr        string
+	wake              chan struct{}
+	stop              chan struct{}
+	done              chan struct{}
+	closeOnce         sync.Once
+	creditCalculator  UsageCreditCalculator
+	overdraftInjected map[string]time.Time
 }
 
 func NewUsageTracker() *UsageTracker {
 	tracker := &UsageTracker{
-		accounts:     make(map[string]usageAggregate),
-		bindings:     make(map[string]usageBinding),
-		now:          time.Now,
-		persistDelay: usagePersistDelay,
-		wake:         make(chan struct{}, 1),
-		stop:         make(chan struct{}),
-		done:         make(chan struct{}),
+		accounts:          make(map[string]usageAggregate),
+		bindings:          make(map[string]usageBinding),
+		now:               time.Now,
+		persistDelay:      usagePersistDelay,
+		persistRetryDelay: usagePersistRetryDelay,
+		wake:              make(chan struct{}, 1),
+		stop:              make(chan struct{}),
+		done:              make(chan struct{}),
+		overdraftInjected: make(map[string]time.Time),
 	}
 	go tracker.run()
 	return tracker
@@ -173,13 +230,15 @@ func (t *UsageTracker) Configure(config Config) {
 	t.storeMu.Lock()
 	defer t.storeMu.Unlock()
 	t.mu.Lock()
+	previousAllowDurable := t.allowDurable
+	previousDurableStore := t.durableStore
 	t.allowDurable = config.implicitDataDir
 	if !t.allowDurable {
 		t.durableStore = ""
 	} else if t.durableStore != "" {
 		storePath = t.durableStore
 	}
-	if t.loaded && t.store == storePath {
+	if t.loaded && t.store == storePath && t.storageErr == "" {
 		t.mu.Unlock()
 		return
 	}
@@ -187,11 +246,30 @@ func (t *UsageTracker) Configure(config Config) {
 		if persisted, errSave := persistUsageState(t.store, t.accounts); errSave == nil {
 			t.accounts = mergeUsageAggregates(t.accounts, persisted)
 			t.dirty = false
+			t.storageErr = ""
+		} else {
+			// Do not switch stores while the current in-memory state is dirty.
+			// A failed write must never silently discard usage collected since
+			// the last successful persistence.
+			t.storageErr = "usage state could not be persisted"
+			// Keep the previous durable-store selection in sync with the
+			// still-active store when configuration cannot be committed.
+			t.allowDurable = previousAllowDurable
+			t.durableStore = previousDurableStore
+			t.mu.Unlock()
+			return
 		}
 	}
 	accounts, recovered, errLoad := loadUsageStateWithBackup(storePath)
 	if errLoad != nil {
 		accounts = make(map[string]usageAggregate)
+		if !errors.Is(errLoad, os.ErrNotExist) {
+			t.storageErr = "usage state could not be loaded"
+		} else {
+			t.storageErr = ""
+		}
+	} else {
+		t.storageErr = ""
 	}
 	t.accounts = accounts
 	t.store = storePath
@@ -358,7 +436,11 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	if t == nil {
 		return
 	}
-	authIndex := strings.TrimSpace(record.AuthIndex)
+	// UsageRecord may carry either the auth index (the primary usage binding
+	// key) or the credential ID; resolve both to the same usage state and
+	// overdraft injection evidence so the interceptor's selected_auth_id path
+	// and the host's usage reports stay aligned.
+	authIndex := strings.TrimSpace(firstNonEmpty(record.AuthIndex, record.AuthID))
 	if authIndex == "" {
 		return
 	}
@@ -376,6 +458,7 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 	}
 
 	t.mu.Lock()
+	authIndex = t.resolveUsageAuthIndexLocked(authIndex)
 	storageKey, identity := t.usageStorageKeyLocked(authIndex)
 	if _, exists := t.accounts[storageKey]; !exists && len(t.accounts) >= maxUsageAccounts {
 		t.evictOldestLocked()
@@ -435,11 +518,194 @@ func (t *UsageTracker) Observe(record cpaapi.UsageRecord) {
 		}
 		aggregate.Codex.ObservedAt = codex.ObservedAt
 	}
+	// Overdraft evidence from real business traffic: a successful request that
+	// actually carried the overdraft payload (recent interceptor injection for
+	// the same account) while its quota window is still exhausted proves the
+	// overdraft works (passed), mirroring the sub2api-overdraft coordinator
+	// which only calls observeBusinessSuccess for requests marked as injected.
+	// An explicit quota 429 on a request that carried the overdraft payload
+	// confirms the account is genuinely limited even with the overdraft
+	// (failed, terminal for the same cycle), mirroring finishBusinessQuotaFailure
+	// in the sub2api-overdraft fork; a 429 on a request that never carried the
+	// payload only proves the plain account is limited and stays pending for
+	// the probe path to decide. Transient rate-limit 429s stay inconclusive
+	// and keep flowing through the normal rate-limit policy.
+	if !record.Failed && t.overdraftInjectedRecently(authIndex, now) {
+		if aggregate.FiveHourOverdraft != nil && aggregate.FiveHourOverdraft.Active && usageWindowStillExhausted(aggregate.Codex.FiveHour) {
+			applyOverdraftCycleEvidence(&aggregate.FiveHourOverdraft, aggregate.Codex.FiveHour, 5*60, overdraftStatusPassed, "business_request_ok", now, now)
+		}
+		if aggregate.SevenDayOverdraft != nil && aggregate.SevenDayOverdraft.Active && usageWindowStillExhausted(aggregate.Codex.SevenDay) {
+			applyOverdraftCycleEvidence(&aggregate.SevenDayOverdraft, aggregate.Codex.SevenDay, 7*24*60, overdraftStatusPassed, "business_request_ok", now, now)
+		}
+	} else if usageFailureIsQuotaLimited(record, now) && t.overdraftInjectedRecently(authIndex, now) {
+		applyOverdraftCycleEvidence(&aggregate.FiveHourOverdraft, aggregate.Codex.FiveHour, 5*60, overdraftStatusFailed, "quota_limit_reached", now, now)
+		applyOverdraftCycleEvidence(&aggregate.SevenDayOverdraft, aggregate.Codex.SevenDay, 7*24*60, overdraftStatusFailed, "quota_limit_reached", now, now)
+	}
 	t.accounts[storageKey] = aggregate
 	t.dirty = true
 	t.generation++
 	t.mu.Unlock()
 	t.requestPersist()
+}
+
+// usageFailureIsQuotaLimited classifies an explicit quota 429 the same way the
+// sub2api-overdraft fork does: definite subscription-quota markers win, then
+// transient rate-limit evidence is excluded, then usage headers and JSON quota
+// evidence are considered. Ordinary transient 429s are deliberately not
+// treated as quota-exhausted evidence.
+func usageFailureIsQuotaLimited(record cpaapi.UsageRecord, now time.Time) bool {
+	if !record.Failed || record.Failure.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
+	text := normalizedFailureText(record.Failure.Body)
+	for _, marker := range []string{
+		"usage_limit_reached",
+		"usage limit has been reached",
+		"you have reached your usage limit",
+		"quota exhausted",
+		"insufficient quota",
+		"insufficient_quota",
+		"weekly limit reached",
+		"weekly_limit_reached",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	if usageFailureTextHasTransientRateLimit(text) {
+		return false
+	}
+	var payload any
+	parsedPayload := len(record.Failure.Body) > 0 && json.Unmarshal([]byte(record.Failure.Body), &payload) == nil
+	if parsedPayload {
+		if usageFailureJSONHasTransientRateLimitEvidence(payload, 0) {
+			return false
+		}
+		if usageFailureJSONHasQuotaEvidence(payload, 0) {
+			return true
+		}
+	}
+	if snapshot := parseCodexUsageHeaders(record.ResponseHeaders, now); snapshot != nil {
+		if snapshot.FiveHour != nil && snapshot.FiveHour.UsedPercent >= 100 ||
+			snapshot.SevenDay != nil && snapshot.SevenDay.UsedPercent >= 100 {
+			return true
+		}
+	}
+	return false
+}
+
+// usageFailureJSONQuotaCode matches the explicit quota error codes the
+// sub2api-overdraft fork recognizes inside a 429 JSON body, including the two
+// codes (monthly limit, billing hard limit) that are only matched structurally.
+func usageFailureJSONQuotaCode(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.NewReplacer("-", "_", " ", "_").Replace(value)
+	switch value {
+	case "usage_limit_reached", "weekly_limit_reached", "monthly_limit_reached",
+		"quota_exhausted", "insufficient_quota", "billing_hard_limit_reached":
+		return true
+	default:
+		return false
+	}
+}
+
+func usageFailureJSONHasQuotaEvidence(value any, depth int) bool {
+	if depth > 6 {
+		return false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, raw := range typed {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
+			switch normalizedKey {
+			case "type", "code", "reason", "error_code":
+				if marker, ok := raw.(string); ok && usageFailureJSONQuotaCode(marker) {
+					return true
+				}
+			case "limit_reached", "limitreached":
+				if reached, ok := raw.(bool); ok && reached {
+					return true
+				}
+			case "used_percent", "usedpercent":
+				if used, ok := raw.(float64); ok && used >= 100 {
+					return true
+				}
+			}
+			if usageFailureJSONHasQuotaEvidence(raw, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if usageFailureJSONHasQuotaEvidence(item, depth+1) {
+				return true
+			}
+		}
+	case string:
+		if usageFailureJSONQuotaCode(typed) {
+			return true
+		}
+		text := strings.ToLower(strings.Join(strings.Fields(typed), " "))
+		for _, marker := range []string{
+			"usage limit has been reached",
+			"you have reached your usage limit",
+			"quota exhausted",
+			"insufficient quota",
+			"weekly limit reached",
+		} {
+			if strings.Contains(text, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func usageFailureJSONHasTransientRateLimitEvidence(value any, depth int) bool {
+	if depth > 6 {
+		return false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, raw := range typed {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
+			if normalizedKey == "type" || normalizedKey == "code" || normalizedKey == "reason" || normalizedKey == "error_code" {
+				if marker, ok := raw.(string); ok {
+					marker = strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(strings.TrimSpace(marker)))
+					switch marker {
+					case "rate_limit_error", "rate_limit_exceeded", "too_many_requests", "request_rate_limited", "token_rate_limited":
+						return true
+					}
+				}
+			}
+			if usageFailureJSONHasTransientRateLimitEvidence(raw, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if usageFailureJSONHasTransientRateLimitEvidence(item, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func usageFailureTextHasTransientRateLimit(text string) bool {
+	normalized := strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(text))
+	for _, marker := range []string{
+		"rate_limit_error",
+		"rate_limit_exceeded",
+		"too_many_requests",
+		"request_rate_limited",
+		"token_rate_limited",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *UsageTracker) ObserveCredentialUsage(authIndex string, snapshot *CodexUsageSnapshot) {
@@ -528,7 +794,8 @@ func (t *UsageTracker) BeginOverdraftCycle(authIndex, quotaWindow string, exhaus
 		}
 		recoverAt := exhaustedAt.Add(time.Duration(minutes) * time.Minute).UTC()
 		*cycle = &overdraftCycleState{
-			Active: true, BaselineTokens: aggregate.SuccessfulTokens, BaselineRequests: aggregate.SuccessfulRequests,
+			Active: true, Status: overdraftStatusPending, CycleKey: overdraftCycleKeyFor(window, fallbackMinutes, exhaustedAt),
+			BaselineTokens: aggregate.SuccessfulTokens, BaselineRequests: aggregate.SuccessfulRequests,
 			BaselineCreditAmountNanos: aggregate.CreditAmountNanos,
 			BaselineCreditRated:       aggregate.CreditRatedRequests,
 			BaselineCreditUnrated:     aggregate.CreditUnratedRequests,
@@ -590,11 +857,166 @@ func (t *UsageTracker) StopOverdraftCycle(authIndex string) {
 	}
 }
 
+// MarkOverdraftCycle records overdraft evidence for one quota window cycle.
+// passed marks a successful business request or probe that carried the
+// overdraft payload; failed marks an explicit quota 429 (terminal for the
+// same cycle); inconclusive marks transient evidence that neither proves nor
+// disproves the overdraft. The state machine mirrors the sub2api-overdraft
+// probe coordinator so the interceptor and the auto-disable gate agree on the
+// same cycle evidence.
+func (t *UsageTracker) MarkOverdraftCycle(authIndex, quotaWindow, status, reason string, testedAt time.Time) {
+	if t == nil {
+		return
+	}
+	authIndex = safeOperationIdentifier(authIndex, 256)
+	if authIndex == "" {
+		return
+	}
+	status = normalizeOverdraftStatus(status)
+	if status == "" {
+		return
+	}
+	now := t.currentTime()
+	testedAt = testedAt.UTC()
+	if testedAt.IsZero() || testedAt.After(now.Add(time.Minute)) {
+		testedAt = now
+	}
+	t.mu.Lock()
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	aggregate, exists := t.accounts[storageKey]
+	if !exists || aggregate.Codex == nil {
+		t.mu.Unlock()
+		return
+	}
+	aggregate.Identity = mergeUsageIdentity(aggregate.Identity, identity)
+	changed := false
+	mark := func(window *UsageWindowSnapshot, cycle **overdraftCycleState, fallbackMinutes int) {
+		window = currentUsageWindow(window, aggregate.Codex.ObservedAt, testedAt)
+		if window == nil {
+			return
+		}
+		if applyOverdraftCycleEvidence(cycle, window, fallbackMinutes, status, reason, testedAt, now) {
+			changed = true
+		}
+	}
+	switch normalizeInspectionQuotaWindow(quotaWindow) {
+	case InspectionQuotaWindowFiveHour, InspectionQuotaWindowFiveHourFallback:
+		mark(aggregate.Codex.FiveHour, &aggregate.FiveHourOverdraft, 5*60)
+	case InspectionQuotaWindowSevenDay:
+		mark(aggregate.Codex.SevenDay, &aggregate.SevenDayOverdraft, 7*24*60)
+	default:
+		mark(aggregate.Codex.FiveHour, &aggregate.FiveHourOverdraft, 5*60)
+		mark(aggregate.Codex.SevenDay, &aggregate.SevenDayOverdraft, 7*24*60)
+	}
+	if changed {
+		aggregate.UpdatedAt = now
+		t.accounts[storageKey] = aggregate
+		t.dirty = true
+		t.generation++
+	}
+	t.mu.Unlock()
+	if changed {
+		t.requestPersist()
+	}
+}
+
 func stoppedOverdraftCycle(cycle *overdraftCycleState, now time.Time) *overdraftCycleState {
 	if cycle == nil || !cycle.Active {
 		return cycle
 	}
-	return &overdraftCycleState{Active: false, ChangedAt: now.UTC()}
+	// A cycle that reaches 0% is a recovered window, not a deleted one. Keeping
+	// the recovered marker lets the interceptor and the UI distinguish "quota
+	// recovered" from "never overdrafted" and prevents a stale active cycle
+	// from being resurrected by a late usage response.
+	return &overdraftCycleState{
+		Active: false, Status: overdraftStatusRecovered, CycleKey: cycle.CycleKey,
+		StartedAt: cycle.StartedAt, RecoverAt: cycle.RecoverAt, WindowMinutes: cycle.WindowMinutes,
+		ChangedAt: now.UTC(),
+	}
+}
+
+// normalizeOverdraftStatus accepts the overdraft cycle states and maps legacy
+// empty statuses onto their derived values.
+func normalizeOverdraftStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case overdraftStatusPending, overdraftStatusPassed, overdraftStatusFailed, overdraftStatusInconclusive, overdraftStatusRecovered:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+// overdraftCycleKeyFor builds a stable per-window cycle key from the observed
+// reset time (falling back to the estimated recovery time). The key is the
+// identity used to decide whether late evidence belongs to the same quota
+// cycle, mirroring the sub2api-overdraft signal keys.
+func overdraftCycleKeyFor(window *UsageWindowSnapshot, fallbackMinutes int, exhaustedAt time.Time) string {
+	prefix := "window"
+	if fallbackMinutes >= 7*24*60 {
+		prefix = "7d"
+	} else if fallbackMinutes > 0 {
+		prefix = "5h"
+	}
+	if window != nil && window.ResetAt != nil {
+		return fmt.Sprintf("%s:%d", prefix, window.ResetAt.Unix())
+	}
+	minutes := fallbackMinutes
+	if window != nil && window.WindowMinutes > 0 {
+		minutes = window.WindowMinutes
+	}
+	return fmt.Sprintf("%s:%d", prefix, exhaustedAt.Add(time.Duration(minutes)*time.Minute).UTC().Unix())
+}
+
+// applyOverdraftCycleEvidence updates one overdraft cycle with a state
+// transition. failed is terminal for the same cycle: later passed or
+// inconclusive evidence cannot reopen a confirmed-failed cycle, matching the
+// sub2api-overdraft probe state machine. Returns true when the cycle changed.
+func applyOverdraftCycleEvidence(cycle **overdraftCycleState, window *UsageWindowSnapshot, fallbackMinutes int, status, reason string, testedAt, now time.Time) bool {
+	if cycle == nil {
+		return false
+	}
+	status = normalizeOverdraftStatus(status)
+	if status == "" {
+		return false
+	}
+	reason = strings.TrimSpace(reason)
+	current := *cycle
+	if current == nil {
+		minutes := fallbackMinutes
+		if window != nil && window.WindowMinutes > 0 {
+			minutes = window.WindowMinutes
+		}
+		recoverAt := testedAt.Add(time.Duration(minutes) * time.Minute).UTC()
+		*cycle = &overdraftCycleState{
+			Active:        status != overdraftStatusFailed && status != overdraftStatusRecovered,
+			Status:        status,
+			CycleKey:      overdraftCycleKeyFor(window, fallbackMinutes, testedAt),
+			Attempts:      1,
+			ReasonCode:    reason,
+			VerifiedAt:    timePointer(testedAt),
+			StartedAt:     testedAt,
+			RecoverAt:     recoverAt,
+			WindowMinutes: minutes,
+			ChangedAt:     now,
+		}
+		return true
+	}
+	if current.Status == overdraftStatusFailed && status != overdraftStatusFailed {
+		return false
+	}
+	if current.Status == status && current.ReasonCode == reason {
+		return false
+	}
+	current.Active = status != overdraftStatusFailed && status != overdraftStatusRecovered
+	current.Status = status
+	current.Attempts++
+	if current.CycleKey == "" {
+		current.CycleKey = overdraftCycleKeyFor(window, fallbackMinutes, testedAt)
+	}
+	current.ReasonCode = reason
+	current.VerifiedAt = timePointer(testedAt)
+	current.ChangedAt = now
+	return true
 }
 
 func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
@@ -636,6 +1058,28 @@ func (t *UsageTracker) UsageIdentity(authIndex string) string {
 	return binding.Key
 }
 
+// resolveUsageAuthIndexLocked normalizes a request-lifecycle identifier to the
+// canonical usage binding key. CPA reports usage with either the auth index
+// (the primary bindings key) or the credential ID (AuthID / selected_auth_id
+// request metadata); the credential ID is reverse-resolved through the auth
+// file bindings so both key families reach the same usage state and overdraft
+// injection evidence. The caller must hold at least a read lock.
+func (t *UsageTracker) resolveUsageAuthIndexLocked(identifier string) string {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return ""
+	}
+	if _, bound := t.bindings[identifier]; bound {
+		return identifier
+	}
+	for index, binding := range t.bindings {
+		if binding.AuthID == identifier {
+			return index
+		}
+	}
+	return identifier
+}
+
 func (t *UsageTracker) usageStorageKeyLocked(authIndex string) (string, usageIdentityFingerprint) {
 	if binding, exists := t.bindings[authIndex]; exists {
 		return binding.Key, binding.Identity
@@ -647,7 +1091,16 @@ func (t *UsageTracker) Close() {
 	if t == nil {
 		return
 	}
-	t.closeOnce.Do(func() { close(t.stop) })
+	t.closeOnce.Do(func() {
+		t.mu.Lock()
+		if t.retryTimer != nil {
+			t.retryTimer.Stop()
+			t.retryTimer = nil
+		}
+		t.retryScheduled = false
+		t.mu.Unlock()
+		close(t.stop)
+	})
 	<-t.done
 }
 
@@ -728,16 +1181,59 @@ func (t *UsageTracker) persist() {
 	t.mu.RUnlock()
 	persisted, errSave := persistUsageState(storePath, accounts)
 	if errSave != nil {
+		t.mu.Lock()
+		if t.store == storePath {
+			t.storageErr = "usage state could not be persisted"
+			// Keep dirty state and arrange a bounded retry. External events may
+			// still wake the worker, but a failed write must not leave it idle
+			// forever when no new usage arrives.
+			if !t.retryScheduled {
+				t.retryScheduled = true
+				delay := t.persistRetryDelay
+				if delay <= 0 {
+					delay = usagePersistRetryDelay
+				}
+				t.retryTimer = time.AfterFunc(delay, func() {
+					if t == nil {
+						return
+					}
+					t.mu.Lock()
+					t.retryScheduled = false
+					t.retryTimer = nil
+					t.mu.Unlock()
+					t.requestPersist()
+				})
+			}
+		}
+		t.mu.Unlock()
 		return
 	}
 	t.mu.Lock()
 	if t.store == storePath {
 		t.accounts = mergeUsageAggregates(t.accounts, persisted)
+		t.storageErr = ""
+		if t.retryTimer != nil {
+			t.retryTimer.Stop()
+			t.retryTimer = nil
+		}
+		t.retryScheduled = false
 	}
 	if t.generation == generation && t.store == storePath {
 		t.dirty = false
 	}
 	t.mu.Unlock()
+}
+
+// StorageError reports a sanitized persistence failure, if any. The raw
+// filesystem error is intentionally not exposed because it may contain local
+// paths or other implementation details.
+func (t *UsageTracker) StorageError() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.storageErr
 }
 
 func publicUsageSnapshot(aggregate usageAggregate, now time.Time) *AccountUsageSnapshot {
@@ -809,6 +1305,7 @@ func publicUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time, c
 		return nil
 	}
 	snapshot.OverdraftActive = cycle != nil && cycle.Active
+	snapshot.OverdraftStatus = overdraftStatusOf(cycle)
 	snapshot.OverdraftTokens = 0
 	snapshot.OverdraftRequests = 0
 	snapshot.OverdraftAmountUSD = 0
@@ -827,6 +1324,140 @@ func publicUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time, c
 	snapshot.OverdraftStartedAt = timePointer(cycle.StartedAt)
 	snapshot.OverdraftRecoverAt = timePointer(cycle.RecoverAt)
 	return snapshot
+}
+
+func overdraftStatusOf(cycle *overdraftCycleState) string {
+	if cycle == nil {
+		return ""
+	}
+	status := strings.TrimSpace(cycle.Status)
+	if status == "" {
+		if cycle.Active {
+			return overdraftStatusPending
+		}
+		return ""
+	}
+	return status
+}
+
+// OverdraftGateState reports the per-window usage percentages and overdraft
+// cycle statuses used by the request interceptor pre-arm decision. The
+// identifier may be either the CPA auth index (the primary usage binding key)
+// or the credential ID carried by the selected_auth_id request metadata; the
+// credential ID is reverse-resolved through the auth file bindings so both
+// request-lifecycle key families reach the same usage state.
+func (t *UsageTracker) OverdraftGateState(identifier string) overdraftGateState {
+	var state overdraftGateState
+	if t == nil {
+		return state
+	}
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return state
+	}
+	t.mu.RLock()
+	authIndex := t.resolveUsageAuthIndexLocked(identifier)
+	storageKey, identity := t.usageStorageKeyLocked(authIndex)
+	if t.bindingsReady && identity == (usageIdentityFingerprint{}) {
+		t.mu.RUnlock()
+		return state
+	}
+	aggregate, exists := t.accounts[storageKey]
+	t.mu.RUnlock()
+	if !exists || usageIdentitiesConflict(aggregate.Identity, identity) {
+		return state
+	}
+	state.Has = true
+	if aggregate.Codex != nil {
+		if window := aggregate.Codex.FiveHour; window != nil {
+			state.FiveHourUsedPercent = window.UsedPercent
+			if window.ResetAt != nil {
+				state.FiveHourResetAt = window.ResetAt.UTC()
+			}
+		}
+		if window := aggregate.Codex.SevenDay; window != nil {
+			state.SevenDayUsedPercent = window.UsedPercent
+			if window.ResetAt != nil {
+				state.SevenDayResetAt = window.ResetAt.UTC()
+			}
+		}
+	}
+	state.FiveHourCycleStatus = overdraftStatusOf(aggregate.FiveHourOverdraft)
+	state.SevenDayCycleStatus = overdraftStatusOf(aggregate.SevenDayOverdraft)
+	if cycle := aggregate.FiveHourOverdraft; cycle != nil {
+		state.FiveHourRecoverAt = cycle.RecoverAt
+	}
+	if cycle := aggregate.SevenDayOverdraft; cycle != nil {
+		state.SevenDayRecoverAt = cycle.RecoverAt
+	}
+	return state
+}
+
+// NoteOverdraftInjection records that the request interceptor just appended the
+// no-op exec overdraft pair to a request for the given account. The CPA usage
+// ABI does not correlate UsageRecord back to its RequestID, so this bounded
+// timestamp map is the evidence used to decide whether a later successful
+// usage record may mark an active overdraft cycle passed. The identifier may
+// be the CPA auth index or the credential ID; both resolve to the same usage
+// storage key as Observe uses.
+func (t *UsageTracker) NoteOverdraftInjection(authIndex string) {
+	if t == nil {
+		return
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return
+	}
+	now := t.currentTime()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	authIndex = t.resolveUsageAuthIndexLocked(authIndex)
+	storageKey, _ := t.usageStorageKeyLocked(authIndex)
+	if storageKey == "" {
+		return
+	}
+	if t.overdraftInjected == nil {
+		t.overdraftInjected = make(map[string]time.Time)
+	}
+	if len(t.overdraftInjected) >= maxTrackedOverdraftInjections {
+		oldestKey := ""
+		var oldestAt time.Time
+		for key, injectedAt := range t.overdraftInjected {
+			if oldestKey == "" || injectedAt.Before(oldestAt) || injectedAt.Equal(oldestAt) && key < oldestKey {
+				oldestKey, oldestAt = key, injectedAt
+			}
+		}
+		if oldestKey != "" {
+			delete(t.overdraftInjected, oldestKey)
+		}
+	}
+	t.overdraftInjected[storageKey] = now
+}
+
+// overdraftInjectedRecently reports whether the account carried an overdraft
+// injection recently enough for a succeeding usage record to count as passed
+// evidence. The caller must hold at least a read lock: Observe evaluates this
+// while already holding the write lock.
+func (t *UsageTracker) overdraftInjectedRecently(authIndex string, now time.Time) bool {
+	if t == nil {
+		return false
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return false
+	}
+	storageKey, _ := t.usageStorageKeyLocked(authIndex)
+	injectedAt, exists := t.overdraftInjected[storageKey]
+	return exists && !injectedAt.IsZero() && now.Sub(injectedAt) <= weeklyOverdraftInjectionTTL
+}
+
+// usageWindowStillExhausted mirrors the sub2api-overdraft signal check
+// (codexQuotaOverdraftSignalFromAccount) that requires the observed window to
+// remain at or above 100% before business success can confirm an overdraft
+// cycle. A window that dropped below 100% but did not reach 0% keeps the
+// cycle open (not recovered) yet no longer counts as passed evidence.
+func usageWindowStillExhausted(window *UsageWindowSnapshot) bool {
+	return window != nil && window.UsedPercent >= 100
 }
 
 func currentUsageWindow(window *UsageWindowSnapshot, observedAt, now time.Time) *UsageWindowSnapshot {
@@ -1025,6 +1656,7 @@ func cloneOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
 		return nil
 	}
 	cloned := *cycle
+	cloned.VerifiedAt = cloneTimePointer(cycle.VerifiedAt)
 	return &cloned
 }
 

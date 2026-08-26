@@ -21,12 +21,42 @@ const snapshot: PolicySnapshot = {
   last_scan: { scanned: 12, eligible: 12, changed: 1, skipped: 11, failed: 0, quota_metadata_probed: 10, quota_metadata_updated: 9, quota_metadata_failed: 1 },
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("AutomationPolicySettings", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
     setSession("", "management-secret");
     vi.restoreAllMocks();
+  });
+
+  it("ignores stale policy responses after a refresh revision changes", async () => {
+    const first = deferred<PolicySnapshot>();
+    const second = deferred<PolicySnapshot>();
+    vi.spyOn(api, "getDefaultPolicy")
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const view = render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+    view.rerender(<AutomationPolicySettings refreshRevision={1} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+
+    second.resolve({ ...snapshot, last_scan: { ...snapshot.last_scan, scanned: 99 } });
+    const metrics = await screen.findByLabelText("最近扫描统计");
+    const scannedMetric = metrics.querySelector("div")!;
+    expect(within(scannedMetric).getByText("99")).toBeInTheDocument();
+
+    first.resolve({ ...snapshot, last_scan: { ...snapshot.last_scan, scanned: 1 } });
+    await waitFor(() => expect(within(scannedMetric).getByText("99")).toBeInTheDocument());
+    expect(within(scannedMetric).queryByText("1")).not.toBeInTheDocument();
   });
 
   it("builds multiple prioritized policies with nested conditions and model routing", async () => {

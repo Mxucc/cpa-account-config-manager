@@ -23,6 +23,20 @@ const inspectionSnapshot = {
   probe_sweep_started_at: "2026-07-20T07:59:00Z",
 };
 
+const emptyInspectionSummary = {
+  actionable: 0,
+  suggested_delete: 0,
+  suggested_disable: 0,
+  suggested_enable: 0,
+  reauth: 0,
+  deletable_reauth: 0,
+  review: 0,
+  keep: 0,
+  handled: 0,
+  editable_enabled: 0,
+  editable_disabled: 0,
+};
+
 describe("InspectionWorkspace", () => {
   beforeEach(() => {
     _resetSessionForTest();
@@ -39,7 +53,7 @@ describe("InspectionWorkspace", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       requests.push({ url, init });
-      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "auth-1", name: "operator.json", provider: "codex", type: "codex", plan_type: "k12", health: "invalid_credentials", reason_code: "invalid_credentials", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 2, healthy_streak: 0, last_checked_at: "2026-07-20T08:00:00Z" }], total: 1, page: 1, page_size: 50, pages: 1 });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "auth-1", name: "operator.json", provider: "codex", type: "codex", plan_type: "k12", health: "invalid_credentials", reason_code: "invalid_credentials", confidence: "high", recommendation: "reauth", disabled: false, editable: true, auto_disable_eligible: true, owned_disable: false, failure_streak: 2, healthy_streak: 0, last_checked_at: "2026-07-20T08:00:00Z" }], summary: emptyInspectionSummary, total: 1, page: 1, page_size: 50, pages: 1 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [{ id: "action-1", account_id: "auth-1", name: "operator.json", provider: "codex", action: "disable", status: "pending", reason_code: "invalid_credentials", created_at: "2026-07-20T08:00:00Z" }] });
       if (url.endsWith("/inspection/run")) return jsonResponse({ ...inspectionSnapshot, pending: true, run_mode: "full", probe_phase: "listing" }, 202);
       if (url.endsWith("/inspection")) return jsonResponse(inspectionSnapshot);
@@ -63,10 +77,36 @@ describe("InspectionWorkspace", () => {
     expect(onAccountsChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("does not run automatic deletion merely because the inspection page is opened", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [], summary: emptyInspectionSummary, total: 0, page: 1, page_size: 50, pages: 0 });
+      if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
+      if (url.endsWith("/inspection")) return jsonResponse({
+        ...inspectionSnapshot,
+        policy: { ...inspectionSnapshot.policy, auto_delete: true },
+        total: 0,
+        action_count: 0,
+        probe_sweep_remaining: 0,
+        probe_sweep_total: 0,
+        probe_sweep_completed: 0,
+        probe_sweep_status: "completed",
+      });
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<InspectionWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    expect(await screen.findByRole("region", { name: "巡检与自动化" })).toBeInTheDocument();
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/inspection/auto-delete"))).toBe(false);
+  });
+
   it("does not request or render plugin update controls inside inspection", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/inspection/results")) return jsonResponse({ results: [], total: 0, page: 1, page_size: 50, pages: 0 });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [], summary: emptyInspectionSummary, total: 0, page: 1, page_size: 50, pages: 0 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
       if (url.endsWith("/inspection")) return jsonResponse({ ...inspectionSnapshot, total: 0, action_count: 0 });
       return jsonResponse({});
@@ -84,7 +124,7 @@ describe("InspectionWorkspace", () => {
   it("renders unknown runtime health values without crashing", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "future-1", name: "future.json", provider: "codex", type: "oauth", health: "provider_unhealthy", reason_code: "native_unavailable", confidence: "medium", recommendation: "review", disabled: false, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z" }], total: 1, page: 1, page_size: 50, pages: 1 });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "future-1", name: "future.json", provider: "codex", type: "oauth", health: "provider_unhealthy", reason_code: "native_unavailable", confidence: "medium", recommendation: "review", disabled: false, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T10:00:00Z" }], summary: emptyInspectionSummary, total: 1, page: 1, page_size: 50, pages: 1 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
       if (url.endsWith("/inspection")) return jsonResponse(inspectionSnapshot);
       if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.6", update_available: false, checking: false, pending: false });
@@ -107,7 +147,7 @@ describe("InspectionWorkspace", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       requests.push({ url, init });
-      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "review-1", name: "review.json", provider: "codex", type: "codex", plan_type: "k12", health: "review", reason_code: "authentication_review", confidence: "low", recommendation: "review", disabled: false, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T08:00:00Z", status_code: 401, review_status: "pending", signal_source: "passive" }], total: 1, page: 1, page_size: url.includes("page_size=100") ? 100 : 50, pages: 1 });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [{ id: "review-1", name: "review.json", provider: "codex", type: "codex", plan_type: "k12", health: "review", reason_code: "authentication_review", confidence: "low", recommendation: "review", disabled: false, editable: true, auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0, last_checked_at: "2026-07-21T08:00:00Z", status_code: 401, review_status: "pending", signal_source: "passive" }], summary: emptyInspectionSummary, total: 1, page: 1, page_size: url.includes("page_size=100") ? 100 : 50, pages: 1 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
       if (url.endsWith("/inspection/review")) return jsonResponse({ id: "review-1", health: "review", review_status: "resolved" });
       if (url.endsWith("/inspection")) return jsonResponse({ ...inspectionSnapshot, probe_sweep_remaining: 0, probe_sweep_total: 0, probe_sweep_completed: 0, probe_sweep_status: "completed" });
@@ -165,7 +205,7 @@ describe("InspectionWorkspace", () => {
         livePolls += 1;
         return jsonResponse({ ...activeSnapshot, revision: livePolls + 1, live_results: livePolls >= 1 ? [liveResult] : [] });
       }
-      if (url.includes("/inspection/results")) return jsonResponse({ results: [liveResult], total: 1, page: 1, page_size: 50, pages: 1 });
+      if (url.includes("/inspection/results")) return jsonResponse({ results: [liveResult], summary: emptyInspectionSummary, total: 1, page: 1, page_size: 50, pages: 1 });
       if (url.includes("/inspection/actions")) return jsonResponse({ actions: [] });
       if (url.includes("/batch/preview")) return jsonResponse({ id: "disable-preview", created_at: "2026-07-21T10:00:02Z", expires_at: "2026-07-21T10:05:02Z", scope_mode: "selected", total: 1, eligible: 1, read_only: 0, missing: 0, physical_files: 1, providers: { codex: 1 }, patch: { fields: ["disabled"], proxy_mutation: false }, targets: [{ id: "live-1", name: "live.json", provider: "codex", eligible: true }] });
       if (url.endsWith("/inspection")) return jsonResponse(activeSnapshot);

@@ -77,6 +77,7 @@ export interface AccountConcurrencyAvailability {
 	host_schema_version: number;
 	required_schema_version: number;
 	reason?: "host_schema_v2_required";
+	storage_error?: string;
 }
 
 export interface AccountConcurrencySummary {
@@ -180,6 +181,7 @@ export interface UsageWindowSnapshot {
   reset_at?: string;
   window_minutes?: number;
 	overdraft_active?: boolean;
+	overdraft_status?: string;
 	overdraft_tokens?: number;
 	overdraft_requests?: number;
 	overdraft_amount_usd?: number;
@@ -264,6 +266,7 @@ export interface AccountListResponse {
   page_size: number;
   pages: number;
 	account_concurrency?: AccountConcurrencyAvailability;
+	usage_storage_error?: string;
 }
 
 export type AccountDeduplicationMatch = "account_id" | "email" | "multiple";
@@ -488,6 +491,7 @@ export interface JobSnapshot {
   finished_at?: string;
   retry_available: boolean;
   persisted: boolean;
+  storage_error?: string;
   results?: JobResult[];
 }
 
@@ -544,6 +548,7 @@ export interface PolicyScanSummary {
   quota_metadata_updated?: number;
   quota_metadata_failed?: number;
   error?: string;
+  failure_details?: OperationFailureDetail[];
 }
 
 export interface PolicySnapshot {
@@ -1067,11 +1072,24 @@ export interface CPAServerVersionSnapshot {
   error?: "current_version_unavailable" | "latest_version_unavailable" | "version_comparison_unavailable";
 }
 
+export interface ExperimentalCodexIdentitySettings {
+  outbound_convergence_enabled: boolean;
+  ingress_gate_enabled: boolean;
+  allow_app_server_clients: boolean;
+  convergence_mode?: string;
+  min_version?: string;
+  max_version?: string;
+  whitelist?: string;
+  blacklist?: string;
+  fingerprint_signals?: string;
+}
+
 export interface ExperimentalSettings {
   weekly_overdraft_enabled: boolean;
   agent_identity_enabled: boolean;
   auto_model_whitelist_enabled: boolean;
   sub2api_credit_usage_enabled: boolean;
+  codex_identity: ExperimentalCodexIdentitySettings;
 }
 
 export interface ExperimentalSettingsSnapshot {
@@ -1131,6 +1149,7 @@ export interface OpenCodeZenAccountView {
 
 export interface OpenCodeZenAccountsResponse {
   accounts: OpenCodeZenAccountView[];
+  storage_error?: string;
 }
 
 export interface OpenCodeZenProbeResult {
@@ -1155,6 +1174,7 @@ export interface OpenCodeZenProbeAccountResponse {
 
 export interface OpenCodeAccountsResponse {
   accounts: OpenCodeAccountView[];
+  storage_error?: string;
 }
 
 export type AIProviderChannelKind =
@@ -1180,12 +1200,18 @@ export interface AIProviderChannelModel {
   input_modalities?: string[];
   output_modalities?: string[];
   thinking?: unknown;
+  /** Original host fields retained so editing known fields cannot erase newer CPA options. */
+  raw?: Record<string, unknown>;
 }
 
 export interface AIProviderAPIKeyEntry {
   api_key?: string;
   weight?: number | null;
   proxy_url?: string;
+  /** CPA runtime auth index; metadata only and never persisted back to config. */
+  auth_index?: string;
+  /** Original host credential row retained for lossless rewrites. */
+  raw?: Record<string, unknown>;
 }
 
 export interface AIProviderChannelEntry {
@@ -1204,9 +1230,12 @@ export interface AIProviderChannelEntry {
   api_key_entries?: AIProviderAPIKeyEntry[];
   support_prompt_cache_key?: boolean;
   disable_cooling?: boolean;
+  request_retry?: number | null;
+  request_scoped_errors?: unknown[];
   alpha_search?: boolean;
   websockets?: boolean;
   rebuild_mid_system_message?: boolean;
+  fingerprint_profile?: string;
   auth_index?: string;
   account_id?: string;
   workspace_id?: string;
@@ -1255,5 +1284,8 @@ export interface AIProviderChannelSnapshot {
   kind: AIProviderChannelKind;
   count: number;
   entries: AIProviderChannelEntry[];
+  /** Stable, redacted issue code when this channel could not be listed. */
+  error?: string;
+  /** Stable issue code when the channel exists but its persisted state is unavailable. */
+  storage_error?: string;
 }
-

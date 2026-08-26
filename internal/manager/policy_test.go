@@ -300,6 +300,36 @@ func TestPolicyEngineChangedPolicySaveResetsFingerprintsWithoutWakingScan(t *tes
 	}
 }
 
+func TestPolicyEngineSetPolicyDoesNotPublishWhenPersistenceFails(t *testing.T) {
+	dataDir := t.TempDir()
+	storeParent := filepath.Join(dataDir, "not-a-directory")
+	if errWrite := os.WriteFile(storeParent, []byte("file"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	engine := NewPolicyEngine(&fakeAuthHost{})
+	oldPolicy := normalizeDefaultPolicy(DefaultPolicy{Enabled: true})
+	engine.mu.Lock()
+	engine.started = true
+	engine.store = filepath.Join(storeParent, "default-policy.json")
+	engine.policy = oldPolicy
+	engine.mu.Unlock()
+
+	_, errSet := engine.SetPolicy(DefaultPolicy{Enabled: false})
+	if errSet == nil {
+		t.Fatal("SetPolicy() unexpectedly succeeded when its store was not writable")
+	}
+	if !errors.Is(errSet, os.ErrNotExist) && !strings.Contains(errSet.Error(), "not-a-directory") {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+	snapshot := engine.Snapshot()
+	if !snapshot.Policy.Enabled {
+		t.Fatalf("failed save replaced in-memory policy: %#v", snapshot.Policy)
+	}
+	if snapshot.LastScan.Error != policyLocalStoreError {
+		t.Fatalf("failed save error marker = %q", snapshot.LastScan.Error)
+	}
+}
+
 func TestPolicyEngineChangedSameStoreConfigureDoesNotWakeScan(t *testing.T) {
 	dataDir := t.TempDir()
 	priority := 4
@@ -363,6 +393,31 @@ func TestPolicyEngineSameStoreReconfigureClearsOnlyConfiguredPolicyError(t *test
 	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &valid})
 	if got := engine.Snapshot().LastScan.Error; got != "auth file scan failed" {
 		t.Fatalf("valid configured policy replaced scan error with %q", got)
+	}
+}
+
+func TestPolicyEngineInvalidSameStoreReconfigureKeepsLastKnownGoodPolicy(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+
+	priority := 9
+	configured := normalizeDefaultPolicy(DefaultPolicy{Enabled: true, Priority: &priority})
+	if _, errSet := engine.SetPolicy(configured); errSet != nil {
+		t.Fatalf("SetPolicy() error = %v", errSet)
+	}
+
+	// Simulate a bad live config reload.  The persisted/active policy must
+	// remain the last valid one rather than being replaced with defaults.
+	invalid := DefaultPolicy{Enabled: true, ScanIntervalSeconds: 1}
+	engine.Configure(Config{DataDir: dataDir, DefaultPolicy: &invalid})
+	snapshot := engine.Snapshot()
+	if !snapshot.Policy.Enabled || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != priority {
+		t.Fatalf("invalid reload replaced active policy: %#v", snapshot.Policy)
+	}
+	if snapshot.LastScan.Error != configuredPolicyError {
+		t.Fatalf("invalid reload error = %q, want %q", snapshot.LastScan.Error, configuredPolicyError)
 	}
 }
 
@@ -582,8 +637,8 @@ func TestPolicyEngineSharesMutationCoordinatorWithExplicitJobs(t *testing.T) {
 	if !coordinator.TryAcquire("batch-job") {
 		t.Fatal("failed to reserve mutation coordinator")
 	}
-	if retrySoon := engine.reconcile(context.Background()); !retrySoon {
-		t.Fatal("busy background policy scan did not request a short retry")
+	if retrySoon := engine.reconcile(context.Background()); retrySoon {
+		t.Fatal("busy background policy scan should be deferred on the normal interval")
 	}
 	host.mu.Lock()
 	blockedSaves := len(host.saves)
@@ -906,5 +961,265 @@ func assertManagedPolicyValues(t *testing.T, raw json.RawMessage, priority int, 
 	}
 	if document[policyFieldPriority] != float64(priority) || document[policyFieldWebsockets] != websockets {
 		t.Fatalf("managed values = priority:%#v websockets:%#v", document[policyFieldPriority], document[policyFieldWebsockets])
+	}
+}
+
+func TestSamePolicyAccountIncludesPlanTypeButIgnoresFileChurn(t *testing.T) {
+	base := authFingerprint{Name: "account.json", Path: "/auth/account.json", PlanType: "free", Size: 10, ModTimeNS: 1, ModTimeSet: true}
+	if !samePolicyAccount(base, authFingerprint{Name: base.Name, Path: base.Path, PlanType: "free", Size: 99, ModTimeNS: 2, ModTimeSet: true}) {
+		t.Fatal("size/mtime churn should not force a policy rescan")
+	}
+	if samePolicyAccount(base, authFingerprint{Name: base.Name, Path: base.Path, PlanType: "plus"}) {
+		t.Fatal("plan type changes must force a policy rescan")
+	}
+}
+
+func TestPolicyEngineDefersOnlyQuotaProbeFailures(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "good", Name: "good.json", Provider: "codex", Type: "codex", PlanType: "free", Source: "file", Path: "/auth/good.json"},
+		{AuthIndex: "bad", Name: "bad.json", Provider: "codex", Type: "codex", PlanType: "free", Source: "file", Path: "/auth/bad.json"},
+	}, details: map[string]cpaapi.HostAuthGetResponse{
+		"good": {AuthIndex: "good", Name: "good.json", Path: "/auth/good.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"free"}`)},
+		"bad":  {AuthIndex: "bad", Name: "bad.json", Path: "/auth/bad.json", JSON: json.RawMessage(`{"type":"codex","plan_type":"free"}`)},
+	}}
+	websockets := false
+	policy := normalizeDefaultPolicy(DefaultPolicy{
+		CodexQuotaMetadataProbeEnabled: true,
+		ConditionalRules: []ConditionalPolicyRule{{
+			ID: "codex-plus", Name: "Codex Plus", Enabled: true, Priority: 100,
+			Conditions: PolicyConditionGroup{Operator: PolicyConditionAll, Conditions: []PolicyCondition{{Field: PolicyConditionProvider, Value: "codex"}, {Field: PolicyConditionAccountType, Value: "plus"}}},
+			Actions:    ConditionalPolicyActions{Websockets: &websockets},
+		}},
+	})
+	engine := NewPolicyEngine(host)
+	engine.Arm("management-secret")
+	engine.SetQuotaMetadataProbe(func(_ context.Context, account Account, managementKey string) (string, error) {
+		if managementKey != "management-secret" {
+			return "", errors.New("unexpected management key")
+		}
+		if account.ID == "bad" {
+			return "", errors.New("upstream quota probe failed")
+		}
+		return "plus", nil
+	})
+
+	summary, fingerprints, _ := engine.scan(t.Context(), policy, time.Now().UTC())
+	if summary.QuotaMetadataProbed != 2 || summary.QuotaMetadataUpdated != 1 || summary.QuotaMetadataFailed != 1 {
+		t.Fatalf("scan summary = %#v", summary)
+	}
+	if _, ok := fingerprints["bad"]; ok {
+		t.Fatalf("failed account was fingerprinted: %#v", fingerprints["bad"])
+	}
+	if good, ok := fingerprints["good"]; !ok || good.PlanType != "plus" {
+		t.Fatalf("successful account fingerprint = %#v, all=%#v", good, fingerprints)
+	}
+	if len(host.saves) != 1 || host.saves[0].Name != "good.json" {
+		t.Fatalf("saves = %#v", host.saves)
+	}
+}
+
+func TestPolicyEngineWithoutQuotaProbePersistsFingerprintForCodex(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "codex-account", Name: "codex-account.json", Provider: "codex", Type: "codex",
+		Source: "file", Path: "/auths/codex-account.json",
+	}}}
+	priority := 7
+	policy := normalizeDefaultPolicy(DefaultPolicy{Priority: &priority})
+	engine := NewPolicyEngine(host)
+	started := time.Now().UTC()
+	summary, fingerprints, failures, _ := engine.scanWithState(t.Context(), policy, started)
+	if summary.Failed != 0 || len(failures) != 0 || len(fingerprints) != 1 {
+		t.Fatalf("first scan summary=%#v fingerprints=%#v failures=%#v", summary, fingerprints, failures)
+	}
+	engine.mu.Lock()
+	engine.fingerprints = fingerprints
+	engine.failures = failures
+	engine.mu.Unlock()
+	second, next, retry, _ := engine.scanWithState(t.Context(), policy, started.Add(time.Second))
+	if second.Failed != 0 || second.Changed != 0 || second.Skipped != 1 || len(retry) != 0 || len(next) != 1 {
+		t.Fatalf("unchanged scan repeated work: summary=%#v fingerprints=%#v failures=%#v", second, next, retry)
+	}
+}
+
+func TestPolicyEngineMissingQuotaCredentialBacksOffInsteadOfTightLoop(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{
+		AuthIndex: "codex-account", Name: "codex-account.json", Provider: "codex", Type: "codex",
+		Source: "file", Path: "/auths/codex-account.json",
+	}}}
+	engine := NewPolicyEngine(host)
+	engine.SetQuotaMetadataProbe(func(context.Context, Account, string) (string, error) {
+		t.Fatal("quota probe should not run without a management credential")
+		return "", nil
+	})
+	policy := normalizeDefaultPolicy(DefaultPolicy{CodexQuotaMetadataProbeEnabled: true})
+	started := time.Now().UTC()
+	summary, fingerprints, failures, _ := engine.scanWithState(t.Context(), policy, started)
+	if summary.QuotaMetadataProbed != 0 || summary.Failed != 0 || len(fingerprints) != 0 {
+		t.Fatalf("unexpected first scan state: summary=%#v fingerprints=%#v", summary, fingerprints)
+	}
+	failure, ok := failures["codex-account"]
+	if !ok || !failure.RetryAt.After(started) {
+		t.Fatalf("missing quota backoff: %#v", failures)
+	}
+	engine.mu.Lock()
+	engine.failures = failures
+	engine.mu.Unlock()
+	second, _, retry, _ := engine.scanWithState(t.Context(), policy, started.Add(time.Second))
+	if second.QuotaMetadataProbed != 0 || second.Failed != 0 || second.Skipped != 1 || len(retry) != 1 {
+		t.Fatalf("missing quota credential caused a retry loop: summary=%#v failures=%#v", second, retry)
+	}
+}
+
+func TestPolicyConfigureRetriesCorruptSameStore(t *testing.T) {
+	dataDir := t.TempDir()
+	storePath := policyStorePath(dataDir)
+	if errWrite := os.WriteFile(storePath, []byte("{"), 0o600); errWrite != nil {
+		t.Fatalf("write corrupt policy state: %v", errWrite)
+	}
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	// This test exercises same-store recovery only. Keep the background
+	// reconciler parked so it cannot legitimately replace the recovered
+	// fingerprint set before the assertion (especially under -race).
+	engine.SetBackgroundWorkOwner(backgroundWorkOwnerFunc(func() bool { return false }))
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	if got := engine.Snapshot().LastScan.Error; got != "stored default policy could not be loaded" {
+		t.Fatalf("load error = %q", got)
+	}
+	priority := 8
+	want := normalizeDefaultPolicy(DefaultPolicy{Enabled: true, Priority: &priority})
+	if errSave := savePolicyRuntimeState(storePath, want, PolicyScanSummary{Scanned: 4}, map[string]authFingerprint{
+		"known": {Name: "known.json", Path: "/auths/known.json", PlanType: "plus"},
+	}); errSave != nil {
+		t.Fatalf("save recovered policy state: %v", errSave)
+	}
+	engine.Configure(Config{DataDir: dataDir})
+	snapshot := engine.Snapshot()
+	if snapshot.LastScan.Error != "" || snapshot.Policy.Priority == nil || *snapshot.Policy.Priority != priority || snapshot.LastScan.Scanned != 4 {
+		t.Fatalf("recovered snapshot = %#v", snapshot)
+	}
+	engine.mu.RLock()
+	_, known := engine.fingerprints["known"]
+	engine.mu.RUnlock()
+	if !known {
+		t.Fatal("recovered fingerprint is missing")
+	}
+}
+
+func TestPolicyRetriesFailedRuntimePersistence(t *testing.T) {
+	previousDelay := policyPersistRetryDelay
+	policyPersistRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() { policyPersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(Config{DataDir: dataDir})
+	defer engine.Shutdown()
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocking path: %v", errWrite)
+	}
+	engine.mu.Lock()
+	engine.store = filepath.Join(blockingPath, "default-policy.json")
+	engine.lastScan = PolicyScanSummary{Scanned: 7}
+	engine.fingerprints["persist-me"] = authFingerprint{Name: "persist-me.json", Path: "/auths/persist-me.json"}
+	engine.dirty = true
+	engine.mu.Unlock()
+	engine.operationMu.Lock()
+	engine.persistRuntimeStateLocked()
+	engine.operationMu.Unlock()
+	if got := engine.Snapshot().LastScan.Error; got != policyLocalStoreError {
+		t.Fatalf("persistence error = %q", got)
+	}
+	if errRemove := os.Remove(blockingPath); errRemove != nil {
+		t.Fatalf("remove blocking path: %v", errRemove)
+	}
+	if errMkdir := os.MkdirAll(blockingPath, 0o700); errMkdir != nil {
+		t.Fatalf("restore blocking path: %v", errMkdir)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && engine.Snapshot().LastScan.Error == policyLocalStoreError {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := engine.Snapshot().LastScan.Error; got != "" {
+		t.Fatalf("persistence error after retry = %q", got)
+	}
+	_, loadedScan, loadedFingerprints, errLoad := loadPolicyRuntimeState(filepath.Join(blockingPath, "default-policy.json"))
+	if errLoad != nil {
+		t.Fatalf("load retried state: %v", errLoad)
+	}
+	if loadedScan.Scanned != 7 {
+		t.Fatalf("loaded scan = %#v", loadedScan)
+	}
+	if _, exists := loadedFingerprints["persist-me"]; !exists {
+		t.Fatal("retry lost fingerprint")
+	}
+	for _, detail := range loadedScan.FailureDetails {
+		if detail.ReasonCode == OperationFailurePolicyStatePersist {
+			t.Fatal("transient local persistence failure was written as scan evidence")
+		}
+	}
+}
+
+func TestPolicyDoesNotSwitchStoreWhenDirtyFlushFails(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(Config{DataDir: oldDir})
+	defer engine.Shutdown()
+	engine.mu.Lock()
+	engine.fingerprints["keep-me"] = authFingerprint{Name: "keep-me.json", Path: "/auths/keep-me.json"}
+	engine.dirty = true
+	engine.mu.Unlock()
+	if errRemove := os.RemoveAll(oldDir); errRemove != nil {
+		t.Fatalf("remove old data dir: %v", errRemove)
+	}
+	if errWrite := os.WriteFile(oldDir, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("replace old data dir with file: %v", errWrite)
+	}
+	engine.Configure(Config{DataDir: newDir})
+	engine.mu.RLock()
+	store, dirty := engine.store, engine.dirty
+	_, exists := engine.fingerprints["keep-me"]
+	engine.mu.RUnlock()
+	if store != policyStorePath(oldDir) || !dirty || !exists {
+		t.Fatalf("dirty state switched or was lost: store=%q dirty=%v exists=%v", store, dirty, exists)
+	}
+	if got := engine.Snapshot().LastScan.Error; got != policyLocalStoreError {
+		t.Fatalf("persistence error = %q", got)
+	}
+}
+
+func TestPolicyShutdownStopsPersistenceRetry(t *testing.T) {
+	previousDelay := policyPersistRetryDelay
+	policyPersistRetryDelay = time.Hour
+	t.Cleanup(func() { policyPersistRetryDelay = previousDelay })
+
+	dataDir := t.TempDir()
+	engine := NewPolicyEngine(&fakeAuthHost{details: map[string]cpaapi.HostAuthGetResponse{}})
+	engine.Configure(Config{DataDir: dataDir})
+	blockingPath := filepath.Join(dataDir, "blocked")
+	if errWrite := os.WriteFile(blockingPath, []byte("block"), 0o600); errWrite != nil {
+		t.Fatalf("write blocking path: %v", errWrite)
+	}
+	engine.mu.Lock()
+	engine.store = filepath.Join(blockingPath, "default-policy.json")
+	engine.dirty = true
+	engine.mu.Unlock()
+	engine.operationMu.Lock()
+	engine.persistRuntimeStateLocked()
+	engine.operationMu.Unlock()
+	engine.mu.RLock()
+	scheduled := engine.retryScheduled && engine.retryTimer != nil
+	engine.mu.RUnlock()
+	if !scheduled {
+		t.Fatal("persistence retry was not scheduled")
+	}
+	engine.Shutdown()
+	engine.mu.RLock()
+	scheduled = engine.retryScheduled || engine.retryTimer != nil
+	engine.mu.RUnlock()
+	if scheduled {
+		t.Fatal("persistence retry survived shutdown")
 	}
 }

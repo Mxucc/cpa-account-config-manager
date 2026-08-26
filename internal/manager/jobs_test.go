@@ -261,6 +261,75 @@ func TestJobEngineClearsManagementKeyWhenStartFails(t *testing.T) {
 	if writer.key != "" {
 		t.Fatalf("management key was not cleared after failed start")
 	}
+	snapshot := engine.Snapshot(false)
+	if snapshot.State != JobStateIdle || snapshot.Persisted || snapshot.StorageError == "" {
+		t.Fatalf("failed start snapshot = %#v, want visible storage failure", snapshot)
+	}
+}
+
+func TestJobEngineConfigureRetriesFailedLoadForSameStore(t *testing.T) {
+	dataDir := t.TempDir()
+	store := jobStorePath(dataDir)
+	if errWrite := os.WriteFile(store, []byte("not-json"), 0o600); errWrite != nil {
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	engine := NewJobEngine(NewAccountService(&fakeAuthHost{}))
+	defer engine.Shutdown()
+	engine.Configure(Config{DataDir: dataDir})
+	if snapshot := engine.Snapshot(false); snapshot.StorageError == "" {
+		t.Fatalf("initial snapshot = %#v, want load error", snapshot)
+	}
+	want := JobSnapshot{ID: "restored", Operation: BatchOperationPatch, State: JobStateCompleted, Persisted: true}
+	if errSave := saveJobSnapshot(store, want); errSave != nil {
+		t.Fatalf("saveJobSnapshot() error = %v", errSave)
+	}
+	engine.Configure(Config{DataDir: dataDir})
+	got := engine.Snapshot(false)
+	if got.ID != want.ID || got.State != want.State || got.StorageError != "" {
+		t.Fatalf("retried snapshot = %#v, want restored state %#v", got, want)
+	}
+}
+
+func TestJobEngineRetriesTerminalSnapshotPersistence(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := NewJobEngine(NewAccountService(&fakeAuthHost{}))
+	engine.Configure(Config{DataDir: dataDir})
+	engine.mu.Lock()
+	engine.persistRetryDelay = 10 * time.Millisecond
+	engine.snapshot = JobSnapshot{ID: "terminal", Operation: BatchOperationPatch, State: JobStateCompleted}
+	engine.store = filepath.Join(dataDir, "blocked", "results.json")
+	if errWrite := os.WriteFile(filepath.Dir(engine.store), []byte("block"), 0o600); errWrite != nil {
+		engine.mu.Unlock()
+		t.Fatalf("WriteFile() error = %v", errWrite)
+	}
+	if errPersist := engine.persistLocked(); errPersist == nil {
+		engine.mu.Unlock()
+		t.Fatal("persistLocked() unexpectedly succeeded")
+	}
+	blockedPath := filepath.Dir(engine.store)
+	engine.mu.Unlock()
+
+	if errRemove := os.Remove(blockedPath); errRemove != nil {
+		t.Fatalf("Remove() error = %v", errRemove)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := engine.Snapshot(false)
+		if snapshot.Persisted && snapshot.StorageError == "" {
+			loaded, errLoad := loadJobSnapshot(engine.store)
+			if errLoad != nil {
+				t.Fatalf("loadJobSnapshot() error = %v", errLoad)
+			}
+			if loaded.ID != "terminal" || loaded.State != JobStateCompleted {
+				t.Fatalf("persisted snapshot = %#v", loaded)
+			}
+			engine.Shutdown()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	engine.Shutdown()
+	t.Fatalf("job snapshot was not retried: %#v", engine.Snapshot(false))
 }
 
 func waitForTerminalJob(t *testing.T, engine *JobEngine) JobSnapshot {

@@ -15,6 +15,22 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+type modelProbeNilResponseDoer struct{}
+
+func (modelProbeNilResponseDoer) Do(*http.Request) (*http.Response, error) { return nil, nil }
+
+func TestModelTestServiceRejectsEmptyManagementResponse(t *testing.T) {
+	service := &ModelTestService{doer: modelProbeNilResponseDoer{}}
+	_, errCall := service.callManagementAPI(context.Background(), "http://127.0.0.1:8317", "management-secret", "auth-1", modelProbe{
+		kind:   "codex",
+		method: http.MethodPost,
+		url:    "https://chatgpt.com/backend-api/codex/responses",
+	})
+	if errCall == nil || !strings.Contains(errCall.Error(), "empty response") {
+		t.Fatalf("callManagementAPI() error = %v", errCall)
+	}
+}
+
 func TestHandleAccountModelTestUsesSelectedCPAAuthAndRecordsSanitizedResult(t *testing.T) {
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{
@@ -540,7 +556,7 @@ func TestHandleAccountModelTestLoadsEnabledWeeklyOverdraftExperiment(t *testing.
 	host := &fakeAuthHost{
 		entries: []cpaapi.HostAuthFileEntry{{
 			AuthIndex: "auth-1", Name: "experimental.json", Provider: "codex", Type: "codex",
-			AccountType: "oauth", Source: "file", Path: "/auths/experimental.json",
+			Email: "experimental@example.com", AccountType: "oauth", Source: "file", Path: "/auths/experimental.json",
 		}},
 		details: map[string]cpaapi.HostAuthGetResponse{
 			"auth-1": {
@@ -572,6 +588,13 @@ func TestHandleAccountModelTestLoadsEnabledWeeklyOverdraftExperiment(t *testing.
 	transformer.newCallID = func() (string, bool) { return "call_cpa_overdraft_account_test", true }
 	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\nexperimental_settings:\n  weekly_overdraft_enabled: true\n"))
 	defer app.Close()
+	// The 95% pre-arm gate mirrors the sub2api-overdraft eligibility check on
+	// the probe path: the account must already carry usage evidence near
+	// exhaustion, otherwise the probe is not injected.
+	app.usage.Observe(cpaapi.UsageRecord{
+		Provider: "codex", AuthIndex: "auth-1",
+		ResponseHeaders: codexUsageObservationHeaders(time.Now(), 100, 100),
+	})
 
 	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-1", Model: "gpt-5.4", ExperimentalWeeklyOverdraft: true})
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
@@ -1163,5 +1186,38 @@ func TestInspectionCodexAlwaysUsesCredentialProbeForAPIKeyRuntimeMetadata(t *tes
 	}
 	if result.Response != nil {
 		t.Fatalf("inspection result retained an upstream response preview: %#v", result.Response)
+	}
+}
+
+func TestRecordModelTestSurfacesSanitizedInspectionRecordFailure(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	result := ModelTestResult{
+		AccountID:  "account-1",
+		Model:      "gpt-test",
+		Status:     "available",
+		ReasonCode: "model_response_ok",
+		TestedAt:   time.Now().UTC(),
+	}
+
+	app.recordModelTest(result, OperationSourceManual, fmt.Errorf("write /secret/path with bearer-secret"))
+
+	listed := app.operations.List(OperationQuery{Page: 1})
+	if len(listed.Operations) != 1 {
+		t.Fatalf("operation count = %d, want 1", len(listed.Operations))
+	}
+	operation := listed.Operations[0]
+	if operation.Status != OperationStatusWarning || operation.Succeeded != 1 || len(operation.FailureDetails) != 1 ||
+		operation.FailureDetails[0].ReasonCode != OperationFailureModelTestInspectionRecord {
+		t.Fatalf("operation = %#v", operation)
+	}
+	raw, errMarshal := json.Marshal(operation)
+	if errMarshal != nil {
+		t.Fatalf("marshal operation: %v", errMarshal)
+	}
+	for _, secret := range []string{"secret/path", "bearer-secret"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("operation leaked %q: %s", secret, raw)
+		}
 	}
 }

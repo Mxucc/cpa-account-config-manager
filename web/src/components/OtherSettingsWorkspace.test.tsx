@@ -36,7 +36,7 @@ describe("OtherSettingsWorkspace", () => {
       if (url.endsWith("/updates")) {
         return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.91", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z", runtime: { active: true, superseded: false, instance_version: "0.2.91", restart_required: false, restart_recommended: true } });
       }
-      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false } });
+      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
       if (url === "/v0/management/plugin-store") {
         return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.91", update_available: true }] });
       }
@@ -101,7 +101,7 @@ describe("OtherSettingsWorkspace", () => {
       runtime: { active: false, superseded: false, instance_version: "0.2.91", restart_required: true, restart_recommended: false },
     });
     vi.spyOn(api, "getCPAServerVersionStatus").mockResolvedValue({ update_available: false, checked_at: "2026-07-25T08:00:00Z" });
-    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false } });
+    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
     vi.spyOn(api, "installPluginUpdate").mockResolvedValue({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: true });
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
@@ -122,7 +122,7 @@ describe("OtherSettingsWorkspace", () => {
       checking: false, pending: false, checked_at: "2026-07-25T08:00:00Z",
     });
     vi.spyOn(api, "getCPAServerVersionStatus").mockResolvedValue({ update_available: false, checked_at: "2026-07-25T08:00:00Z" });
-    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false } });
+    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
     const install = vi.spyOn(api, "installPluginUpdate").mockResolvedValue({ status: "installed", id: "cpa-account-config-manager", version: "0.3.0", restart_required: false });
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
@@ -151,9 +151,9 @@ describe("OtherSettingsWorkspace", () => {
         return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.991", installed: true, installed_version: "0.2.991", update_available: false }] });
       }
       if (url.endsWith("/experiments") && init.method === "PUT") {
-        return jsonResponse({ settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true } });
+        return jsonResponse({ settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
       }
-      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false } });
+      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
       if (url.endsWith("/config") && init.method === "PATCH") return jsonResponse({});
       return jsonResponse({});
     });
@@ -178,9 +178,43 @@ describe("OtherSettingsWorkspace", () => {
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));
     const configRequest = requests.find(({ url, init }) => url.endsWith("/config") && init.method === "PATCH");
     const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
-    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true } });
-    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true });
-    expect(onExperimentalSettingsChange).toHaveBeenLastCalledWith({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true });
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "", min_version: "", max_version: "", whitelist: "", blacklist: "", fingerprint_signals: "" } } });
+    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "", min_version: "", max_version: "", whitelist: "", blacklist: "", fingerprint_signals: "" } });
+    expect(onExperimentalSettingsChange).toHaveBeenLastCalledWith({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } });
+    expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
+  });
+  it("loads, changes, and persists the Codex convergence mode", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/experiments") && init.method === "PUT") {
+        return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: true, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "session" } } });
+      }
+      if (url.endsWith("/experiments")) {
+        return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: true, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "device" } } });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+    const workspace = await screen.findByRole("region", { name: "其他配置" });
+    await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
+    const panel = within(workspace).getByRole("tabpanel", { name: "实验性功能" });
+    await user.click(within(panel).getByText("高级策略 JSON"));
+
+    const mode = within(panel).getByLabelText("收敛模式");
+    expect(mode).toHaveValue("device");
+    await user.selectOptions(mode, "session");
+    await user.click(within(panel).getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));
+    const request = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
+    const body = JSON.parse(String(request?.init.body));
+    expect(body.codex_identity.convergence_mode).toBe("session");
     expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
   });
 });

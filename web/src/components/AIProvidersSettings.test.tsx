@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetSessionForTest, setSession } from "../store/session";
@@ -6,6 +6,16 @@ import { AIProvidersSettings } from "./AIProvidersSettings";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function authIndexedOpenAIEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  const keyEntries = (Array.isArray(entry["api-key-entries"])
+    ? entry["api-key-entries"]
+    : []) as Array<Record<string, unknown>>;
+  if (keyEntries.length > 0) {
+    return { ...entry, "api-key-entries": keyEntries.map((keyEntry) => ({ ...keyEntry, "auth-index": `openai-${keyEntry["api-key"]}` })) };
+  }
+  return { ...entry, "auth-index": "openai-entry" };
 }
 
 describe("AIProvidersSettings", () => {
@@ -21,7 +31,7 @@ describe("AIProvidersSettings", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       requests.push({ url, init });
-      const openai = overrides["openai-compatibility"] ?? [
+      const openai = (overrides["openai-compatibility"] as Array<Record<string, unknown>> | undefined) ?? [
         { name: "OpenRouter", "base-url": "https://openrouter.ai/api/v1", "api-key-entries": [{ "api-key": "sk-or-live-1234abcd", "proxy-url": "" }], models: [{ name: "deepseek-chat", alias: "deepseek-chat" }] },
       ];
       const gemini = overrides["gemini-api-key"] ?? [
@@ -36,7 +46,9 @@ describe("AIProvidersSettings", () => {
       }
       if (url.endsWith("/opencode/accounts")) return jsonResponse({ accounts: opencode });
       if (url.endsWith("/opencode/refresh")) return jsonResponse({ results: {} });
-      if (url.endsWith("/openai-compatibility")) return jsonResponse({ "openai-compatibility": openai });
+      if (url.endsWith("/openai-compatibility")) {
+        return jsonResponse({ "openai-compatibility": openai.map(authIndexedOpenAIEntry) });
+      }
       if (url.endsWith("/gemini-api-key")) return jsonResponse({ "gemini-api-key": gemini });
       if (url.endsWith("/interactions-api-key")) return jsonResponse({ "interactions-api-key": [] });
       if (url.endsWith("/claude-api-key")) return jsonResponse({ "claude-api-key": [] });
@@ -44,6 +56,9 @@ describe("AIProvidersSettings", () => {
       if (url.endsWith("/xai-api-key")) return jsonResponse({ "xai-api-key": [] });
       if (url.endsWith("/vertex-api-key")) return jsonResponse({ "vertex-api-key": [] });
       if (url.endsWith("/api-keys")) return jsonResponse({ "api-keys": [] });
+      if (url.endsWith("/ai-providers/runtime")) {
+        return jsonResponse({ snapshots: [], updated_at: new Date().toISOString() });
+      }
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -64,6 +79,8 @@ describe("AIProvidersSettings", () => {
           models: [{ name: "deepseek-chat", alias: "deepseek-chat" }],
           "support-prompt-cache-key": true,
           "disable-cooling": true,
+          "request-retry": 3,
+          "request-scoped-errors": [{ match: "rate limited" }],
         },
       ],
     });
@@ -100,10 +117,11 @@ describe("AIProvidersSettings", () => {
     expect(body).toHaveLength(2);
     expect(body[0]).toMatchObject({ name: "OpenRouter", "base-url": "https://openrouter.ai/api/v1" });
     expect(body[0]["api-key-entries"]).toEqual([
-      { "api-key": "sk-or-live-1234abcd", weight: 2, "proxy-url": "https://key-proxy.example" },
-      { "api-key": "sk-or-backup-5678", weight: 1 },
+      { "api-key": "sk-or-live-1234abcd", weight: 2, "proxy-url": "https://key-proxy.example", "auth-index": "openai-sk-or-live-1234abcd" },
+      { "api-key": "sk-or-backup-5678", weight: 1, "auth-index": "openai-sk-or-backup-5678" },
     ]);
     expect(body[0]).toMatchObject({ "support-prompt-cache-key": true, "disable-cooling": true });
+    expect(body[0]).toMatchObject({ "request-retry": 3, "request-scoped-errors": [{ match: "rate limited" }] });
     expect(body[1]).toMatchObject({ name: "MyProvider", "base-url": "https://my.example.com/v1" });
     expect(JSON.stringify(body)).toContain("sk-new-secret-1234");
     expect(onNotice).toHaveBeenCalledWith("AI 提供商已添加");
@@ -144,11 +162,158 @@ describe("AIProvidersSettings", () => {
     expect(body[0]).toMatchObject({
       name: "OpenRouter",
       "api-key-entries": [
-        { "api-key": "sk-replacement-5678", weight: 2, "proxy-url": "https://first-proxy.example" },
-        { "api-key": "sk-or-backup-5678", weight: 1, "proxy-url": "https://backup-proxy.example" },
+        { "api-key": "sk-replacement-5678", weight: 2, "proxy-url": "https://first-proxy.example", "auth-index": "openai-sk-or-live-1234abcd" },
+        { "api-key": "sk-or-backup-5678", weight: 1, "proxy-url": "https://backup-proxy.example", "auth-index": "openai-sk-or-backup-5678" },
       ],
     });
     expect(body[0]["api-key"]).toBeUndefined();
+  });
+
+  it("keeps unrelated weighted OpenAI-compatible keys when editing the first credential row", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock({
+      "openai-compatibility": [
+        {
+          name: "OpenRouter",
+          "base-url": "https://openrouter.ai/api/v1",
+          "api-key-entries": [
+            { "api-key": "sk-first-1234abcd" },
+            { "api-key": "sk-second-5678efgh", weight: 3, "proxy-url": "https://second-proxy.example" },
+          ],
+        },
+      ],
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+    const keyInput = dialog.querySelector<HTMLInputElement>(".secret-input input") as HTMLInputElement;
+    expect(keyInput.placeholder).toBe("输入新 Key 替换当前凭据");
+    await user.type(keyInput, "sk-replacement-9012ijklmn");
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
+    expect(body[0]["api-key-entries"]).toEqual([
+      { "api-key": "sk-replacement-9012ijklmn", "auth-index": "openai-sk-first-1234abcd" },
+      { "api-key": "sk-second-5678efgh", weight: 3, "proxy-url": "https://second-proxy.example", "auth-index": "openai-sk-second-5678efgh" },
+    ]);
+  });
+
+  it("keeps the existing first OpenAI-compatible key when only unrelated fields change", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock({
+      "openai-compatibility": [
+        {
+          name: "OpenRouter",
+          "base-url": "https://openrouter.ai/api/v1",
+          "api-key-entries": [
+            { "api-key": "sk-first-1234abcd" },
+            { "api-key": "sk-second-5678efgh", weight: 3, "proxy-url": "https://second-proxy.example" },
+          ],
+        },
+      ],
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+    await user.clear(within(dialog).getByLabelText("提供商名称"));
+    await user.type(within(dialog).getByLabelText("提供商名称"), "OpenRouter Updated");
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
+    expect(body[0].name).toBe("OpenRouter Updated");
+    expect(body[0]["api-key-entries"]).toEqual([
+      { "api-key": "sk-first-1234abcd", "auth-index": "openai-sk-first-1234abcd" },
+      { "api-key": "sk-second-5678efgh", weight: 3, "proxy-url": "https://second-proxy.example", "auth-index": "openai-sk-second-5678efgh" },
+    ]);
+  });
+
+  it("preserves a legacy top-level OpenAI-compatible API key when editing other fields", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock({
+      "openai-compatibility": [
+        {
+          name: "LegacyProvider",
+          "base-url": "https://legacy.example.com/v1",
+          "api-key": "sk-legacy-secret-1234",
+        },
+      ],
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((candidate) => candidate.textContent?.includes("LegacyProvider"));
+    expect(row).toBeDefined();
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+    const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
+    expect(body[0]["api-key"]).toBeUndefined();
+    expect(body[0]["api-key-entries"]).toEqual([{ "api-key": "sk-legacy-secret-1234" }]);
+  });
+
+  it("loads and updates CPA request retry and scoped error rules", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock({
+      "openai-compatibility": [
+        {
+          name: "RetryProvider",
+          "base-url": "https://retry.example.com/v1",
+          "api-key-entries": [{ "api-key": "sk-retry-secret-1234" }],
+          "request-retry": 2,
+          "request-scoped-errors": [{ match: "old rule" }],
+        },
+      ],
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((candidate) => candidate.textContent?.includes("RetryProvider"));
+    expect(row).toBeDefined();
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+    expect(within(dialog).getByLabelText("请求重试覆盖（留空使用全局，0 禁用）")).toHaveValue(2);
+    expect(within(dialog).getByLabelText("请求范围错误规则（每行一个 JSON 对象）")).toHaveValue('{"match":"old rule"}');
+
+    const retryField = within(dialog).getByLabelText("请求重试覆盖（留空使用全局，0 禁用）");
+    await user.clear(retryField);
+    await user.type(retryField, "5");
+    const errorsField = within(dialog).getByLabelText("请求范围错误规则（每行一个 JSON 对象）");
+    await user.clear(errorsField);
+    await user.clear(errorsField);
+    fireEvent.change(errorsField, { target: { value: '{"match":"new rule"}' } });
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/openai-compatibility") && init.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
+    expect(body[0]).toMatchObject({
+      "request-retry": 5,
+      "request-scoped-errors": [{ match: "new rule" }],
+    });
   });
 
   it("offers every provider type when adding a new provider", async () => {
@@ -227,6 +392,7 @@ describe("AIProvidersSettings", () => {
     expect(openaiRow).toBeDefined();
     await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "删除该渠道" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility?index=0") && init.method === "DELETE")).toBe(true));
+    await waitFor(() => expect(requests.filter(({ url, init }) => url.endsWith("/openai-compatibility") && !init.method)).toHaveLength(2));
     expect(onNotice).toHaveBeenCalledWith("渠道已删除");
   });
 

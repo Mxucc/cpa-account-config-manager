@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,10 +66,13 @@ type OpenCodeZenProbeResult struct {
 // endpoints both accept the credential. See
 // https://github.com/Kiowx/opencode-cc for the bridge reference.
 type OpenCodeZenService struct {
-	mu       sync.RWMutex
-	accounts []OpenCodeZenAccount
-	dataDir  string
-	now      func() time.Time
+	mu         sync.RWMutex
+	accounts   []OpenCodeZenAccount
+	dataDir    string
+	loaded     bool
+	loadFailed bool
+	storageErr string
+	now        func() time.Time
 }
 
 func NewOpenCodeZenService() *OpenCodeZenService {
@@ -87,18 +91,50 @@ func (s *OpenCodeZenService) Configure(config Config) {
 	if s == nil {
 		return
 	}
-	var loaded openCodeZenPersisted
-	if config.DataDir != "" {
-		if raw, errRead := os.ReadFile(openCodeZenStorePath(config.DataDir)); errRead == nil {
-			if errDecode := json.Unmarshal(raw, &loaded); errDecode == nil && loaded.Version == openCodeZenStoreVersion {
-				loaded.Accounts = normalizeOpenCodeZenAccounts(loaded.Accounts)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sameStore := s.loaded && s.dataDir == config.DataDir
+	if sameStore && !s.loadFailed {
+		return
+	}
+	loaded, errLoad := loadOpenCodeZenState(openCodeZenStorePath(config.DataDir), config.DataDir != "")
+	if errLoad != nil {
+		s.loaded = true
+		s.loadFailed = !errors.Is(errLoad, os.ErrNotExist)
+		if s.loadFailed {
+			s.storageErr = "OpenCode Zen state could not be loaded"
+		} else {
+			s.storageErr = ""
+			if !sameStore {
+				s.accounts = nil
 			}
 		}
+		s.dataDir = config.DataDir
+		return
 	}
-	s.mu.Lock()
 	s.dataDir = config.DataDir
-	s.accounts = append([]OpenCodeZenAccount(nil), loaded.Accounts...)
-	s.mu.Unlock()
+	s.accounts = normalizeOpenCodeZenAccounts(loaded.Accounts)
+	s.loaded = true
+	s.loadFailed = false
+	s.storageErr = ""
+}
+
+func loadOpenCodeZenState(storePath string, enabled bool) (openCodeZenPersisted, error) {
+	var loaded openCodeZenPersisted
+	if !enabled {
+		return loaded, os.ErrNotExist
+	}
+	raw, errRead := os.ReadFile(storePath)
+	if errRead != nil {
+		return loaded, errRead
+	}
+	if errDecode := json.Unmarshal(raw, &loaded); errDecode != nil {
+		return loaded, fmt.Errorf("decode OpenCode Zen state: %w", errDecode)
+	}
+	if loaded.Version != openCodeZenStoreVersion {
+		return loaded, fmt.Errorf("unsupported OpenCode Zen state version")
+	}
+	return loaded, nil
 }
 
 func normalizeOpenCodeZenAccounts(accounts []OpenCodeZenAccount) []OpenCodeZenAccount {
@@ -120,10 +156,26 @@ func (s *OpenCodeZenService) persistLocked() error {
 	if s.dataDir == "" {
 		return nil
 	}
-	return savePrivateJSON(openCodeZenStorePath(s.dataDir), openCodeZenPersisted{
+	errPersist := savePrivateJSON(openCodeZenStorePath(s.dataDir), openCodeZenPersisted{
 		Version:  openCodeZenStoreVersion,
 		Accounts: append([]OpenCodeZenAccount(nil), s.accounts...),
 	})
+	if errPersist != nil {
+		s.storageErr = "OpenCode Zen state could not be persisted"
+		return errPersist
+	}
+	s.loadFailed = false
+	s.storageErr = ""
+	return nil
+}
+
+func (s *OpenCodeZenService) StorageError() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.storageErr
 }
 
 // ListAccounts returns the redacted account list.
@@ -304,6 +356,10 @@ func probeOpenCodeZenEndpoint(ctx context.Context, baseURL, apiKey string, timeo
 		response, errDo := client.Do(request)
 		if errDo != nil {
 			lastDetail = sanitizeAIProviderProbeError(errDo)
+			continue
+		}
+		if response == nil || response.Body == nil {
+			lastDetail = "upstream returned an empty response"
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, openCodeZenMaxProbeBytes))

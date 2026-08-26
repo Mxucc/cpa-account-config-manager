@@ -191,7 +191,7 @@ func saveInspectionState(path string, state persistedInspectionState) error {
 	state.Policy = normalizeInspectionPolicy(state.Policy)
 	state.LastNotificationByEndpoint = notificationCooldownsForEndpoints(state.LastNotificationByEndpoint, state.Policy.NotificationEndpoints)
 	state.Records = sanitizeInspectionRecords(state.Records)
-	state.Actions = append([]InspectionAction(nil), state.Actions...)
+	state.Actions = sanitizeInspectionActions(state.Actions)
 	state.ProbeSweepTargets = append([]string(nil), state.ProbeSweepTargets...)
 	state.RunHealth = append([]string(nil), state.RunHealth...)
 	state.RunSelected = append([]string(nil), state.RunSelected...)
@@ -333,6 +333,7 @@ func sanitizeInspectionActions(actions []InspectionAction) []InspectionAction {
 			action.Source = OperationSourceInspection
 		}
 		action.ReasonCode = safeInspectionReason(action.ReasonCode)
+		action.FailureReason = safeOperationFailureReason(action.FailureReason)
 		if action.ID == "" || action.AccountID == "" || action.Action == "" || action.Status == "" {
 			continue
 		}

@@ -17,13 +17,26 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
     ? tx("ui.total_tokens_count", { count: formatNumber(usage.total_tokens) })
     : tx("ui.no_cpa_usage_data_received");
   const credit = usage?.credit;
-  const hasCreditSamples = Boolean(credit && (credit.rated_requests > 0 || credit.unrated_requests > 0));
+  // A rated request can legitimately cost less than one display cent. Treat
+  // the presence of a persisted credit snapshot (including a zero-cost
+  // request) as collected data; otherwise the cell stays stuck on
+  // "awaiting credit usage collection" forever for inexpensive models.
+  const hasCreditSamples = Boolean(credit && (
+    credit.rated_requests > 0 ||
+    credit.unrated_requests > 0 ||
+    credit.amount_usd > 0 ||
+    credit.started_at ||
+    credit.pricing_updated_at
+  ));
+  const hasObservedUsage = Boolean(usage && safeCount(usage.total_tokens) > 0);
   const primaryUsageValue = creditUsageEnabled && hasCreditSamples
     ? formatCreditUSD(credit?.amount_usd ?? 0, locale)
     : creditUsageEnabled
-      ? tx("ui.awaiting_credit_usage_collection")
+      ? hasObservedUsage ? tokenValue : tx("ui.awaiting_credit_usage_collection")
       : tokenValue;
-  const primaryUsageUnit = creditUsageEnabled && hasCreditSamples ? "USD" : creditUsageEnabled ? "" : "tok";
+  const primaryUsageUnit = creditUsageEnabled
+    ? hasCreditSamples || hasObservedUsage ? (hasCreditSamples ? "USD" : "tok") : ""
+    : "tok";
   const primaryUsageTitle = creditUsageEnabled
     ? hasCreditSamples
       ? tx("ui.estimated_credit_usage_detail", {
@@ -32,7 +45,7 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
           unrated: formatNumber(credit?.unrated_requests ?? 0),
           tokens: formatNumber(usage?.total_tokens ?? 0),
         })
-      : tx("ui.awaiting_credit_usage_collection")
+      : hasObservedUsage ? tx("ui.no_rated_usage") : tx("ui.awaiting_credit_usage_collection")
     : tokenTitle;
   const requestTitle = tx("ui.total_requests_success_succeeded_failed_failed", { success: formatNumber(account.success), failed: formatNumber(account.failed) });
   const recentTitle = account.recent_requests?.length
@@ -151,9 +164,11 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
                           requests: formatNumber(measuredRequests),
                           total: totalLabel,
                         });
+                  const cycleStatus = overdraftStatusLabel(window.window.overdraft_status, tx);
                   return (
-                    <span key={window.label} title={title}>
+                    <span key={window.label} title={cycleStatus ? `${title} · ${cycleStatus}` : title}>
                       <small>{window.label}</small><b>+{content}</b>
+                      {cycleStatus ? <i className="usage-overdraft-status">{cycleStatus}</i> : null}
                     </span>
                   );
                 })}
@@ -171,6 +186,23 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   );
 }
 
+
+function overdraftStatusLabel(status: string | undefined, tx: (key: UIMessageKey) => string): string {
+  switch (status) {
+    case "pending":
+      return tx("ui.overdraft_cycle_pending");
+    case "passed":
+      return tx("ui.overdraft_cycle_passed");
+    case "failed":
+      return tx("ui.overdraft_cycle_failed");
+    case "inconclusive":
+      return tx("ui.overdraft_cycle_inconclusive");
+    case "recovered":
+      return tx("ui.overdraft_cycle_recovered");
+    default:
+      return "";
+  }
+}
 
 function probeReasonLabel(reasonCode: string | undefined, tx: (key: UIMessageKey) => string): string {
   switch (reasonCode) {

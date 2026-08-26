@@ -87,7 +87,7 @@ func (e *codexTokenRefreshExchanger) Exchange(ctx context.Context, input tokenRe
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", "codex-cli/0.91.0")
+	ensureCodexIdentityHeaders(request.Header)
 
 	doer := e.doer
 	if doer == nil {

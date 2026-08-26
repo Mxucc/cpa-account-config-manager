@@ -57,6 +57,7 @@ describe("primary account batch flow", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
     vi.mocked(readPanelAuth).mockReturnValue(null);
   });
@@ -64,10 +65,8 @@ describe("primary account batch flow", () => {
   it.each([
     { mode: "manual", panelAuth: null },
     { mode: "embedded", panelAuth: { apiBase: "http://localhost:8317", managementKey: "management-secret" } },
-  ])("renders the first account page after one request while $mode settings persistence remains pending", async ({ panelAuth }) => {
+  ])("renders the first account page without reconfiguring CPA on bootstrap ($mode)", async ({ panelAuth }) => {
     const user = userEvent.setup();
-    let releaseSettings: (() => void) | undefined;
-    const settingsGate = new Promise<void>((resolve) => { releaseSettings = resolve; });
     const accountRequests: string[] = [];
     let settingsRequests = 0;
     let settingsPersisted = false;
@@ -83,7 +82,6 @@ describe("primary account batch flow", () => {
       }
       if (url.endsWith("/defaults") || url.endsWith("/inspection") || url.endsWith("/updates") || url.endsWith("/operations/settings") || url.endsWith("/experiments")) {
         settingsRequests += 1;
-        await settingsGate;
         return persistedSettingsResponse(url);
       }
       if (url.endsWith("/config")) {
@@ -100,15 +98,17 @@ describe("primary account batch flow", () => {
     }
 
     expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
-    await waitFor(() => expect(settingsRequests).toBe(6));
+    // Opening the page is read-only. It must not PATCH mirrored settings back
+    // into CPA because that can trigger a host reconfigure and duplicate scans.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The update widget may read /updates; no settings migration write is allowed.
+    expect(settingsRequests).toBeLessThanOrEqual(1);
     expect(settingsPersisted).toBe(false);
     expect(accountRequests).toHaveLength(1);
     expect(accountRequests[0]).toContain("page=1");
     expect(accountRequests[0]).toContain("page_size=50");
     expect(accountRequests[0]).not.toContain("page_size=1");
 
-    releaseSettings?.();
-    await waitFor(() => expect(settingsPersisted).toBe(true));
   });
 
   it("runs plugin-store auto-update from the accounts view after authentication", async () => {
@@ -1427,6 +1427,7 @@ describe("account deduplication flow", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -1506,6 +1507,7 @@ describe("Agent Identity Session login mode", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
+    sessionStorage.clear();
     window.history.replaceState({}, "", "/");
     vi.restoreAllMocks();
     vi.mocked(readPanelAuth).mockReturnValue(null);
@@ -1661,7 +1663,7 @@ describe("Agent Identity Session login mode", () => {
           result: { reachable: true, status_code: 200, detail: "reachable" },
         });
       }
-      if (url.endsWith("/accounts")) {
+      if (url.includes("/accounts?")) {
         return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 1, pages: 0 });
       }
       return persistedSettingsResponse(url);
@@ -1700,6 +1702,7 @@ describe("primary navigation order", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
     vi.mocked(readPanelAuth).mockReturnValue(null);
   });
@@ -1720,7 +1723,7 @@ describe("primary navigation order", () => {
 
     const nav = await screen.findByRole("navigation", { name: "账号管理视图" });
     const tabs = within(nav).getAllByRole("button").map((button) => button.textContent);
-    expect(tabs).toEqual(["账号", "巡检与自动化", "AI 提供商", "操作日志", "其他配置"]);
+    expect(tabs).toEqual(["概览", "账号", "巡检与自动化", "AI 提供商", "操作日志", "其他配置"]);
 
     await user.click(within(nav).getByRole("button", { name: "AI 提供商" }));
     expect(await screen.findByRole("tabpanel", { name: "AI 提供商" })).toBeInTheDocument();

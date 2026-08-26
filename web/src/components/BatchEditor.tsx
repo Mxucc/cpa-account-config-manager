@@ -83,6 +83,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			setConcurrencyLimit(String(config.concurrency?.limit ?? 0));
 			setNote(config.note);
 			setPrefix(config.prefix);
+			setProxyURL(config.proxy_configured ? config.proxy : "");
 			setWebsockets(config.websockets ?? false);
 			setModelMode(config.model_policy?.mode ?? "all");
 			setSelectedModels(new Set(config.model_policy?.models ?? []));
@@ -141,6 +142,11 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 	const togglePriority = () => {
 		if (!enabled.priority && priority.trim() === "") setPriority("0");
 		toggle("priority");
+	};
+
+	const toggleProxyURL = () => {
+		if (!enabled.proxy_url && !proxyURL.trim()) setProxyURL(currentConfig?.proxy_configured ? currentConfig.proxy : "direct");
+		toggle("proxy_url");
 	};
 
   const submit = (event: FormEvent) => {
@@ -258,7 +264,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         <EditRow checked={enabled.prefix} label={tx("ui.prefix")} onToggle={() => toggle("prefix")}>
           <input value={prefix} onChange={(event) => setPrefix(event.target.value)} maxLength={256} disabled={!enabled.prefix} aria-label={tx("ui.prefix_value")} />
         </EditRow>
-        <EditRow checked={enabled.proxy_url} label={tx("ui.proxy_url")} onToggle={() => toggle("proxy_url")}>
+        <EditRow checked={enabled.proxy_url} label={tx("ui.proxy_url")} onToggle={toggleProxyURL}>
           <div className="secret-input editor-secret">
             <input value={proxyURL} onChange={(event) => setProxyURL(event.target.value)} type={showProxy ? "text" : "password"} disabled={!enabled.proxy_url} aria-label={tx("ui.proxy_url_value")} />
             <button type="button" aria-label={tx(showProxy ? "ui.hide_proxy" : "ui.show_proxy")} title={tx(showProxy ? "ui.hide_proxy" : "ui.show_proxy")} onClick={() => setShowProxy((value) => !value)} disabled={!enabled.proxy_url}>

@@ -11,6 +11,7 @@ import {
   Eye,
   FileCog,
   Github,
+  Gauge,
   CircleHelp,
   LoaderCircle,
   LockKeyhole,
@@ -53,6 +54,7 @@ import { ModelTestDialog } from "./components/ModelTestDialog";
 import { Modal } from "./components/Modal";
 import { PreviewDialog } from "./components/PreviewDialog";
 import { DeleteAccountDialog } from "./components/DeleteAccountDialog";
+import { DashboardWorkspace } from "./components/DashboardWorkspace";
 import { operatorMessage } from "./format/operatorMessage";
 import { accountState, accountStateLabel, technicalLabel } from "./format/accountDisplay";
 import { accountAutomationPresentation } from "./format/accountAutomation";
@@ -211,7 +213,7 @@ export default function App() {
 function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"accounts" | "inspection" | "providers" | "operations" | "settings">("accounts");
+  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "operations" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -307,7 +309,7 @@ function AccountManagerApp() {
 
   useEffect(() => {
     let active = true;
-    let settingsTimer = 0;
+    const controller = new AbortController();
     const bootstrap = async () => {
       const panelAuth = readPanelAuth();
       if (!panelAuth) {
@@ -316,37 +318,31 @@ function AccountManagerApp() {
       }
       setSession(panelAuth.apiBase, panelAuth.managementKey);
       try {
-        const response = await api.listAccounts(1, pageSize, apiFilters, accountSort);
+        const response = await api.listAccounts(1, pageSize, apiFilters, accountSort, controller.signal);
         if (!active) return;
         setData(response);
         skipInitialAccountRefresh.current = true;
         setAuthState("ready");
-        settingsTimer = window.setTimeout(() => {
-          void api.persistCurrentSettings().then((settings) => {
-            if (active) {
-              setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
-              setSub2APICreditUsageEnabled(settings.sub2api_credit_usage_enabled === true);
-            }
-          }).catch((error) => {
-            if (!active) return;
-            if (error instanceof api.APIError && error.status === 401) {
-              clearSession();
-              setAuthState("login");
-              setAuthError(operatorMessage(error.message, locale));
-              return;
-            }
-            setNotice(operatorMessage(error instanceof Error ? error.message : "ui.settings_persistence_failed", locale));
-          });
-        }, 0);
-      } catch {
-        clearSession();
-        if (active) setAuthState("login");
+      } catch (error) {
+        if (!active || controller.signal.aborted) return;
+        // A transient CPA/plugin failure must not be mistaken for an expired
+        // management key. Only an explicit 401 invalidates the session;
+        // other failures stay in the authenticated shell so the operator can
+        // retry instead of being silently sent back to login.
+        if (error instanceof api.APIError && error.status === 401) {
+          clearSession();
+          setAuthState("login");
+          setAuthError(operatorMessage(error.message, locale));
+          return;
+        }
+        setAuthState("ready");
+        setNotice(errorText(error, locale));
       }
     };
     void bootstrap();
     return () => {
       active = false;
-      window.clearTimeout(settingsTimer);
+      controller.abort();
     };
   }, []);
 
@@ -372,17 +368,18 @@ function AccountManagerApp() {
     }
   }, [authState]);
 
-  const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters, requestedSort: AccountSort = accountSort) => {
+  const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters, requestedSort: AccountSort = accountSort, signal?: AbortSignal) => {
     if (authState !== "ready") return;
     const requestID = accountRequest.current + 1;
     accountRequest.current = requestID;
     if (!silent) setLoading(true);
     try {
-      const response = await api.listAccounts(requestedPage, pageSize, requestedFilters, requestedSort);
+      const response = await api.listAccounts(requestedPage, pageSize, requestedFilters, requestedSort, signal);
       if (requestID !== accountRequest.current) return;
       setData(response);
       if (response.pages > 0 && requestedPage > response.pages) setPage(response.pages);
     } catch (error) {
+      if (signal?.aborted) return;
       if (requestID !== accountRequest.current) return;
       handleAPIError(error);
     } finally {
@@ -452,9 +449,11 @@ function AccountManagerApp() {
 	};
 
   const requestInspectionAccountSync = useCallback(() => {
+    // The polling owner reads inspection state first and then refreshes accounts.
+    // Keeping both operations in one sequence avoids a stale eager refresh plus
+    // a duplicate refresh when the first poll starts.
     setInspectionAccountSyncActive(true);
-    void refreshAccounts(true);
-  }, [refreshAccounts]);
+  }, []);
 
   useEffect(() => {
     if (activeView !== "accounts") return;
@@ -469,11 +468,12 @@ function AccountManagerApp() {
     if (!importUsageCollectionActive || authState !== "ready") return;
     let cancelled = false;
     let timer = 0;
+    const controller = new AbortController();
     const poll = async () => {
       try {
-        const snapshot = await api.getInspection();
+        const snapshot = await api.getInspection(controller.signal);
         if (cancelled) return;
-        await refreshAccounts(true);
+        await refreshAccounts(true, page, apiFilters, accountSort, controller.signal);
         if (cancelled) return;
         if (snapshot.running || snapshot.pending || snapshot.probe_sweep_remaining > 0) {
           timer = window.setTimeout(poll, 1500);
@@ -481,7 +481,7 @@ function AccountManagerApp() {
           setImportUsageCollectionActive(false);
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setImportUsageCollectionActive(false);
           handleAPIError(error);
         }
@@ -490,17 +490,19 @@ function AccountManagerApp() {
     timer = window.setTimeout(poll, 700);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [authState, handleAPIError, importUsageCollectionActive, refreshAccounts]);
+  }, [accountSort, apiFilters, authState, handleAPIError, importUsageCollectionActive, page, refreshAccounts]);
 
   useEffect(() => {
     if (authState !== "ready" || importResult?.state !== "running") return;
     let cancelled = false;
     let timer = 0;
+    const controller = new AbortController();
     const poll = async () => {
       try {
-        const result = await api.getImportStatus();
+        const result = await api.getImportStatus(controller.signal);
         if (cancelled) return;
         setImportResult(result);
         if (result.state === "running") {
@@ -511,9 +513,9 @@ function AccountManagerApp() {
         setNotice(result.failed || result.skipped
           ? tx("ui.added_count_accounts_failed_not_written", { count: result.imported, failed: result.failed + result.skipped })
           : tx("ui.added_count_accounts", { count: result.imported }));
-        void refreshAccounts();
+        void refreshAccounts(false, page, apiFilters, accountSort, controller.signal);
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setImportError(errorText(error, locale));
           if (error instanceof api.APIError && error.status === 401) handleAPIError(error);
         }
@@ -522,6 +524,7 @@ function AccountManagerApp() {
     timer = window.setTimeout(poll, 500);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
   }, [authState, handleAPIError, importResult?.state, locale, refreshAccounts, tx]);
@@ -530,11 +533,12 @@ function AccountManagerApp() {
     if (!inspectionAccountSyncActive || authState !== "ready") return;
     let cancelled = false;
     let timer = 0;
+    const controller = new AbortController();
     const poll = async () => {
       try {
-        const snapshot = await api.getInspection();
+        const snapshot = await api.getInspection(controller.signal);
         if (cancelled) return;
-        await refreshAccounts(true);
+        await refreshAccounts(true, page, apiFilters, accountSort, controller.signal);
         if (cancelled) return;
         if (snapshot.running || snapshot.pending || snapshot.probe_sweep_status === "running") {
           timer = window.setTimeout(poll, 1200);
@@ -542,7 +546,7 @@ function AccountManagerApp() {
           setInspectionAccountSyncActive(false);
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setInspectionAccountSyncActive(false);
           handleAPIError(error);
         }
@@ -551,42 +555,49 @@ function AccountManagerApp() {
     timer = window.setTimeout(poll, 400);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [authState, handleAPIError, inspectionAccountSyncActive, refreshAccounts]);
+  }, [accountSort, apiFilters, authState, handleAPIError, inspectionAccountSyncActive, page, refreshAccounts]);
 
   useEffect(() => {
     if (authState !== "ready") return;
-    void api.getJobStatus(true).then((snapshot) => {
-      if (snapshot.id) setJob(snapshot);
-    }).catch(() => undefined);
-  }, [authState]);
+    const controller = new AbortController();
+    void api.getJobStatus(true, controller.signal).then((snapshot) => {
+      if (!controller.signal.aborted && snapshot.id) setJob(snapshot);
+    }).catch((error) => {
+      if (!controller.signal.aborted) setNotice(errorText(error, locale));
+    });
+    return () => controller.abort();
+  }, [authState, locale]);
 
   useEffect(() => {
     if (!job?.running) return;
     let cancelled = false;
     let timer = 0;
+    const controller = new AbortController();
     const poll = async () => {
       try {
-        const light = await api.getJobStatus(false);
+        const light = await api.getJobStatus(false, controller.signal);
         if (cancelled) return;
         if (light.running) {
           setJob((current) => ({ ...light, results: current?.results }));
           timer = window.setTimeout(poll, 850);
           return;
         }
-        const full = await api.getJobStatus(true);
+        const full = await api.getJobStatus(true, controller.signal);
         if (!cancelled) {
           setJob(full);
           setData((current) => applyCompletedAccountPatch(current, full, activeJobPatch.current));
         }
       } catch (error) {
-        if (!cancelled) handleAPIError(error);
+        if (!cancelled && !controller.signal.aborted) handleAPIError(error);
       }
     };
     timer = window.setTimeout(poll, 500);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
   }, [handleAPIError, job?.id, job?.running, refreshAccounts]);
@@ -595,30 +606,32 @@ function AccountManagerApp() {
     if (!forceJob?.running) return;
     let cancelled = false;
     let timer = 0;
+    const controller = new AbortController();
     const poll = async () => {
       try {
-        const light = await api.getForceSyncStatus(false);
+        const light = await api.getForceSyncStatus(false, controller.signal);
         if (cancelled) return;
         if (light.running) {
           setForceJob((current) => ({ ...light, results: current?.results }));
           timer = window.setTimeout(poll, 850);
           return;
         }
-        const full = await api.getForceSyncStatus(true);
+        const full = await api.getForceSyncStatus(true, controller.signal);
         if (!cancelled) {
           setForceJob(full);
-          void refreshAccounts();
+          void refreshAccounts(false, page, apiFilters, accountSort, controller.signal);
         }
       } catch (error) {
-        if (!cancelled) handleAPIError(error);
+        if (!cancelled && !controller.signal.aborted) handleAPIError(error);
       }
     };
     timer = window.setTimeout(poll, 500);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [forceJob?.id, forceJob?.running, handleAPIError, refreshAccounts]);
+  }, [accountSort, apiFilters, forceJob?.id, forceJob?.running, handleAPIError, page, refreshAccounts]);
 
   const login = async (baseURL: string, managementKey: string) => {
     setAuthLoading(true);
@@ -629,9 +642,6 @@ function AccountManagerApp() {
       setData(response);
       skipInitialAccountRefresh.current = true;
       setAuthState("ready");
-      window.setTimeout(() => {
-        void api.persistCurrentSettings().catch(handleAPIError);
-      }, 0);
     } catch (error) {
       clearSession();
       setAuthError(error instanceof Error ? operatorMessage(error.message, locale) : tx("ui.authentication_failed"));
@@ -1114,6 +1124,7 @@ function AccountManagerApp() {
 
         <div className="workspace-bar">
           <nav className="workspace-tabs" aria-label={tx("ui.account_management_views")}>
+            <button type="button" className={activeView === "dashboard" ? "active" : ""} aria-current={activeView === "dashboard" ? "page" : undefined} onClick={() => setActiveView("dashboard")}><Gauge size={16} />{tx("ui.dashboard")}</button>
             <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} />{tx("ui.accounts")}</button>
             <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} />{tx("ui.inspection_and_automation")}</button>
             <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} />{tx("ui.ai_providers")}</button>
@@ -1140,9 +1151,13 @@ function AccountManagerApp() {
           </div>
         </div>
 
+        {data.usage_storage_error ? <div className="notice-bar global-notice warning-notice" role="alert"><span>{tx("ui.usage_storage_error")}</span></div> : null}
+        {data.account_concurrency?.storage_error ? <div className="notice-bar global-notice warning-notice" role="alert"><span>{tx("ui.account_concurrency_storage_error")}</span></div> : null}
         {notice ? <div className="notice-bar global-notice" role="alert"><span>{notice}</span><IconButton label={tx("ui.dismiss_notification")} onClick={() => setNotice("")}><X size={15} /></IconButton></div> : null}
 
-        {activeView === "accounts" ? (
+        {activeView === "dashboard" ? (
+          <DashboardWorkspace onAPIError={handleAPIError} />
+        ) : activeView === "accounts" ? (
         <section className="account-panel">
           <section className="filter-bar" aria-label={tx("ui.account_filters")}>
             <div className="filter-heading">

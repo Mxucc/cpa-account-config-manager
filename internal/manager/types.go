@@ -13,6 +13,7 @@ type Account struct {
 	ProjectID       string                     `json:"project_id,omitempty"`
 	AccountType     string                     `json:"account_type,omitempty"`
 	PlanType        string                     `json:"plan_type,omitempty"`
+	DeviceID        string                     `json:"device_id,omitempty"`
 	Status          string                     `json:"status,omitempty"`
 	StatusMessage   string                     `json:"status_message,omitempty"`
 	Disabled        bool                       `json:"disabled"`
@@ -104,4 +105,5 @@ type ListResponse struct {
 	PageSize           int                            `json:"page_size"`
 	Pages              int                            `json:"pages"`
 	AccountConcurrency AccountConcurrencyAvailability `json:"account_concurrency"`
+	UsageStorageError  string                         `json:"usage_storage_error,omitempty"`
 }

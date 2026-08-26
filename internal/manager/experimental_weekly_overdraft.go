@@ -22,8 +22,17 @@ var weeklyOverdraftInputMarkerBytes = []byte(weeklyOverdraftInputMarker)
 
 type WeeklyOverdraftExperiment struct {
 	enabled      func() bool
+	gate         overdraftGate
 	maxBodyBytes int
 	newCallID    func() (string, bool)
+}
+
+// overdraftGate lets the interceptor read the current usage percentages and
+// overdraft cycle states and record successful injections without depending on
+// the usage tracker directly.
+type overdraftGate interface {
+	OverdraftGateState(string) overdraftGateState
+	NoteOverdraftInjection(string)
 }
 
 func NewWeeklyOverdraftExperiment(enabled func() bool) *WeeklyOverdraftExperiment {
@@ -37,9 +46,81 @@ func NewWeeklyOverdraftExperiment(enabled func() bool) *WeeklyOverdraftExperimen
 	}
 }
 
+// WithOverdraftGate attaches the usage-backed gate used for the 95% pre-arm
+// and the auto-disable veto. Without a gate the experiment keeps the legacy
+// always-inject behavior so callers that only exercise the transformer can
+// stay independent of the usage tracker.
+func (e *WeeklyOverdraftExperiment) WithOverdraftGate(gate overdraftGate) *WeeklyOverdraftExperiment {
+	if e == nil {
+		return nil
+	}
+	e.gate = gate
+	return e
+}
+
+// overdraftInjectionEligible mirrors the sub2api-overdraft pre-arm decision:
+// inject while an open overdraft cycle's recovery deadline is still in the
+// future (pending/passed/inconclusive), never inject for a cycle confirmed
+// failed or recovered, and otherwise inject once a window crosses 95% while
+// its reset deadline is still in the future. An expired cycle or window falls
+// back to the plain 95% pre-arm rule exactly like the reference fork.
+func (e *WeeklyOverdraftExperiment) overdraftInjectionEligible(authIndex string) bool {
+	if e == nil || e.gate == nil {
+		return true
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return false
+	}
+	state := e.gate.OverdraftGateState(authIndex)
+	if !state.Has {
+		return false
+	}
+	now := time.Now().UTC()
+	windowEligible := func(percent float64, status string, resetAt, recoverAt time.Time) bool {
+		switch status {
+		case overdraftStatusPassed, overdraftStatusPending, overdraftStatusInconclusive:
+			if !recoverAt.IsZero() && recoverAt.After(now) {
+				return true
+			}
+			// Recovery deadline already passed: fall through to the plain 95%
+			// pre-arm rule exactly like the reference fork.
+		case overdraftStatusFailed, overdraftStatusRecovered:
+			return false
+		}
+		if percent < overdraftPrearmPercent {
+			return false
+		}
+		return resetAt.IsZero() || resetAt.After(now)
+	}
+	return windowEligible(state.FiveHourUsedPercent, state.FiveHourCycleStatus, state.FiveHourResetAt, state.FiveHourRecoverAt) ||
+		windowEligible(state.SevenDayUsedPercent, state.SevenDayCycleStatus, state.SevenDayResetAt, state.SevenDayRecoverAt)
+}
+
+// overdraftAuthIndexFromMetadata resolves the selected account key from the
+// CPA request metadata. runtimeIdentityFromMetadata treats "selected_auth_id"
+// as an opaque credential id and returns an empty auth index, but the CPA
+// request lifecycle populates that key with the selected account (see
+// AccountConcurrencyService), so the overdraft gate must use the raw value
+// from either the index or the id key family.
+func overdraftAuthIndexFromMetadata(metadata map[string]any) string {
+	for _, key := range []string{"selected_auth_index", "selected_auth_id", "auth_index", "auth_id"} {
+		if value, ok := metadata[key].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
 func (e *WeeklyOverdraftExperiment) InterceptRequest(request cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
 	if !e.RequestInterceptionActive() || !e.RequestInterceptionAcceptsFormat(request.ToFormat) ||
 		len(request.Body) == 0 || len(request.Body) > e.bodyLimit() {
+		return cpaapi.RequestInterceptResponse{}, false
+	}
+	authIndex := overdraftAuthIndexFromMetadata(request.Metadata)
+	if !e.overdraftInjectionEligible(authIndex) {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
 	// Match the field marker before invoking the JSON decoder. This is the same
@@ -56,6 +137,12 @@ func (e *WeeklyOverdraftExperiment) InterceptRequest(request cpaapi.RequestInter
 	}
 	var input []json.RawMessage
 	if errInput := json.Unmarshal(document.Input, &input); errInput != nil || len(input) == 0 {
+		return cpaapi.RequestInterceptResponse{}, false
+	}
+	// Never double-inject: a replayed or forwarded request that already
+	// carries the no-op exec pair (this plugin or the sub2api-overdraft fork)
+	// stays unchanged, mirroring codexQuotaOverdraftInputHasInjection.
+	if inputHasWeeklyOverdraftInjection(input) {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
 	var last struct {
@@ -95,6 +182,12 @@ func (e *WeeklyOverdraftExperiment) InterceptRequest(request cpaapi.RequestInter
 	updated, replaced := replaceTopLevelJSONFieldValue(request.Body, "input", document.Input, updatedInput)
 	if !replaced || len(updated) > e.bodyLimit() {
 		return cpaapi.RequestInterceptResponse{}, false
+	}
+	// Record the injection as passed-evidence for the account so a later
+	// successful usage record can confirm the overdraft cycle (the usage ABI
+	// does not expose the originating RequestID).
+	if e.gate != nil {
+		e.gate.NoteOverdraftInjection(authIndex)
 	}
 	return cpaapi.RequestInterceptResponse{Body: updated}, true
 }
@@ -238,8 +331,34 @@ func (e *WeeklyOverdraftExperiment) RequestInterceptionAcceptsFormat(format stri
 	return strings.EqualFold(strings.TrimSpace(format), "codex")
 }
 
-func (e *WeeklyOverdraftExperiment) AllowUsageAutoDisable(_ cpaapi.UsageRecord, _ time.Time) bool {
+func (e *WeeklyOverdraftExperiment) AllowUsageAutoDisable(record cpaapi.UsageRecord, _ time.Time) bool {
+	if e == nil || e.enabled == nil || !e.enabled() || e.gate == nil {
+		return true
+	}
+	// UsageRecord.AuthIndex is the primary binding key, but fall back to the
+	// credential ID when the host only reports AuthID so the veto still reaches
+	// the same usage state (OverdraftGateState reverse-resolves credential IDs).
+	state := e.gate.OverdraftGateState(strings.TrimSpace(firstNonEmpty(record.AuthIndex, record.AuthID)))
+	if !state.Has {
+		return true
+	}
+	// A cycle that is pending, passed, or inconclusive is still overdrafting:
+	// veto the automatic disable so business traffic can keep collecting
+	// evidence. Only a confirmed-failed (or recovered) cycle lets the account
+	// be disabled.
+	if overdraftCycleStatusActive(state.FiveHourCycleStatus) || overdraftCycleStatusActive(state.SevenDayCycleStatus) {
+		return false
+	}
 	return true
+}
+
+func overdraftCycleStatusActive(status string) bool {
+	switch status {
+	case overdraftStatusPending, overdraftStatusPassed, overdraftStatusInconclusive:
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *WeeklyOverdraftExperiment) AllowInspectionAutoDisable(result InspectionResult) bool {
@@ -295,6 +414,29 @@ func (e *WeeklyOverdraftExperiment) newID() (string, bool) {
 		return newExperimentalCallID()
 	}
 	return e.newCallID()
+}
+
+// weeklyOverdraftCallIDPrefixes covers the call-id families this plugin and
+// the sub2api-overdraft fork use for the no-op exec pair, so forwarded or
+// replayed requests are recognized as already injected.
+var weeklyOverdraftCallIDPrefixes = []string{"call_cpa_overdraft_", "call_sub2api_overdraft_"}
+
+func inputHasWeeklyOverdraftInjection(input []json.RawMessage) bool {
+	for _, raw := range input {
+		var item struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+		}
+		if err := json.Unmarshal(raw, &item); err != nil || item.Type != "custom_tool_call" {
+			continue
+		}
+		for _, prefix := range weeklyOverdraftCallIDPrefixes {
+			if strings.HasPrefix(item.CallID, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func newExperimentalCallID() (string, bool) {

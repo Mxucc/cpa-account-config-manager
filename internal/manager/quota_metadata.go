@@ -21,7 +21,7 @@ const (
 	codexQuotaUsageURL        = "https://chatgpt.com/backend-api/wham/usage"
 	codexQuotaResetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	codexQuotaResetConsumeURL = codexQuotaResetCreditsURL + "/consume"
-	codexQuotaUserAgent       = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
+	codexQuotaUserAgent       = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
 	maxActiveResetCount       = 1_000_000
 )
 
@@ -205,7 +205,7 @@ func (a *App) resolveQuotaMetadataTarget(ctx context.Context, accountID, managem
 	if provider != "codex" && provider != agentIdentityProvider {
 		return Account{}, nil, ErrQuotaMetadataUnsupported
 	}
-	client, errClient := newManagementClient(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer)
+	client, errClient := newManagementClientWithStore(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer, a.accounts)
 	if errClient != nil {
 		return Account{}, nil, ErrQuotaMetadataUnavailable
 	}
@@ -242,7 +242,7 @@ func (a *App) runNewAccountQuotaMetadata(ctx context.Context, account Account, m
 }
 
 func (a *App) refreshAccountQuotaMetadata(ctx context.Context, account Account, managementKey string, reevaluatePolicy bool) (quotaMetadata, error) {
-	client, errClient := newManagementClient(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer)
+	client, errClient := newManagementClientWithStore(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer, a.accounts)
 	if errClient != nil {
 		return quotaMetadata{}, ErrQuotaMetadataUnavailable
 	}
@@ -297,7 +297,9 @@ func (group accountObserverGroup) ObserveAccounts(accounts []Account) {
 }
 
 func fetchQuotaMetadata(ctx context.Context, client *managementClient, account Account, chatGPTAccountID string) (quotaMetadata, error) {
-	headers := codexQuotaHeaders(chatGPTAccountID)
+	headers := applyCodexFingerprintToStringMap(
+		ctx, client.fingerprintStore, account, codexQuotaHeaders(chatGPTAccountID), "",
+	)
 	usageResponse, errUsage := client.APICall(ctx, managementAPICallRequest{
 		AuthIndex: account.ID, Method: http.MethodGet, URL: codexQuotaUsageURL, Header: headers,
 	})
@@ -318,8 +320,9 @@ func fetchQuotaMetadata(ctx context.Context, client *managementClient, account A
 	}
 
 	resetHeaders := cloneStringMap(headers)
+	ensureCodexIdentityHeadersFromMap(resetHeaders)
 	resetHeaders["Accept"] = "application/json"
-	resetHeaders["OpenAI-Beta"] = "codex-1"
+	resetHeaders["OpenAI-Beta"] = "responses=experimental"
 	resetHeaders["Originator"] = "Codex Desktop"
 	resetResponse, errReset := client.APICall(ctx, managementAPICallRequest{
 		AuthIndex: account.ID, Method: http.MethodGet, URL: codexQuotaResetCreditsURL, Header: resetHeaders,
@@ -362,11 +365,64 @@ func consumeQuotaResetCredit(ctx context.Context, client *managementClient, acco
 	return nil
 }
 
+// ensureCodexIdentityHeadersFromMap applies the shared Codex identity fallback
+// to management-client string headers without exposing credential values.
+func ensureCodexIdentityHeadersFromMap(headers map[string]string) {
+	if headers == nil {
+		return
+	}
+	header := make(http.Header, len(headers)+4)
+	for key, value := range headers {
+		header.Set(key, value)
+	}
+	ensureCodexIdentityHeaders(header)
+	for _, name := range []string{"User-Agent", "Originator", "Version", "OpenAI-Beta"} {
+		if value := header.Get(name); value != "" {
+			headers[name] = value
+			headers[http.CanonicalHeaderKey(name)] = value
+		}
+	}
+}
+
+// applyCodexFingerprintToStringMap converges plugin-originated GET probes with
+// the same account seed used by the request interceptor and model tests.
+func applyCodexFingerprintToStringMap(ctx context.Context, store fingerprintSeedStore, account Account, headers map[string]string, clientSessionID string) map[string]string {
+	if headers == nil || store == nil {
+		return headers
+	}
+	settings := codexIdentitySettingsSnapshot()
+	mode := effectiveCodexFingerprintMode(settings.ConvergenceMode)
+	seed, ok := ensureCodexFingerprintSeed(ctx, store, account)
+	if !ok {
+		return headers
+	}
+	ids := resolveCodexFingerprintIDs(account, seed, clientSessionID, mode)
+	if ids == nil {
+		return headers
+	}
+	header := make(http.Header, len(headers)+8)
+	for key, value := range headers {
+		header.Set(key, value)
+	}
+	applyCodexFingerprintHeaders(header, ids)
+	for _, name := range []string{
+		"X-Codex-Installation-Id", "X-Codex-Window-Id", "X-Client-Request-Id",
+		"Session-Id", "Session_Id", "Thread-Id", codexFingerprintHeader,
+	} {
+		if value := header.Get(name); value != "" {
+			headers[name] = value
+			headers[http.CanonicalHeaderKey(name)] = value
+		}
+	}
+	return headers
+}
+
 func codexQuotaHeaders(chatGPTAccountID string) map[string]string {
 	headers := map[string]string{
 		"Authorization": "Bearer $TOKEN$",
 		"Content-Type":  "application/json",
 		"User-Agent":    codexQuotaUserAgent,
+		"Originator":    "codex_cli_rs",
 	}
 	if chatGPTAccountID != "" {
 		headers["Chatgpt-Account-Id"] = chatGPTAccountID
@@ -556,4 +612,24 @@ func safeQuotaAccountID(value any) string {
 		}
 	}
 	return valueText
+}
+
+var (
+	codexIdentitySettingsMu       sync.RWMutex
+	codexIdentitySettingsProvider func() ExperimentalCodexIdentitySettings
+)
+
+func setCodexIdentitySettingsProvider(provider func() ExperimentalCodexIdentitySettings) {
+	codexIdentitySettingsMu.Lock()
+	defer codexIdentitySettingsMu.Unlock()
+	codexIdentitySettingsProvider = provider
+}
+
+func codexIdentitySettingsSnapshot() ExperimentalCodexIdentitySettings {
+	codexIdentitySettingsMu.RLock()
+	defer codexIdentitySettingsMu.RUnlock()
+	if codexIdentitySettingsProvider == nil {
+		return ExperimentalCodexIdentitySettings{}
+	}
+	return codexIdentitySettingsProvider()
 }

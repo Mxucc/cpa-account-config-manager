@@ -132,9 +132,14 @@ type agentIdentityJWKS struct {
 }
 
 type AgentIdentityExperiment struct {
-	enabled   func() bool
-	transport AgentIdentityTransport
-	now       func() time.Time
+	enabled      func() bool
+	transport    AgentIdentityTransport
+	now          func() time.Time
+	streamMu     sync.Mutex
+	streamCtx    context.Context
+	streamCancel context.CancelFunc
+	streamWait   sync.WaitGroup
+	closed       bool
 
 	mu       sync.Mutex
 	tasks    map[string]agentIdentityTask
@@ -148,11 +153,49 @@ func NewAgentIdentityExperiment(enabled func() bool, transport AgentIdentityTran
 	if enabled == nil {
 		enabled = func() bool { return false }
 	}
+	streamCtx, streamCancel := context.WithCancel(context.Background())
 	return &AgentIdentityExperiment{
 		enabled: enabled, transport: transport, now: time.Now,
+		streamCtx: streamCtx, streamCancel: streamCancel,
 		tasks: make(map[string]agentIdentityTask), inflight: make(map[string]*agentIdentityTaskCall),
 		logins: make(map[string]*agentIdentityLoginFlow),
 	}
+}
+
+// Shutdown cancels detached Agent Identity stream forwarders.  Stream
+// forwarders intentionally outlive the request that opened them, but they
+// must not survive the plugin instance and keep CPA transport resources alive.
+func (e *AgentIdentityExperiment) Shutdown() {
+	if e == nil {
+		return
+	}
+	e.streamMu.Lock()
+	if !e.closed {
+		e.closed = true
+		if e.streamCancel != nil {
+			e.streamCancel()
+		}
+	}
+	e.streamMu.Unlock()
+	e.streamWait.Wait()
+}
+
+func (e *AgentIdentityExperiment) startStreamForwarder(pluginStreamID, upstreamStreamID, credentialLabel string) error {
+	if e == nil {
+		return fmt.Errorf("Agent Identity experiment is unavailable")
+	}
+	e.streamMu.Lock()
+	defer e.streamMu.Unlock()
+	if e.closed || e.streamCtx == nil {
+		return fmt.Errorf("Agent Identity experiment is shutting down")
+	}
+	e.streamWait.Add(1)
+	ctx := e.streamCtx
+	go func() {
+		defer e.streamWait.Done()
+		e.forwardStream(ctx, pluginStreamID, upstreamStreamID, credentialLabel)
+	}()
+	return nil
 }
 
 func (e *AgentIdentityExperiment) Clear() {
@@ -621,7 +664,10 @@ func (e *AgentIdentityExperiment) ExecuteStream(ctx context.Context, request cpa
 		if errStart != nil {
 			return cpaapi.ExecutorStreamResponse{}, errStart
 		}
-		go e.forwardStream(request.StreamID, upstream.StreamID, "Codex personal access token")
+		if errForward := e.startStreamForwarder(request.StreamID, upstream.StreamID, "Codex personal access token"); errForward != nil {
+			_ = e.transport.AgentIdentityCloseHTTPStream(ctx, upstream.StreamID)
+			return cpaapi.ExecutorStreamResponse{}, errForward
+		}
 		return cpaapi.ExecutorStreamResponse{Headers: upstream.Headers}, nil
 	}
 	parsed, errParse := e.executionCredential(request.StorageJSON)
@@ -636,7 +682,10 @@ func (e *AgentIdentityExperiment) ExecuteStream(ctx context.Context, request cpa
 	if errStart != nil {
 		return cpaapi.ExecutorStreamResponse{}, errStart
 	}
-	go e.forwardStream(request.StreamID, upstream.StreamID, "Agent Identity")
+	if errForward := e.startStreamForwarder(request.StreamID, upstream.StreamID, "Agent Identity"); errForward != nil {
+		_ = e.transport.AgentIdentityCloseHTTPStream(ctx, upstream.StreamID)
+		return cpaapi.ExecutorStreamResponse{}, errForward
+	}
 	return cpaapi.ExecutorStreamResponse{Headers: upstream.Headers}, nil
 }
 
@@ -722,28 +771,32 @@ func (e *AgentIdentityExperiment) startAuthenticatedStream(ctx context.Context, 
 	return response, nil
 }
 
-func (e *AgentIdentityExperiment) forwardStream(pluginStreamID, upstreamStreamID, credentialLabel string) {
-	ctx := context.Background()
+func (e *AgentIdentityExperiment) forwardStream(ctx context.Context, pluginStreamID, upstreamStreamID, credentialLabel string) {
 	credentialLabel = firstNonEmpty(credentialLabel, "Codex credential")
-	defer func() { _ = e.transport.AgentIdentityCloseHTTPStream(ctx, upstreamStreamID) }()
+	// Use a fresh bounded cleanup context: the stream context is deliberately
+	// canceled during shutdown, but CPA still needs a live context to receive
+	// the close control message and release the upstream stream.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelCleanup()
+	defer func() { _ = e.transport.AgentIdentityCloseHTTPStream(cleanupCtx, upstreamStreamID) }()
 	for {
 		chunk, errRead := e.transport.AgentIdentityReadStream(ctx, upstreamStreamID)
 		if errRead != nil {
-			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " upstream stream failed"})
+			_ = e.transport.AgentIdentityCloseStream(cleanupCtx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " upstream stream failed"})
 			return
 		}
 		if len(chunk.Payload) > 0 {
 			if errEmit := e.transport.AgentIdentityEmitStream(ctx, cpaapi.HostStreamEmitRequest{StreamID: pluginStreamID, Payload: chunk.Payload}); errEmit != nil {
-				_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " downstream stream closed"})
+				_ = e.transport.AgentIdentityCloseStream(cleanupCtx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " downstream stream closed"})
 				return
 			}
 		}
 		if chunk.Error != "" {
-			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " upstream stream failed"})
+			_ = e.transport.AgentIdentityCloseStream(cleanupCtx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID, Error: credentialLabel + " upstream stream failed"})
 			return
 		}
 		if chunk.Done {
-			_ = e.transport.AgentIdentityCloseStream(ctx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID})
+			_ = e.transport.AgentIdentityCloseStream(cleanupCtx, cpaapi.HostStreamCloseRequest{StreamID: pluginStreamID})
 			return
 		}
 	}

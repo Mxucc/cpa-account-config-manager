@@ -221,3 +221,13 @@ func TestCorrectedMirroredSettingsClearPriorConfigurationErrors(t *testing.T) {
 		t.Fatalf("corrected update configuration error = %q", got)
 	}
 }
+
+func TestParseConfigStrictRejectsMalformedYAML(t *testing.T) {
+	config, errParse := ParseConfigStrict([]byte("workers: [\n"))
+	if errParse == nil || errParse.Error() != "invalid plugin configuration" {
+		t.Fatalf("ParseConfigStrict() error = %v", errParse)
+	}
+	if config.Workers != defaultWorkers {
+		t.Fatalf("fallback workers = %d, want %d", config.Workers, defaultWorkers)
+	}
+}

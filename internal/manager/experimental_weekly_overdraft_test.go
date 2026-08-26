@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"testing"
@@ -583,5 +584,327 @@ func TestWeeklyOverdraftExperimentExpiredResetDoesNotSuppressRemediation(t *test
 	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
 	if !experiment.AllowUsageAutoDisable(cpaapi.UsageRecord{ResponseHeaders: headers}, now) {
 		t.Fatal("expired weekly window suppressed remediation")
+	}
+}
+
+type fakeOverdraftGate struct {
+	state overdraftGateState
+}
+
+func (g fakeOverdraftGate) OverdraftGateState(string) overdraftGateState { return g.state }
+
+func (g fakeOverdraftGate) NoteOverdraftInjection(string) {}
+
+// recordingOverdraftGate records the identifier each gate query receives so
+// tests can assert which metadata key family reached the usage state.
+type recordingOverdraftGate struct {
+	gate   overdraftGate
+	record *string
+}
+
+func (g recordingOverdraftGate) OverdraftGateState(identifier string) overdraftGateState {
+	if g.record != nil {
+		*g.record = identifier
+	}
+	return g.gate.OverdraftGateState(identifier)
+}
+
+func (g recordingOverdraftGate) NoteOverdraftInjection(identifier string) {
+	g.gate.NoteOverdraftInjection(identifier)
+}
+
+// notingOverdraftGate records only injection notes so tests can distinguish
+// interceptor writes from eligibility reads on the gate.
+type notingOverdraftGate struct {
+	gate  overdraftGate
+	noted *string
+	count *int
+}
+
+func (g notingOverdraftGate) OverdraftGateState(identifier string) overdraftGateState {
+	return g.gate.OverdraftGateState(identifier)
+}
+
+func (g notingOverdraftGate) NoteOverdraftInjection(identifier string) {
+	if g.noted != nil {
+		*g.noted = identifier
+	}
+	if g.count != nil {
+		*g.count++
+	}
+	g.gate.NoteOverdraftInjection(identifier)
+}
+
+func overdraftInjectionRequest() cpaapi.RequestInterceptRequest {
+	return cpaapi.RequestInterceptRequest{
+		ToFormat: "codex",
+		Metadata: map[string]any{"selected_auth_index": "overdraft-account"},
+		Body:     []byte(`{"model":"gpt-5.4","store":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}]}`),
+	}
+}
+
+func TestWeeklyOverdraftExperimentPrearmsAt95Percent(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	now := time.Now().UTC()
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		SevenDayUsedPercent: 95,
+		SevenDayCycleStatus: overdraftStatusPending,
+		SevenDayRecoverAt:   now.Add(time.Hour),
+	}})
+	response, changed := experiment.InterceptRequest(overdraftInjectionRequest())
+	if !changed || len(response.Body) == 0 {
+		t.Fatal("95% pre-arm window was not injected")
+	}
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		SevenDayUsedPercent: 95,
+		SevenDayCycleStatus: overdraftStatusPassed,
+		SevenDayRecoverAt:   now.Add(time.Hour),
+	}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); !changed {
+		t.Fatal("passed cycle at 95% stopped injecting")
+	}
+}
+
+func TestWeeklyOverdraftExperimentDoesNotInjectFailedOrRecoveredCycle(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	for _, status := range []string{overdraftStatusFailed, overdraftStatusRecovered} {
+		experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+			Has:                 true,
+			FiveHourUsedPercent: 100,
+			FiveHourCycleStatus: status,
+		}})
+		if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); changed {
+			t.Fatalf("cycle status %q still injected", status)
+		}
+	}
+}
+
+func TestWeeklyOverdraftExperimentBelow95WithoutCycleDoesNotInject(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		FiveHourUsedPercent: 80,
+	}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); changed {
+		t.Fatal("80% window without an open cycle was injected")
+	}
+	now := time.Now().UTC()
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		FiveHourUsedPercent: 80,
+		FiveHourCycleStatus: overdraftStatusInconclusive,
+		FiveHourRecoverAt:   now.Add(time.Hour),
+	}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); !changed {
+		t.Fatal("open inconclusive cycle below 95% stopped injecting")
+	}
+}
+
+func TestWeeklyOverdraftExperimentGateStateMissingIsConservative(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{Has: false}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); changed {
+		t.Fatal("missing gate state still injected")
+	}
+	if _, changed := experiment.InterceptRequest(cpaapi.RequestInterceptRequest{ToFormat: "codex", Body: []byte(`{"input":[]}`)}); changed {
+		t.Fatal("request without an account identity was injected")
+	}
+}
+
+func TestWeeklyOverdraftExperimentResolvesAuthIDMetadataKey(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	now := time.Now().UTC()
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		SevenDayUsedPercent: 100,
+		SevenDayCycleStatus: overdraftStatusPending,
+		SevenDayRecoverAt:   now.Add(time.Hour),
+	}})
+	// The CPA request lifecycle populates selected_auth_id with the selected
+	// account credential id (see AccountConcurrencyService, which keys
+	// per-account concurrency by Account.AuthID). runtimeIdentityFromMetadata
+	// treats that key as an opaque credential id, and UsageTracker resolves it
+	// back to the auth index through the auth file bindings, so the raw
+	// metadata value must reach the gate unchanged.
+	for _, key := range []string{"selected_auth_id", "auth_id"} {
+		request := overdraftInjectionRequest()
+		request.Metadata = map[string]any{key: "overdraft-account"}
+		if _, changed := experiment.InterceptRequest(request); !changed {
+			t.Fatalf("metadata key %q did not reach the overdraft gate", key)
+		}
+	}
+}
+
+func TestWeeklyOverdraftExperimentRecordsInjectionOnSuccess(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	now := time.Now().UTC()
+	var received string
+	var notes int
+	experiment.WithOverdraftGate(notingOverdraftGate{
+		gate: fakeOverdraftGate{state: overdraftGateState{
+			Has:                 true,
+			SevenDayUsedPercent: 95,
+			SevenDayCycleStatus: overdraftStatusPending,
+			SevenDayRecoverAt:   now.Add(time.Hour),
+		}},
+		noted: &received,
+		count: &notes,
+	})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); !changed {
+		t.Fatal("95% pre-arm window was not injected")
+	}
+	if received != "overdraft-account" || notes != 1 {
+		t.Fatalf("injection was recorded for %q notes:%d, want the resolved account with one note", received, notes)
+	}
+	// An unchanged request (already carrying the pair) must not record a new
+	// injection: the interceptor did not append anything for this account.
+	received = ""
+	notes = 0
+	already := overdraftInjectionRequest()
+	already.Body = []byte(`{"input":[{"type":"custom_tool_call","name":"exec","call_id":"call_cpa_overdraft_existing","input":{}},{"type":"custom_tool_call_output","call_id":"call_cpa_overdraft_existing","output":[]},{"type":"message","role":"user","content":[]}]}`)
+	if _, changed := experiment.InterceptRequest(already); changed {
+		t.Fatal("already-injected request was changed")
+	}
+	if notes != 0 {
+		t.Fatalf("no-op interception recorded %d injection(s)", notes)
+	}
+}
+
+func TestWeeklyOverdraftExperimentAllowUsageAutoDisableVetoesActiveCycle(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	now := time.Date(2026, time.August, 25, 6, 0, 0, 0, time.UTC)
+	record := cpaapi.UsageRecord{AuthIndex: "overdraft-account"}
+	for _, status := range []string{overdraftStatusPending, overdraftStatusPassed, overdraftStatusInconclusive} {
+		experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+			Has:                 true,
+			SevenDayCycleStatus: status,
+		}})
+		if experiment.AllowUsageAutoDisable(record, now) {
+			t.Fatalf("auto disable was allowed while cycle status %q is active", status)
+		}
+	}
+	for _, status := range []string{overdraftStatusFailed, overdraftStatusRecovered} {
+		experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+			Has:                 true,
+			SevenDayCycleStatus: status,
+		}})
+		if !experiment.AllowUsageAutoDisable(record, now) {
+			t.Fatalf("auto disable was vetoed after cycle status %q", status)
+		}
+	}
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{Has: true}})
+	if !experiment.AllowUsageAutoDisable(record, now) {
+		t.Fatal("auto disable was vetoed without any open cycle")
+	}
+	// The veto must also fire when the host only reports the credential ID on
+	// the usage record: the gate resolves it like the request metadata does.
+	var received string
+	experiment.WithOverdraftGate(recordingOverdraftGate{
+		gate:   fakeOverdraftGate{state: overdraftGateState{Has: true, SevenDayCycleStatus: overdraftStatusPending}},
+		record: &received,
+	})
+	authIDOnly := cpaapi.UsageRecord{AuthID: "cred-only"}
+	if experiment.AllowUsageAutoDisable(authIDOnly, now) {
+		t.Fatal("auto disable was allowed when the active cycle was reached via AuthID")
+	}
+	if received != "cred-only" {
+		t.Fatalf("gate identifier = %q, want the credential ID", received)
+	}
+	experiment.WithOverdraftGate(nil)
+	if !experiment.AllowUsageAutoDisable(record, now) {
+		t.Fatal("auto disable was vetoed without a gate")
+	}
+}
+
+func TestWeeklyOverdraftExperimentExpiredCycleRecoverAtFallsBackToPrearm(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	now := time.Now().UTC()
+	past := now.Add(-5 * time.Minute)
+	future := now.Add(5 * time.Hour)
+	for _, status := range []string{overdraftStatusPending, overdraftStatusPassed, overdraftStatusInconclusive} {
+		experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+			Has:                 true,
+			FiveHourUsedPercent: 80,
+			FiveHourCycleStatus: status,
+			FiveHourRecoverAt:   past,
+		}})
+		if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); changed {
+			t.Fatalf("expired cycle status %q below 95%% still injected", status)
+		}
+		// Once the recovery deadline passes, the account falls back to the
+		// plain 95% pre-arm rule: a still-fresh window at 100% injects again.
+		experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+			Has:                 true,
+			FiveHourUsedPercent: 100,
+			FiveHourCycleStatus: status,
+			FiveHourRecoverAt:   past,
+			FiveHourResetAt:     future,
+		}})
+		if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); !changed {
+			t.Fatalf("expired cycle status %q at 100%% did not fall back to pre-arm", status)
+		}
+	}
+}
+
+func TestWeeklyOverdraftExperimentExpiredWindowResetAtDoesNotInject(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	now := time.Now().UTC()
+	past := now.Add(-5 * time.Minute)
+	future := now.Add(5 * time.Hour)
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		FiveHourUsedPercent: 100,
+		FiveHourResetAt:     past,
+	}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); changed {
+		t.Fatal("expired window reset at 100% was injected")
+	}
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		FiveHourUsedPercent: 100,
+		FiveHourResetAt:     future,
+	}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); !changed {
+		t.Fatal("fresh window reset at 100% was not injected")
+	}
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		FiveHourUsedPercent: 100,
+	}})
+	if _, changed := experiment.InterceptRequest(overdraftInjectionRequest()); !changed {
+		t.Fatal("window without a reset deadline at 100% was not injected")
+	}
+}
+
+func TestWeeklyOverdraftExperimentDoesNotDoubleInject(t *testing.T) {
+	experiment := NewWeeklyOverdraftExperiment(func() bool { return true })
+	experiment.newCallID = func() (string, bool) { return "call_cpa_overdraft_test", true }
+	now := time.Now().UTC()
+	experiment.WithOverdraftGate(fakeOverdraftGate{state: overdraftGateState{
+		Has:                 true,
+		SevenDayUsedPercent: 100,
+		SevenDayCycleStatus: overdraftStatusPending,
+		SevenDayRecoverAt:   now.Add(time.Hour),
+	}})
+	for _, prefix := range []string{"call_cpa_overdraft_", "call_sub2api_overdraft_"} {
+		alreadyInjected := fmt.Sprintf(`{"input":[{"type":"message","role":"user","content":"continue"},{"type":"custom_tool_call","name":"exec","call_id":%q,"input":"const r = await tools.exec_command(...);"},{"type":"message","role":"user","content":"after"}]}`, prefix+"deadbeef")
+		response, changed := experiment.InterceptRequest(cpaapi.RequestInterceptRequest{
+			ToFormat: "codex",
+			Metadata: map[string]any{"selected_auth_index": "overdraft-account"},
+			Body:     []byte(alreadyInjected),
+		})
+		if changed || len(response.Body) != 0 {
+			t.Fatalf("request already carrying %s injection was modified again", prefix)
+		}
 	}
 }

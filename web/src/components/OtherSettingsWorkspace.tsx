@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   PackageCheck,
   RefreshCw,
+  RotateCcw,
   Save,
 	Server,
 	ShieldCheck,
@@ -15,7 +16,7 @@ import {
 	UploadCloud,
   Workflow,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
@@ -30,6 +31,7 @@ import {
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
+import { readPluginDensity, readPluginTheme, readPluginThemeEnabled, resetPluginTheme, setPluginDensity, setPluginTheme, setPluginThemeEnabled, type PluginDensity, type PluginThemePreset } from "../store/pluginTheme";
 
 interface OtherSettingsWorkspaceProps {
   onAPIError: (error: unknown) => void;
@@ -49,6 +51,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">("automation");
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [typographyDistinction, setTypographyDistinction] = useState(readTypographyDistinction);
+  const [pluginTheme, setPluginThemeState] = useState<PluginThemePreset>(readPluginTheme);
+  const [pluginDensity, setPluginDensityState] = useState<PluginDensity>(readPluginDensity);
+  const [pluginThemeEnabled, setPluginThemeEnabledState] = useState(readPluginThemeEnabled);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -64,7 +69,17 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
   const [sub2APICreditUsageEnabled, setSub2APICreditUsageEnabled] = useState(false);
+  const [codexOutboundConvergenceEnabled, setCodexOutboundConvergenceEnabled] = useState(false);
+  const [codexIngressGateEnabled, setCodexIngressGateEnabled] = useState(false);
+  const [codexAllowAppServerClients, setCodexAllowAppServerClients] = useState(false);
+  const [codexConvergenceMode, setCodexConvergenceMode] = useState("");
+  const [codexMinVersion, setCodexMinVersion] = useState("");
+  const [codexMaxVersion, setCodexMaxVersion] = useState("");
+  const [codexWhitelist, setCodexWhitelist] = useState("");
+  const [codexBlacklist, setCodexBlacklist] = useState("");
+  const [codexFingerprintSignals, setCodexFingerprintSignals] = useState("");
   const [error, setError] = useState("");
+  const refreshSequence = useRef(0);
   const handleError = useCallback((caught: unknown) => {
     if (caught instanceof api.APIError && caught.status === 401) {
       onAPIError(caught);
@@ -73,38 +88,49 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
   }, [locale, onAPIError, tx]);
 
-  const refreshPlugin = useCallback(async (checkNow = false) => {
-    const next = await api.getEffectiveUpdateStatus(checkNow);
-    setUpdates(next);
+  const refreshPlugin = useCallback(async (checkNow = false, signal?: AbortSignal) => {
+    const next = await api.getEffectiveUpdateStatus(checkNow, signal);
+    if (!signal?.aborted) setUpdates(next);
     return next;
   }, []);
 
-  const refreshServer = useCallback(async () => {
-    const next = await api.getCPAServerVersionStatus();
-    setServer(next);
+  const refreshServer = useCallback(async (signal?: AbortSignal) => {
+    const next = await api.getCPAServerVersionStatus(signal);
+    if (!signal?.aborted) setServer(next);
     return next;
   }, []);
 
-  const refreshExperiments = useCallback(async () => {
-    const next = await api.getExperimentalSettings();
-    setExperiments(next);
-    onExperimentalSettingsChange(next.settings);
+  const refreshExperiments = useCallback(async (signal?: AbortSignal) => {
+    const next = await api.getExperimentalSettings(signal);
+    if (!signal?.aborted) {
+      setExperiments(next);
+      onExperimentalSettingsChange(next.settings);
+    }
     return next;
   }, [onExperimentalSettingsChange]);
 
-  const refreshAll = useCallback(async () => {
+  const refreshAll = useCallback(async (signal?: AbortSignal) => {
+    const sequence = refreshSequence.current + 1;
+    refreshSequence.current = sequence;
     setLoading(true);
     setError("");
     try {
-      await Promise.all([refreshPlugin(), refreshServer(), refreshExperiments()]);
+      await Promise.all([refreshPlugin(false, signal), refreshServer(signal), refreshExperiments(signal)]);
     } catch (caught) {
-      handleError(caught);
+      if (!signal?.aborted && refreshSequence.current === sequence) handleError(caught);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && refreshSequence.current === sequence) setLoading(false);
     }
   }, [handleError, refreshExperiments, refreshPlugin, refreshServer]);
 
-  useEffect(() => { void refreshAll(); }, [refreshAll]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void refreshAll(controller.signal);
+    return () => {
+      refreshSequence.current += 1;
+      controller.abort();
+    };
+  }, [refreshAll]);
 
   useEffect(() => subscribePluginUpdateStatus(setUpdates), []);
 
@@ -121,6 +147,20 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
     setSub2APICreditUsageEnabled(experiments.settings.sub2api_credit_usage_enabled === true);
+    const codexIdentity = experiments.settings.codex_identity ?? {
+      outbound_convergence_enabled: false,
+      ingress_gate_enabled: false,
+      allow_app_server_clients: false,
+    };
+    setCodexOutboundConvergenceEnabled(codexIdentity.outbound_convergence_enabled === true);
+    setCodexIngressGateEnabled(codexIdentity.ingress_gate_enabled === true);
+    setCodexAllowAppServerClients(codexIdentity.allow_app_server_clients === true);
+    setCodexConvergenceMode(codexIdentity.convergence_mode || "");
+    setCodexMinVersion(codexIdentity.min_version || "");
+    setCodexMaxVersion(codexIdentity.max_version || "");
+    setCodexWhitelist(codexIdentity.whitelist || "");
+    setCodexBlacklist(codexIdentity.blacklist || "");
+    setCodexFingerprintSignals(codexIdentity.fingerprint_signals || "");
   }, [experiments]);
 
   const installUpdate = useCallback(async () => {
@@ -208,6 +248,17 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         agent_identity_enabled: agentIdentityEnabled,
         auto_model_whitelist_enabled: true,
         sub2api_credit_usage_enabled: sub2APICreditUsageEnabled,
+        codex_identity: {
+          outbound_convergence_enabled: codexOutboundConvergenceEnabled,
+          ingress_gate_enabled: codexIngressGateEnabled,
+          allow_app_server_clients: codexAllowAppServerClients,
+          convergence_mode: codexConvergenceMode,
+          min_version: codexMinVersion,
+          max_version: codexMaxVersion,
+          whitelist: codexWhitelist,
+          blacklist: codexBlacklist,
+          fingerprint_signals: codexFingerprintSignals,
+        },
       });
       setExperiments(next);
       onExperimentalSettingsChange(next.settings);
@@ -227,6 +278,24 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const updateTypographyDistinction = (enabled: boolean) => {
     setTypographyDistinction(enabled);
     writeTypographyDistinction(enabled);
+  };
+  const updatePluginTheme = (next: PluginThemePreset) => {
+    setPluginThemeState(next);
+    setPluginTheme(next);
+  };
+  const updatePluginDensity = (next: PluginDensity) => {
+    setPluginDensityState(next);
+    setPluginDensity(next);
+  };
+  const updatePluginThemeEnabled = (enabled: boolean) => {
+    setPluginThemeEnabledState(enabled);
+    setPluginThemeEnabled(enabled);
+  };
+  const resetPluginAppearance = () => {
+    resetPluginTheme();
+    setPluginThemeState(readPluginTheme());
+    setPluginDensityState(readPluginDensity());
+    setPluginThemeEnabledState(readPluginThemeEnabled());
   };
   return (
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
@@ -259,6 +328,15 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
       ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : activeSection === "updates" ? <div className="plugin-configuration-version-panel" role="tabpanel" aria-label={tx("ui.plugin_configuration_and_version")}>
+        <section className="plugin-appearance-settings settings-section" aria-label={tx("ui.plugin_appearance")}>
+          <div className="settings-section-heading"><div><strong>{tx("ui.plugin_appearance")}</strong><span>{tx("ui.plugin_appearance_description")}</span></div></div>
+          <label className="switch-control"><input type="checkbox" checked={pluginThemeEnabled} onChange={(event) => updatePluginThemeEnabled(event.target.checked)} /><b>{tx(pluginThemeEnabled ? "ui.enabled" : "ui.disabled")}</b></label>
+          <div className="settings-inline-grid">
+            <label className="filter-control"><span>{tx("ui.plugin_theme_preset")}</span><select value={pluginTheme} disabled={!pluginThemeEnabled} onChange={(event) => updatePluginTheme(event.target.value as PluginThemePreset)}><option value="neutral">{tx("ui.plugin_theme_neutral")}</option><option value="indigo">{tx("ui.plugin_theme_indigo")}</option><option value="forest">{tx("ui.plugin_theme_forest")}</option><option value="rose">{tx("ui.plugin_theme_rose")}</option></select></label>
+            <label className="filter-control"><span>{tx("ui.plugin_density")}</span><select value={pluginDensity} onChange={(event) => updatePluginDensity(event.target.value as PluginDensity)}><option value="comfortable">{tx("ui.plugin_density_comfortable")}</option><option value="compact">{tx("ui.plugin_density_compact")}</option></select></label>
+          </div>
+          <div className="settings-section-actions"><button className="button button-quiet" type="button" onClick={resetPluginAppearance}><RotateCcw size={15} />{tx("ui.reset_plugin_appearance")}</button></div>
+        </section>
         <section className="font-size-settings settings-section" aria-label={tx("ui.font_size")}>
           <header><Type size={18} /><div><strong>{tx("ui.font_size")}</strong><span>{tx("ui.font_size_description")}</span></div></header>
           <div className="font-size-settings-body">
@@ -309,6 +387,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             <div className="settings-update-callout" role="status"><UploadCloud size={18} /><strong>{tx("ui.version_version_available", { version: updates.latest_version || "-" })}</strong></div>
           ) : null}
           {updates?.runtime?.storage_error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.runtime_ownership_storage_is_unavailable")}</span></div> : null}
+          {updates?.runtime?.restart_recommended ? <div className="experimental-storage-warning" role="status"><AlertTriangle size={16} /><span>{tx("ui.runtime_hot_reload_restart_recommended")}</span></div> : null}
           <div className="update-policy-controls">
             <label><span>{tx("ui.check_for_updates")}</span><input type="checkbox" checked={checkEnabled} disabled={saving} onChange={(event) => { setCheckEnabled(event.target.checked); if (!event.target.checked) setAutoUpdate(false); }} /></label>
             <label><span>{tx("ui.check_interval")}</span><span className="number-suffix"><input type="number" min="1" max="168" value={checkInterval} disabled={!checkEnabled || saving} onChange={(event) => setCheckInterval(event.target.value)} /><b>{tx("ui.hours")}</b></span></label>
@@ -360,6 +439,64 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
               <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
               <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
             </div>
+          </div>
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><ShieldCheck size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_identity_convergence")}</strong>
+                  <span>{tx("ui.codex_identity_convergence_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input type="checkbox" checked={codexOutboundConvergenceEnabled} disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setCodexOutboundConvergenceEnabled(event.target.checked)} aria-label={tx("ui.codex_outbound_convergence")} />
+                <b>{tx(codexOutboundConvergenceEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.codex_outbound_convergence")}</strong><span>{tx("ui.codex_outbound_convergence_behavior")}</span></div>
+              <div><strong>{tx("ui.codex_api_key_probe")}</strong><span>{tx("ui.codex_api_key_probe_behavior")}</span></div>
+              <div><strong>{tx("ui.internal_probe_requests")}</strong><span>{tx("ui.codex_internal_probe_behavior")}</span></div>
+            </div>
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <div>
+                  <strong>{tx("ui.codex_ingress_gate")}</strong>
+                  <span>{tx("ui.codex_ingress_gate_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input type="checkbox" checked={codexIngressGateEnabled} disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setCodexIngressGateEnabled(event.target.checked)} aria-label={tx("ui.codex_ingress_gate")} />
+                <b>{tx(codexIngressGateEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.codex_app_server_clients")}</strong><span>{tx("ui.codex_app_server_clients_behavior")}</span></div>
+              <div><strong>{tx("ui.codex_version_bounds")}</strong><span>{tx("ui.codex_version_bounds_behavior")}</span></div>
+              <div><strong>{tx("ui.codex_fingerprint_signals")}</strong><span>{tx("ui.codex_fingerprint_signals_behavior")}</span></div>
+            </div>
+            <details className="codex-identity-advanced">
+              <summary>{tx("ui.codex_advanced_policy_json")}</summary>
+              <div className="settings-inline-grid codex-policy-grid">
+                <label className="filter-control"><span>{tx("ui.codex_min_version")}</span><input value={codexMinVersion} placeholder="0.144.0" onChange={(event) => setCodexMinVersion(event.target.value)} /></label>
+                <label className="filter-control"><span>{tx("ui.codex_max_version")}</span><input value={codexMaxVersion} placeholder="0.144.9" onChange={(event) => setCodexMaxVersion(event.target.value)} /></label>
+                <label className="filter-control"><span>{tx("ui.codex_convergence_mode")}</span>
+                <select value={codexConvergenceMode} onChange={(event) => setCodexConvergenceMode(event.target.value)}>
+                  <option value="">{tx("ui.codex_convergence_legacy_full")}</option>
+                  <option value="off">{tx("ui.codex_convergence_off")}</option>
+                  <option value="device">{tx("ui.codex_convergence_device")}</option>
+                  <option value="session">{tx("ui.codex_convergence_session")}</option>
+                  <option value="full">{tx("ui.codex_convergence_full")}</option>
+                </select></label>
+                <label className="switch-control"><input type="checkbox" checked={codexAllowAppServerClients} onChange={(event) => setCodexAllowAppServerClients(event.target.checked)} /><b>{tx(codexAllowAppServerClients ? "ui.on_2" : "ui.off_2")} · {tx("ui.codex_allow_app_server")}</b></label>
+              </div>
+              <label className="codex-policy-field"><span>{tx("ui.codex_whitelist_json")}</span><textarea rows={3} spellCheck={false} value={codexWhitelist} onChange={(event) => setCodexWhitelist(event.target.value)} /></label>
+              <label className="codex-policy-field"><span>{tx("ui.codex_blacklist_json")}</span><textarea rows={3} spellCheck={false} value={codexBlacklist} onChange={(event) => setCodexBlacklist(event.target.value)} /></label>
+              <label className="codex-policy-field"><span>{tx("ui.codex_fingerprint_json")}</span><textarea rows={4} spellCheck={false} value={codexFingerprintSignals} onChange={(event) => setCodexFingerprintSignals(event.target.value)} /></label>
+            </details>
           </div>
           <div className="experimental-feature-block">
             <div className="experimental-feature-row">

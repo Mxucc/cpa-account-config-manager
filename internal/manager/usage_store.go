@@ -454,6 +454,14 @@ func sanitizeOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
 		return nil
 	}
 	cycle = cloneOverdraftCycle(cycle)
+	cycle.Status = normalizeOverdraftStatus(cycle.Status)
+	cycle.CycleKey = safeOverdraftCycleKey(cycle.CycleKey)
+	cycle.Attempts = boundedOverdraftAttempts(cycle.Attempts)
+	cycle.ReasonCode = safeOptionalInspectionReason(cycle.ReasonCode)
+	if cycle.VerifiedAt != nil {
+		utc := cycle.VerifiedAt.UTC()
+		cycle.VerifiedAt = &utc
+	}
 	cycle.BaselineTokens = nonNegative(cycle.BaselineTokens)
 	cycle.BaselineRequests = nonNegative(cycle.BaselineRequests)
 	cycle.BaselineCreditAmountNanos = nonNegative(cycle.BaselineCreditAmountNanos)
@@ -479,6 +487,21 @@ func sanitizeOverdraftCycle(cycle *overdraftCycleState) *overdraftCycleState {
 		cycle.WindowMinutes = 0
 	}
 	return cycle
+}
+
+func safeOverdraftCycleKey(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 128 {
+		return value[:128]
+	}
+	return value
+}
+
+func boundedOverdraftAttempts(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return min(value, 10_000)
 }
 
 func sanitizeAccountLifecycle(state *accountLifecycleState) *accountLifecycleState {

@@ -213,9 +213,6 @@ func (s *OpenCodeZenService) SaveAccount(accountID, name, baseURL, apiKey string
 	name = strings.TrimSpace(name)
 	baseURL = normalizeOpenCodeZenBaseURL(baseURL)
 	apiKey = strings.TrimSpace(apiKey)
-	if baseURL == "" {
-		return "", fmt.Errorf("base_url is required")
-	}
 	if parsed, errParse := url.Parse(baseURL); errParse != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return "", fmt.Errorf("base_url must be a valid http(s) URL")
 	}
@@ -377,7 +374,11 @@ func probeOpenCodeZenEndpoint(ctx context.Context, baseURL, apiKey string, timeo
 }
 
 // normalizeOpenCodeZenBaseURL trims whitespace and trailing slashes so probe
-// URL building is stable; an empty result means the input was blank.
+// URL building is stable. An empty value uses the official Zen gateway.
 func normalizeOpenCodeZenBaseURL(value string) string {
-	return strings.TrimRight(strings.TrimSpace(value), "/")
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if value == "" {
+		return openCodeZenDefaultBaseURL
+	}
+	return value
 }

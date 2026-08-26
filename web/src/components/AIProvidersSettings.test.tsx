@@ -56,8 +56,9 @@ describe("AIProvidersSettings", () => {
       if (url.endsWith("/xai-api-key")) return jsonResponse({ "xai-api-key": [] });
       if (url.endsWith("/vertex-api-key")) return jsonResponse({ "vertex-api-key": [] });
       if (url.endsWith("/api-keys")) return jsonResponse({ "api-keys": [] });
-      if (url.endsWith("/ai-providers/runtime")) {
-        return jsonResponse({ snapshots: [], updated_at: new Date().toISOString() });
+      if (url.includes("/ai-providers/runtime")) {
+        const runtime = overrides["ai-providers-runtime"] ?? { snapshots: [], updated_at: new Date().toISOString() };
+        return jsonResponse(runtime);
       }
       return jsonResponse({});
     });
@@ -125,6 +126,76 @@ describe("AIProvidersSettings", () => {
     expect(body[1]).toMatchObject({ name: "MyProvider", "base-url": "https://my.example.com/v1" });
     expect(JSON.stringify(body)).toContain("sk-new-secret-1234");
     expect(onNotice).toHaveBeenCalledWith("AI 提供商已添加");
+  });
+
+  it("hides provider concurrency controls while CPA supports observation only", async () => {
+    providerFetchMock();
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    await waitFor(() => expect(section.querySelector(".ai-provider-table tbody tr")).not.toBeNull());
+    const headers = Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent);
+    expect(headers).not.toContain("并发");
+  });
+
+  it("shows observable concurrency only when CPA reports it as configurable", async () => {
+    providerFetchMock({
+      "ai-providers-runtime": {
+        snapshots: [{
+          provider: "openai",
+          auth_index: "openai-sk-or-live-1234abcd",
+          identity: "provider-key",
+          supported: true,
+          concurrency_configurable: true,
+          active: 2,
+          limit: 100,
+          input_tokens: 1000,
+          output_tokens: 200,
+          reasoning_tokens: 20,
+          cached_tokens: 14,
+          total_tokens: 1234,
+          amount_usd: 0.0123,
+          rated_requests: 1,
+          unrated_requests: 0,
+          updated_at: new Date().toISOString(),
+        }],
+        updated_at: new Date().toISOString(),
+      },
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = await waitFor(() => {
+      const found = Array.from(section.querySelectorAll(".ai-provider-table tbody tr"))
+        .find((item) => item.textContent?.includes("OpenRouter"));
+      expect(found).toBeDefined();
+      return found as HTMLElement;
+    });
+    await waitFor(() => expect(Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent)).toContain("并发"));
+    expect(row.textContent).toContain("2/100");
+    expect(row.textContent).toContain("1,234");
+    expect(row.textContent).toContain("$0.0123");
+  });
+
+  it("tests a configured model without requiring an upstream model catalog", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock();
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = await waitFor(() => section.querySelectorAll(".ai-provider-table tbody tr"));
+    const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
+    expect(openaiRow).toBeDefined();
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "测试 OpenRouter" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "测试渠道：OpenRouter" });
+    await waitFor(() => expect(within(dialog).getByLabelText("测试模型")).toHaveValue("deepseek-chat"));
+    const probeRequests = requests.filter(({ url }) => url.endsWith("/ai-providers/test"));
+    expect(probeRequests).toHaveLength(2);
+    expect(JSON.parse(String(probeRequests[1].init.body)).model).toBe("deepseek-chat");
   });
 
   it("saves a replacement OpenAI-compatible API key inside api-key-entries", async () => {
@@ -422,7 +493,11 @@ describe("AIProvidersSettings", () => {
       const url = String(input);
       requests.push({ url, init });
       if (url.endsWith("/ai-providers/test")) {
-        return jsonResponse({ reachable: true, status_code: 200, detail: "reachable" });
+        const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+        if (body.model) {
+          return jsonResponse({ reachable: true, status: "available", status_code: 200, model: body.model, probe_kind: "model", reason_code: "model_response_ok", detail: "model response ok", models: [{ id: "gpt-5.5" }, { id: "gpt-5.4-mini" }] });
+        }
+        return jsonResponse({ reachable: true, status_code: 200, detail: "reachable", models: [{ id: "gpt-5.5" }, { id: "gpt-5.4-mini" }] });
       }
       if (url.endsWith("/openai-compatibility")) {
         return jsonResponse({ "openai-compatibility": [{ name: "OpenRouter", "base-url": "https://openrouter.ai/api/v1", "api-key-entries": [{ "api-key": "sk-or-live-1234abcd" }] }] });
@@ -440,7 +515,11 @@ describe("AIProvidersSettings", () => {
     await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "测试 OpenRouter" }));
 
     const dialog = await screen.findByRole("dialog", { name: "测试渠道：OpenRouter" });
-    expect(await within(dialog).findByText("渠道可达")).toBeInTheDocument();
+    expect(await within(dialog).findByText("模型可用")).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: "测试模型" })).toHaveValue("gpt-5.5");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "测试模型" }), "gpt-5.4-mini");
+    await user.click(within(dialog).getByRole("button", { name: "重新测试" }));
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/ai-providers/test") && JSON.parse(String(init.body)).model === "gpt-5.4-mini")).toBe(true));
     const probeRequest = requests.find(({ url }) => url.endsWith("/ai-providers/test"));
     expect(probeRequest).toBeDefined();
     const body = JSON.parse(String(probeRequest?.init.body)) as Record<string, unknown>;

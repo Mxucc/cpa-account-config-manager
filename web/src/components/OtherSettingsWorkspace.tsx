@@ -2,18 +2,19 @@ import {
   AlertTriangle,
   BellRing,
   CircleDollarSign,
+  DoorClosed,
   ExternalLink,
   FlaskConical,
-	KeyRound,
+  KeyRound,
   LoaderCircle,
   PackageCheck,
   RefreshCw,
   RotateCcw,
   Save,
-	Server,
-	ShieldCheck,
+  Server,
+  ShieldCheck,
   Type,
-	UploadCloud,
+  UploadCloud,
   Workflow,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -29,6 +30,7 @@ import {
   type FontSizePreset,
 } from "../store/fontSize";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
+import { ProxyProfilesSettings } from "./ProxyProfilesSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
 import { readPluginDensity, readPluginTheme, readPluginThemeEnabled, resetPluginTheme, setPluginDensity, setPluginTheme, setPluginThemeEnabled, type PluginDensity, type PluginThemePreset } from "../store/pluginTheme";
@@ -56,6 +58,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [pluginThemeEnabled, setPluginThemeEnabledState] = useState(readPluginThemeEnabled);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
+  const [proxyRefreshRevision, setProxyRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -301,7 +304,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
         <div><strong>{tx("ui.other_settings")}</strong><span>{tx("ui.other_settings_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); void refreshAll(); }}>
+        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); setProxyRefreshRevision((current) => current + 1); void refreshAll(); }}>
           <RefreshCw className={loading ? "spin" : ""} size={16} />{tx("ui.refresh")}
         </button>
       </header>
@@ -328,6 +331,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
       ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : activeSection === "updates" ? <div className="plugin-configuration-version-panel" role="tabpanel" aria-label={tx("ui.plugin_configuration_and_version")}>
+        <ProxyProfilesSettings refreshRevision={proxyRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
         <section className="plugin-appearance-settings settings-section" aria-label={tx("ui.plugin_appearance")}>
           <div className="settings-section-heading"><div><strong>{tx("ui.plugin_appearance")}</strong><span>{tx("ui.plugin_appearance_description")}</span></div></div>
           <label className="switch-control"><input type="checkbox" checked={pluginThemeEnabled} onChange={(event) => updatePluginThemeEnabled(event.target.checked)} /><b>{tx(pluginThemeEnabled ? "ui.enabled" : "ui.disabled")}</b></label>
@@ -462,6 +466,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             </div>
             <div className="experimental-feature-row">
               <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><DoorClosed size={18} /></span>
                 <div>
                   <strong>{tx("ui.codex_ingress_gate")}</strong>
                   <span>{tx("ui.codex_ingress_gate_description")}</span>

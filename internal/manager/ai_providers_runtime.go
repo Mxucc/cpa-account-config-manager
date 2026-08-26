@@ -25,23 +25,28 @@ const (
 // ProviderRuntimeSnapshot is intentionally redacted. It contains no API key,
 // token, cookie, header, or provider credential material.
 type ProviderRuntimeSnapshot struct {
-	Provider        string               `json:"provider"`
-	AuthIndex       string               `json:"auth_index,omitempty"`
-	Identity        string               `json:"identity"`
-	Supported       bool                 `json:"supported"`
-	Reason          string               `json:"reason,omitempty"`
-	Active          int                  `json:"active"`
-	Limit           int                  `json:"limit"`
-	InputTokens     int64                `json:"input_tokens"`
-	OutputTokens    int64                `json:"output_tokens"`
-	ReasoningTokens int64                `json:"reasoning_tokens"`
-	CachedTokens    int64                `json:"cached_tokens"`
-	TotalTokens     int64                `json:"total_tokens"`
-	AmountUSD       float64              `json:"amount_usd"`
-	RatedRequests   int64                `json:"rated_requests"`
-	UnratedRequests int64                `json:"unrated_requests"`
-	Models          []ProviderModelUsage `json:"models,omitempty"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	Provider  string `json:"provider"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	Identity  string `json:"identity"`
+	Supported bool   `json:"supported"`
+	Reason    string `json:"reason,omitempty"`
+	// ConcurrencyConfigurable reports whether the plugin can enforce a
+	// provider/API-key concurrency limit. Current CPA request interception is
+	// account-scoped, so this remains false for API-key channels even when
+	// their active requests can be observed.
+	ConcurrencyConfigurable bool                 `json:"concurrency_configurable"`
+	Active                  int                  `json:"active"`
+	Limit                   int                  `json:"limit"`
+	InputTokens             int64                `json:"input_tokens"`
+	OutputTokens            int64                `json:"output_tokens"`
+	ReasoningTokens         int64                `json:"reasoning_tokens"`
+	CachedTokens            int64                `json:"cached_tokens"`
+	TotalTokens             int64                `json:"total_tokens"`
+	AmountUSD               float64              `json:"amount_usd"`
+	RatedRequests           int64                `json:"rated_requests"`
+	UnratedRequests         int64                `json:"unrated_requests"`
+	Models                  []ProviderModelUsage `json:"models,omitempty"`
+	UpdatedAt               time.Time            `json:"updated_at"`
 }
 
 type ProviderModelUsage struct {
@@ -272,7 +277,26 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 		if t.concurrency != nil && aggregate.AuthIndex != "" {
 			limit = t.concurrency.Summary(aggregate.AuthIndex).Limit
 		}
-		out = append(out, ProviderRuntimeSnapshot{Provider: aggregate.Provider, AuthIndex: aggregate.AuthIndex, Identity: aggregate.Identity, Supported: supported, Reason: reason, Active: aggregate.Active, Limit: limit, InputTokens: aggregate.InputTokens, OutputTokens: aggregate.OutputTokens, ReasoningTokens: aggregate.ReasoningTokens, CachedTokens: aggregate.CachedTokens, TotalTokens: aggregate.TotalTokens, AmountUSD: float64(aggregate.AmountNanos) / creditNanosPerUSD, RatedRequests: aggregate.RatedRequests, UnratedRequests: aggregate.UnratedRequests, Models: models, UpdatedAt: aggregate.UpdatedAt})
+		out = append(out, ProviderRuntimeSnapshot{
+			Provider:                aggregate.Provider,
+			AuthIndex:               aggregate.AuthIndex,
+			Identity:                aggregate.Identity,
+			Supported:               supported,
+			Reason:                  reason,
+			ConcurrencyConfigurable: false,
+			Active:                  aggregate.Active,
+			Limit:                   limit,
+			InputTokens:             aggregate.InputTokens,
+			OutputTokens:            aggregate.OutputTokens,
+			ReasoningTokens:         aggregate.ReasoningTokens,
+			CachedTokens:            aggregate.CachedTokens,
+			TotalTokens:             aggregate.TotalTokens,
+			AmountUSD:               float64(aggregate.AmountNanos) / creditNanosPerUSD,
+			RatedRequests:           aggregate.RatedRequests,
+			UnratedRequests:         aggregate.UnratedRequests,
+			Models:                  models,
+			UpdatedAt:               aggregate.UpdatedAt,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Provider == out[j].Provider {

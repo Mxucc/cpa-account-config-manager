@@ -80,10 +80,18 @@ type previewStore struct {
 }
 
 type PreviewService struct {
-	accounts    *AccountService
-	concurrency *AccountConcurrencyService
-	store       *previewStore
-	now         func() time.Time
+	accounts      *AccountService
+	concurrency   *AccountConcurrencyService
+	proxyProfiles ProxyProfileResolver
+	store         *previewStore
+	now           func() time.Time
+}
+
+func (s *PreviewService) SetProxyProfiles(resolver ProxyProfileResolver) {
+	if s == nil {
+		return
+	}
+	s.proxyProfiles = resolver
 }
 
 func (s *PreviewService) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
@@ -161,6 +169,13 @@ func (s *PreviewService) Clear() {
 	s.store.clear()
 }
 
+func (s *PreviewService) proxyProfileResolver(id string) (string, bool) {
+	if s == nil || s.proxyProfiles == nil || strings.TrimSpace(id) == "" {
+		return "", false
+	}
+	return s.proxyProfiles.ProxyURLByID(id)
+}
+
 func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPatch BatchPatch) (previewSnapshot, error) {
 	if s == nil || s.accounts == nil {
 		return previewSnapshot{}, fmt.Errorf("account service is unavailable")
@@ -175,6 +190,10 @@ func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPat
 	}
 	if patch.ConcurrencyLimit != nil && (s.concurrency == nil || !s.concurrency.Availability().Supported) {
 		return previewSnapshot{}, ErrAccountConcurrencyUnsupported
+	}
+	patch, errPatch = patch.ResolveProxyProfile(s.proxyProfileResolver)
+	if errPatch != nil {
+		return previewSnapshot{}, errPatch
 	}
 	resolved, errResolve := s.accounts.ResolveTargets(ctx, scope)
 	if errResolve != nil {

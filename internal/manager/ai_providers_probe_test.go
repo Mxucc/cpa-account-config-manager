@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -274,5 +275,95 @@ func TestAIProviderCodexProbeUsesStableConvergedIdentity(t *testing.T) {
 	}
 	if len(host.saves) != 0 {
 		t.Fatalf("AI-provider credential writes = %d, want 0", len(host.saves))
+	}
+}
+
+func TestAIProviderModelProbeUsesConfiguredModelAndClassifiesResponse(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Body:       []byte(`{"id":"chatcmpl_test","object":"chat.completion","choices":[{"message":{"content":"OK"}}]}`),
+	}}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderModel(context.Background(), "openai-compatibility", "https://provider.example/v1", "sk-secret", "", "provider-model", nil, time.Second)
+	if !result.Reachable || result.Status != "available" || result.ReasonCode != "model_response_ok" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Model != "provider-model" || result.Response == nil {
+		t.Fatalf("model/response = %#v", result)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %#v", transport.requests)
+	}
+	request := transport.requests[0]
+	if request.Method != http.MethodPost || request.URL != "https://provider.example/v1/chat/completions" {
+		t.Fatalf("request = %#v", request)
+	}
+	if !bytes.Contains(request.Body, []byte(`"model":"provider-model"`)) {
+		t.Fatalf("request body = %s", request.Body)
+	}
+	if request.Headers.Get("Authorization") != "Bearer sk-secret" {
+		t.Fatalf("authorization header missing: %#v", request.Headers)
+	}
+}
+
+func TestAIProviderModelProbeClassifiesExpectedFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		status     string
+		reason     string
+	}{
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, body: `{"error":"invalid key"}`, status: "unavailable", reason: "authentication_failed"},
+		{name: "quota", statusCode: http.StatusTooManyRequests, body: `{"error":{"type":"usage_limit_reached","message":"usage limit has been reached"}}`, status: "review", reason: "quota_limited"},
+		{name: "model missing", statusCode: http.StatusBadRequest, body: `{"error":{"message":"model not found"}}`, status: "unavailable", reason: "model_not_found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{StatusCode: test.statusCode, Body: []byte(test.body)}}}
+			app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+			result := app.probeAIProviderModel(context.Background(), "openai-compatibility", "https://provider.example/v1", "sk-secret", "", "provider-model", nil, time.Second)
+			if result.Status != test.status || result.ReasonCode != test.reason || result.StatusCode != test.statusCode {
+				t.Fatalf("result = %#v", result)
+			}
+			if result.Reachable {
+				t.Fatalf("failure result is reachable: %#v", result)
+			}
+		})
+	}
+}
+
+func TestAIProviderModelCatalogParsing(t *testing.T) {
+	models := parseAIProviderModelCatalog([]byte(`{"data":[{"id":"gpt-4o-mini","object":"model","owned_by":"openai"},{"id":"gpt-4o-mini"}]}`))
+	if len(models) != 1 || models[0].ID != "gpt-4o-mini" || models[0].OwnedBy != "openai" {
+		t.Fatalf("models = %#v", models)
+	}
+	models = parseAIProviderModelCatalog([]byte(`{"models":[{"name":"models/gemini-2.5-flash","displayName":"Gemini Flash"}]}`))
+	if len(models) != 1 || models[0].ID != "gemini-2.5-flash" || models[0].DisplayName != "Gemini Flash" {
+		t.Fatalf("gemini models = %#v", models)
+	}
+}
+
+func TestAIProviderRuntimeSnapshotCannotFabricateProviderConcurrencyControl(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider:  "openai",
+		AuthIndex: "provider-index",
+		Model:     "gpt-5.5",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 12},
+	})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshot count = %d, want 1", len(snapshots))
+	}
+	if !snapshots[0].Supported {
+		t.Fatal("identified provider runtime should remain observable")
+	}
+	if snapshots[0].Active != 0 || snapshots[0].Limit != 0 {
+		t.Fatalf("observability snapshot should not invent admission state: active=%d limit=%d", snapshots[0].Active, snapshots[0].Limit)
+	}
+	if snapshots[0].ConcurrencyConfigurable {
+		t.Fatal("CPA provider/API-key concurrency is not configurable through the plugin and must not be reported as configurable")
 	}
 }

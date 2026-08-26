@@ -408,12 +408,39 @@ export interface HeaderPatch {
   remove?: string[];
 }
 
+export interface ProxyProfileView {
+	id: string;
+	name: string;
+	proxy_url_masked: string;
+	note?: string;
+	providers?: string[];
+	enabled: boolean;
+	account_count: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ProxyProfileListResponse {
+	profiles: ProxyProfileView[];
+	storage_error?: string;
+}
+
+export interface ProxyProfileInput {
+	id?: string;
+	name: string;
+	proxy_url: string;
+	note?: string;
+	providers?: string[];
+	enabled?: boolean;
+}
+
 export interface BatchPatch {
   disabled?: boolean;
   priority?: number;
   note?: string;
   prefix?: string;
   proxy_url?: string;
+	proxy_profile_id?: string;
   websockets?: boolean;
   headers?: HeaderPatch;
 	model_policy?: ModelPolicyPatch;
@@ -1260,6 +1287,7 @@ export interface AIProviderRuntimeSnapshot {
   auth_index?: string;
   identity: string;
   supported: boolean;
+  concurrency_configurable?: boolean;
   reason?: string;
   active: number;
   limit: number;

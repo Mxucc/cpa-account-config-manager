@@ -37,6 +37,7 @@ describe("OtherSettingsWorkspace", () => {
         return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.91", update_available: false, checking: false, pending: false, checked_at: "2026-07-21T08:00:00Z", runtime: { active: true, superseded: false, instance_version: "0.2.91", restart_required: false, restart_recommended: true } });
       }
       if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
+      if (url.endsWith("/proxy-profiles")) return jsonResponse({ profiles: [], storage_error: "" });
       if (url === "/v0/management/plugin-store") {
         return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.0", installed: true, installed_version: "0.2.91", update_available: true }] });
       }

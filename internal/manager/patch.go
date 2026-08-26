@@ -34,6 +34,7 @@ type BatchPatch struct {
 	Note             *string           `json:"note,omitempty"`
 	Prefix           *string           `json:"prefix,omitempty"`
 	ProxyURL         *string           `json:"proxy_url,omitempty"`
+	ProxyProfileID   *string           `json:"proxy_profile_id,omitempty"`
 	Websockets       *bool             `json:"websockets,omitempty"`
 	Headers          *HeaderPatch      `json:"headers,omitempty"`
 	ModelPolicy      *ModelPolicyPatch `json:"model_policy,omitempty"`
@@ -107,6 +108,13 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 		}
 		patch.ProxyURL = stringPointer(value)
 	}
+	if patch.ProxyProfileID != nil {
+		value := strings.TrimSpace(*patch.ProxyProfileID)
+		if value == "" || len(value) > 128 || hasUnsafeControl(value, false) {
+			return BatchPatch{}, fmt.Errorf("proxy profile id is invalid")
+		}
+		patch.ProxyProfileID = stringPointer(value)
+	}
 	if patch.Headers != nil {
 		headers, errHeaders := normalizeHeaderPatch(*patch.Headers)
 		if errHeaders != nil {
@@ -136,7 +144,7 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 
 func (patch BatchPatch) Empty() bool {
 	return patch.Disabled == nil && patch.Priority == nil && patch.Note == nil &&
-		patch.Prefix == nil && patch.ProxyURL == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil
+		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil
 }
 
 func (patch BatchPatch) Summary() PatchSummary {
@@ -155,6 +163,9 @@ func (patch BatchPatch) Summary() PatchSummary {
 	}
 	if patch.ProxyURL != nil {
 		fields = append(fields, "proxy_url")
+	}
+	if patch.ProxyProfileID != nil {
+		fields = append(fields, "proxy_profile")
 	}
 	if patch.Websockets != nil {
 		fields = append(fields, "websockets")
@@ -215,9 +226,29 @@ func (patch BatchPatch) FieldPayload(name string) map[string]any {
 	return payload
 }
 
+// ResolveProxyProfile converts a reusable profile reference into the concrete
+// proxy URL required by CPA. The reference is removed after resolution so that
+// management payloads never carry plugin-local identifiers.
+func (patch BatchPatch) ResolveProxyProfile(resolve func(string) (string, bool)) (BatchPatch, error) {
+	if patch.ProxyProfileID == nil {
+		return patch, nil
+	}
+	if resolve == nil {
+		return BatchPatch{}, fmt.Errorf("proxy profiles are unavailable")
+	}
+	id := strings.TrimSpace(*patch.ProxyProfileID)
+	url, ok := resolve(id)
+	if !ok {
+		return BatchPatch{}, fmt.Errorf("proxy profile was not found")
+	}
+	patch.ProxyURL = stringPointer(url)
+	patch.ProxyProfileID = nil
+	return patch, nil
+}
+
 func (patch BatchPatch) HasFieldUpdates() bool {
 	return patch.Priority != nil || patch.Note != nil || patch.Prefix != nil ||
-		patch.ProxyURL != nil || patch.Websockets != nil || patch.Headers != nil || patch.ModelPolicy != nil
+		patch.ProxyURL != nil || patch.ProxyProfileID != nil || patch.Websockets != nil || patch.Headers != nil || patch.ModelPolicy != nil
 }
 
 func (patch BatchPatch) HasPluginUpdates() bool {
@@ -242,6 +273,9 @@ func cloneBatchPatch(patch BatchPatch) BatchPatch {
 	}
 	if patch.ProxyURL != nil {
 		clone.ProxyURL = stringPointer(*patch.ProxyURL)
+	}
+	if patch.ProxyProfileID != nil {
+		clone.ProxyProfileID = stringPointer(*patch.ProxyProfileID)
 	}
 	if patch.Websockets != nil {
 		value := *patch.Websockets

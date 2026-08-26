@@ -138,8 +138,8 @@ func (a *App) handleOpenCodeZenProbe(ctx context.Context, req cpaapi.ManagementR
 	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid OpenCode Zen probe request"})
 	}
-	if strings.TrimSpace(request.BaseURL) == "" || strings.TrimSpace(request.ZenAPIKey) == "" {
-		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "base_url and zen_api_key are both required"})
+	if strings.TrimSpace(request.ZenAPIKey) == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "zen_api_key is required"})
 	}
 	result := a.opencodeZen.Probe(ctx, request.BaseURL, request.ZenAPIKey, openCodeZenTimeout(request.TimeoutSeconds))
 	status := http.StatusOK

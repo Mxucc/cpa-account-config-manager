@@ -96,6 +96,7 @@ type JobEngine struct {
 	wait              sync.WaitGroup
 	accounts          *AccountService
 	concurrency       *AccountConcurrencyService
+	proxyProfiles     ProxyProfileResolver
 	mutations         *MutationCoordinator
 	backgroundOwner   BackgroundWorkOwner
 	config            Config
@@ -115,6 +116,14 @@ type JobEngine struct {
 	retryScheduled    bool
 	closed            bool
 	persistRetryDelay time.Duration
+}
+
+// SetProxyProfiles keeps batch execution decoupled from the profile store and
+// allows tests to inject a resolver without constructing a full application.
+func (e *JobEngine) SetProxyProfiles(resolver ProxyProfileResolver) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.proxyProfiles = resolver
 }
 
 func (e *JobEngine) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
@@ -435,6 +444,16 @@ func clearManagementWriterSecrets(writer ManagementWriter) {
 	}
 }
 
+func (e *JobEngine) proxyProfileResolver(id string) (string, bool) {
+	e.mu.Lock()
+	profiles := e.proxyProfiles
+	e.mu.Unlock()
+	if profiles == nil || strings.TrimSpace(id) == "" {
+		return "", false
+	}
+	return profiles.ProxyURLByID(id)
+}
+
 func (e *JobEngine) applyAccountSafely(ctx context.Context, account Account, operation string, patch BatchPatch, writer ManagementWriter) (result JobResult) {
 	defer func() {
 		if recover() != nil {
@@ -470,6 +489,10 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 	}
 
 	resolvedPatch := cloneBatchPatch(patch)
+	resolvedPatch, errProxy := resolvedPatch.ResolveProxyProfile(e.proxyProfileResolver)
+	if errProxy != nil {
+		return JobResult{Status: ResultFailed, Error: errProxy.Error(), Retryable: true}
+	}
 	if patch.ModelPolicy != nil {
 		var catalog []AccountModelOption
 		if patch.ModelPolicy.Mode != ModelPolicyModeAll {

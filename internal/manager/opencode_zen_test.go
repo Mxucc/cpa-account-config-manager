@@ -29,6 +29,18 @@ func zenTestServer(t *testing.T, secret string) *httptest.Server {
 	return server
 }
 
+func TestOpenCodeZenEmptyBaseURLUsesDefault(t *testing.T) {
+	service := NewOpenCodeZenService()
+	service.Configure(Config{DataDir: t.TempDir()})
+	id, err := service.SaveAccount("", "default", "", "sk-default")
+	if err != nil || id == "" {
+		t.Fatalf("save with empty base URL: id=%q err=%v", id, err)
+	}
+	views := service.ListAccounts()
+	if len(views) != 1 || views[0].BaseURL != openCodeZenDefaultBaseURL {
+		t.Fatalf("views = %+v, want default base URL", views)
+	}
+}
 func TestProbeOpenCodeZenEndpointReachable(t *testing.T) {
 	server := zenTestServer(t, "sk-zen-secret")
 	service := NewOpenCodeZenService()

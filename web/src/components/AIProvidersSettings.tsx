@@ -1,7 +1,10 @@
 import { Activity, Eye, EyeOff, LoaderCircle, Plus, Power, PowerOff, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, ShieldQuestion, XCircle } from "lucide-react";
 import * as api from "../api/client";
+import { technicalLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
+import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 import type {
@@ -23,6 +26,48 @@ interface AIProvidersSettingsProps {
 }
 
 type AddKind = AIProviderChannelKind;
+
+const providerTestStatusLabels: Record<api.AIProviderProbeResult["status"] & NonNullable<api.AIProviderProbeResult["status"]>, UIMessageKey> = {
+  available: "ui.model_available",
+  unavailable: "ui.model_unavailable",
+  unsupported: "ui.testing_unsupported",
+  review: "ui.manual_confirmation_required",
+};
+
+const providerTestReasonLabels: Record<string, UIMessageKey> = {
+  model_response_ok: "ui.received_the_expected_model_response",
+  model_not_found: "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist",
+  account_unavailable: "ui.account_is_currently_unavailable",
+  authentication_failed: "ui.authentication_failed_check_credential_status",
+  quota_limited: "ui.upstream_quota_or_rate_limited",
+  request_timeout: "ui.test_request_timed_out",
+  request_failed: "ui.upstream_service_is_temporarily_unavailable",
+  upstream_unavailable: "ui.upstream_service_is_temporarily_unavailable",
+  invalid_response: "ui.the_upstream_response_cannot_confirm_model_availability",
+  invalid_model: "ui.enter_model_id",
+  unsupported_provider: "ui.this_provider_does_not_support_safe_model_testing_yet",
+  transient_failure: "ui.upstream_service_is_temporarily_unavailable",
+};
+
+function ProviderTestResponse({ response }: { response: NonNullable<api.AIProviderProbeResult["response"]> }) {
+  const { tx } = useI18n();
+  const headers = Array.isArray(response.headers) ? response.headers : [];
+  const body = response.body ? decodeHTMLCharacterReferences(response.body) : tx("ui.empty_response_body");
+  return (
+    <div className="model-test-response">
+      <div className="model-test-response-heading">
+        <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
+        <span>{response.format.toUpperCase()}{response.truncated ? ` · ${tx("ui.truncated")}` : ""}</span>
+      </div>
+      {headers.length > 0 ? (
+        <div className="model-test-response-headers" aria-label={tx("ui.response_headers")}>
+          {headers.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
+        </div>
+      ) : null}
+      <pre aria-label={tx("ui.response_body")}><code>{body}</code></pre>
+    </div>
+  );
+}
 
 const addableKinds: Array<{ kind: AddKind; labelKey: UIMessageKey; descriptionKey: UIMessageKey }> = [
   { kind: "openai-compatibility", labelKey: "ui.ai_provider_channel_openai_compatibility", descriptionKey: "ui.ai_provider_channel_openai_compatibility_description" },
@@ -281,7 +326,7 @@ function RichChannelFields({
               <input value={keyEntry.apiKey} onChange={(event) => setKeyRow(index, { apiKey: event.target.value })} type="password" placeholder="sk-..." autoComplete="off" />
               <input value={keyEntry.weight} onChange={(event) => setKeyRow(index, { weight: event.target.value })} type="number" placeholder={tx("ui.ai_provider_field_weight")} autoComplete="off" />
               <input value={keyEntry.proxyURL} onChange={(event) => setKeyRow(index, { proxyURL: event.target.value })} placeholder={tx("ui.ai_provider_field_proxy_url")} autoComplete="off" />
-              <button className="button-danger" type="button" aria-label={tx("ui.remove")} onClick={() => removeKeyEntryRow(index)}><Trash2 size={14} /></button>
+              <button className="button button-danger button-small" type="button" aria-label={tx("ui.remove")} onClick={() => removeKeyEntryRow(index)}><Trash2 size={14} /></button>
             </div>
           ))}
           <button className="button" type="button" onClick={addKeyEntryRow}><Plus size={14} />{tx("ui.ai_provider_field_add_api_key")}</button>
@@ -347,7 +392,7 @@ function channelLabelKey(kind: AIProviderChannelKind): UIMessageKey {
 }
 
 export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: AIProvidersSettingsProps) {
-  const { locale, tx } = useI18n();
+  const { locale, tx, formatDateTime } = useI18n();
   const [channels, setChannels] = useState<AIProviderChannelSnapshot[]>([]);
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
   const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
@@ -361,6 +406,8 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const [viewing, setViewing] = useState<{ kind: AIProviderChannelKind; entry: AIProviderChannelEntry } | null>(null);
   const [testing, setTesting] = useState<{ kind: AIProviderChannelKind; index: number; label: string } | null>(null);
   const [testResult, setTestResult] = useState<api.AIProviderProbeResult | null>(null);
+  const [testModels, setTestModels] = useState<string[]>([]);
+  const [testModel, setTestModel] = useState("");
   const [newName, setNewName] = useState("");
   const [newBaseURL, setNewBaseURL] = useState("");
   const [newAPIKey, setNewAPIKey] = useState("");
@@ -485,6 +532,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       auth_index: undefined,
       identity: `provider:${entry.name ?? entry.index}`,
       supported: matches.some((snapshot) => snapshot.supported),
+      concurrency_configurable: matches.some((snapshot) => snapshot.concurrency_configurable === true),
       active: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.active), 0),
       limit,
       input_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.input_tokens), 0),
@@ -507,12 +555,18 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     return `$${amount.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
   };
 
+  const providerConcurrencyConfigurable = runtimeSnapshots.some(
+    (runtime) => runtime.supported && runtime.concurrency_configurable === true,
+  );
+
   const resetForm = () => {
     setAdding(false);
     setEditing(null);
     setViewing(null);
     setTesting(null);
     setTestResult(null);
+    setTestModels([]);
+    setTestModel("");
     setAddKind("openai-compatibility");
     setNewName("");
     setNewBaseURL("");
@@ -533,7 +587,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     if (addKind === "opencode-go") {
       if (!newWorkspace.trim() || !newCookie.trim()) return;
     } else if (addKind === "opencode-zen") {
-      if (!newBaseURL.trim() || !newAPIKey.trim()) return;
+      if (!newAPIKey.trim()) return;
     } else if (addKind === "openai-compatibility") {
       if (!newName.trim() || !newBaseURL.trim() || !newAPIKey.trim()) return;
     } else if (!newAPIKey.trim()) {
@@ -696,23 +750,64 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const testChannel = async (entry: AIProviderChannelEntry, kind: AIProviderChannelKind) => {
     if (busy) return;
     if (kind === "opencode-go") return;
-    if (kind === "opencode-zen" && !entry.account_id) return;
+    const unsupported = kind === "vertex-api-key" || kind === "api-keys"
+      ? tx("ui.ai_provider_model_catalog_unavailable")
+      : "";
+    if (unsupported) {
+      setError(unsupported);
+      setTesting({ kind, index: entry.index, label: entry.name || entry.base_url || `#${entry.index + 1}` });
+      setTestResult({
+        reachable: false,
+        status: "unsupported",
+        probe_kind: "model",
+        reason_code: "unsupported_provider",
+        detail: unsupported,
+        tested_at: new Date().toISOString(),
+      });
+      return;
+    }
     setBusy(true);
     setError("");
     setTestResult(null);
+    setTestModels([]);
+    setTestModel("");
     setTesting({ kind, index: entry.index, label: entry.name || entry.base_url || `#${entry.index + 1}` });
     try {
-      const result = kind === "opencode-zen"
-        ? (await api.probeOpenCodeZenAccount(entry.account_id as string)).result
-        : await api.testAIProviderChannelForKind(
-            kind,
-            entry.base_url ?? "",
-            entry.api_key ?? "",
-            15,
-            entry.headers,
-            entry.auth_index || entry.account_id,
-          );
-      setTestResult(result);
+      if (kind === "opencode-zen") {
+        setTestResult((await api.probeOpenCodeZenAccount(entry.account_id as string)).result);
+      } else {
+        const configured = (entry.models ?? []).map((model) => String(model.name ?? model.alias ?? "").trim()).filter(Boolean);
+        let catalog: api.AIProviderProbeResult | null = null;
+        try {
+          catalog = await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id);
+        } catch {
+          // Some compatible gateways intentionally do not expose /models.
+          // Configured models are still real routing targets, so continue.
+        }
+        const discovered = (catalog?.models ?? []).map((model) => String(model.id ?? "").trim()).filter(Boolean);
+        const models = [...new Set([...discovered, ...configured])];
+        setTestModels(models);
+        const selected = models[0] ?? "";
+        setTestModel(selected);
+        if (selected) {
+          const result = await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, selected);
+          if (!catalog?.reachable && configured.length > 0) {
+            result.detail = result.detail ? `${result.detail} · model catalog unavailable` : "model catalog unavailable";
+          }
+          setTestResult(result);
+        } else if (catalog) {
+          setTestResult(catalog);
+        } else {
+          setTestResult({
+            reachable: false,
+            status: "unsupported",
+            probe_kind: "model",
+            reason_code: "no_models_available",
+            detail: tx("ui.ai_provider_no_models_available"),
+            tested_at: new Date().toISOString(),
+          });
+        }
+      }
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -720,15 +815,28 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     }
   };
 
+  const retestChannelModel = async () => {
+    if (!testing || !testModel || busy) return;
+    const channel = channels.find((item) => item.kind === testing.kind);
+    const entry = channel?.entries.find((item) => item.index === testing.index);
+    if (!entry || testing.kind === "opencode-zen") return;
+    setBusy(true);
+    try {
+      setTestResult(await api.testAIProviderChannelForKind(testing.kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, testModel));
+    } catch (caught) { handleError(caught); } finally { setBusy(false); }
+  };
+
   const closeTest = () => {
     setTesting(null);
     setTestResult(null);
+    setTestModels([]);
+    setTestModel("");
   };
 
   const addFormValid = addKind === "opencode-go"
     ? Boolean(newWorkspace.trim() && newCookie.trim())
     : addKind === "opencode-zen"
-      ? Boolean(newBaseURL.trim() && newAPIKey.trim())
+      ? Boolean(newAPIKey.trim())
       : addKind === "openai-compatibility"
         ? Boolean(newName.trim() && newBaseURL.trim() && newAPIKey.trim())
         : Boolean(newAPIKey.trim());
@@ -999,7 +1107,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               if (!runtime) return <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_usage")}</span><strong>{tx("ui.ai_provider_identity_unavailable")}</strong></div>;
               return (
                 <div className="ai-provider-runtime-detail">
-                  <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency")}</span><strong>{runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`}</strong></div>
+                  {runtime.supported ? <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency")}</span><strong>{runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`}</strong></div> : null}
                   <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_total_tokens")}</span><strong>{formatTokens(runtime.total_tokens)}</strong></div>
                   <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_estimated_cost")}</span><strong>{formatAmount(runtime.amount_usd)}</strong></div>
                   {runtime.models && runtime.models.length > 0 ? (
@@ -1014,16 +1122,64 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
 
       {testing ? (
         <Modal title={tx("ui.test_ai_provider_title", { name: testing.label })} onClose={closeTest} footer={(
-          <button className="button" type="button" onClick={closeTest}>{tx("ui.close")}</button>
+          <>
+            {testModels.length > 0 && testResult ? (
+              <button className="button" type="button" disabled={!testModel || busy} onClick={() => void retestChannelModel()}>
+                {busy ? <LoaderCircle className="spin" size={16} /> : null}{tx("ui.test_again")}
+              </button>
+            ) : null}
+            <button className="button button-primary" type="button" onClick={closeTest}>{tx("ui.close")}</button>
+          </>
         )}>
-          {!testResult ? (
-            <div className="ai-provider-test-running" role="status"><LoaderCircle className="spin" size={20} /><span>{tx("ui.testing_ai_provider")}</span></div>
-          ) : (
-            <div className={`ai-provider-test-result ${testResult.reachable ? "is-reachable" : "is-failed"}`} role="status">
-              <strong>{testResult.reachable ? tx("ui.ai_provider_test_ok") : tx("ui.ai_provider_test_failed")}</strong>
-              <span>{testResult.detail || (testResult.status_code ? `HTTP ${testResult.status_code}` : "")}</span>
+          <div className="model-test-dialog">
+            <div className="model-test-account">
+              <span className="model-test-account-icon"><Activity size={18} /></span>
+              <div>
+                <strong>{testing.label}</strong>
+                <span>{technicalLabel(testing.kind, locale)} · {testing.kind === "openai-compatibility" ? "api_key" : testing.kind}</span>
+              </div>
             </div>
-          )}
+            <label className="model-test-field">
+              <span>{tx("ui.test_model")}</span>
+              {testModels.length > 0 ? (
+                <select aria-label={tx("ui.test_model")} value={testModel} disabled={busy} onChange={(event) => setTestModel(event.target.value)}>
+                  {testModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                </select>
+              ) : (
+                <span className="model-test-field-note">{tx("ui.ai_provider_no_models_available")}</span>
+              )}
+            </label>
+            {busy ? <div className="ai-provider-test-running" role="status"><LoaderCircle className="spin" size={20} /><span>{tx("ui.testing_ai_provider")}</span></div> : null}
+            {!busy ? (
+            (() => {
+              const result = testResult;
+              if (!result) return null;
+              const status = result.status || (result.reachable ? "available" : "unavailable");
+              const StatusIcon = status === "available" ? CheckCircle2 : status === "unavailable" ? XCircle : status === "unsupported" ? AlertTriangle : ShieldQuestion;
+              const reasonKey = providerTestReasonLabels[result.reason_code ?? ""];
+              const description = result.detail
+                ? operatorMessage(result.detail, locale)
+                : reasonKey
+                  ? tx(reasonKey)
+                  : result.status_code
+                    ? tx("ui.the_test_result_requires_manual_confirmation")
+                    : "";
+              return (
+                <section className={`model-test-outcome outcome-${status}`} aria-label={tx("ui.model_test_result")}>
+                  <div className="model-test-outcome-heading"><StatusIcon size={21} /><div><strong>{tx(providerTestStatusLabels[status])}</strong><span>{description}</span></div></div>
+                  <dl>
+                    {result.model ? <div><dt>{tx("ui.model")}</dt><dd>{result.model}</dd></div> : null}
+                    <div><dt>{tx("ui.http_status")}</dt><dd>{result.status_code || "-"}</dd></div>
+                    {result.probe_kind ? <div><dt>{tx("ui.probe_type")}</dt><dd>{result.probe_kind === "credential" ? tx("ui.credential_probe") : tx("ui.model_probe")}</dd></div> : null}
+                    {typeof result.latency_ms === "number" ? <div><dt>{tx("ui.latency")}</dt><dd>{result.latency_ms >= 0 ? `${result.latency_ms} ms` : "-"}</dd></div> : null}
+                    {result.tested_at ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(result.tested_at)}</dd></div> : null}
+                  </dl>
+                  {result.response ? <ProviderTestResponse response={result.response} /> : null}
+                </section>
+              );
+              })()
+            ) : null}
+          </div>
         </Modal>
       ) : null}
 
@@ -1034,12 +1190,22 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       ) : (
         <div className="ai-provider-table-wrap">
           <table className="account-table ai-provider-table">
-            <thead><tr><th>{tx("ui.ai_provider_type")}</th><th>{tx("ui.ai_provider_name")}</th><th>{tx("ui.ai_provider_base_url")}</th><th>{tx("ui.ai_provider_api_key")}</th><th>{tx("ui.status")}</th><th>{tx("ui.models")}</th><th>{tx("ui.ai_provider_concurrency")}</th><th>{tx("ui.ai_provider_usage")}</th><th>{tx("ui.actions")}</th></tr></thead>
+            <thead><tr>
+              <th>{tx("ui.ai_provider_type")}</th>
+              <th>{tx("ui.ai_provider_name")}</th>
+              <th>{tx("ui.ai_provider_base_url")}</th>
+              <th>{tx("ui.ai_provider_api_key")}</th>
+              <th>{tx("ui.status")}</th>
+              <th>{tx("ui.ai_provider_model_count")}</th>
+              {providerConcurrencyConfigurable ? <th>{tx("ui.ai_provider_concurrency")}</th> : null}
+              <th>{tx("ui.ai_provider_usage")}</th>
+              <th>{tx("ui.actions")}</th>
+            </tr></thead>
             <tbody>
               {channels.flatMap((channel) => [
                 ...(channel.error || channel.storage_error ? [
                   <tr key={`${channel.kind}-issue`} className="ai-provider-channel-issue">
-                    <td colSpan={9}>
+                    <td colSpan={providerConcurrencyConfigurable ? 9 : 8}>
                       <strong>{tx(channelLabelKey(channel.kind))}</strong>{" "}
                       <span>{tx(channel.storage_error ? "ui.ai_provider_storage_unavailable" : channel.error === "provider_channel_response_invalid" ? "ui.ai_provider_response_invalid" : "ui.ai_provider_channel_unavailable")}</span>
                     </td>
@@ -1056,7 +1222,13 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   {(() => {
                     const runtime = runtimeForEntry(entry);
                     return <>
-                      <td title={runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : undefined}>{runtime ? (runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`) : "-"}</td>
+                      {providerConcurrencyConfigurable ? (
+                        <td title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
+                          {runtime?.supported && runtime.concurrency_configurable === true
+                            ? (runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`)
+                            : "-"}
+                        </td>
+                      ) : null}
                       <td>{runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><br /><small>{formatAmount(runtime.amount_usd)}</small></> : <span title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</span>}</td>
                     </>;
                   })()}

@@ -82,6 +82,7 @@ type App struct {
 	agentIdentity   *AgentIdentityExperiment
 	opencode        *OpenCodeQuotaService
 	opencodeZen     *OpenCodeZenService
+	proxyProfiles   *ProxyProfileService
 	indexHTML       []byte
 	quiesceOnce     sync.Once
 	quotaResetLocks [64]sync.Mutex
@@ -109,6 +110,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	quotaBootstrap := NewAccountQuotaMetadataBootstrap()
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
+	proxyProfiles := NewProxyProfileService()
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -166,9 +168,12 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		agentIdentity:   agentIdentity,
 		opencode:        opencode,
 		opencodeZen:     opencodeZen,
+		proxyProfiles:   proxyProfiles,
 		indexHTML:       append([]byte(nil), indexHTML...),
 	}
 	app.previews.SetAccountConcurrency(concurrency)
+	app.previews.SetProxyProfiles(proxyProfiles)
+	jobs.SetProxyProfiles(proxyProfiles)
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
@@ -219,6 +224,8 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.operations.Configure(config)
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
+	a.proxyProfiles.Configure(config)
+	a.proxyProfiles.SetBindingApplier(a.applyProxyProfileBindings)
 	a.experiments.Configure(config)
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
 	a.newAccountProbe.Configure(config)
@@ -518,6 +525,10 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/proxy-profiles", Description: "List redacted reusable proxy profiles."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/proxy-profiles", Description: "Create a reusable proxy profile."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/proxy-profiles", Description: "Update a reusable proxy profile."},
+			{Method: http.MethodDelete, Path: managementRoutePrefix + "/proxy-profiles", Description: "Delete a reusable proxy profile."},
 		},
 		Resources: []cpaapi.ResourceRoute{
 			{
@@ -698,6 +709,14 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeAccounts(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/probe":
 		return a.handleOpenCodeProbe(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/proxy-profiles":
+		return a.handleProxyProfilesList(ctx)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/proxy-profiles":
+		return a.handleProxyProfileCreate(req)
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/proxy-profiles":
+		return a.handleProxyProfileUpdate(req)
+	case method == http.MethodDelete && path == "/v0/management"+managementRoutePrefix+"/proxy-profiles":
+		return a.handleProxyProfileDelete(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/accounts":
 		return a.handleOpenCodeZenAccounts(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/accounts":

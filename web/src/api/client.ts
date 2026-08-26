@@ -34,6 +34,9 @@ import type {
 	AIProviderChannelModel,
 	AIProviderRuntimeResponse,
 	ForceSyncJobSnapshot,
+	ProxyProfileInput,
+	ProxyProfileListResponse,
+	ProxyProfileView,
 	ForceSyncPreview,
   ExportFormat,
   ImportPreview,
@@ -1692,6 +1695,7 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
       || !isNonEmptyString(raw.provider)
       || !isNonEmptyString(raw.identity)
       || typeof raw.supported !== "boolean"
+      || (raw.concurrency_configurable !== undefined && typeof raw.concurrency_configurable !== "boolean")
       || !isFiniteNonNegativeInteger(raw.active)
       || !isFiniteNonNegativeInteger(raw.limit)
       || !isFiniteNonNegativeNumber(raw.input_tokens)
@@ -2083,6 +2087,14 @@ export interface AIProviderProbeResult {
   reachable: boolean;
   status_code?: number;
   detail?: string;
+  model?: string;
+  status?: "available" | "unavailable" | "unsupported" | "review";
+  probe_kind?: string;
+  reason_code?: string;
+  latency_ms?: number;
+  tested_at?: string;
+  response?: import("../types").ModelTestResponsePreview;
+  models?: import("../types").AccountModelOption[];
 }
 
 export async function testAIProviderChannel(baseURL: string, apiKey: string, timeoutSeconds = 15, headers?: Record<string, string>): Promise<AIProviderProbeResult> {
@@ -2096,6 +2108,7 @@ export async function testAIProviderChannelForKind(
   timeoutSeconds = 15,
   headers?: Record<string, string>,
   authID?: string,
+  model?: string,
 ): Promise<AIProviderProbeResult> {
   const response = await requestRecord<AIProviderProbeResult>("/ai-providers/test", {
     method: "POST",
@@ -2106,6 +2119,7 @@ export async function testAIProviderChannelForKind(
       timeout_seconds: timeoutSeconds,
       ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
       ...(authID ? { auth_id: authID } : {}),
+      ...(model ? { model: model.trim() } : {}),
     }),
   });
   return response;
@@ -2201,4 +2215,56 @@ export async function addAIProviderChannel(kind: AIProviderChannelKind, provider
     ...(apiKeyProvider.base_url?.trim() ? { "base-url": apiKeyProvider.base_url.trim() } : {}),
   });
   await putAIProviderChannel(kind, items);
+}
+
+function normalizeProxyProfilesResponse(response: unknown): ProxyProfileListResponse {
+	if (!isRecord(response)) throw new APIError(502, "ui.invalid_api_response");
+	const profiles = nullableRecordArray(response.profiles);
+	if (profiles === undefined || profiles.some((item) =>
+		!isNonEmptyString(item.id)
+		|| !isNonEmptyString(item.name)
+		|| !isNonEmptyString(item.proxy_url_masked)
+		|| typeof item.enabled !== "boolean"
+		|| !isFiniteNonNegativeInteger(item.account_count)
+	)) {
+		throw new APIError(502, "ui.invalid_api_response");
+	}
+	return {
+		profiles: profiles.map((item) => ({
+			id: item.id as string,
+			name: item.name as string,
+			proxy_url_masked: item.proxy_url_masked as string,
+			note: typeof item.note === "string" ? item.note : undefined,
+			providers: Array.isArray(item.providers) ? item.providers.filter((value): value is string => typeof value === "string") : [],
+			enabled: item.enabled as boolean,
+			account_count: Number(item.account_count),
+			created_at: typeof item.created_at === "string" ? item.created_at : "",
+			updated_at: typeof item.updated_at === "string" ? item.updated_at : "",
+		})),
+		...(typeof response.storage_error === "string" ? { storage_error: response.storage_error } : {}),
+	};
+}
+
+export async function listProxyProfiles(signal?: AbortSignal): Promise<ProxyProfileListResponse> {
+	return normalizeProxyProfilesResponse(await requestRecord<unknown>("/proxy-profiles", { signal }));
+}
+
+export async function createProxyProfile(input: ProxyProfileInput): Promise<ProxyProfileView> {
+	const response = await requestRecord<{ profile?: unknown }>("/proxy-profiles", { method: "POST", body: JSON.stringify(input) });
+	return parseProxyProfile(response.profile);
+}
+
+export async function updateProxyProfile(input: ProxyProfileInput & { id: string }): Promise<ProxyProfileView> {
+	const response = await requestRecord<{ profile?: unknown }>("/proxy-profiles", { method: "PUT", body: JSON.stringify(input) });
+	return parseProxyProfile(response.profile);
+}
+
+export async function deleteProxyProfile(id: string, force = false): Promise<void> {
+	await request("/proxy-profiles?id=" + encodeURIComponent(id) + (force ? "&force=true" : ""), { method: "DELETE" });
+}
+
+function parseProxyProfile(value: unknown): ProxyProfileView {
+	const normalized = normalizeProxyProfilesResponse({ profiles: [value] });
+	if (normalized.profiles.length !== 1) throw new APIError(502, "ui.invalid_api_response");
+	return normalized.profiles[0];
 }

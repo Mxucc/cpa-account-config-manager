@@ -1,7 +1,9 @@
 package manager
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -19,6 +21,7 @@ type AIProviderProbeRequest struct {
 	BaseURL string            `json:"base_url"`
 	APIKey  string            `json:"api_key,omitempty"`
 	AuthID  string            `json:"auth_id,omitempty"`
+	Model   string            `json:"model,omitempty"`
 	Timeout int               `json:"timeout_seconds,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
@@ -26,9 +29,17 @@ type AIProviderProbeRequest struct {
 // AIProviderProbeResult reports whether the channel endpoint is reachable and
 // how the upstream treated the supplied credential.
 type AIProviderProbeResult struct {
-	Reachable  bool   `json:"reachable"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Detail     string `json:"detail,omitempty"`
+	Reachable  bool                      `json:"reachable"`
+	StatusCode int                       `json:"status_code,omitempty"`
+	Detail     string                    `json:"detail,omitempty"`
+	Model      string                    `json:"model,omitempty"`
+	Status     string                    `json:"status,omitempty"`
+	ProbeKind  string                    `json:"probe_kind,omitempty"`
+	ReasonCode string                    `json:"reason_code,omitempty"`
+	LatencyMS  int64                     `json:"latency_ms,omitempty"`
+	TestedAt   time.Time                 `json:"tested_at,omitempty"`
+	Response   *ModelTestResponsePreview `json:"response,omitempty"`
+	Models     []AccountModelOption      `json:"models,omitempty"`
 }
 
 const (
@@ -60,14 +71,22 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	if request.Timeout >= 1 && request.Timeout <= aiProviderProbeMaxTimeoutSeconds {
 		timeout = time.Duration(request.Timeout) * time.Second
 	}
-	result := a.probeAIProviderEndpoint(
-		ctx, kind, baseURL, apiKey, request.AuthID, request.Headers, timeout,
-	)
+	var result AIProviderProbeResult
+	// Keep the original catalog reachability probe for old clients. New clients
+	// submit a model and receive the same structured result as account testing.
+	if strings.TrimSpace(request.Model) != "" {
+		result = a.probeAIProviderModel(ctx, kind, baseURL, apiKey, request.AuthID, request.Model, request.Headers, timeout)
+	} else {
+		result = a.probeAIProviderEndpoint(ctx, kind, baseURL, apiKey, request.AuthID, request.Headers, timeout)
+	}
 	status := http.StatusOK
-	if !result.Reachable {
+	// Model tests return a structured result even for expected upstream
+	// failures (401/400/429), matching account model-test semantics. Keep the
+	// legacy catalog-only endpoint's 502 behavior for old clients.
+	if !result.Reachable && strings.TrimSpace(request.Model) == "" {
 		status = http.StatusBadGateway
 	}
-	return jsonResponse(status, AIProviderProbeResult{Reachable: result.Reachable, StatusCode: result.StatusCode, Detail: result.Detail})
+	return jsonResponse(status, result)
 }
 
 func (a *App) probeAIProviderEndpoint(
@@ -131,7 +150,7 @@ func (a *App) probeAIProviderEndpoint(
 		}
 		lastStatus = response.StatusCode
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
-			return AIProviderProbeResult{Reachable: true, StatusCode: response.StatusCode, Detail: "reachable"}
+			return AIProviderProbeResult{Reachable: true, StatusCode: response.StatusCode, Detail: "reachable", Models: parseAIProviderModelCatalog(response.Body)}
 		}
 		lastDetail = aiProviderProbeStatusDetail(response.StatusCode)
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
@@ -139,6 +158,211 @@ func (a *App) probeAIProviderEndpoint(
 		}
 	}
 	return AIProviderProbeResult{Reachable: false, StatusCode: lastStatus, Detail: lastDetail}
+}
+
+// probeAIProviderModel performs a real, minimal model request with the
+// submitted provider credential. It deliberately uses the same payload builder
+// and response classifier as account model tests, but sends directly through
+// the host transport because an AI-provider channel is not an auth file.
+func (a *App) probeAIProviderModel(ctx context.Context, kind, baseURL, apiKey, authID, model string, customHeaders map[string]string, timeout time.Duration) AIProviderProbeResult {
+	started := time.Now()
+	result := AIProviderProbeResult{Model: strings.TrimSpace(model), ProbeKind: InspectionProbeKindModel, TestedAt: started}
+	if safeModelIdentifier(model) == "" {
+		result.ReasonCode = "invalid_model"
+		result.Detail = "model contains unsupported characters or exceeds 128 characters"
+		return result
+	}
+	provider := aiProviderModelKind(kind)
+	metadata := modelTestAuthMetadata{hasAPIKey: true, baseURL: normalizeAIProviderBaseURL(baseURL)}
+	probe, selected, supported, errBuild := buildModelProbe(provider, model, metadata)
+	if errBuild != nil {
+		result.ReasonCode = "unsupported_provider"
+		result.Detail = sanitizeAIProviderProbeError(errBuild)
+		return result
+	}
+	result.Model = selected
+	if !supported {
+		result.ReasonCode = "unsupported_provider"
+		result.Detail = "provider model testing is not supported for this channel"
+		return result
+	}
+	// CPA channel settings may point at a compatible proxy rather than the
+	// provider's public origin. Keep the provider-specific request shape while
+	// replacing only its destination with the configured base URL.
+	probe.url = aiProviderModelProbeURL(kind, baseURL, selected, probe.url)
+	for key, value := range customHeaders {
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if key == "" || value == "" || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			continue
+		}
+		probe.headers[key] = value
+	}
+	replaceModelProbeToken(probe.headers, apiKey)
+	probeHeaders := http.Header{}
+	for key, value := range probe.headers {
+		probeHeaders.Set(key, value)
+	}
+	applyAIProviderProbeAuth(probeHeaders, kind, apiKey)
+	a.applyAIProviderCodexFingerprint(probeHeaders, kind, authID)
+	probe.headers = map[string]string{}
+	for key, values := range probeHeaders {
+		if len(values) > 0 {
+			probe.headers[key] = values[0]
+		}
+	}
+	transport := a.agentIdentity.transport
+	if transport == nil {
+		result.ReasonCode, result.Detail = "transport_unavailable", "host HTTP transport is unavailable"
+		return result
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	request := cpaapi.HostHTTPRequest{Method: firstNonEmpty(probe.method, http.MethodPost), URL: probe.url, Headers: http.Header{}, Body: []byte(probe.data)}
+	for key, value := range probe.headers {
+		request.Headers.Set(key, value)
+	}
+	response, errDo := transport.AgentIdentityDo(probeCtx, "", request)
+	result.LatencyMS = maxInt64(0, time.Since(started).Milliseconds())
+	if errDo != nil {
+		result.ReasonCode = "request_failed"
+		result.Detail = sanitizeAIProviderProbeError(errDo)
+		return result
+	}
+	result.StatusCode = response.StatusCode
+	body := response.Body
+	if len(body) > maxModelTestResponseBytes {
+		body = body[:maxModelTestResponseBytes]
+	}
+	result.Response = sanitizeModelTestResponsePreview(modelProbeHTTPResponse{StatusCode: response.StatusCode, Header: response.Headers, Body: body})
+	result.Status, result.ReasonCode = classifyModelProbe(probe.kind, response.StatusCode, body)
+	result.Reachable = result.Status == "available"
+	result.Detail = aiProviderModelProbeDetail(result.Status, result.ReasonCode)
+	return result
+}
+
+func aiProviderModelKind(kind string) string {
+	switch normalizeAIProviderKind(kind) {
+	case "codex-api-key":
+		return "codex"
+	case "claude-api-key":
+		return "claude"
+	case "gemini-api-key", "interactions-api-key", "gemini-interactions", "aistudio":
+		return "gemini"
+	case "vertex-api-key":
+		return "vertex"
+	case "xai-api-key":
+		return "xai"
+	case "api-keys":
+		return "openai"
+	case "openai-compatibility", "openai-compatible":
+		return "openai-compatible"
+	default:
+		return normalizeAIProviderKind(kind)
+	}
+}
+
+func aiProviderModelProbeURL(kind, baseURL, model, fallback string) string {
+	base := normalizeAIProviderBaseURL(baseURL)
+	if base == "" {
+		return fallback
+	}
+	// A CPA entry may already contain the concrete inference endpoint. Keep it
+	// intact instead of silently falling back to the public provider URL; this
+	// is important for OpenAI-compatible proxies and self-hosted Claude/Gemini
+	// gateways.
+	if strings.HasSuffix(base, "/chat/completions") || strings.HasSuffix(base, "/responses") || strings.Contains(base, ":generateContent") || strings.HasSuffix(base, "/messages") {
+		return base
+	}
+	switch normalizeAIProviderKind(kind) {
+	case "openai-compatibility", "openai-compatible":
+		return openAICompatibleChatURL(base)
+	case "claude-api-key":
+		return strings.TrimRight(base, "/") + "/messages"
+	case "xai-api-key":
+		return strings.TrimRight(base, "/") + "/responses"
+	case "gemini-api-key", "interactions-api-key":
+		trimmed := strings.TrimRight(base, "/")
+		if strings.HasSuffix(trimmed, "/v1beta") || strings.HasSuffix(trimmed, "/v1") {
+			return trimmed + "/models/" + url.PathEscape(strings.TrimPrefix(model, "models/")) + ":generateContent"
+		}
+	}
+	return fallback
+}
+
+func normalizeAIProviderBaseURL(value string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(value), "/")
+	if strings.HasSuffix(trimmed, "/models") {
+		trimmed = strings.TrimSuffix(trimmed, "/models")
+	}
+	return trimmed
+}
+
+func replaceModelProbeToken(headers map[string]string, token string) {
+	for key, value := range headers {
+		if strings.Contains(value, "$TOKEN$") {
+			headers[key] = strings.ReplaceAll(value, "$TOKEN$", token)
+		}
+	}
+}
+
+func aiProviderModelProbeDetail(status, reason string) string {
+	if status == "available" {
+		return "model response is available"
+	}
+	switch reason {
+	case "authentication_failed":
+		return "upstream rejected the provider credential"
+	case "quota_limited":
+		return "upstream quota or request limit reached"
+	case "model_not_found":
+		return "the selected model is unavailable"
+	default:
+		return "upstream model probe could not confirm availability"
+	}
+}
+
+// parseAIProviderModelCatalog accepts the common OpenAI and Gemini catalog
+// envelopes while bounding input and output. The returned entries are safe
+// allow-listed data and never contain credentials or arbitrary upstream fields.
+func parseAIProviderModelCatalog(body []byte) []AccountModelOption {
+	if len(body) == 0 || len(body) > aiProviderProbeMaxResponseBytes {
+		return nil
+	}
+	var envelope struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+		Models []struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+			Description string `json:"description"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(body), &envelope) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]AccountModelOption, 0, len(envelope.Data)+len(envelope.Models))
+	add := func(id, display, owner, typ string) {
+		id = strings.TrimSpace(strings.TrimPrefix(id, "models/"))
+		if safeModelIdentifier(id) == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, AccountModelOption{ID: id, DisplayName: strings.TrimSpace(display), OwnedBy: strings.TrimSpace(owner), Type: typ})
+	}
+	for _, item := range envelope.Data {
+		add(item.ID, item.ID, item.OwnedBy, item.Object)
+	}
+	for _, item := range envelope.Models {
+		add(item.Name, firstNonEmpty(item.DisplayName, item.Name), "", "model")
+	}
+	if len(out) > 1000 {
+		out = out[:1000]
+	}
+	return out
 }
 
 func normalizeAIProviderKind(kind string) string {

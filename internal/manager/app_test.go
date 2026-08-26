@@ -107,6 +107,10 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/zen/probe-account":               {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/ai-providers/test":                        {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/ai-providers/runtime":                      {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/proxy-profiles":                            {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/proxy-profiles":                           {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/proxy-profiles":                            {},
+		http.MethodDelete + " /plugins/cpa-account-config-manager/proxy-profiles":                         {},
 	}
 	if len(registration.Routes) != len(expected) {
 		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))

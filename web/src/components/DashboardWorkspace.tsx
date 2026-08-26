@@ -2,7 +2,7 @@ import { Activity, AlertTriangle, Boxes, CircleDollarSign, HeartPulse, RefreshCw
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../api/client";
 import { useI18n } from "../i18n";
-import type { Account, AccountListResponse, AIProviderRuntimeResponse, InspectionSnapshot } from "../types";
+import type { Account, AccountListResponse, AIProviderChannelSnapshot, AIProviderRuntimeResponse, InspectionSnapshot } from "../types";
 import { IconButton } from "./IconButton";
 
 interface DashboardWorkspaceProps {
@@ -21,6 +21,7 @@ interface DashboardData {
   accounts: Account[];
   inspection: InspectionSnapshot | null;
   runtime: AIProviderRuntimeResponse | null;
+  providers: AIProviderChannelSnapshot[];
   updatedAt: string;
 }
 
@@ -113,7 +114,7 @@ export function countUnhealthyAccounts(accounts: Account[]): number {
 
 export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
   const { tx, formatDateTime, formatNumber } = useI18n();
-  const [data, setData] = useState<DashboardData>({ accounts: [], inspection: null, runtime: null, updatedAt: "" });
+  const [data, setData] = useState<DashboardData>({ accounts: [], inspection: null, runtime: null, providers: [], updatedAt: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
@@ -122,15 +123,16 @@ export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
     setLoading(true);
     setError("");
     try {
-      const [accountPage, inspection, runtime] = await Promise.all([
+      const [accountPage, inspection, runtime, providers] = await Promise.all([
         api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, signal),
         optional(api.getInspection(signal)),
         optional(api.getAIProviderRuntime(signal)),
+        optional(api.listAIProviderChannels(signal)),
       ]);
       if (signal?.aborted) return;
       const accounts = await collectDashboardAccounts(accountPage, api.listAccounts, signal);
       if (signal?.aborted) return;
-      setData({ accounts, inspection, runtime, updatedAt: new Date().toISOString() });
+      setData({ accounts, inspection, runtime, providers: providers ?? [], updatedAt: new Date().toISOString() });
     } catch (caught) {
       if (signal?.aborted) return;
       if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
@@ -152,12 +154,36 @@ export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
     const disabled = accounts.filter((account) => account.disabled).length;
     const unhealthy = countUnhealthyAccounts(accounts);
     const healthy = Math.max(0, accounts.length - unhealthy);
-    const tokens = accounts.reduce((total, account) => total + Math.max(0, safeDashboardNumber(account.usage?.total_tokens)), 0);
-    const cost = accounts.reduce((total, account) => total + Math.max(0, safeDashboardNumber(account.usage?.credit?.amount_usd)), 0);
-    const active = data.runtime?.snapshots.reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.active)), 0) ?? 0;
-    const providers = new Set(accounts.map((account) => String(account.provider || account.type || "unknown").toLowerCase())).size;
+    const providerCount = data.providers.reduce((total, channel) => total + (Array.isArray(channel.entries) ? channel.entries.length : 0), 0);
+    const providerCredentialCount = data.providers.reduce((total, channel) => total + Math.max(0, safeDashboardNumber(channel.count ?? channel.entries?.length ?? 0)), 0);
+    const providerEnabled = data.providers.reduce((total, channel) => total + (channel.entries ?? []).filter((entry) => !entry.disabled).length, 0);
+    const providerDisabled = data.providers.reduce((total, channel) => total + (channel.entries ?? []).filter((entry) => entry.disabled === true).length, 0);
+    const providerIndexes = new Set<string>();
+    for (const channel of data.providers) {
+      for (const entry of channel.entries ?? []) {
+        const topLevel = String(entry.auth_index ?? "").trim();
+        if (topLevel) providerIndexes.add(topLevel);
+        for (const keyEntry of entry.api_key_entries ?? []) {
+          const authIndex = String(keyEntry.auth_index ?? "").trim();
+          if (authIndex) providerIndexes.add(authIndex);
+        }
+      }
+    }
+    // Runtime callbacks may include both auth files and API-key channels. Only
+    // snapshots explicitly identified as a configured provider are added here;
+    // account usage is already persisted and counted above.
+    const providerSnapshots = (data.runtime?.snapshots ?? []).filter((snapshot) => {
+      const authIndex = String(snapshot.auth_index ?? "").trim();
+      return authIndex !== "" && providerIndexes.has(authIndex);
+    });
+    const providerTokens = providerSnapshots.reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.total_tokens)), 0);
+    const providerCost = providerSnapshots.reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.amount_usd)), 0);
+    const tokens = accounts.reduce((total, account) => total + Math.max(0, safeDashboardNumber(account.usage?.total_tokens)), 0) + providerTokens;
+    const cost = accounts.reduce((total, account) => total + Math.max(0, safeDashboardNumber(account.usage?.credit?.amount_usd)), 0) + providerCost;
+    const active = (data.runtime?.snapshots ?? []).reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.active)), 0);
+    const providers = providerCount;
     const modelCosts = new Map<string, number>();
-    for (const snapshot of data.runtime?.snapshots ?? []) {
+    for (const snapshot of providerSnapshots) {
       for (const model of snapshot.models ?? []) {
         const name = String(model.model || "").trim();
         const amount = safeDashboardNumber(model.amount_usd);
@@ -166,8 +192,8 @@ export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
       }
     }
     const topModels = [...modelCosts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-    return { enabled, disabled, unhealthy, healthy, tokens, cost, active, providers, topModels };
-  }, [data.accounts, data.runtime]);
+    return { enabled, disabled, unhealthy, healthy, tokens, cost, active, providers, topModels, providerCount, providerCredentialCount, providerEnabled, providerDisabled };
+  }, [data.accounts, data.providers, data.runtime]);
 
   return (
     <section className="dashboard-workspace" aria-label={tx("ui.dashboard")}>
@@ -180,7 +206,7 @@ export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
       </div>
       {error ? <div className="notice-bar warning" role="alert"><AlertTriangle size={16} />{error}</div> : null}
       <div className="dashboard-grid">
-        <article className="dashboard-card"><div className="dashboard-card-icon"><Users size={18} /></div><span>{tx("ui.total_accounts")}</span><strong>{formatNumber(data.accounts.length)}</strong><small>{tx("ui.enabled_disabled_summary", { enabled: summary.enabled, disabled: summary.disabled })}</small></article>
+        <article className="dashboard-card"><div className="dashboard-card-icon"><Users size={18} /></div><span>{tx("ui.total_accounts_and_providers")}</span><strong>{formatNumber(data.accounts.length + summary.providerCredentialCount)}</strong><small>{tx("ui.enabled_disabled_summary", { enabled: summary.enabled, disabled: summary.disabled })} · {tx("ui.provider_credentials_enabled_disabled", { enabled: summary.providerEnabled, disabled: summary.providerDisabled })}</small></article>
         <article className="dashboard-card"><div className="dashboard-card-icon success"><HeartPulse size={18} /></div><span>{tx("ui.healthy_accounts")}</span><strong>{formatNumber(summary.healthy)}</strong><small>{tx("ui.unhealthy_count", { count: summary.unhealthy })}</small></article>
         <article className="dashboard-card"><div className="dashboard-card-icon warning"><ShieldCheck size={18} /></div><span>{tx("ui.total_tokens")}</span><strong>{formatNumber(summary.tokens)}</strong><small>{tx("ui.provider_count", { count: summary.providers })}</small></article>
         <article className="dashboard-card"><div className="dashboard-card-icon accent"><CircleDollarSign size={18} /></div><span>{tx("ui.total_cost")}</span><strong>{formatUSD(summary.cost)}</strong><small>{tx("ui.active_requests_count", { count: summary.active })}</small></article>

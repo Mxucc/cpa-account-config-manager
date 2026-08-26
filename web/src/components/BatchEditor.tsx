@@ -1,6 +1,7 @@
 import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { AccountConcurrencyAvailability, AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode } from "../types";
+import { listProxyProfiles } from "../api/client";
+import type { AccountConcurrencyAvailability, AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode, ProxyProfileView } from "../types";
 import { formatAccountConcurrency } from "../accountConcurrency";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
@@ -54,6 +55,8 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const [prefix, setPrefix] = useState("");
   const [proxyURL, setProxyURL] = useState("");
   const [showProxy, setShowProxy] = useState(false);
+	const [proxyProfiles, setProxyProfiles] = useState<ProxyProfileView[]>([]);
+	const [proxyProfileID, setProxyProfileID] = useState("");
   const [websockets, setWebsockets] = useState(false);
   const [headers, setHeaders] = useState<HeaderRow[]>([{ id: 1, action: "set", name: "", value: "" }]);
   const [error, setError] = useState("");
@@ -98,6 +101,11 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 	useEffect(() => {
 		void loadConfiguration();
 	}, [loadConfiguration]);
+	useEffect(() => {
+		let active = true;
+		listProxyProfiles().then((response) => { if (active) setProxyProfiles(response.profiles); }).catch(() => undefined);
+		return () => { active = false; };
+	}, []);
 	const visibleModels = useMemo(() => {
 		const query = modelSearch.trim().toLowerCase();
 		if (!query) return modelCatalog?.models ?? [];
@@ -266,8 +274,14 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         </EditRow>
         <EditRow checked={enabled.proxy_url} label={tx("ui.proxy_url")} onToggle={toggleProxyURL}>
           <div className="secret-input editor-secret">
-            <input value={proxyURL} onChange={(event) => setProxyURL(event.target.value)} type={showProxy ? "text" : "password"} disabled={!enabled.proxy_url} aria-label={tx("ui.proxy_url_value")} />
-            <button type="button" aria-label={tx(showProxy ? "ui.hide_proxy" : "ui.show_proxy")} title={tx(showProxy ? "ui.hide_proxy" : "ui.show_proxy")} onClick={() => setShowProxy((value) => !value)} disabled={!enabled.proxy_url}>
+            <select value={proxyProfileID} onChange={(event) => setProxyProfileID(event.target.value)} disabled={!enabled.proxy_url} aria-label={tx("ui.select_proxy_profile")}>
+              <option value="">{tx("ui.manual_proxy_url")}</option>
+              {proxyProfiles.filter((profile) => profile.enabled).map((profile) => (
+                <option key={profile.id} value={profile.id}>{profile.name} · {profile.proxy_url_masked}</option>
+              ))}
+            </select>
+            <input value={proxyURL} onChange={(event) => { setProxyURL(event.target.value); setProxyProfileID(""); }} type={showProxy ? "text" : "password"} disabled={!enabled.proxy_url || Boolean(proxyProfileID)} aria-label={tx("ui.proxy_url_value")} />
+            <button type="button" aria-label={tx(showProxy ? "ui.hide_proxy" : "ui.show_proxy")} title={tx(showProxy ? "ui.hide_proxy" : "ui.show_proxy")} onClick={() => setShowProxy((value) => !value)} disabled={!enabled.proxy_url || Boolean(proxyProfileID)}>
               {showProxy ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>

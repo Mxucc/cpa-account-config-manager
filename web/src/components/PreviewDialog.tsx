@@ -95,7 +95,7 @@ function previewWarnings(preview: BatchPreview, locale: Locale): string[] {
   const warnings: string[] = [];
   if (preview.read_only > 0) warnings.push(translateUI(locale, "ui.count_targets_are_read_only_and_will_be_skipped", { count: preview.read_only }));
   if (preview.missing > 0) warnings.push(translateUI(locale, "ui.count_selected_targets_no_longer_exist_and_will_be_skipped", { count: preview.missing }));
-  if (Object.keys(preview.providers).length > 1) warnings.push(translateUI(locale, "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts"));
+  if (Object.keys(preview.providers ?? {}).length > 1) warnings.push(translateUI(locale, "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts"));
   return warnings;
 }
 

@@ -83,6 +83,21 @@ func TestApplyDefaultPolicyForceOverwritesOnlyManagedFields(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultPolicyAppliesResolvedProxyWithoutExposingProfileID(t *testing.T) {
+	proxy := "socks5h://user:secret@proxy.internal:1080"
+	updated, applied, changed, errApply := applyDefaultPolicy(json.RawMessage(`{"type":"codex","proxy_url":"direct","access_token":"token-secret"}`), DefaultPolicy{proxyURL: &proxy}, applyForce)
+	if errApply != nil || !changed || len(applied) != 1 || applied[0] != policyFieldProxyURL {
+		t.Fatalf("changed=%t applied=%#v err=%v", changed, applied, errApply)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(updated, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document[policyFieldProxyURL] != proxy || document["proxy_profile_id"] != nil {
+		t.Fatalf("document=%#v", document)
+	}
+}
+
 func TestPolicyStatePersistsReloadsAndUsesPrivatePermissions(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "private")
 	path := policyStorePath(dataDir)

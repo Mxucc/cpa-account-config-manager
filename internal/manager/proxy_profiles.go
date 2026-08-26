@@ -66,6 +66,12 @@ type ProxyProfileResolver interface {
 	ProxyURLByID(id string) (string, bool)
 }
 
+// ProxyProfileScopedResolver is implemented by resolvers that can enforce a
+// profile's optional provider allow-list without exposing the stored URL.
+type ProxyProfileScopedResolver interface {
+	ProxyURLForProvider(id, provider string) (string, bool)
+}
+
 type ProxyProfileService struct {
 	mu             sync.RWMutex
 	dataDir        string
@@ -178,6 +184,30 @@ func (s *ProxyProfileService) ProxyURLByID(id string) (string, bool) {
 	return p.ProxyURL, true
 }
 
+func (s *ProxyProfileService) ProxyURLForProvider(id, provider string) (string, bool) {
+	p, err := s.get(id)
+	if err != nil || !p.Enabled {
+		return "", false
+	}
+	if len(p.Providers) == 0 {
+		return p.ProxyURL, true
+	}
+	provider = normalizeProxyProfileProvider(provider)
+	for _, allowed := range p.Providers {
+		if normalizeProxyProfileProvider(allowed) == provider {
+			return p.ProxyURL, true
+		}
+	}
+	return "", false
+}
+
+func resolveProxyProfileForProvider(resolver ProxyProfileResolver, id, provider string) (string, bool) {
+	if scoped, ok := resolver.(ProxyProfileScopedResolver); ok {
+		return scoped.ProxyURLForProvider(id, provider)
+	}
+	return resolver.ProxyURLByID(id)
+}
+
 func (s *ProxyProfileService) List(ctx context.Context) []ProxyProfileView {
 	_ = ctx
 	s.mu.RLock()
@@ -232,6 +262,9 @@ func (s *ProxyProfileService) Update(id, name, rawURL, note string, providers []
 	old, ok := s.profiles[strings.TrimSpace(id)]
 	if !ok {
 		return ProxyProfileView{}, ErrProxyProfileNotFound
+	}
+	if strings.TrimSpace(rawURL) == "" {
+		rawURL = old.ProxyURL
 	}
 	p, err := normalizeProxyProfile(old.ID, name, rawURL, note, providers, enabled)
 	if err != nil {
@@ -350,7 +383,7 @@ func normalizeProxyProfile(id, name, rawURL, note string, providers []string, en
 	seen := map[string]bool{}
 	clean := make([]string, 0, len(providers))
 	for _, v := range providers {
-		v = strings.ToLower(strings.TrimSpace(v))
+		v = normalizeProxyProfileProvider(v)
 		if v == "" || seen[v] {
 			continue
 		}
@@ -368,6 +401,10 @@ func normalizeProxyProfile(id, name, rawURL, note string, providers []string, en
 		en = *enabled
 	}
 	return ProxyProfile{ID: id, Name: name, ProxyURL: rawURL, Note: note, Providers: clean, Enabled: en}, nil
+}
+
+func normalizeProxyProfileProvider(value string) string {
+	return deduplicationProviderFamily(strings.ToLower(strings.TrimSpace(value)))
 }
 func validateProxyProfileURL(raw string) error {
 	if len(raw) > maxProxyURLLength {

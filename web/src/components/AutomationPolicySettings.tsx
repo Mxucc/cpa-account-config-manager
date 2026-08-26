@@ -22,6 +22,7 @@ import type {
   ModelPolicyMode,
   PolicySnapshot,
   OperationFailureDetail,
+  ProxyProfileView,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
@@ -44,6 +45,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   const [scanning, setScanning] = useState(false);
   const [confirmRunAfterSave, setConfirmRunAfterSave] = useState(false);
   const [error, setError] = useState("");
+  const [proxyProfiles, setProxyProfiles] = useState<ProxyProfileView[]>([]);
   const refreshRequest = useRef(0);
 
   const invalidateRefresh = () => {
@@ -78,6 +80,14 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
       invalidateRefresh();
     };
   }, [refresh, refreshRevision]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.listProxyProfiles(controller.signal).then((response) => {
+      if (!controller.signal.aborted) setProxyProfiles(response.profiles.filter((profile) => profile.enabled));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [refreshRevision]);
 
   useEffect(() => {
     if (!snapshot?.running) return;
@@ -148,7 +158,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   }
 
   const lastScan = snapshot.last_scan;
-  const persistedFields = snapshot.policy.priority !== null || snapshot.policy.websockets !== null;
+  const persistedFields = snapshot.policy.priority !== null || snapshot.policy.websockets !== null || Boolean(snapshot.policy.proxy_profile_id) || Boolean(snapshot.policy.ai_provider_proxy_profile_id);
   const controlsLocked = saving || forceLoading;
   const policyError = error || (snapshot.new_account_model_probe_storage_error ? tx("ui.new_account_model_probe_storage_error") : "") || operatorMessage(lastScan.error, locale);
 
@@ -181,6 +191,8 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
           </label>
           <OptionalNumberRow label="Priority" ariaLabel={tx("ui.default_priority")} value={draft.priority} disabled={controlsLocked} onChange={(priority) => updateDraft({ priority })} />
           <OptionalBooleanRow label="WebSockets" ariaLabel={tx("ui.default_websockets")} value={draft.websockets} disabled={controlsLocked} onChange={(websockets) => updateDraft({ websockets })} />
+          <ProxyProfileRow label={tx("ui.default_account_proxy")} value={draft.proxy_profile_id ?? null} profiles={proxyProfiles} disabled={controlsLocked} onChange={(proxy_profile_id) => updateDraft({ proxy_profile_id })} />
+          <ProxyProfileRow label={tx("ui.default_ai_provider_proxy")} value={draft.ai_provider_proxy_profile_id ?? null} profiles={proxyProfiles} disabled={controlsLocked} onChange={(ai_provider_proxy_profile_id) => updateDraft({ ai_provider_proxy_profile_id })} />
           <label className="policy-row policy-interval"><span className="edit-optin">{tx("ui.scan_interval")}</span><span className="number-suffix"><input type="number" min="5" max="300" value={draft.scan_interval_seconds} disabled={controlsLocked} onChange={(event) => updateDraft({ scan_interval_seconds: Number(event.target.value) })} aria-label={tx("ui.scan_interval")} /><b>{tx("ui.seconds")}</b></span></label>
         </div>
       </section>
@@ -201,6 +213,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
               disabled={controlsLocked}
               onChange={(next) => updateRules(rules.map((item, itemIndex) => itemIndex === index ? next : item))}
               onMove={(offset) => updateRules(moveRule(rules, index, index + offset))}
+              profiles={proxyProfiles}
               onDelete={() => updateRules(rules.filter((_, itemIndex) => itemIndex !== index))}
             />
           ))}
@@ -235,7 +248,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   );
 }
 
-function ConditionalRuleEditor({ rule, index, total, disabled, onChange, onMove, onDelete }: { rule: ConditionalPolicyRule; index: number; total: number; disabled: boolean; onChange: (rule: ConditionalPolicyRule) => void; onMove: (offset: number) => void; onDelete: () => void }) {
+function ConditionalRuleEditor({ rule, index, total, disabled, profiles, onChange, onMove, onDelete }: { rule: ConditionalPolicyRule; index: number; total: number; disabled: boolean; profiles: ProxyProfileView[]; onChange: (rule: ConditionalPolicyRule) => void; onMove: (offset: number) => void; onDelete: () => void }) {
   const { tx } = useI18n();
   const updateActions = (actions: ConditionalPolicyActions) => onChange({ ...rule, actions });
   return (
@@ -256,11 +269,23 @@ function ConditionalRuleEditor({ rule, index, total, disabled, onChange, onMove,
           <OptionalBooleanAction label={tx("ui.new_account_model_probe")} present={hasOwn(rule.actions, "new_account_model_probe")} value={rule.actions.new_account_model_probe ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "new_account_model_probe", present, value))} />
           <OptionalNumberAction label="Priority" present={hasOwn(rule.actions, "priority")} value={rule.actions.priority ?? 0} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "priority", present, value))} />
           <OptionalBooleanAction label="WebSockets" present={hasOwn(rule.actions, "websockets")} value={rule.actions.websockets ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "websockets", present, value))} />
+          <OptionalProxyProfileAction label={tx("ui.account_proxy_profile")} value={rule.actions.proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => updateActions(updateOptionalAction(rule.actions, "proxy_profile_id", value !== null, value ?? undefined))} />
+          <OptionalProxyProfileAction label={tx("ui.ai_provider_proxy_profile")} value={rule.actions.ai_provider_proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => updateActions(updateOptionalAction(rule.actions, "ai_provider_proxy_profile_id", value !== null, value ?? undefined))} />
           <ModelPolicyAction actions={rule.actions} disabled={disabled} onChange={updateActions} />
         </section>
       </div>
     </article>
   );
+}
+
+function ProxyProfileRow({ label, value, profiles, disabled, onChange }: { label: string; value: string | null; profiles: ProxyProfileView[]; disabled: boolean; onChange: (value: string | null) => void }) {
+  const { tx } = useI18n();
+  return <label className={`policy-row ${value ? "is-enabled" : ""}`}><span className="edit-optin">{label}</span><select value={value ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value || null)}><option value="">{tx("ui.proxy_profile_unset")}</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.proxy_url_masked}</option>)}</select></label>;
+}
+
+function OptionalProxyProfileAction({ label, value, profiles, disabled, onChange }: { label: string; value: string | null; profiles: ProxyProfileView[]; disabled: boolean; onChange: (value: string | null) => void }) {
+  const present = value !== null;
+  return <div className={`conditional-action ${present ? "is-managed" : ""}`}><label><input type="checkbox" checked={present} disabled={disabled} onChange={(event) => onChange(event.target.checked ? (profiles[0]?.id ?? null) : null)} /><span>{label}</span></label>{present ? <select value={value ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value || null)}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.proxy_url_masked}</option>)}</select> : null}</div>;
 }
 
 function ModelPolicyAction({ actions, disabled, onChange }: { actions: ConditionalPolicyActions; disabled: boolean; onChange: (actions: ConditionalPolicyActions) => void }) {

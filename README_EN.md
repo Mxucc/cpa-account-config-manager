@@ -36,6 +36,10 @@ journal without exposing raw credentials to the browser.
 - Apply base presets to newly imported or discovered accounts, then override
   them with prioritized nested conditional policies for provider, plan,
   account type, and email suffix.
+- Manage reusable proxy profiles with masked credentials. Automation policies
+  can assign default account and AI-provider proxies, while conditional rules
+  can override them by provider, plan, account type, or email suffix. This
+  resolves [issue #3](https://github.com/Mxucc/cpa-account-config-manager/issues/3).
 - Detect plugin updates through the CPA Plugin Store and display the current
   and latest CPA server versions. CPA executable updates remain read-only
   version guidance; the plugin never replaces the CPA binary.

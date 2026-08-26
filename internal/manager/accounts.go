@@ -24,6 +24,8 @@ const (
 	maxPageSize              = 1000
 	accountDetailWorkers     = 8
 	maxAccountPlanTypeLength = 64
+	accountDetailCacheTTL    = 5 * time.Second
+	accountDetailCacheMax    = 2048
 )
 
 type AuthHost interface {
@@ -57,10 +59,17 @@ type AccountLifecycleReader interface {
 }
 
 type AccountService struct {
-	host        AuthHost
-	usage       UsageSnapshotReader
-	concurrency *AccountConcurrencyService
-	observer    interface{ ObserveAccounts([]Account) }
+	host          AuthHost
+	usage         UsageSnapshotReader
+	concurrency   *AccountConcurrencyService
+	observer      interface{ ObserveAccounts([]Account) }
+	detailCacheMu sync.Mutex
+	detailCache   map[string]accountDetailCacheEntry
+}
+
+type accountDetailCacheEntry struct {
+	account Account
+	at      time.Time
 }
 
 func (s *AccountService) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
@@ -84,7 +93,7 @@ type ResolvedTargets struct {
 }
 
 func NewAccountService(host AuthHost, usage ...UsageSnapshotReader) *AccountService {
-	service := &AccountService{host: host}
+	service := &AccountService{host: host, detailCache: make(map[string]accountDetailCacheEntry)}
 	if len(usage) > 0 {
 		service.usage = usage[0]
 	}
@@ -262,7 +271,13 @@ func (s *AccountService) SaveAuth(ctx context.Context, name string, rawJSON json
 	if s == nil || s.host == nil {
 		return cpaapi.HostAuthSaveResponse{}, fmt.Errorf("auth host is unavailable")
 	}
-	return s.host.SaveAuth(ctx, name, rawJSON)
+	response, errSave := s.host.SaveAuth(ctx, name, rawJSON)
+	if errSave == nil {
+		s.detailCacheMu.Lock()
+		s.detailCache = make(map[string]accountDetailCacheEntry)
+		s.detailCacheMu.Unlock()
+	}
+	return response, errSave
 }
 
 func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
@@ -333,6 +348,13 @@ func (s *AccountService) enrichAccountDetails(ctx context.Context, accounts []Ac
 }
 
 func (s *AccountService) enrichAccountDetail(ctx context.Context, account *Account) {
+	if account == nil || account.detailAuthIndex == "" {
+		return
+	}
+	if cached, ok := s.cachedAccountDetail(account.detailAuthIndex); ok {
+		applyCachedAccountDetail(account, cached)
+		return
+	}
 	detail, errGet := s.host.GetAuth(ctx, account.detailAuthIndex)
 	if errGet != nil {
 		markAccountDetailUnavailable(account)
@@ -346,7 +368,8 @@ func (s *AccountService) enrichAccountDetail(ctx context.Context, account *Accou
 		markAccountDetailUnavailable(account)
 		return
 	}
-	if errEnrich := enrichAccount(account, detail); errEnrich != nil && account.Editable {
+	errEnrich := enrichAccount(account, detail)
+	if errEnrich != nil && account.Editable {
 		account.Editable = false
 		account.ReadOnlyReason = "physical auth file is invalid"
 	}
@@ -354,6 +377,84 @@ func (s *AccountService) enrichAccountDetail(ctx context.Context, account *Accou
 	// metadata is fetched only by explicit credential/config detail requests.
 	if account.Credential == nil {
 		credential := credentialSummaryFromAccount(*account)
+		account.Credential = &credential
+	}
+	if errEnrich == nil {
+		s.storeAccountDetail(account)
+	}
+}
+
+func (s *AccountService) cachedAccountDetail(authIndex string) (Account, bool) {
+	s.detailCacheMu.Lock()
+	defer s.detailCacheMu.Unlock()
+	entry, ok := s.detailCache[strings.TrimSpace(authIndex)]
+	if !ok || time.Since(entry.at) > accountDetailCacheTTL {
+		if ok {
+			delete(s.detailCache, strings.TrimSpace(authIndex))
+		}
+		return Account{}, false
+	}
+	return entry.account, true
+}
+
+func (s *AccountService) storeAccountDetail(account *Account) {
+	if account == nil || strings.TrimSpace(account.detailAuthIndex) == "" {
+		return
+	}
+	// Store only the derived, non-secret account view. Raw auth JSON and tokens
+	// are deliberately never retained by this cache.
+	copyAccount := *account
+	copyAccount.RecentRequests = nil
+	if account.HeaderNames != nil {
+		copyAccount.HeaderNames = append([]string(nil), account.HeaderNames...)
+	}
+	if account.ModelPolicy != nil {
+		modelPolicy := *account.ModelPolicy
+		copyAccount.ModelPolicy = &modelPolicy
+	}
+	if account.Credential != nil {
+		credential := *account.Credential
+		copyAccount.Credential = &credential
+	}
+	s.detailCacheMu.Lock()
+	if s.detailCache == nil {
+		s.detailCache = make(map[string]accountDetailCacheEntry)
+	}
+	now := time.Now()
+	for key, entry := range s.detailCache {
+		if now.Sub(entry.at) > accountDetailCacheTTL {
+			delete(s.detailCache, key)
+		}
+	}
+	if len(s.detailCache) >= accountDetailCacheMax {
+		for key := range s.detailCache {
+			delete(s.detailCache, key)
+			break
+		}
+	}
+	s.detailCache[strings.TrimSpace(account.detailAuthIndex)] = accountDetailCacheEntry{account: copyAccount, at: now}
+	s.detailCacheMu.Unlock()
+}
+
+func applyCachedAccountDetail(account *Account, cached Account) {
+	if account == nil {
+		return
+	}
+	account.path = cached.path
+	account.revision = cached.revision
+	account.Prefix = cached.Prefix
+	account.Proxy = cached.Proxy
+	account.ProxyConfigured = cached.ProxyConfigured
+	account.Priority = cached.Priority
+	account.Note = cached.Note
+	account.Websockets = cached.Websockets
+	account.PlanType = cached.PlanType
+	account.HeaderNames = append([]string(nil), cached.HeaderNames...)
+	account.HeaderCount = cached.HeaderCount
+	account.ModelPolicy = cached.ModelPolicy
+	account.DeviceID = cached.DeviceID
+	if account.Credential == nil && cached.Credential != nil {
+		credential := *cached.Credential
 		account.Credential = &credential
 	}
 }

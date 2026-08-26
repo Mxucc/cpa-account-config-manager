@@ -220,3 +220,23 @@ func accountDetailFixtures(count int) ([]cpaapi.HostAuthFileEntry, map[string]cp
 	}
 	return entries, details
 }
+
+func TestAccountDetailLoadingUsesShortLivedDerivedCache(t *testing.T) {
+	entries, details := accountDetailFixtures(2)
+	host := &fakeAuthHost{entries: entries, details: details}
+	service := NewAccountService(host)
+	query := ListQuery{Page: 1, PageSize: len(entries)}
+	if _, errList := service.List(context.Background(), query); errList != nil {
+		t.Fatalf("first list = %v", errList)
+	}
+	if _, errList := service.List(context.Background(), query); errList != nil {
+		t.Fatalf("second list = %v", errList)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	for _, entry := range entries {
+		if got := host.getCalls[entry.AuthIndex]; got != 1 {
+			t.Fatalf("GetAuth(%q) calls = %d, want one cached read", entry.AuthIndex, got)
+		}
+	}
+}

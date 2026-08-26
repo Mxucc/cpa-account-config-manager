@@ -636,6 +636,56 @@ func TestHandleAccountModelTestLoadsEnabledWeeklyOverdraftExperiment(t *testing.
 	}
 }
 
+func TestExperimentalModelTestPreservesCredential401(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-invalid", Name: "invalid.json", Provider: "codex", Type: "codex",
+			Email: "invalid@example.com", AccountType: "oauth", Source: "file", Path: "/auths/invalid.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-invalid": {AuthIndex: "auth-invalid", Name: "invalid.json", Path: "/auths/invalid.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"secret","account_id":"workspace-invalid"}`)},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+			StatusCode: http.StatusUnauthorized,
+			Header:     map[string][]string{"Content-Type": {"application/json"}},
+			Body:       `{"error":{"code":"token_invalidated","message":"Your authentication token has been invalidated. Please try signing in again.","type":"invalid_request_error"},"status":401}`,
+		})
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\nexperimental_settings:\n  weekly_overdraft_enabled: true\n"))
+	defer app.Close()
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-invalid", Model: "gpt-5.4", ExperimentalWeeklyOverdraft: true})
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/accounts/model-test",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+		Body:    body,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("experimental credential test = %d %s", response.StatusCode, response.Body)
+	}
+	var result ModelTestResult
+	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	if result.Status != "unavailable" || result.ReasonCode != "authentication_failed" || result.StatusCode != http.StatusUnauthorized || result.ProbeKind != InspectionProbeKindCredential {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Response == nil || !strings.Contains(result.Response.Body, "token_invalidated") {
+		t.Fatalf("credential response preview = %#v", result.Response)
+	}
+	if strings.Contains(string(response.Body), "weekly overdraft experiment could not be applied") || strings.Contains(string(response.Body), "secret") {
+		t.Fatalf("experimental credential error was masked or leaked: %s", response.Body)
+	}
+}
+
 func TestNormalQuotaProbeFreezesOverdraftBaselineButExperimentalProbeDoesNot(t *testing.T) {
 	now := time.Date(2026, time.July, 30, 2, 0, 0, 0, time.UTC)
 	host := &fakeAuthHost{

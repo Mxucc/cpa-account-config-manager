@@ -21,10 +21,12 @@ const (
 	minPolicyScanIntervalSeconds     = 5
 	maxPolicyScanIntervalSeconds     = 300
 	policyFailureRetryInterval       = 5 * time.Minute
+	aiProviderProxyReconcileInterval = 5 * time.Minute
 	policyApplyModeMissing           = "missing"
 
 	policyFieldPriority      = "priority"
 	policyFieldWebsockets    = "websockets"
+	policyFieldProxyURL      = "proxy_url"
 	policyMutationOwner      = "default-policy-scan"
 	policyQuotaWorkers       = 4
 	policyFailureSampleLimit = 5
@@ -44,7 +46,10 @@ type DefaultPolicy struct {
 	ScanIntervalSeconds            int                     `json:"scan_interval_seconds" yaml:"scan_interval_seconds"`
 	Priority                       *int                    `json:"priority" yaml:"priority"`
 	Websockets                     *bool                   `json:"websockets" yaml:"websockets"`
+	ProxyProfileID                 *string                 `json:"proxy_profile_id,omitempty" yaml:"proxy_profile_id,omitempty"`
+	AIProviderProxyProfileID       *string                 `json:"ai_provider_proxy_profile_id,omitempty" yaml:"ai_provider_proxy_profile_id,omitempty"`
 	ConditionalRules               []ConditionalPolicyRule `json:"conditional_rules,omitempty" yaml:"conditional_rules,omitempty"`
+	proxyURL                       *string
 }
 
 type PolicyScanSummary struct {
@@ -92,6 +97,7 @@ type policyFailureBackoff struct {
 }
 
 type policyQuotaMetadataProbe func(context.Context, Account, string) (string, error)
+type policyAIProviderProxyApplier func(context.Context, DefaultPolicy, ProxyProfileResolver, string) (int, error)
 
 type policyQuotaMetadataProbeSummary struct {
 	planTypes map[string]string
@@ -104,32 +110,35 @@ type policyQuotaMetadataProbeSummary struct {
 }
 
 type PolicyEngine struct {
-	mu                 sync.RWMutex
-	operationMu        sync.Mutex
-	wait               sync.WaitGroup
-	host               AuthHost
-	mutations          *MutationCoordinator
-	observer           interface{ ObserveAccounts([]Account) }
-	modelPolicyApplier func(context.Context, Account, ModelPolicyPatch, string) (bool, error)
-	quotaMetadataProbe policyQuotaMetadataProbe
-	managementKey      string
-	backgroundOwner    BackgroundWorkOwner
-	config             Config
-	store              string
-	policy             DefaultPolicy
-	lastScan           PolicyScanSummary
-	running            bool
-	scanStarted        time.Time
-	fingerprints       map[string]authFingerprint
-	failures           map[string]policyFailureBackoff
-	wake               chan struct{}
-	cancel             context.CancelFunc
-	started            bool
-	closed             bool
-	loadFailed         bool
-	dirty              bool
-	retryTimer         *time.Timer
-	retryScheduled     bool
+	mu                       sync.RWMutex
+	operationMu              sync.Mutex
+	wait                     sync.WaitGroup
+	host                     AuthHost
+	mutations                *MutationCoordinator
+	observer                 interface{ ObserveAccounts([]Account) }
+	modelPolicyApplier       func(context.Context, Account, ModelPolicyPatch, string) (bool, error)
+	proxyProfiles            ProxyProfileResolver
+	aiProviderProxyApplier   policyAIProviderProxyApplier
+	aiProviderProxyAppliedAt time.Time
+	quotaMetadataProbe       policyQuotaMetadataProbe
+	managementKey            string
+	backgroundOwner          BackgroundWorkOwner
+	config                   Config
+	store                    string
+	policy                   DefaultPolicy
+	lastScan                 PolicyScanSummary
+	running                  bool
+	scanStarted              time.Time
+	fingerprints             map[string]authFingerprint
+	failures                 map[string]policyFailureBackoff
+	wake                     chan struct{}
+	cancel                   context.CancelFunc
+	started                  bool
+	closed                   bool
+	loadFailed               bool
+	dirty                    bool
+	retryTimer               *time.Timer
+	retryScheduled           bool
 	// initialScanPending coalesces a manual wake received while the engine is
 	// performing its first startup reconciliation.  Configure starts the
 	// worker before callers can finish applying a policy; without this guard a
@@ -157,6 +166,25 @@ func (e *PolicyEngine) SetModelPolicyApplier(applier func(context.Context, Accou
 	e.mu.Unlock()
 }
 
+func (e *PolicyEngine) SetProxyProfiles(resolver ProxyProfileResolver) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.proxyProfiles = resolver
+	e.mu.Unlock()
+}
+
+func (e *PolicyEngine) SetAIProviderProxyApplier(applier policyAIProviderProxyApplier) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.aiProviderProxyApplier = applier
+	e.aiProviderProxyAppliedAt = time.Time{}
+	e.mu.Unlock()
+}
+
 func (e *PolicyEngine) Arm(managementKey string) {
 	if e == nil {
 		return
@@ -167,10 +195,27 @@ func (e *PolicyEngine) Arm(managementKey string) {
 	}
 	e.mu.Lock()
 	if !e.closed {
+		if e.managementKey != managementKey {
+			e.aiProviderProxyAppliedAt = time.Time{}
+		}
 		e.managementKey = managementKey
 	}
 	e.mu.Unlock()
 	managementKey = ""
+}
+
+func (e *PolicyEngine) ProxyProfilesUpdated() {
+	if e == nil {
+		return
+	}
+	e.operationMu.Lock()
+	e.mu.Lock()
+	e.fingerprints = make(map[string]authFingerprint)
+	e.failures = make(map[string]policyFailureBackoff)
+	e.aiProviderProxyAppliedAt = time.Time{}
+	e.mu.Unlock()
+	e.operationMu.Unlock()
+	e.requestScan()
 }
 
 func (e *PolicyEngine) SetObserver(observer interface{ ObserveAccounts([]Account) }) {
@@ -451,6 +496,7 @@ func (e *PolicyEngine) SetPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 	if changed {
 		e.fingerprints = make(map[string]authFingerprint)
 		e.failures = make(map[string]policyFailureBackoff)
+		e.aiProviderProxyAppliedAt = time.Time{}
 	}
 	if e.lastScan.Error == policyLocalStoreError {
 		e.lastScan.Error = ""
@@ -478,6 +524,7 @@ func (e *PolicyEngine) RequestScan() PolicySnapshot {
 		return e.Snapshot()
 	}
 	e.failures = make(map[string]policyFailureBackoff)
+	e.aiProviderProxyAppliedAt = time.Time{}
 	e.mu.Unlock()
 	e.operationMu.Unlock()
 	e.requestScan()
@@ -586,7 +633,9 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	e.mu.RLock()
 	policy := cloneDefaultPolicy(e.policy)
 	e.mu.RUnlock()
-	applyDefaults := policy.ManagesFields()
+	applyAccountDefaults := policy.ManagesAccountFields()
+	applyAIProviderDefaults := policy.ManagesAIProviderProxy()
+	applyDefaults := applyAccountDefaults || applyAIProviderDefaults
 	if !applyDefaults && !policy.ManagesNewAccountProbe() {
 		return false
 	}
@@ -607,7 +656,38 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	e.scanStarted = startedAt
 	e.mu.Unlock()
 
-	summary, fingerprints, failures, observedAccounts := e.scanWithState(ctx, policy, startedAt)
+	summary := PolicyScanSummary{StartedAt: startedAt}
+	if applyAIProviderDefaults {
+		changed, errApply := e.reconcileAIProviderProxies(ctx, policy, startedAt)
+		if errApply != nil {
+			summary.Failed++
+			addPolicyFailureDetail(&summary.FailureDetails, classifyPolicyFailure(errApply), "ai-providers")
+		} else {
+			summary.Changed += changed
+		}
+	}
+	var fingerprints map[string]authFingerprint
+	var failures map[string]policyFailureBackoff
+	var observedAccounts []Account
+	if applyAccountDefaults || policy.ManagesNewAccountProbe() {
+		accountSummary, accountFingerprints, accountFailures, accounts := e.scanWithState(ctx, policy, startedAt)
+		summary.Scanned += accountSummary.Scanned
+		summary.Eligible += accountSummary.Eligible
+		summary.Changed += accountSummary.Changed
+		summary.Skipped += accountSummary.Skipped
+		summary.Failed += accountSummary.Failed
+		summary.QuotaMetadataProbed += accountSummary.QuotaMetadataProbed
+		summary.QuotaMetadataUpdated += accountSummary.QuotaMetadataUpdated
+		summary.QuotaMetadataFailed += accountSummary.QuotaMetadataFailed
+		summary.FailureDetails = mergePolicyFailureDetails(summary.FailureDetails, accountSummary.FailureDetails)
+		fingerprints, failures, observedAccounts = accountFingerprints, accountFailures, accounts
+	} else {
+		e.mu.RLock()
+		fingerprints = clonePolicyFingerprints(e.fingerprints)
+		failures = clonePolicyFailures(e.failures)
+		e.mu.RUnlock()
+	}
+	summary.FinishedAt = e.now().UTC()
 	e.mu.Lock()
 	e.running = false
 	e.scanStarted = time.Time{}
@@ -629,6 +709,38 @@ func (e *PolicyEngine) reconcile(ctx context.Context) bool {
 	}
 	e.persistRuntimeStateLocked()
 	return false
+}
+
+func (e *PolicyEngine) reconcileAIProviderProxies(ctx context.Context, policy DefaultPolicy, startedAt time.Time) (int, error) {
+	e.mu.RLock()
+	applier := e.aiProviderProxyApplier
+	resolver := e.proxyProfiles
+	managementKey := e.managementKey
+	lastAppliedAt := e.aiProviderProxyAppliedAt
+	e.mu.RUnlock()
+	if applier == nil || resolver == nil || strings.TrimSpace(managementKey) == "" {
+		return 0, fmt.Errorf("AI provider proxy policy is not armed")
+	}
+	if !lastAppliedAt.IsZero() && startedAt.Sub(lastAppliedAt) < aiProviderProxyReconcileInterval {
+		return 0, nil
+	}
+	changed, errApply := applier(ctx, policy, resolver, managementKey)
+	managementKey = ""
+	e.mu.Lock()
+	e.aiProviderProxyAppliedAt = startedAt
+	e.mu.Unlock()
+	if errApply != nil {
+		return 0, errApply
+	}
+	return changed, nil
+}
+
+func clonePolicyFailures(failures map[string]policyFailureBackoff) map[string]policyFailureBackoff {
+	cloned := make(map[string]policyFailureBackoff, len(failures))
+	for key, failure := range failures {
+		cloned[key] = failure
+	}
+	return cloned
 }
 
 // persistRuntimeStateLocked saves the newest policy scan snapshot. The caller
@@ -1116,19 +1228,47 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 	if !policy.Enabled {
 		basePolicy.Priority = nil
 		basePolicy.Websockets = nil
+		basePolicy.ProxyProfileID = nil
+		basePolicy.AIProviderProxyProfileID = nil
+	}
+	if basePolicy.ProxyProfileID != nil {
+		e.mu.RLock()
+		resolver := e.proxyProfiles
+		e.mu.RUnlock()
+		if resolver == nil {
+			return false, fmt.Errorf("proxy profile resolver is unavailable")
+		}
+		proxyURL, ok := resolveProxyProfileForProvider(resolver, *basePolicy.ProxyProfileID, firstNonEmpty(account.Provider, account.Type))
+		if !ok {
+			return false, fmt.Errorf("proxy profile is unavailable")
+		}
+		basePolicy.proxyURL = &proxyURL
 	}
 	updated, _, changed, errApply := applyDefaultPolicy(detail.JSON, basePolicy, applyMissing)
 	if errApply != nil {
 		return false, errApply
 	}
 	resolved := resolveConditionalPolicy(policy, account)
-	if resolved.PriorityFromRule || resolved.WebsocketsFromRule {
+	if resolved.PriorityFromRule || resolved.WebsocketsFromRule || resolved.ProxyProfileFromRule {
 		override := DefaultPolicy{}
 		if resolved.PriorityFromRule {
 			override.Priority = resolved.Priority
 		}
 		if resolved.WebsocketsFromRule {
 			override.Websockets = resolved.Websockets
+		}
+		if resolved.ProxyProfileFromRule && resolved.ProxyProfileID != nil {
+			e.mu.RLock()
+			resolver := e.proxyProfiles
+			e.mu.RUnlock()
+			if resolver == nil {
+				return false, fmt.Errorf("proxy profile resolver is unavailable")
+			}
+			proxyURL, ok := resolveProxyProfileForProvider(resolver, *resolved.ProxyProfileID, firstNonEmpty(account.Provider, account.Type))
+			if !ok {
+				return false, fmt.Errorf("proxy profile is unavailable")
+			}
+			override.proxyURL = &proxyURL
 		}
 		var conditionalChanged bool
 		updated, _, conditionalChanged, errApply = applyDefaultPolicy(updated, override, applyForce)
@@ -1166,6 +1306,14 @@ func normalizeDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
 	policy.CodexQuotaMetadataProbeEnabled = true
 	policy.ApplyMode = policyApplyModeMissing
 	policy.ScanIntervalSeconds = clampPolicyScanInterval(policy.ScanIntervalSeconds)
+	if policy.ProxyProfileID != nil {
+		id := strings.ToLower(strings.TrimSpace(*policy.ProxyProfileID))
+		policy.ProxyProfileID = &id
+	}
+	if policy.AIProviderProxyProfileID != nil {
+		id := strings.ToLower(strings.TrimSpace(*policy.AIProviderProxyProfileID))
+		policy.AIProviderProxyProfileID = &id
+	}
 	return cloneDefaultPolicy(policy)
 }
 
@@ -1187,11 +1335,27 @@ func validateDefaultPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 }
 
 func (policy DefaultPolicy) ManagesFields() bool {
-	if policy.Enabled && (policy.Priority != nil || policy.Websockets != nil) {
+	return policy.ManagesAccountFields() || policy.ManagesAIProviderProxy()
+}
+
+func (policy DefaultPolicy) ManagesAccountFields() bool {
+	if policy.Enabled && (policy.Priority != nil || policy.Websockets != nil || policy.ProxyProfileID != nil) {
 		return true
 	}
 	for _, rule := range policy.ConditionalRules {
-		if rule.Enabled && (rule.Actions.Priority != nil || rule.Actions.Websockets != nil || rule.Actions.ModelPolicy != nil) {
+		if rule.Enabled && (rule.Actions.Priority != nil || rule.Actions.Websockets != nil || rule.Actions.ModelPolicy != nil || rule.Actions.ProxyProfileID != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func (policy DefaultPolicy) ManagesAIProviderProxy() bool {
+	if policy.Enabled && policy.AIProviderProxyProfileID != nil {
+		return true
+	}
+	for _, rule := range policy.ConditionalRules {
+		if rule.Enabled && rule.Actions.AIProviderProxyProfileID != nil {
 			return true
 		}
 	}
@@ -1211,12 +1375,15 @@ func (policy DefaultPolicy) ManagesNewAccountProbe() bool {
 }
 
 func (policy DefaultPolicy) Fields() []string {
-	fields := make([]string, 0, 2)
+	fields := make([]string, 0, 3)
 	if policy.Priority != nil {
 		fields = append(fields, policyFieldPriority)
 	}
 	if policy.Websockets != nil {
 		fields = append(fields, policyFieldWebsockets)
+	}
+	if policy.ProxyProfileID != nil {
+		fields = append(fields, policyFieldProxyURL)
 	}
 	return fields
 }
@@ -1225,6 +1392,8 @@ func cloneDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
 	clone := policy
 	clone.Priority = cloneIntPointer(policy.Priority)
 	clone.Websockets = cloneBoolPointer(policy.Websockets)
+	clone.ProxyProfileID = cloneStringPointer(policy.ProxyProfileID)
+	clone.AIProviderProxyProfileID = cloneStringPointer(policy.AIProviderProxyProfileID)
 	clone.ConditionalRules = cloneConditionalPolicyRules(policy.ConditionalRules)
 	return clone
 }
@@ -1235,7 +1404,7 @@ func defaultPolicyEqual(left, right DefaultPolicy) bool {
 	return left.Enabled == right.Enabled && left.ApplyMode == right.ApplyMode &&
 		left.NewAccountModelProbeEnabled == right.NewAccountModelProbeEnabled &&
 		left.CodexQuotaMetadataProbeEnabled == right.CodexQuotaMetadataProbeEnabled &&
-		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right) &&
+		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right) && optionalStringEqual(left.ProxyProfileID, right.ProxyProfileID) && optionalStringEqual(left.AIProviderProxyProfileID, right.AIProviderProxyProfileID) &&
 		reflect.DeepEqual(left.ConditionalRules, right.ConditionalRules)
 }
 
@@ -1309,6 +1478,11 @@ func applyDefaultPolicy(raw json.RawMessage, policy DefaultPolicy, mode policyAp
 	}
 	if policy.Websockets != nil {
 		if errApply := apply(policyFieldWebsockets, *policy.Websockets); errApply != nil {
+			return nil, nil, false, errApply
+		}
+	}
+	if policy.proxyURL != nil {
+		if errApply := apply(policyFieldProxyURL, *policy.proxyURL); errApply != nil {
 			return nil, nil, false, errApply
 		}
 	}

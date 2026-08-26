@@ -177,6 +177,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
+	policies.SetProxyProfiles(proxyProfiles)
+	policies.SetAIProviderProxyApplier(app.applyAIProviderProxyPolicy)
 	policies.SetQuotaMetadataProbe(app.runPolicyQuotaMetadataProbe)
 	newAccountProbe.SetEligibility(func(account Account) bool {
 		resolved := resolveConditionalPolicy(policies.Snapshot().Policy, account)

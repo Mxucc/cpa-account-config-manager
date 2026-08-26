@@ -36,10 +36,12 @@ type PolicyConditionGroup struct {
 }
 
 type ConditionalPolicyActions struct {
-	NewAccountModelProbe *bool             `json:"new_account_model_probe,omitempty" yaml:"new_account_model_probe,omitempty"`
-	Priority             *int              `json:"priority,omitempty" yaml:"priority,omitempty"`
-	Websockets           *bool             `json:"websockets,omitempty" yaml:"websockets,omitempty"`
-	ModelPolicy          *ModelPolicyPatch `json:"model_policy,omitempty" yaml:"model_policy,omitempty"`
+	NewAccountModelProbe     *bool             `json:"new_account_model_probe,omitempty" yaml:"new_account_model_probe,omitempty"`
+	Priority                 *int              `json:"priority,omitempty" yaml:"priority,omitempty"`
+	Websockets               *bool             `json:"websockets,omitempty" yaml:"websockets,omitempty"`
+	ModelPolicy              *ModelPolicyPatch `json:"model_policy,omitempty" yaml:"model_policy,omitempty"`
+	ProxyProfileID           *string           `json:"proxy_profile_id,omitempty" yaml:"proxy_profile_id,omitempty"`
+	AIProviderProxyProfileID *string           `json:"ai_provider_proxy_profile_id,omitempty" yaml:"ai_provider_proxy_profile_id,omitempty"`
 }
 
 type ConditionalPolicyRule struct {
@@ -52,14 +54,18 @@ type ConditionalPolicyRule struct {
 }
 
 type ResolvedConditionalPolicy struct {
-	NewAccountModelProbe *bool
-	Priority             *int
-	Websockets           *bool
-	ModelPolicy          *ModelPolicyPatch
-	MatchedRuleIDs       []string
-	PriorityFromRule     bool
-	WebsocketsFromRule   bool
-	ModelPolicyFromRule  bool
+	NewAccountModelProbe     *bool
+	Priority                 *int
+	Websockets               *bool
+	ModelPolicy              *ModelPolicyPatch
+	MatchedRuleIDs           []string
+	PriorityFromRule         bool
+	WebsocketsFromRule       bool
+	ModelPolicyFromRule      bool
+	ProxyProfileID           *string
+	AIProviderProxyProfileID *string
+	ProxyProfileFromRule     bool
+	AIProviderProxyFromRule  bool
 }
 
 func validateConditionalPolicyRules(rules []ConditionalPolicyRule) ([]ConditionalPolicyRule, error) {
@@ -227,8 +233,21 @@ func validateConditionalPolicyActions(actions ConditionalPolicyActions) (Conditi
 		}
 		actions.ModelPolicy = &validated
 	}
-	if actions.NewAccountModelProbe == nil && actions.Priority == nil && actions.Websockets == nil && actions.ModelPolicy == nil {
+	if actions.NewAccountModelProbe == nil && actions.Priority == nil && actions.Websockets == nil && actions.ModelPolicy == nil && actions.ProxyProfileID == nil && actions.AIProviderProxyProfileID == nil {
 		return ConditionalPolicyActions{}, fmt.Errorf("conditional policy requires at least one action")
+	}
+	for _, id := range []*string{actions.ProxyProfileID, actions.AIProviderProxyProfileID} {
+		if id != nil && !validConditionalPolicyIdentifier(strings.ToLower(strings.TrimSpace(*id))) {
+			return ConditionalPolicyActions{}, fmt.Errorf("proxy profile id is invalid")
+		}
+	}
+	if actions.ProxyProfileID != nil {
+		id := strings.ToLower(strings.TrimSpace(*actions.ProxyProfileID))
+		actions.ProxyProfileID = &id
+	}
+	if actions.AIProviderProxyProfileID != nil {
+		id := strings.ToLower(strings.TrimSpace(*actions.AIProviderProxyProfileID))
+		actions.AIProviderProxyProfileID = &id
 	}
 	return cloneConditionalPolicyActions(actions), nil
 }
@@ -322,6 +341,16 @@ func resolveConditionalPolicy(policy DefaultPolicy, account Account) ResolvedCon
 			resolved.ModelPolicy = &modelPolicy
 			resolved.ModelPolicyFromRule = true
 		}
+		if actions.ProxyProfileID != nil {
+			id := strings.ToLower(strings.TrimSpace(*actions.ProxyProfileID))
+			resolved.ProxyProfileID = &id
+			resolved.ProxyProfileFromRule = true
+		}
+		if actions.AIProviderProxyProfileID != nil {
+			id := strings.ToLower(strings.TrimSpace(*actions.AIProviderProxyProfileID))
+			resolved.AIProviderProxyProfileID = &id
+			resolved.AIProviderProxyFromRule = true
+		}
 		resolved.MatchedRuleIDs = append(resolved.MatchedRuleIDs, match.rule.ID)
 	}
 	return resolved
@@ -352,6 +381,14 @@ func cloneConditionalPolicyActions(actions ConditionalPolicyActions) Conditional
 	clone.NewAccountModelProbe = cloneBoolPointer(actions.NewAccountModelProbe)
 	clone.Priority = cloneIntPointer(actions.Priority)
 	clone.Websockets = cloneBoolPointer(actions.Websockets)
+	if actions.ProxyProfileID != nil {
+		id := *actions.ProxyProfileID
+		clone.ProxyProfileID = &id
+	}
+	if actions.AIProviderProxyProfileID != nil {
+		id := *actions.AIProviderProxyProfileID
+		clone.AIProviderProxyProfileID = &id
+	}
 	if actions.ModelPolicy != nil {
 		modelPolicy := cloneModelPolicyPatch(*actions.ModelPolicy)
 		clone.ModelPolicy = &modelPolicy

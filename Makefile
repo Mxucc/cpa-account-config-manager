@@ -42,7 +42,7 @@ package: plugin
 
 test:
 	go test ./...
-	cd $(WEB_DIR) && npm test -- --run
+	cd $(WEB_DIR) && npm test -- --run --pool=forks --maxWorkers=1
 
 version-check:
 	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$$'
@@ -55,7 +55,7 @@ verify: version-check
 	go test -race ./...
 	go vet ./...
 	cd $(WEB_DIR) && npm run typecheck
-	cd $(WEB_DIR) && npm test -- --run
+	cd $(WEB_DIR) && npm test -- --run --pool=forks --maxWorkers=1
 	$(MAKE) build
 
 clean:

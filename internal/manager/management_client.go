@@ -44,6 +44,14 @@ type managementClient struct {
 	fingerprintStore fingerprintSeedStore
 }
 
+type managementHTTPStatusError struct {
+	StatusCode int
+}
+
+func (e *managementHTTPStatusError) Error() string {
+	return fmt.Sprintf("management API returned HTTP %d", e.StatusCode)
+}
+
 func (c *managementClient) clearSecrets() {
 	if c == nil {
 		return
@@ -182,7 +190,7 @@ func (c *managementClient) requestJSON(ctx context.Context, method, path string,
 		return fmt.Errorf("management API response exceeded the size limit")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("management API returned HTTP %d", response.StatusCode)
+		return &managementHTTPStatusError{StatusCode: response.StatusCode}
 	}
 	if output != nil {
 		if len(bytes.TrimSpace(responseBody)) == 0 {

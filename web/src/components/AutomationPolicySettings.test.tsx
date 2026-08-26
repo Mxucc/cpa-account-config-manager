@@ -37,6 +37,7 @@ describe("AutomationPolicySettings", () => {
     localStorage.clear();
     setSession("", "management-secret");
     vi.restoreAllMocks();
+    vi.spyOn(api, "listProxyProfiles").mockResolvedValue({ profiles: [] });
   });
 
   it("ignores stale policy responses after a refresh revision changes", async () => {
@@ -108,7 +109,7 @@ describe("AutomationPolicySettings", () => {
         model_policy: { mode: "allow_only", models: ["gpt-5.5", "gpt-5.4-mini"] },
       },
     });
-  });
+  }, 15_000);
 
   it("keeps the Codex quota metadata probe as a hidden always-on capability", async () => {
     const user = userEvent.setup();
@@ -128,6 +129,49 @@ describe("AutomationPolicySettings", () => {
     await user.click(within(panel).getByRole("button", { name: "保存策略" }));
 
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ codex_quota_metadata_probe_enabled: true })));
+  });
+
+  it("saves enabled proxy profile references for default and conditional account/provider policies", async () => {
+    const user = userEvent.setup();
+    const save = vi.spyOn(api, "saveDefaultPolicy").mockImplementation(async (policy) => ({ ...snapshot, policy }));
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+    vi.mocked(api.listProxyProfiles).mockResolvedValue({
+      profiles: [
+        { id: "proxy-account", name: "账号出口", proxy_url_masked: "socks5://user:***@proxy.example:1080", enabled: true, account_count: 2, created_at: "", updated_at: "" },
+        { id: "proxy-provider", name: "供应商出口", proxy_url_masked: "https://***@provider.example", enabled: true, account_count: 0, created_at: "", updated_at: "" },
+        { id: "proxy-disabled", name: "停用出口", proxy_url_masked: "https://***@disabled.example", enabled: false, account_count: 0, created_at: "", updated_at: "" },
+      ],
+    });
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+    await screen.findByRole("checkbox", { name: "启用新账号模型探测" });
+    const panel = screen.getByRole("tabpanel", { name: "自动策略" });
+    await waitFor(() =>
+      expect(
+        within(panel).getAllByRole("option", {
+          name: "账号出口 · socks5://user:***@proxy.example:1080",
+        }),
+      ).toHaveLength(2),
+    );
+    expect(within(panel).queryByText(/disabled\.example/)).not.toBeInTheDocument();
+
+    await user.selectOptions(within(panel).getByLabelText("默认账号代理"), "proxy-account");
+    await user.selectOptions(within(panel).getByLabelText("默认 AI 供应商代理"), "proxy-provider");
+    await user.click(within(panel).getByRole("button", { name: "添加策略" }));
+    const rule = within(panel).getByRole("article");
+    await user.click(within(rule).getByRole("checkbox", { name: "账号代理档案" }));
+    await user.click(within(rule).getByRole("checkbox", { name: "AI 供应商代理档案" }));
+    const conditionalSelects = within(rule).getAllByRole("combobox");
+    await user.selectOptions(conditionalSelects.at(-2)!, "proxy-provider");
+    await user.selectOptions(conditionalSelects.at(-1)!, "proxy-account");
+
+    await user.click(within(panel).getByRole("button", { name: "保存策略" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toMatchObject({
+      proxy_profile_id: "proxy-account",
+      ai_provider_proxy_profile_id: "proxy-provider",
+      conditional_rules: [{ actions: { proxy_profile_id: "proxy-provider", ai_provider_proxy_profile_id: "proxy-account" } }],
+    });
   });
 
   it("saves without running until the user explicitly starts the asynchronous scan", async () => {

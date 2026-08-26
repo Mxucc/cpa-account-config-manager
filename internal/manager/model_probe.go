@@ -391,7 +391,7 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	// Inspection must use the Codex credential endpoint even when CPA runtime
 	// metadata says api_key. The runtime label can be stale or describe the
 	// routing adapter rather than the physical auth file.
-	if probeProvider == "codex" && !request.ExperimentalWeeklyOverdraft && (request.Inspection || !metadata.usesAPIKey()) {
+	if probeProvider == "codex" && (request.Inspection || !metadata.usesAPIKey()) {
 		credential := buildCodexCredentialProbe(metadata)
 		credentialResponse, errCredential := s.callAccountProbe(probeCtx, managementBaseURL, managementKey, callbackID, account, credential)
 		if errCredential == nil {
@@ -424,23 +424,26 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		}
 	}
 	if request.ExperimentalWeeklyOverdraft {
+		// The experiment is best-effort.  A missing transformer or an input that
+		// is not eligible for injection must not hide the normal model probe
+		// result (in particular a real 401/token_invalidated response).
 		if s.experimentalTransformer == nil {
-			return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment is unavailable")
+			// Fall through and run the ordinary probe unchanged.
+		} else {
+			// Carry the selected account identity so the 95% pre-arm gate can
+			// resolve the usage-backed cycle state for the account being probed,
+			// mirroring the sub2api-overdraft eligibility check on the probe path.
+			modification, changed := s.experimentalTransformer.InterceptRequest(cpaapi.RequestInterceptRequest{
+				ToFormat: "codex",
+				Metadata: map[string]any{"selected_auth_index": account.ID},
+				Body:     []byte(probe.data),
+			})
+			callID := experimentalToolCallID(modification.Body)
+			if changed && len(modification.Body) > 0 && callID != "" {
+				probe.data = string(modification.Body)
+				result.Experiment = &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: callID}
+			}
 		}
-		// Carry the selected account identity so the 95% pre-arm gate can
-		// resolve the usage-backed cycle state for the account being probed,
-		// mirroring the sub2api-overdraft eligibility check on the probe path.
-		modification, changed := s.experimentalTransformer.InterceptRequest(cpaapi.RequestInterceptRequest{
-			ToFormat: "codex",
-			Metadata: map[string]any{"selected_auth_index": account.ID},
-			Body:     []byte(probe.data),
-		})
-		callID := experimentalToolCallID(modification.Body)
-		if !changed || len(modification.Body) == 0 || callID == "" {
-			return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment could not be applied")
-		}
-		probe.data = string(modification.Body)
-		result.Experiment = &ModelTestExperiment{Name: "weekly_overdraft", Applied: true, CallID: callID}
 	}
 
 	runAttempt := func(role, attemptModel string, attemptProbe modelProbe, experiment *ModelTestExperiment) (ModelTestAttempt, modelProbeHTTPResponse, error) {

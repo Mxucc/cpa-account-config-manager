@@ -549,6 +549,18 @@ func optionalBoolEqual(left, right *bool) bool {
 	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func optionalStringEqual(left, right *string) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
 func cloneForcePreview(preview ForceSyncPreview) ForceSyncPreview {
 	clone := preview
 	clone.Policy = forcePolicySummary(DefaultPolicy{Priority: preview.Policy.Priority, Websockets: preview.Policy.Websockets})

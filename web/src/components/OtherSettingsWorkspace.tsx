@@ -327,11 +327,13 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
       {activeSection === "automation" ? (
-        <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
+        <>
+          <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
+          <ProxyProfilesSettings refreshRevision={proxyRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
+        </>
       ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : activeSection === "updates" ? <div className="plugin-configuration-version-panel" role="tabpanel" aria-label={tx("ui.plugin_configuration_and_version")}>
-        <ProxyProfilesSettings refreshRevision={proxyRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
         <section className="plugin-appearance-settings settings-section" aria-label={tx("ui.plugin_appearance")}>
           <div className="settings-section-heading"><div><strong>{tx("ui.plugin_appearance")}</strong><span>{tx("ui.plugin_appearance_description")}</span></div></div>
           <label className="switch-control"><input type="checkbox" checked={pluginThemeEnabled} onChange={(event) => updatePluginThemeEnabled(event.target.checked)} /><b>{tx(pluginThemeEnabled ? "ui.enabled" : "ui.disabled")}</b></label>

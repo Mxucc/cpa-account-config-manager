@@ -530,6 +530,8 @@ export interface DefaultPolicy {
   scan_interval_seconds: number;
   priority: number | null;
   websockets: boolean | null;
+  proxy_profile_id?: string | null;
+  ai_provider_proxy_profile_id?: string | null;
   conditional_rules?: ConditionalPolicyRule[];
 }
 
@@ -552,6 +554,8 @@ export interface ConditionalPolicyActions {
   priority?: number;
   websockets?: boolean;
   model_policy?: ModelPolicyPatch;
+  proxy_profile_id?: string;
+  ai_provider_proxy_profile_id?: string;
 }
 
 export interface ConditionalPolicyRule {

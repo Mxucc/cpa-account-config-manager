@@ -56,6 +56,7 @@ func (a *App) handleProxyProfileUpdate(req cpaapi.ManagementRequest) cpaapi.Mana
 		}
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
+	a.policies.ProxyProfilesUpdated()
 	return jsonResponse(http.StatusOK, map[string]any{"profile": view})
 }
 
@@ -85,5 +86,6 @@ func (a *App) handleProxyProfileDelete(req cpaapi.ManagementRequest) cpaapi.Mana
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": err.Error()})
 		}
 	}
+	a.policies.ProxyProfilesUpdated()
 	return jsonResponse(http.StatusOK, map[string]any{"deleted": true})
 }

@@ -1735,70 +1735,76 @@ export async function getAIProviderRuntime(signal?: AbortSignal): Promise<AIProv
   return normalizeAIProviderRuntimeResponse(await managementRequest<unknown>("/ai-providers/runtime", { signal }));
 }
 
-export async function listAIProviderChannels(signal?: AbortSignal): Promise<AIProviderChannelSnapshot[]> {
-  const channels: AIProviderChannelSnapshot[] = [];
-  for (const channel of AI_PROVIDER_CHANNELS) {
-    try {
-      if (channel.kind === "opencode-go") {
-        const listed = await listOpenCodeAccounts(signal);
-        channels.push({
-          kind: channel.kind,
-          count: listed.accounts?.length ?? 0,
-          entries: (listed.accounts ?? []).map((account, index) => ({
-            index,
-            account_id: account.id,
-            workspace_id: account.workspace_id,
-            name: account.workspace_id,
-          })),
-          ...(listed.storage_error ? { storage_error: "provider_storage_unavailable" } : {}),
-        });
-        continue;
-      }
-      if (channel.kind === "opencode-zen") {
-        const listed = await listOpenCodeZenAccounts(signal);
-        channels.push({
-          kind: channel.kind,
-          count: listed.accounts?.length ?? 0,
-          entries: (listed.accounts ?? []).map((account, index) => ({
-            index,
-            account_id: account.id,
-            name: account.name ?? account.base_url,
-            base_url: account.base_url,
-            key_set: account.key_set,
-          })),
-          ...(listed.storage_error ? { storage_error: "provider_storage_unavailable" } : {}),
-        });
-        continue;
-      }
-      if (channel.apiPath) {
-        const payload = await managementRequest<unknown>(channel.apiPath, { signal });
-        const payloadRecord = isRecord(payload) ? payload : undefined;
-        const rawEntries = payloadRecord?.[channel.kind];
-        if (!Array.isArray(rawEntries)) {
-          channels.push({ kind: channel.kind, count: 0, entries: [], error: "provider_channel_response_invalid" });
-          continue;
-        }
-        const entries = channelEntriesFromResponse(channel.kind, payload);
-        channels.push({ kind: channel.kind, count: entries.length, entries });
-        continue;
-      }
-      channels.push({ kind: channel.kind, count: 0, entries: [] as AIProviderChannelEntry[] });
-    } catch (caught) {
-      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) throw caught;
-      if (caught instanceof APIError && (caught.status === 401 || caught.status === 403)) {
-        throw caught;
-      }
-      channels.push({
+/** Fetch one provider channel, degrading non-auth failures to a channel error. */
+async function loadAIProviderChannel(
+  channel: (typeof AI_PROVIDER_CHANNELS)[number],
+  signal?: AbortSignal,
+): Promise<AIProviderChannelSnapshot> {
+  try {
+    if (channel.kind === "opencode-go") {
+      const listed = await listOpenCodeAccounts(signal);
+      return {
         kind: channel.kind,
-        count: 0,
-        entries: [],
-        error: caught instanceof APIError && caught.status === 502
-          ? "provider_channel_response_invalid"
-          : "provider_channel_unavailable",
-      });
+        count: listed.accounts?.length ?? 0,
+        entries: (listed.accounts ?? []).map((account, index) => ({
+          index,
+          account_id: account.id,
+          workspace_id: account.workspace_id,
+          name: account.workspace_id,
+        })),
+        ...(listed.storage_error ? { storage_error: "provider_storage_unavailable" } : {}),
+      };
     }
+    if (channel.kind === "opencode-zen") {
+      const listed = await listOpenCodeZenAccounts(signal);
+      return {
+        kind: channel.kind,
+        count: listed.accounts?.length ?? 0,
+        entries: (listed.accounts ?? []).map((account, index) => ({
+          index,
+          account_id: account.id,
+          name: account.name ?? account.base_url,
+          base_url: account.base_url,
+          key_set: account.key_set,
+        })),
+        ...(listed.storage_error ? { storage_error: "provider_storage_unavailable" } : {}),
+      };
+    }
+    if (channel.apiPath) {
+      const payload = await managementRequest<unknown>(channel.apiPath, { signal });
+      const payloadRecord = isRecord(payload) ? payload : undefined;
+      const rawEntries = payloadRecord?.[channel.kind];
+      if (!Array.isArray(rawEntries)) {
+        return { kind: channel.kind, count: 0, entries: [], error: "provider_channel_response_invalid" };
+      }
+      const entries = channelEntriesFromResponse(channel.kind, payload);
+      return { kind: channel.kind, count: entries.length, entries };
+    }
+    return { kind: channel.kind, count: 0, entries: [] as AIProviderChannelEntry[] };
+  } catch (caught) {
+    if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) throw caught;
+    if (caught instanceof APIError && (caught.status === 401 || caught.status === 403)) throw caught;
+    return {
+      kind: channel.kind,
+      count: 0,
+      entries: [],
+      error: caught instanceof APIError && caught.status === 502
+        ? "provider_channel_response_invalid"
+        : "provider_channel_unavailable",
+    };
   }
-  return channels;
+}
+
+/**
+ * Fetch one channel as an authentication gate, then load the independent
+ * provider channels in parallel to avoid serial page-load latency.
+ */
+export async function listAIProviderChannels(signal?: AbortSignal): Promise<AIProviderChannelSnapshot[]> {
+  const [first, ...rest] = AI_PROVIDER_CHANNELS;
+  if (!first) return [];
+  const firstSnapshot = await loadAIProviderChannel(first, signal);
+  const remaining = await Promise.all(rest.map((channel) => loadAIProviderChannel(channel, signal)));
+  return [firstSnapshot, ...remaining];
 }
 
 export async function putAIProviderChannel(kind: AIProviderChannelKind, items: unknown[]): Promise<void> {

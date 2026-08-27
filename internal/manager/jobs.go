@@ -96,6 +96,7 @@ type JobEngine struct {
 	wait              sync.WaitGroup
 	accounts          *AccountService
 	concurrency       *AccountConcurrencyService
+	usageLimits       *UsageLimitService
 	proxyProfiles     ProxyProfileResolver
 	mutations         *MutationCoordinator
 	backgroundOwner   BackgroundWorkOwner
@@ -124,6 +125,15 @@ func (e *JobEngine) SetProxyProfiles(resolver ProxyProfileResolver) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.proxyProfiles = resolver
+}
+
+func (e *JobEngine) SetUsageLimits(service *UsageLimitService) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.usageLimits = service
+	e.mu.Unlock()
 }
 
 func (e *JobEngine) SetAccountConcurrency(concurrency *AccountConcurrencyService) {
@@ -551,6 +561,18 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 			return JobResult{Status: ResultFailed, Error: "account concurrency update failed", AppliedFields: applied, Retryable: true}
 		}
 		applied = append(applied, "concurrency_limit")
+	}
+	if patch.UsageLimits != nil {
+		e.mu.Lock()
+		usageLimits := e.usageLimits
+		e.mu.Unlock()
+		if usageLimits == nil {
+			return JobResult{Status: ResultFailed, Error: "usage limits service is unavailable", AppliedFields: applied, Retryable: true}
+		}
+		if _, errUsage := usageLimits.Set(AccountUsageLimitsScope(account.ID), *patch.UsageLimits); errUsage != nil {
+			return JobResult{Status: ResultFailed, Error: "account usage limits update failed", AppliedFields: applied, Retryable: true}
+		}
+		applied = append(applied, "usage_limits")
 	}
 	return JobResult{Status: ResultSucceeded, AppliedFields: applied}
 }

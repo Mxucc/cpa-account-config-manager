@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   BellRing,
-  CircleDollarSign,
   DoorClosed,
   ExternalLink,
   FlaskConical,
@@ -36,7 +35,6 @@ import {
 } from "../store/fontSize";
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { ProxyProfilesSettings } from "./ProxyProfilesSettings";
-import { UsageLimitsSettings } from "./UsageLimitsSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import {
   announcePluginUpdateStatus,
@@ -78,7 +76,7 @@ export function OtherSettingsWorkspace({
   const [experiments, setExperiments] =
     useState<ExperimentalSettingsSnapshot | null>(null);
   const [activeSection, setActiveSection] = useState<
-    "automation" | "notifications" | "updates" | "experimental" | "limits"
+    "automation" | "notifications" | "updates" | "experimental"
   >("automation");
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [typographyDistinction, setTypographyDistinction] = useState(
@@ -467,16 +465,6 @@ export function OtherSettingsWorkspace({
         >
           <FlaskConical size={15} />
           {tx("ui.experimental_features")}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeSection === "limits"}
-          className={activeSection === "limits" ? "active" : ""}
-          onClick={() => setActiveSection("limits")}
-        >
-          <CircleDollarSign size={15} />
-          {tx("ui.usage_limits")}
         </button>
       </div>
 
@@ -880,8 +868,7 @@ export function OtherSettingsWorkspace({
             </section>
           </div>
         </div>
-      ) : activeSection === "limits" ? (
-        <UsageLimitsSettings onAPIError={onAPIError} onNotice={onNotice} />
+      ) : (
       ) : (
         <section
           className="experimental-settings-section"

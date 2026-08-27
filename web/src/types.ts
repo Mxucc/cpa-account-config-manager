@@ -107,6 +107,7 @@ export interface AccountEditableConfig {
   model_policy: AccountModelPolicySummary | null;
   concurrency?: AccountConcurrencySummary;
   account_concurrency?: AccountConcurrencyAvailability;
+  usage_limits: UsageLimitsConfig;
   credential?: CredentialSummary;
 }
 
@@ -467,6 +468,7 @@ export interface BatchPatch {
   headers?: HeaderPatch;
   model_policy?: ModelPolicyPatch;
   concurrency_limit?: number;
+  usage_limits?: UsageLimitsConfig;
 }
 
 export interface TargetScope {
@@ -1230,11 +1232,17 @@ export interface UsageLimitsConfig {
   models?: UsageModelLimit[];
 }
 
+export interface UsageLimitsScope {
+  kind: "account" | "provider";
+  id: string;
+}
+
 export interface UsageLimitsSnapshot {
+  scope: UsageLimitsScope;
   config: UsageLimitsConfig;
   credit_used_usd: number;
   credit_model_used_usd?: Record<string, number>;
-  updated_at: string;
+  updated_at?: string;
   storage_error?: string;
 }
 

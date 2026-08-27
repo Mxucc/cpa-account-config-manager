@@ -19,8 +19,10 @@ import type {
   DefaultPolicy,
   ExperimentalSettings,
   ExperimentalSettingsSnapshot,
+  UsageLimitRule,
   UsageLimitsConfig,
   UsageLimitsSnapshot,
+  UsageModelLimit,
   AgentIdentitySessionLoginResponse,
   OpenCodeAccountSaveResponse,
   OpenCodeAccountsResponse,
@@ -447,6 +449,50 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isValidUsageLimitRule(value: unknown): value is UsageLimitRule {
+  if (!isRecord(value) || typeof value.enabled !== "boolean") return false;
+  if (value.basis !== "account" && value.basis !== "credit") return false;
+  if (value.window !== undefined && value.window !== "five_hour" && value.window !== "seven_day") return false;
+  if (value.percent !== undefined && !isFiniteNonNegativeNumber(value.percent)) return false;
+  if (value.amount_usd !== undefined && !isFiniteNonNegativeNumber(value.amount_usd)) return false;
+  return true;
+}
+
+function normalizeUsageLimitsConfigResponse(value: unknown): UsageLimitsConfig {
+  if (!isRecord(value) || typeof value.enabled !== "boolean") throw new APIError(502, "ui.invalid_api_response");
+  const total = value.total === undefined || value.total === null ? undefined : value.total;
+  if (total !== undefined && !isValidUsageLimitRule(total)) throw new APIError(502, "ui.invalid_api_response");
+  const models = value.models === undefined || value.models === null ? [] : value.models;
+  if (!Array.isArray(models) || models.some((item) => !isRecord(item) || typeof item.model !== "string" || typeof item.within_total !== "boolean" || !isValidUsageLimitRule(item.rule))) {
+    throw new APIError(502, "ui.invalid_api_response");
+  }
+  return {
+    enabled: value.enabled,
+    ...(total === undefined ? {} : { total: total as UsageLimitRule }),
+    models: models as UsageModelLimit[],
+  };
+}
+
+function normalizeUsageLimitsSnapshot(response: unknown, fallbackScope?: { kind: "account" | "provider"; id: string }): UsageLimitsSnapshot {
+  if (!isRecord(response) || !isRecord(response.scope) || (response.scope.kind !== "account" && response.scope.kind !== "provider") || typeof response.scope.id !== "string" || !isFiniteNonNegativeNumber(response.credit_used_usd)) {
+    throw new APIError(502, "ui.invalid_api_response");
+  }
+  return {
+    scope: { kind: response.scope.kind, id: response.scope.id },
+    config: normalizeUsageLimitsConfigResponse(response.config),
+    credit_used_usd: response.credit_used_usd,
+    credit_model_used_usd: isRecord(response.credit_model_used_usd)
+      ? Object.entries(response.credit_model_used_usd).reduce<Record<string, number>>((out, [model, amount]) => {
+          if (isFiniteNonNegativeNumber(amount)) out[model] = amount;
+          return out;
+        }, {})
+      : {},
+    updated_at: typeof response.updated_at === "string" ? response.updated_at : undefined,
+    storage_error: typeof response.storage_error === "string" ? response.storage_error : undefined,
+    ...(fallbackScope ? { scope: fallbackScope } : {}),
+  };
+}
+
 /**
  * Go may encode an empty nil slice as null on older plugin/runtime pairs, so
  * null remains a compatible empty list. A missing field or a list containing
@@ -603,6 +649,7 @@ export async function loadAccountConfig(
       source.header_names.every((item) => typeof item === "string"));
   const validModelPolicy =
     source.model_policy === null || isRecord(source.model_policy);
+  const usageLimits = source.usage_limits === undefined ? { enabled: false, models: [] } : normalizeUsageLimitsConfigResponse(source.usage_limits);
   if (
     typeof source.account_id !== "string" ||
     !source.account_id.trim() ||
@@ -645,7 +692,24 @@ export async function loadAccountConfig(
       : [],
     account_concurrency: availability,
     concurrency,
+    usage_limits: usageLimits,
   } as AccountEditableConfig;
+}
+
+export async function getProviderUsageLimits(provider: string): Promise<UsageLimitsSnapshot> {
+  const response = await requestRecord<unknown>("/ai-providers/usage-limits", {
+    method: "POST",
+    body: JSON.stringify({ provider }),
+  });
+  return normalizeUsageLimitsSnapshot(response, { kind: "provider", id: provider });
+}
+
+export async function saveProviderUsageLimits(provider: string, config: UsageLimitsConfig): Promise<UsageLimitsSnapshot> {
+  const response = await requestRecord<unknown>("/ai-providers/usage-limits", {
+    method: "PUT",
+    body: JSON.stringify({ provider, config }),
+  });
+  return normalizeUsageLimitsSnapshot(response, { kind: "provider", id: provider });
 }
 
 export async function refreshAccountQuotaMetadata(
@@ -1298,20 +1362,6 @@ export async function saveExperimentalSettings(
   });
 }
 
-export async function getUsageLimits(
-  signal?: AbortSignal,
-): Promise<UsageLimitsSnapshot> {
-  return requestRecord<UsageLimitsSnapshot>("/usage-limits", { signal });
-}
-
-export async function saveUsageLimits(
-  config: UsageLimitsConfig,
-): Promise<UsageLimitsSnapshot> {
-  return requestRecord<UsageLimitsSnapshot>("/usage-limits", {
-    method: "PUT",
-    body: JSON.stringify(config),
-  });
-}
 
 export async function completeAgentIdentitySessionLogin(
   state: string,

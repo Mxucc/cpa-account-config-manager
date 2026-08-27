@@ -81,7 +81,9 @@ export const enUI = {
     "Keep title and description text at distinct sizes. Turn this off to make descriptions use their title size.",
   "ui.usage_limits": "Usage limits",
   "ui.usage_limits_description":
-    "Stop new requests when an account percentage or estimated credit ceiling is reached. Credit limits are useful for AI providers without upstream quota data.",
+    "Configure account-level or AI-provider-level credit, 5-hour, and 7-day limits.",
+  "ui.account_usage_limits_description": "Limits apply only to account {scope}.",
+  "ui.provider_usage_limits_description": "Limits apply only to AI provider {scope}.",
   "ui.usage_limits_enabled": "Usage limits enabled",
   "ui.usage_limits_disabled": "Usage limits disabled",
   "ui.usage_limit_basis": "Limit basis",
@@ -106,6 +108,8 @@ export const enUI = {
   "ui.usage_limit_credit_note":
     "Estimated cost is based on the configured model pricing table; requests without a rated price are not counted.",
   "ui.usage_limits_saved": "Usage limits saved",
+  "ui.usage_limits_updated_in_preview": "Usage limits updated in preview",
+  "ui.account_concurrency_single_account_note": "Applies only to this account; other accounts are unchanged",
   "ui.usage_limit_reached": "Limit reached",
   "ui.usage_limit_not_configured": "Not configured",
   "ui.usage_limit_uncollected": "Usage not collected",

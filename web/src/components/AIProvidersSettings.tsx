@@ -1,4 +1,4 @@
-import { Activity, Eye, EyeOff, LoaderCircle, Plus, Power, PowerOff, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Activity, Eye, EyeOff, Gauge, LoaderCircle, Plus, Power, PowerOff, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ShieldQuestion, XCircle } from "lucide-react";
 import * as api from "../api/client";
@@ -16,10 +16,10 @@ import type {
   AIProviderChannelSnapshot,
   AIProviderRuntimeModelUsage,
   AIProviderRuntimeSnapshot,
-  UsageLimitsSnapshot,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
+import { UsageLimitsSettings } from "./UsageLimitsSettings";
 
 interface AIProvidersSettingsProps {
   refreshRevision: number;
@@ -397,9 +397,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const { locale, tx, formatDateTime } = useI18n();
   const [channels, setChannels] = useState<AIProviderChannelSnapshot[]>([]);
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
-  const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
-  const [usageLimits, setUsageLimits] = useState<UsageLimitsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -407,6 +405,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const [addKind, setAddKind] = useState<AddKind>("openai-compatibility");
   const [editing, setEditing] = useState<EditingEntry | null>(null);
   const [viewing, setViewing] = useState<{ kind: AIProviderChannelKind; entry: AIProviderChannelEntry } | null>(null);
+  const [usageLimitsProvider, setUsageLimitsProvider] = useState<{ id: string; label: string } | null>(null);
   const [testing, setTesting] = useState<{ kind: AIProviderChannelKind; index: number; label: string } | null>(null);
   const [testResult, setTestResult] = useState<api.AIProviderProbeResult | null>(null);
   const [testModels, setTestModels] = useState<string[]>([]);
@@ -452,7 +451,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       const runtime = await api.getAIProviderRuntime(signal);
       if (requestID !== runtimeRequest.current) return;
       setRuntimeSnapshots(runtime.snapshots ?? []);
-      setRuntimeUpdatedAt(runtime.updated_at ?? "");
       setRuntimeError("");
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
@@ -485,20 +483,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       runtimeRequest.current += 1;
     };
   }, [refreshRuntime, refreshRevision]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const refreshLimits = async () => {
-      try {
-        setUsageLimits(await api.getUsageLimits(controller.signal));
-      } catch (caught) {
-        if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
-        if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
-      }
-    };
-    void refreshLimits();
-    return () => controller.abort();
-  }, [onAPIError, refreshRevision]);
 
   const runtimeForEntry = (entry: AIProviderChannelEntry): AIProviderRuntimeSnapshot | undefined => {
     // A provider may have one runtime identity per API key. CPA exposes those
@@ -572,14 +556,23 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     return `$${amount.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
   };
 
-  const providerConcurrencyConfigurable = runtimeSnapshots.some(
-    (runtime) => runtime.supported && runtime.concurrency_configurable === true,
-  );
+  const providerUsageScope = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry) => {
+    const runtimeProvider = runtimeForEntry(entry)?.provider?.trim();
+    return runtimeProvider || entry.name?.trim() || entry.workspace_id?.trim() || kind;
+  };
+
+  const openUsageLimits = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry) => {
+    const label = entry.name || entry.workspace_id || `#${entry.index + 1}`;
+    setError("");
+    setViewing(null);
+    setUsageLimitsProvider({ id: providerUsageScope(kind, entry), label });
+  };
 
   const resetForm = () => {
     setAdding(false);
     setEditing(null);
     setViewing(null);
+    setUsageLimitsProvider(null);
     setTesting(null);
     setTestResult(null);
     setTestModels([]);
@@ -867,12 +860,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     return stats;
   }, { channels: 0, credentials: 0, enabled: 0, disabled: 0 });
   const activeProviderRequests = runtimeSnapshots.reduce((total, snapshot) => total + Math.max(0, snapshot.active || 0), 0);
-  const providerCreditObserved = runtimeSnapshots.reduce((total, snapshot) => total + safeNumber(snapshot.amount_usd), 0);
-  const totalCreditRule = usageLimits?.config?.enabled && usageLimits.config.total?.enabled && usageLimits.config.total.basis === "credit"
-    ? usageLimits.config.total
-    : null;
-  const totalCreditUsed = safeNumber(usageLimits?.credit_used_usd);
-  const modelCreditRules = (usageLimits?.config?.models ?? []).filter((item) => item.rule.enabled && item.rule.basis === "credit");
 
   return (
     <section className="ai-providers-section" role="tabpanel" aria-label={tx("ui.ai_providers")}>
@@ -902,35 +889,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         <div><span>{tx("ui.active_requests")}</span><strong className={activeProviderRequests > 0 ? "status-live" : ""}>{formatTokens(activeProviderRequests)}</strong></div>
         <div><span>{tx("ui.last_updated")}</span><strong>{runtimeUpdatedAt ? formatDateTime(runtimeUpdatedAt) : tx("ui.no_data_collected")}</strong></div>
       </div>
-      <div className="provider-usage-limit-summary" aria-label={tx("ui.usage_limits")}>
-        <div className="provider-usage-limit-primary">
-          <div><span>{tx("ui.usage_limit_credit_status")}</span><strong>{totalCreditRule ? `${formatCreditUSD(totalCreditUsed, locale)} / ${formatCreditUSD(totalCreditRule.amount_usd ?? 0, locale)}` : tx("ui.usage_limit_not_configured")}</strong></div>
-          <small>{totalCreditRule ? tx("ui.usage_limit_remaining", { percent: formatCreditHeadroomPercent(totalCreditUsed, totalCreditRule.amount_usd ?? 0) }) : tx("ui.usage_limit_provider_note")}</small>
-        </div>
-        <div className="provider-usage-limit-secondary">
-          <span>{tx("ui.estimated_credit_usage")}</span><strong>{formatCreditUSD(providerCreditObserved, locale)}</strong><small>{tx("ui.usage_limit_provider_observed")}</small>
-        </div>
-        {modelCreditRules.length > 0 ? <div className="provider-usage-limit-models">
-          <span>{tx("ui.usage_limit_models")}</span>
-          {modelCreditRules.map((item) => {
-            const used = safeNumber(usageLimits?.credit_model_used_usd?.[item.model]);
-            const limit = item.rule.amount_usd ?? 0;
-            const reached = used >= limit;
-            const scope = item.within_total ? tx("ui.usage_limit_counted_with_total") : tx("ui.usage_limit_independent");
-            const status = reached
-              ? tx("ui.usage_limit_reached")
-              : `${tx("ui.usage_limit_remaining", { percent: formatCreditHeadroomPercent(used, limit) })} · ${scope}`;
-            return (
-              <div key={item.model} className={reached ? "is-reached" : ""}>
-                <code>{item.model}</code>
-                <b>{formatCreditUSD(used, locale)} / {formatCreditUSD(limit, locale)}</b>
-                <small>{status}</small>
-              </div>
-            );
-          })}
-        </div> : null}
-      </div>
-
       {adding ? (
         <Modal title={tx("ui.add_ai_provider")} onClose={() => { if (!busy) resetForm(); }} footer={(
           <>
@@ -1177,7 +1135,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               if (!runtime) return <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_usage")}</span><strong>{tx("ui.ai_provider_identity_unavailable")}</strong></div>;
               return (
                 <div className="ai-provider-runtime-detail">
-                  {runtime.supported ? <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency")}</span><strong>{runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`}</strong></div> : null}
                   <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_total_tokens")}</span><strong>{formatTokens(runtime.total_tokens)}</strong></div>
                   <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_estimated_cost")}</span><strong>{formatAmount(runtime.amount_usd)}</strong></div>
                   {runtime.models && runtime.models.length > 0 ? (
@@ -1187,6 +1144,20 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               );
             })()}
           </div>
+        </Modal>
+      ) : null}
+
+      {usageLimitsProvider ? (
+        <Modal
+          wide
+          title={`${tx("ui.usage_limits")} · ${usageLimitsProvider.label}`}
+          onClose={() => setUsageLimitsProvider(null)}
+        >
+          <UsageLimitsSettings
+            scope={{ kind: "provider", id: usageLimitsProvider.id }}
+            onAPIError={onAPIError}
+            onNotice={onNotice}
+          />
         </Modal>
       ) : null}
 
@@ -1267,7 +1238,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               <th>{tx("ui.ai_provider_api_key")}</th>
               <th>{tx("ui.status")}</th>
               <th>{tx("ui.ai_provider_model_count")}</th>
-              {providerConcurrencyConfigurable ? <th>{tx("ui.ai_provider_concurrency")}</th> : null}
               <th>{tx("ui.ai_provider_usage")}</th>
               <th>{tx("ui.actions")}</th>
             </tr></thead>
@@ -1275,7 +1245,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               {channels.flatMap((channel) => [
                 ...(channel.error || channel.storage_error ? [
                   <tr key={`${channel.kind}-issue`} className="ai-provider-channel-issue">
-                    <td colSpan={providerConcurrencyConfigurable ? 9 : 8}>
+                    <td colSpan={8}>
                       <strong>{tx(channelLabelKey(channel.kind))}</strong>{" "}
                       <span>{tx(channel.storage_error ? "ui.ai_provider_storage_unavailable" : channel.error === "provider_channel_response_invalid" ? "ui.ai_provider_response_invalid" : "ui.ai_provider_channel_unavailable")}</span>
                     </td>
@@ -1291,20 +1261,14 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   <td>{entry.models?.length ?? 0}</td>
                   {(() => {
                     const runtime = runtimeForEntry(entry);
-                    return <>
-                      {providerConcurrencyConfigurable ? (
-                        <td title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
-                          {runtime?.supported && runtime.concurrency_configurable === true
-                            ? (runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`)
-                            : "-"}
-                        </td>
-                      ) : null}
+                    return (
                       <td>{runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><br /><small>{formatAmount(runtime.amount_usd)}</small></> : <span title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</span>}</td>
-                    </>;
+                    );
                   })()}
                   <td className="ai-provider-table-actions">
                     <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                     <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
+                    <IconButton label={tx("ui.usage_limits")} onClick={() => openUsageLimits(channel.kind, entry)}><Gauge size={15} /></IconButton>
                     <IconButton label={tx("ui.edit_ai_provider")} onClick={() => setEditing({ kind: channel.kind, index: entry.index, name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id })}><Save size={15} /></IconButton>
                     {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                       <>
@@ -1326,11 +1290,3 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   );
 }
 
-function safeNumber(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
-}
-
-function formatCreditHeadroomPercent(used: number, limit: number): string {
-  if (!Number.isFinite(limit) || limit <= 0) return "0%";
-  return `${Math.max(0, Math.round((1 - used / limit) * 1000) / 10)}%`;
-}

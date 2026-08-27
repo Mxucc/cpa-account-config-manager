@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	usageLimitStoreVersion = 1
+	usageLimitStoreVersion = 2
 	usageLimitMaxModels    = 256
 	usageLimitMaxPercent   = 100
 	usageLimitMaxUSD       = 1_000_000_000
@@ -51,7 +51,13 @@ type UsageLimitsConfig struct {
 	Models  []UsageModelLimit `json:"models,omitempty"`
 }
 
+type UsageLimitsScope struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
 type UsageLimitsSnapshot struct {
+	Scope              UsageLimitsScope   `json:"scope"`
 	Config             UsageLimitsConfig  `json:"config"`
 	CreditUsedUSD      float64            `json:"credit_used_usd"`
 	CreditModelUsedUSD map[string]float64 `json:"credit_model_used_usd,omitempty"`
@@ -60,40 +66,76 @@ type UsageLimitsSnapshot struct {
 }
 
 type persistedUsageLimits struct {
-	Version                  int               `json:"version"`
-	Config                   UsageLimitsConfig `json:"config"`
-	CreditTotalNanos         int64             `json:"credit_total_nanos,omitempty"`
-	CreditModelsNanos        map[string]int64  `json:"credit_models_nanos,omitempty"`
-	CreditAccountsNanos      map[string]int64  `json:"credit_accounts_nanos,omitempty"`
-	CreditAccountModelsNanos map[string]int64  `json:"credit_account_models_nanos,omitempty"`
-	UpdatedAt                time.Time         `json:"updated_at"`
+	Version                int                          `json:"version"`
+	Configs                map[string]UsageLimitsConfig `json:"configs,omitempty"`
+	CreditScopesNanos      map[string]int64             `json:"credit_scopes_nanos,omitempty"`
+	CreditScopeModelsNanos map[string]int64             `json:"credit_scope_models_nanos,omitempty"`
+	UpdatedAt              time.Time                    `json:"updated_at"`
 }
 
 type UsageLimitService struct {
-	mu                       sync.RWMutex
-	store                    string
-	loaded                   bool
-	storageErr               string
-	config                   UsageLimitsConfig
-	creditTotalNanos         int64
-	creditModelsNanos        map[string]int64
-	creditAccountsNanos      map[string]int64
-	creditAccountModelsNanos map[string]int64
-	usage                    UsageSnapshotReader
-	calculator               UsageCreditCalculator
-	updatedAt                time.Time
+	mu                     sync.RWMutex
+	store                  string
+	loaded                 bool
+	storageErr             string
+	configs                map[string]UsageLimitsConfig
+	creditScopesNanos      map[string]int64
+	creditScopeModelsNanos map[string]int64
+	usage                  UsageSnapshotReader
+	calculator             UsageCreditCalculator
+	updatedAt              time.Time
 }
 
 func NewUsageLimitService(usage UsageSnapshotReader, calculator UsageCreditCalculator) *UsageLimitService {
 	return &UsageLimitService{
 		usage: usage, calculator: calculator,
-		creditModelsNanos:        make(map[string]int64),
-		creditAccountsNanos:      make(map[string]int64),
-		creditAccountModelsNanos: make(map[string]int64),
+		configs:                make(map[string]UsageLimitsConfig),
+		creditScopesNanos:      make(map[string]int64),
+		creditScopeModelsNanos: make(map[string]int64),
 	}
 }
 
 func usageLimitsStorePath(dataDir string) string { return filepath.Join(dataDir, "usage-limits.json") }
+
+func AccountUsageLimitsScope(accountID string) UsageLimitsScope {
+	return UsageLimitsScope{Kind: "account", ID: strings.TrimSpace(accountID)}
+}
+
+func ProviderUsageLimitsScope(provider string) UsageLimitsScope {
+	return UsageLimitsScope{Kind: "provider", ID: normalizeRuntimeProvider(provider)}
+}
+
+func normalizeUsageLimitsScope(scope UsageLimitsScope) (UsageLimitsScope, error) {
+	scope.Kind = strings.ToLower(strings.TrimSpace(scope.Kind))
+	scope.ID = strings.TrimSpace(scope.ID)
+	if scope.Kind != "account" && scope.Kind != "provider" {
+		return UsageLimitsScope{}, errors.New("usage limit scope must be account or provider")
+	}
+	if scope.ID == "" || len(scope.ID) > 4096 {
+		return UsageLimitsScope{}, errors.New("usage limit scope id is required")
+	}
+	if scope.Kind == "provider" {
+		scope.ID = normalizeRuntimeProvider(scope.ID)
+		if scope.ID == "" {
+			return UsageLimitsScope{}, errors.New("usage limit provider is required")
+		}
+	}
+	return scope, nil
+}
+
+func usageLimitScopeKey(scope UsageLimitsScope) (string, error) {
+	scope, err := normalizeUsageLimitsScope(scope)
+	if err != nil {
+		return "", err
+	}
+	if scope.Kind == "account" {
+		// Account IDs can be auth indexes or auth IDs. Hashing keeps those
+		// identifiers out of the persisted usage-limit store.
+		digest := sha256.Sum256([]byte(scope.ID))
+		return "account:" + hex.EncodeToString(digest[:]), nil
+	}
+	return "provider:" + scope.ID, nil
+}
 
 func normalizeUsageLimitRule(rule UsageLimitRule) UsageLimitRule {
 	rule.Basis = strings.ToLower(strings.TrimSpace(rule.Basis))
@@ -105,10 +147,7 @@ func normalizeUsageLimitRule(rule UsageLimitRule) UsageLimitRule {
 		if rule.Window != UsageLimitWindowFiveHour && rule.Window != UsageLimitWindowSevenDay {
 			rule.Window = UsageLimitWindowFiveHour
 		}
-		if math.IsNaN(rule.Percent) || math.IsInf(rule.Percent, 0) {
-			rule.Percent = 0
-		}
-		if rule.Percent < 0 {
+		if math.IsNaN(rule.Percent) || math.IsInf(rule.Percent, 0) || rule.Percent < 0 {
 			rule.Percent = 0
 		}
 		if rule.Percent > usageLimitMaxPercent {
@@ -180,39 +219,58 @@ func validateUsageLimitsConfig(config UsageLimitsConfig) error {
 	return nil
 }
 
-func (s *UsageLimitService) HasCreditLimits() bool {
-	if s == nil {
-		return false
+func validateUsageLimitsConfigForScope(scope UsageLimitsScope, config UsageLimitsConfig) error {
+	config = normalizeUsageLimitsConfig(config)
+	if scope.Kind == "provider" {
+		if config.Total != nil && config.Total.Basis == UsageLimitBasisAccount {
+			return errors.New("provider total usage limit only supports credit amount")
+		}
+		for _, model := range config.Models {
+			if model.Rule.Basis == UsageLimitBasisAccount {
+				return fmt.Errorf("provider model %q usage limit only supports credit amount", model.Model)
+			}
+		}
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.hasCreditLimitLocked()
+	return validateUsageLimitsConfig(config)
+}
+
+func normalizeUsageLimitsConfigForScope(scope UsageLimitsScope, config UsageLimitsConfig) UsageLimitsConfig {
+	config = normalizeUsageLimitsConfig(config)
+	if scope.Kind != "provider" {
+		return config
+	}
+	if config.Total != nil && config.Total.Basis == UsageLimitBasisAccount {
+		config.Total = &UsageLimitRule{Basis: UsageLimitBasisCredit}
+	}
+	for index := range config.Models {
+		if config.Models[index].Rule.Basis == UsageLimitBasisAccount {
+			config.Models[index].Rule = UsageLimitRule{Basis: UsageLimitBasisCredit}
+		}
+	}
+	return config
+}
+
+func normalizeStoredUsageLimitsConfig(key string, config UsageLimitsConfig) UsageLimitsConfig {
+	if strings.HasPrefix(key, "provider:") {
+		return normalizeUsageLimitsConfigForScope(UsageLimitsScope{Kind: "provider"}, config)
+	}
+	return normalizeUsageLimitsConfig(config)
 }
 
 func (s *UsageLimitService) Configure(config Config) {
 	if s == nil {
 		return
 	}
-	config = normalizeConfig(config)
-	path := usageLimitsStorePath(config.DataDir)
+	path := usageLimitsStorePath(normalizeConfig(config).DataDir)
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.loaded && s.store == path && s.storageErr == "" {
-		s.mu.Unlock()
 		return
 	}
-	pathChanged := s.store != path
 	loaded, err := loadUsageLimits(path)
 	if err != nil {
-		// A host reconfiguration can point this service at a different data
-		// directory. Never carry the previous directory's counters into the
-		// new store, especially when the new store has not been created yet.
-		if pathChanged || !s.loaded {
-			s.config = UsageLimitsConfig{}
-			s.creditTotalNanos = 0
-			s.creditModelsNanos = make(map[string]int64)
-			s.creditAccountsNanos = make(map[string]int64)
-			s.creditAccountModelsNanos = make(map[string]int64)
-			s.updatedAt = time.Time{}
+		if s.store != path || !s.loaded {
+			s.resetLocked()
 		}
 		s.store, s.loaded = path, true
 		if errors.Is(err, os.ErrNotExist) {
@@ -220,63 +278,91 @@ func (s *UsageLimitService) Configure(config Config) {
 		} else {
 			s.storageErr = "usage limits could not be loaded"
 		}
-		s.mu.Unlock()
 		return
 	}
-	s.store, s.loaded = path, true
-	s.config = normalizeUsageLimitsConfig(loaded.Config)
-	s.creditTotalNanos = maxInt64Zero(loaded.CreditTotalNanos)
-	s.creditModelsNanos = cloneInt64Map(loaded.CreditModelsNanos)
-	s.creditAccountsNanos = cloneInt64Map(loaded.CreditAccountsNanos)
-	s.creditAccountModelsNanos = cloneInt64Map(loaded.CreditAccountModelsNanos)
+	s.store, s.loaded, s.storageErr = path, true, ""
+	s.configs = cloneUsageLimitConfigs(loaded.Configs)
+	s.creditScopesNanos = cloneInt64Map(loaded.CreditScopesNanos)
+	s.creditScopeModelsNanos = cloneInt64Map(loaded.CreditScopeModelsNanos)
 	s.updatedAt = loaded.UpdatedAt
-	s.storageErr = ""
-	s.mu.Unlock()
 }
 
-func (s *UsageLimitService) Snapshot() UsageLimitsSnapshot {
+func (s *UsageLimitService) resetLocked() {
+	s.configs = make(map[string]UsageLimitsConfig)
+	s.creditScopesNanos = make(map[string]int64)
+	s.creditScopeModelsNanos = make(map[string]int64)
+	s.updatedAt = time.Time{}
+}
+
+func (s *UsageLimitService) Get(scope UsageLimitsScope) UsageLimitsSnapshot {
 	if s == nil {
-		return UsageLimitsSnapshot{}
+		return UsageLimitsSnapshot{Scope: scope}
+	}
+	key, err := usageLimitScopeKey(scope)
+	if err != nil {
+		return UsageLimitsSnapshot{Scope: scope}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	models := make(map[string]float64, len(s.creditModelsNanos))
-	for k, v := range s.creditModelsNanos {
-		models[k] = float64(v) / float64(creditNanosPerUSD)
-	}
-	return UsageLimitsSnapshot{Config: normalizeUsageLimitsConfig(s.config), CreditUsedUSD: float64(s.creditTotalNanos) / float64(creditNanosPerUSD), CreditModelUsedUSD: models, UpdatedAt: s.updatedAt, StorageError: s.storageErr}
+	return s.snapshotLocked(scope, key)
 }
 
-func (s *UsageLimitService) Set(config UsageLimitsConfig) (UsageLimitsSnapshot, error) {
+func (s *UsageLimitService) Set(scope UsageLimitsScope, config UsageLimitsConfig) (UsageLimitsSnapshot, error) {
 	if s == nil {
 		return UsageLimitsSnapshot{}, errors.New("usage limits are unavailable")
 	}
-	config = normalizeUsageLimitsConfig(config)
-	if err := validateUsageLimitsConfig(config); err != nil {
+	normalizedScope, err := normalizeUsageLimitsScope(scope)
+	if err != nil {
 		return UsageLimitsSnapshot{}, err
 	}
+	config = normalizeUsageLimitsConfig(config)
+	if err := validateUsageLimitsConfigForScope(normalizedScope, config); err != nil {
+		return UsageLimitsSnapshot{}, err
+	}
+	key, _ := usageLimitScopeKey(normalizedScope)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.loaded || strings.TrimSpace(s.store) == "" {
 		return UsageLimitsSnapshot{}, errors.New("usage limits storage is unavailable")
 	}
-	state := persistedUsageLimits{Version: usageLimitStoreVersion, Config: config, CreditTotalNanos: s.creditTotalNanos, CreditModelsNanos: s.creditModelsNanos, CreditAccountsNanos: s.creditAccountsNanos, CreditAccountModelsNanos: s.creditAccountModelsNanos, UpdatedAt: time.Now().UTC()}
+	nextConfigs := cloneUsageLimitConfigs(s.configs)
+	if config.Enabled || config.Total != nil || len(config.Models) > 0 {
+		nextConfigs[key] = config
+	} else {
+		delete(nextConfigs, key)
+	}
+	state := persistedUsageLimits{Version: usageLimitStoreVersion, Configs: nextConfigs, CreditScopesNanos: s.creditScopesNanos, CreditScopeModelsNanos: s.creditScopeModelsNanos, UpdatedAt: time.Now().UTC()}
 	if err := saveUsageLimits(s.store, state); err != nil {
 		return UsageLimitsSnapshot{}, fmt.Errorf("persist usage limits: %w", err)
 	}
-	s.config, s.updatedAt, s.storageErr = config, state.UpdatedAt, ""
-	if calculator, ok := s.calculator.(*Sub2APICreditUsage); ok && s.hasCreditLimitLocked() {
-		calculator.SetEnabled(true)
-	}
-	return s.snapshotLocked(), nil
+	s.configs, s.updatedAt, s.storageErr = nextConfigs, state.UpdatedAt, ""
+	return s.snapshotLocked(normalizedScope, key), nil
 }
 
-func (s *UsageLimitService) snapshotLocked() UsageLimitsSnapshot {
-	models := make(map[string]float64, len(s.creditModelsNanos))
-	for k, v := range s.creditModelsNanos {
-		models[k] = float64(v) / float64(creditNanosPerUSD)
+func (s *UsageLimitService) HasCreditLimits() bool {
+	if s == nil {
+		return false
 	}
-	return UsageLimitsSnapshot{Config: normalizeUsageLimitsConfig(s.config), CreditUsedUSD: float64(s.creditTotalNanos) / float64(creditNanosPerUSD), CreditModelUsedUSD: models, UpdatedAt: s.updatedAt, StorageError: s.storageErr}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, config := range s.configs {
+		if hasCreditLimit(config) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCreditLimit(config UsageLimitsConfig) bool {
+	if config.Total != nil && config.Total.Enabled && config.Total.Basis == UsageLimitBasisCredit {
+		return true
+	}
+	for _, item := range config.Models {
+		if item.Rule.Enabled && item.Rule.Basis == UsageLimitBasisCredit {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *UsageLimitService) ObserveUsage(record cpaapi.UsageRecord) {
@@ -288,40 +374,27 @@ func (s *UsageLimitService) ObserveUsage(record cpaapi.UsageRecord) {
 		return
 	}
 	identity, _ := runtimeIdentityFromUsage(record)
-	identity = usageLimitIdentityKey(identity)
+	accountScope := AccountUsageLimitsScope(usageLimitAccountID(identity))
+	providerScope := ProviderUsageLimitsScope(record.Provider)
+	accountKey, _ := usageLimitScopeKey(accountScope)
+	providerKey, providerErr := usageLimitScopeKey(providerScope)
 	model := normalizeUsageLimitModel(record.Model)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.config.Enabled || !s.hasCreditLimitLocked() {
+	if !hasCreditLimit(s.configs[accountKey]) && (providerErr != nil || !hasCreditLimit(s.configs[providerKey])) {
 		return
 	}
-	s.creditTotalNanos = saturatingAdd(s.creditTotalNanos, charge.AmountNanos)
-	if model != "" {
-		s.creditModelsNanos[model] = saturatingAdd(s.creditModelsNanos[model], charge.AmountNanos)
-	}
-	if identity != "" {
-		s.creditAccountsNanos[identity] = saturatingAdd(s.creditAccountsNanos[identity], charge.AmountNanos)
+	for _, key := range []string{accountKey, providerKey} {
+		if key == "" || !hasCreditLimit(s.configs[key]) {
+			continue
+		}
+		s.creditScopesNanos[key] = usageLimitSaturatingAdd(s.creditScopesNanos[key], charge.AmountNanos)
 		if model != "" {
-			key := identity + "\x00" + model
-			s.creditAccountModelsNanos[key] = saturatingAdd(s.creditAccountModelsNanos[key], charge.AmountNanos)
+			s.creditScopeModelsNanos[key+"\x00"+model] = usageLimitSaturatingAdd(s.creditScopeModelsNanos[key+"\x00"+model], charge.AmountNanos)
 		}
 	}
 	s.updatedAt = time.Now().UTC()
-	if s.loaded && s.store != "" {
-		_ = saveUsageLimits(s.store, persistedUsageLimits{Version: usageLimitStoreVersion, Config: s.config, CreditTotalNanos: s.creditTotalNanos, CreditModelsNanos: s.creditModelsNanos, CreditAccountsNanos: s.creditAccountsNanos, CreditAccountModelsNanos: s.creditAccountModelsNanos, UpdatedAt: s.updatedAt})
-	}
-}
-
-func (s *UsageLimitService) hasCreditLimitLocked() bool {
-	if s.config.Total != nil && s.config.Total.Enabled && s.config.Total.Basis == UsageLimitBasisCredit {
-		return true
-	}
-	for _, item := range s.config.Models {
-		if item.Rule.Enabled && item.Rule.Basis == UsageLimitBasisCredit {
-			return true
-		}
-	}
-	return false
+	s.persistLocked()
 }
 
 func (s *UsageLimitService) RequestInterceptionActive() bool              { return s != nil }
@@ -335,66 +408,103 @@ func (s *UsageLimitService) InterceptRequest(request cpaapi.RequestInterceptRequ
 	if model == "" {
 		model = normalizeUsageLimitModel(request.Model)
 	}
-	identity := ""
-	if request.Metadata != nil {
-		for _, key := range []string{"selected_auth_id", "selected_auth_index", "auth_id", "auth_index"} {
-			if value, ok := request.Metadata[key].(string); ok && strings.TrimSpace(value) != "" {
-				identity = strings.TrimSpace(value)
-				break
-			}
-		}
-	}
+	identity, _ := runtimeIdentityFromMetadata(request.Metadata)
 	provider := runtimeProviderFromMetadata(request.Metadata)
-	s.mu.RLock()
-	config := normalizeUsageLimitsConfig(s.config)
-	total := s.creditTotalNanos
-	modelSpent := s.creditModelsNanos[model]
-	s.mu.RUnlock()
-	if !config.Enabled {
-		return cpaapi.RequestInterceptResponse{}, false
+	if provider == "" {
+		provider = normalizeRuntimeProvider(request.ToFormat)
 	}
-	if modelRule, ok := usageLimitModelRule(config, model); ok && modelRule.Rule.Enabled {
-		if modelRule.Rule.Basis == UsageLimitBasisCredit && exceedsCredit(modelSpent, modelRule.Rule.AmountUSD) {
-			return usageLimitRejection("model_credit", model, provider)
+	scopes := []struct {
+		scope    UsageLimitsScope
+		identity string
+	}{
+		{AccountUsageLimitsScope(usageLimitAccountID(identity)), identity},
+		{ProviderUsageLimitsScope(provider), identity},
+	}
+	s.mu.RLock()
+	configs := make(map[string]UsageLimitsConfig, 2)
+	spent := make(map[string]int64, 2)
+	for _, item := range scopes {
+		key, err := usageLimitScopeKey(item.scope)
+		if err != nil {
+			continue
 		}
-		if modelRule.Rule.Basis == UsageLimitBasisAccount && identity != "" {
-			if percent, ok := s.accountPercent(identity, modelRule.Rule.Window); ok && percent >= modelRule.Rule.Percent {
-				return usageLimitRejection("model_account", model, provider)
+		config, ok := s.configs[key]
+		if !ok || !config.Enabled {
+			continue
+		}
+		configs[key] = normalizeUsageLimitsConfig(config)
+		spent[key] = s.creditScopesNanos[key]
+	}
+	s.mu.RUnlock()
+	for key, config := range configs {
+		if rule, ok := usageLimitModelRule(config, model); ok && rule.Rule.Enabled {
+			if rule.Rule.Basis == UsageLimitBasisCredit && exceedsCredit(s.scopeModelSpent(key, model), rule.Rule.AmountUSD) {
+				return usageLimitRejection("model_credit", model, key), true
+			}
+			if rule.Rule.Basis == UsageLimitBasisAccount && identity != "" {
+				if percent, ok := s.accountPercent(identity, rule.Rule.Window); ok && percent >= rule.Rule.Percent {
+					return usageLimitRejection("model_account", model, key), true
+				}
 			}
 		}
-	}
-	if config.Total != nil && config.Total.Enabled && (model == "" || modelRuleWithinTotal(config, model)) {
-		rule := config.Total
-		if rule.Basis == UsageLimitBasisCredit && exceedsCredit(total, rule.AmountUSD) {
-			return usageLimitRejection("total_credit", model, provider)
-		}
-		if rule.Basis == UsageLimitBasisAccount && identity != "" {
-			if percent, ok := s.accountPercent(identity, rule.Window); ok && percent >= rule.Percent {
-				return usageLimitRejection("total_account", model, provider)
+		if config.Total != nil && config.Total.Enabled && (model == "" || modelRuleWithinTotal(config, model)) {
+			rule := config.Total
+			if rule.Basis == UsageLimitBasisCredit && exceedsCredit(spent[key], rule.AmountUSD) {
+				return usageLimitRejection("total_credit", model, key), true
+			}
+			if rule.Basis == UsageLimitBasisAccount && identity != "" {
+				if percent, ok := s.accountPercent(identity, rule.Window); ok && percent >= rule.Percent {
+					return usageLimitRejection("total_account", model, key), true
+				}
 			}
 		}
 	}
 	return cpaapi.RequestInterceptResponse{}, false
 }
 
+func (s *UsageLimitService) scopeModelSpent(key, model string) int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.creditScopeModelsNanos[key+"\x00"+model]
+}
+
 func (s *UsageLimitService) accountPercent(identity, window string) (float64, bool) {
 	if s.usage == nil || strings.TrimSpace(identity) == "" {
 		return 0, false
 	}
-	snapshot := s.usage.Snapshot(identity)
+	lookup := strings.TrimPrefix(identity, "auth-index:")
+	if lookup == identity {
+		lookup = strings.TrimPrefix(identity, "auth-id:")
+	}
+	snapshot := s.usage.Snapshot(lookup)
 	if snapshot == nil || snapshot.Codex == nil {
 		return 0, false
 	}
-	var usage *UsageWindowSnapshot
+	usage := snapshot.Codex.FiveHour
 	if window == UsageLimitWindowSevenDay {
 		usage = snapshot.Codex.SevenDay
-	} else {
-		usage = snapshot.Codex.FiveHour
 	}
 	if usage == nil || math.IsNaN(usage.UsedPercent) || math.IsInf(usage.UsedPercent, 0) {
 		return 0, false
 	}
 	return usage.UsedPercent, true
+}
+
+func (s *UsageLimitService) snapshotLocked(scope UsageLimitsScope, key string) UsageLimitsSnapshot {
+	models := make(map[string]float64)
+	prefix := key + "\x00"
+	for modelKey, value := range s.creditScopeModelsNanos {
+		if strings.HasPrefix(modelKey, prefix) {
+			models[strings.TrimPrefix(modelKey, prefix)] = float64(value) / float64(creditNanosPerUSD)
+		}
+	}
+	return UsageLimitsSnapshot{Scope: scope, Config: normalizeUsageLimitsConfig(s.configs[key]), CreditUsedUSD: float64(s.creditScopesNanos[key]) / float64(creditNanosPerUSD), CreditModelUsedUSD: models, UpdatedAt: s.updatedAt, StorageError: s.storageErr}
+}
+
+func (s *UsageLimitService) persistLocked() {
+	if s.loaded && s.store != "" {
+		_ = saveUsageLimits(s.store, persistedUsageLimits{Version: usageLimitStoreVersion, Configs: s.configs, CreditScopesNanos: s.creditScopesNanos, CreditScopeModelsNanos: s.creditScopeModelsNanos, UpdatedAt: s.updatedAt})
+	}
 }
 
 func usageLimitModelRule(config UsageLimitsConfig, model string) (UsageModelLimit, bool) {
@@ -412,33 +522,42 @@ func modelRuleWithinTotal(config UsageLimitsConfig, model string) bool {
 func exceedsCredit(nanos int64, amount float64) bool {
 	return amount > 0 && float64(nanos)/float64(creditNanosPerUSD) >= amount
 }
-func normalizeUsageLimitModel(model string) string { return strings.ToLower(strings.TrimSpace(model)) }
-func usageLimitIdentityKey(identity string) string {
+func usageLimitAccountID(identity string) string {
 	identity = strings.TrimSpace(identity)
-	if identity == "" {
-		return ""
-	}
-	digest := sha256.Sum256([]byte(identity))
-	return hex.EncodeToString(digest[:])
-}
-func usageLimitRejection(basis, model, provider string) (cpaapi.RequestInterceptResponse, bool) {
-	body, _ := json.Marshal(map[string]string{"error": "usage limit reached", "code": "usage_limit_reached", "basis": basis, "model": model, "provider": provider})
-	return cpaapi.RequestInterceptResponse{Terminate: true, StatusCode: http.StatusTooManyRequests, ResponseHeaders: http.Header{"Content-Type": []string{"application/json"}}, ResponseBody: body}, true
-}
-func maxInt64Zero(value int64) int64 {
-	if value < 0 {
-		return 0
-	}
-	return value
-}
-func cloneInt64Map(source map[string]int64) map[string]int64 {
-	target := make(map[string]int64, len(source))
-	for key, value := range source {
-		if value >= 0 {
-			target[key] = value
+	for _, prefix := range []string{"auth-index:", "auth-id:"} {
+		if strings.HasPrefix(identity, prefix) {
+			return strings.TrimPrefix(identity, prefix)
 		}
 	}
-	return target
+	return identity
+}
+func normalizeUsageLimitModel(model string) string { return strings.ToLower(strings.TrimSpace(model)) }
+func usageLimitRejection(basis, model, scope string) cpaapi.RequestInterceptResponse {
+	body, _ := json.Marshal(map[string]string{"error": "usage limit reached", "code": "usage_limit_reached", "basis": basis, "model": model, "scope": scope})
+	return cpaapi.RequestInterceptResponse{Terminate: true, StatusCode: http.StatusTooManyRequests, ResponseHeaders: http.Header{"Content-Type": []string{"application/json"}}, ResponseBody: body}
+}
+
+func cloneUsageLimitConfigs(input map[string]UsageLimitsConfig) map[string]UsageLimitsConfig {
+	out := make(map[string]UsageLimitsConfig, len(input))
+	for key, value := range input {
+		out[key] = normalizeStoredUsageLimitsConfig(key, value)
+	}
+	return out
+}
+func cloneInt64Map(input map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(input))
+	for key, value := range input {
+		if value > 0 {
+			out[key] = value
+		}
+	}
+	return out
+}
+func usageLimitSaturatingAdd(left, right int64) int64 {
+	if right <= 0 || left >= math.MaxInt64-right {
+		return math.MaxInt64
+	}
+	return left + right
 }
 
 func loadUsageLimits(path string) (persistedUsageLimits, error) {
@@ -450,25 +569,52 @@ func loadUsageLimits(path string) (persistedUsageLimits, error) {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return persistedUsageLimits{}, err
 	}
-	if state.Version != 0 && state.Version != usageLimitStoreVersion {
-		return persistedUsageLimits{}, fmt.Errorf("unsupported usage limit store version %d", state.Version)
+	if state.Version != usageLimitStoreVersion {
+		return persistedUsageLimits{}, fmt.Errorf("unsupported usage limits store version %d", state.Version)
 	}
-	state.Config = normalizeUsageLimitsConfig(state.Config)
-	state.CreditModelsNanos = cloneInt64Map(state.CreditModelsNanos)
-	state.CreditAccountsNanos = cloneInt64Map(state.CreditAccountsNanos)
-	state.CreditAccountModelsNanos = cloneInt64Map(state.CreditAccountModelsNanos)
+	if state.Configs == nil {
+		state.Configs = make(map[string]UsageLimitsConfig)
+	}
 	return state, nil
 }
 func saveUsageLimits(path string, state persistedUsageLimits) error {
-	if strings.TrimSpace(path) == "" {
-		return errors.New("usage limits path is empty")
+	return savePrivateJSON(path, state)
+}
+
+type ProviderUsageLimitsRequest struct {
+	Provider string             `json:"provider"`
+	Config   *UsageLimitsConfig `json:"config,omitempty"`
+}
+
+func (a *App) handleProviderUsageLimits(req cpaapi.ManagementRequest, save bool) cpaapi.ManagementResponse {
+	if a == nil || a.usageLimits == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "usage limits service is unavailable"})
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+	var request ProviderUsageLimitsRequest
+	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
 	}
-	raw, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
+	provider := strings.TrimSpace(request.Provider)
+	if provider == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "provider is required"})
 	}
-	return writePrivateFileAtomically(path, raw)
+	scope := ProviderUsageLimitsScope(provider)
+	if _, errScope := normalizeUsageLimitsScope(scope); errScope != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errScope.Error()})
+	}
+	if !save {
+		return jsonResponse(http.StatusOK, a.usageLimits.Get(scope))
+	}
+	if request.Config == nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "config is required"})
+	}
+	snapshot, errSet := a.usageLimits.Set(scope, *request.Config)
+	if errSet != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(errSet.Error(), "persist") || strings.Contains(errSet.Error(), "storage") {
+			status = http.StatusServiceUnavailable
+		}
+		return jsonResponse(status, map[string]any{"error": errSet.Error()})
+	}
+	return jsonResponse(http.StatusOK, snapshot)
 }

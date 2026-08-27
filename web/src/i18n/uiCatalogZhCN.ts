@@ -80,7 +80,9 @@ export const zhCNUI: Record<UIMessageKey, string> = {
     "严格区分主标题与描述文本字号；关闭后描述文本将使用与主标题相同的字号。",
   "ui.usage_limits": "用量限额",
   "ui.usage_limits_description":
-    "达到账号百分比限额或预估额度上限后，停止新的请求。AI Provider 无法提供上游配额数据时，可使用额度限额。",
+    "配置账号级或 AI 供应商级的额度、5 小时和 7 天限额。",
+  "ui.account_usage_limits_description": "限额仅作用于账号 {scope}。",
+  "ui.provider_usage_limits_description": "限额仅作用于 AI 供应商 {scope}。",
   "ui.usage_limits_enabled": "已启用用量限额",
   "ui.usage_limits_disabled": "已停用用量限额",
   "ui.usage_limit_basis": "限额依据",
@@ -104,6 +106,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.usage_limit_credit_note":
     "预估费用基于当前模型价格表；没有可计费价格的请求不会计入。",
   "ui.usage_limits_saved": "用量限额已保存",
+  "ui.usage_limits_updated_in_preview": "用量限额已更新到预览",
+  "ui.account_concurrency_single_account_note": "仅作用于当前账号，不影响其他账号",
   "ui.usage_limit_reached": "已达到限额",
   "ui.usage_limit_not_configured": "未配置",
   "ui.usage_limit_uncollected": "尚未采集用量",

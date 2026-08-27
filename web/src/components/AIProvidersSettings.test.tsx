@@ -56,6 +56,16 @@ describe("AIProvidersSettings", () => {
       if (url.endsWith("/xai-api-key")) return jsonResponse({ "xai-api-key": [] });
       if (url.endsWith("/vertex-api-key")) return jsonResponse({ "vertex-api-key": [] });
       if (url.endsWith("/api-keys")) return jsonResponse({ "api-keys": [] });
+      if (url.endsWith("/ai-providers/usage-limits")) {
+        const requestBody = init.body ? JSON.parse(String(init.body)) as { provider?: string } : {};
+        return jsonResponse({
+          scope: { kind: "provider", id: requestBody.provider ?? "openrouter" },
+          config: { enabled: false, total: { enabled: false, basis: "account", window: "five_hour", percent: 80, amount_usd: 0 }, models: [] },
+          credit_used_usd: 0,
+          credit_model_used_usd: {},
+          updated_at: new Date().toISOString(),
+        });
+      }
       if (url.includes("/ai-providers/runtime")) {
         const runtime = overrides["ai-providers-runtime"] ?? { snapshots: [], updated_at: new Date().toISOString() };
         return jsonResponse(runtime);
@@ -65,6 +75,26 @@ describe("AIProvidersSettings", () => {
     vi.stubGlobal("fetch", fetchMock);
     return requests;
   }
+
+  it("opens provider-scoped usage limits for the selected provider", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock();
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((candidate) => candidate.textContent?.includes("OpenRouter"));
+    expect(row).toBeDefined();
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "用量限额" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "用量限额 · OpenRouter" });
+    expect(within(dialog).getByText("限额仅作用于供应商 OpenRouter。")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/ai-providers/usage-limits") && init.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ url, init }) => url.endsWith("/ai-providers/usage-limits") && init.method === "PUT");
+    expect(JSON.parse(String(putRequest?.init.body))).toMatchObject({ provider: "OpenRouter" });
+  });
 
   it("lists provider channels with redacted keys and adds an OpenAI-compatible provider", async () => {
     const user = userEvent.setup();
@@ -139,7 +169,7 @@ describe("AIProvidersSettings", () => {
     expect(headers).not.toContain("并发");
   });
 
-  it("shows observable concurrency only when CPA reports it as configurable", async () => {
+  it("keeps provider settings free of provider-level concurrency while retaining usage metrics", async () => {
     providerFetchMock({
       "ai-providers-runtime": {
         snapshots: [{
@@ -173,8 +203,9 @@ describe("AIProvidersSettings", () => {
       expect(found).toBeDefined();
       return found as HTMLElement;
     });
-    await waitFor(() => expect(Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent)).toContain("并发"));
-    expect(row.textContent).toContain("2/100");
+    const headers = Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent);
+    expect(headers).not.toContain("并发");
+    expect(row.textContent).not.toContain("2/100");
     expect(row.textContent).toContain("1,234");
     expect(row.textContent).toContain("$0.0123");
   });

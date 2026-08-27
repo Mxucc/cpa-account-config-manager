@@ -83,7 +83,9 @@ export const ruUI: Record<UIMessageKey, string> = {
     "Разделять размеры заголовков и описаний. Отключите, чтобы описания использовали размер заголовка.",
   "ui.usage_limits": "Лимиты использования",
   "ui.usage_limits_description":
-    "Новые запросы останавливаются после достижения лимита процента аккаунта или оценочной суммы. Лимит суммы полезен для AI-провайдеров без данных квоты.",
+    "Настройте лимиты суммы, 5 часов и 7 дней на уровне аккаунта или AI-провайдера.",
+  "ui.account_usage_limits_description": "Лимиты применяются только к аккаунту {scope}.",
+  "ui.provider_usage_limits_description": "Лимиты применяются только к AI-провайдеру {scope}.",
   "ui.usage_limits_enabled": "Лимиты включены",
   "ui.usage_limits_disabled": "Лимиты выключены",
   "ui.usage_limit_basis": "Основа лимита",
@@ -108,6 +110,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.usage_limit_credit_note":
     "Оценка основана на таблице цен моделей; запросы без тарифа не учитываются.",
   "ui.usage_limits_saved": "Лимиты использования сохранены",
+  "ui.usage_limits_updated_in_preview": "Лимиты обновлены в предварительном просмотре",
+  "ui.account_concurrency_single_account_note": "Применяется только к этому аккаунту; другие аккаунты не изменяются",
   "ui.usage_limit_reached": "Лимит достигнут",
   "ui.usage_limit_not_configured": "Не настроено",
   "ui.usage_limit_uncollected": "Данные не собраны",

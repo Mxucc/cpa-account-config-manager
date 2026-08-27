@@ -80,7 +80,9 @@ export const zhTWUI: Record<UIMessageKey, string> = {
     "嚴格區分主標題與描述文字字級；關閉後描述文字將使用與主標題相同的字級。",
   "ui.usage_limits": "用量上限",
   "ui.usage_limits_description":
-    "達到帳號百分比上限或預估額度上限後，停止新的請求。AI Provider 無法提供上游配額資料時，可使用額度上限。",
+    "設定帳號級或 AI 供應商級的額度、5 小時與 7 天上限。",
+  "ui.account_usage_limits_description": "上限僅套用於帳號 {scope}。",
+  "ui.provider_usage_limits_description": "上限僅套用於 AI 供應商 {scope}。",
   "ui.usage_limits_enabled": "已啟用用量上限",
   "ui.usage_limits_disabled": "已停用用量上限",
   "ui.usage_limit_basis": "上限依據",
@@ -104,6 +106,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.usage_limit_credit_note":
     "預估費用依目前模型價格表計算；沒有可計費價格的請求不會計入。",
   "ui.usage_limits_saved": "用量上限已儲存",
+  "ui.usage_limits_updated_in_preview": "用量上限已更新至預覽",
+  "ui.account_concurrency_single_account_note": "僅套用於目前帳號，不影響其他帳號",
   "ui.usage_limit_reached": "已達到上限",
   "ui.usage_limit_not_configured": "未設定",
   "ui.usage_limit_uncollected": "尚未收集用量",

@@ -559,6 +559,10 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
   const selectedDisabledIDs = [...selected.entries()].filter(([, disabled]) => disabled).map(([id]) => id);
   const selectedEnabledIDs = [...selected.entries()].filter(([, disabled]) => !disabled).map(([id]) => id);
   const lastAnomalyTriggerAt = meaningfulTimestamp(snapshot?.last_anomaly_trigger_at) ? snapshot?.last_anomaly_trigger_at : undefined;
+  const runStatusKey = snapshot?.running ? "ui.running" : snapshot?.pending ? "ui.pending" : lastRun?.error ? "ui.failed" : lastRun?.finished_at ? "ui.completed" : "ui.ready";
+  const primaryTotal = Math.max(0, snapshot?.active_run?.primary_total ?? 0);
+  const primaryCompleted = Math.min(primaryTotal, Math.max(0, snapshot?.active_run?.primary_completed ?? 0));
+  const primaryPercent = primaryTotal > 0 ? Math.round((primaryCompleted / primaryTotal) * 100) : 0;
   return (
     <section className="automation-panel" aria-label={tx("ui.inspection_and_automation")}>
       <header className="automation-toolbar">
@@ -598,6 +602,16 @@ export function InspectionWorkspace({ onAPIError, onNotice, onAccountsChanged = 
       {error || snapshot?.storage_error || lastRun?.error ? (
         <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error || operatorMessage(snapshot?.storage_error || lastRun?.error, locale)}</span><IconButton label={tx("ui.dismiss_inspection_message")} onClick={() => setError("")}><X size={14} /></IconButton></div>
       ) : null}
+
+      <section className="inspection-run-status" aria-label={tx("ui.inspection_run_status")}>
+        <div className="inspection-run-status-heading"><div><span className="page-eyebrow">{tx("ui.inspection_and_automation")}</span><strong>{snapshot?.active_run ? tx("ui.inspecting_now") : tx(runStatusKey)}</strong></div><span>{snapshot?.active_run ? runModeLabel(snapshot.active_run.mode, locale) : snapshot?.run_mode ? runModeLabel(snapshot.run_mode, locale) : tx("ui.no_data_collected")}</span></div>
+        <div className="inspection-run-status-grid">
+          <div><span>{tx("ui.status")}</span><strong>{tx(runStatusKey)}</strong></div>
+          <div><span>{tx("ui.primary_progress")}</span><strong>{primaryTotal > 0 ? `${primaryCompleted}/${primaryTotal}` : "—"}</strong><progress max={100} value={primaryPercent} aria-label={tx("ui.primary_progress", { completed: primaryCompleted, total: primaryTotal })} /></div>
+          <div><span>{tx("ui.retry_progress", { completed: snapshot?.retry_completed ?? 0, total: snapshot?.retry_total ?? 0 })}</span><strong>{snapshot?.retry_total ? `${snapshot?.retry_completed ?? 0}/${snapshot.retry_total}` : "—"}</strong></div>
+          <div><span>{tx("ui.full_server_inspection_progress")}</span><strong>{sweepTotal > 0 ? `${sweepCompleted}/${sweepTotal}` : "—"}</strong>{sweepTotal > 0 ? <progress max={sweepTotal} value={sweepCompleted} aria-label={tx("ui.full_server_inspection_progress")} /> : null}</div>
+        </div>
+      </section>
 
       {snapshot?.probe_sweep_source && sweepStatus ? (
         <div className={`inspection-sweep-progress sweep-${sweepStatus}`} role="status">

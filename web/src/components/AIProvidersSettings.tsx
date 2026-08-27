@@ -840,6 +840,16 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       : addKind === "openai-compatibility"
         ? Boolean(newName.trim() && newBaseURL.trim() && newAPIKey.trim())
         : Boolean(newAPIKey.trim());
+  const providerStats = channels.reduce((stats, channel) => {
+    stats.channels += 1;
+    for (const entry of channel.entries ?? []) {
+      stats.credentials += 1;
+      if (entry.disabled) stats.disabled += 1;
+      else stats.enabled += 1;
+    }
+    return stats;
+  }, { channels: 0, credentials: 0, enabled: 0, disabled: 0 });
+  const activeProviderRequests = runtimeSnapshots.reduce((total, snapshot) => total + Math.max(0, snapshot.active || 0), 0);
 
   return (
     <section className="ai-providers-section" role="tabpanel" aria-label={tx("ui.ai_providers")}>
@@ -860,6 +870,15 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       </div>
 
       {error ? <div className="agent-login-error" role="alert">{error}</div> : null}
+
+      <div className="provider-observability-strip" aria-label={tx("ui.ai_providers")}>
+        <div><span>{tx("ui.ai_provider_channels")}</span><strong>{providerStats.channels}</strong></div>
+        <div><span>{tx("ui.ai_provider_credentials")}</span><strong>{providerStats.credentials}</strong></div>
+        <div><span>{tx("ui.enabled")}</span><strong className="status-success">{providerStats.enabled}</strong></div>
+        <div><span>{tx("ui.disabled")}</span><strong className="status-warning">{providerStats.disabled}</strong></div>
+        <div><span>{tx("ui.active_requests")}</span><strong className={activeProviderRequests > 0 ? "status-live" : ""}>{formatTokens(activeProviderRequests)}</strong></div>
+        <div><span>{tx("ui.last_updated")}</span><strong>{runtimeUpdatedAt ? formatDateTime(runtimeUpdatedAt) : tx("ui.no_data_collected")}</strong></div>
+      </div>
 
       {adding ? (
         <Modal title={tx("ui.add_ai_provider")} onClose={() => { if (!busy) resetForm(); }} footer={(

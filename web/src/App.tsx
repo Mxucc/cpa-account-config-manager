@@ -1114,23 +1114,46 @@ function AccountManagerApp() {
   return (
     <div className={`app-shell ${panelOpen ? "with-job-panel" : ""}`}>
       {authState === "ready" ? <PluginUpdateAutomation onAPIError={handleAPIError} onNotice={setNotice} /> : null}
-      <div className="page-frame">
-        <header className="app-header">
-          <div className="brand-block">
-            <span className="brand-icon"><FileCog size={21} /></span>
-            <div><h1>{tx("ui.account_management")}</h1><span>CPA Account Config Manager</span></div>
+      <aside className="app-sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-icon"><FileCog size={21} /></span>
+          <div>
+            <strong>CPA</strong>
+            <span>Account Config Manager</span>
           </div>
-        </header>
-
-        <div className="workspace-bar">
-          <nav className="workspace-tabs" aria-label={tx("ui.account_management_views")}>
-            <button type="button" className={activeView === "dashboard" ? "active" : ""} aria-current={activeView === "dashboard" ? "page" : undefined} onClick={() => setActiveView("dashboard")}><Gauge size={16} />{tx("ui.dashboard")}</button>
-            <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} />{tx("ui.accounts")}</button>
-            <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} />{tx("ui.inspection_and_automation")}</button>
-            <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} />{tx("ui.ai_providers")}</button>
-            <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} />{tx("ui.operation_log")}</button>
-            <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} />{tx("ui.other_settings")}</button>
-          </nav>
+        </div>
+        <div className="sidebar-version"><span>{tx("ui.observability_console")}</span><code>native plugin</code></div>
+        <nav className="workspace-tabs sidebar-nav" aria-label={tx("ui.account_management_views")}>
+          <button type="button" className={activeView === "dashboard" ? "active" : ""} aria-current={activeView === "dashboard" ? "page" : undefined} onClick={() => setActiveView("dashboard")}><Gauge size={16} /><span>{tx("ui.dashboard")}</span></button>
+          <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} /><span>{tx("ui.accounts")}</span></button>
+          <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} /><span>{tx("ui.inspection_and_automation")}</span></button>
+          <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} /><span>{tx("ui.ai_providers")}</span></button>
+          <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} /><span>{tx("ui.operation_log")}</span></button>
+          <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} /><span>{tx("ui.other_settings")}</span></button>
+        </nav>
+        <div className="sidebar-telemetry" aria-live="polite">
+          <div className="sidebar-telemetry-row"><span><ShieldCheck size={14} />{tx("ui.accounts")}</span><strong>{data.total}</strong></div>
+          <div className="sidebar-telemetry-row"><span><Wifi size={14} />{tx("ui.system_status")}</span><strong>{job?.running || forceJob?.running ? tx("ui.running") : tx("ui.ready")}</strong></div>
+          {job?.id || forceJob?.id ? <div className="sidebar-job-summary"><span>{tx("ui.current_job")}</span><strong>{job?.running ? `${job.done}/${job.total}` : forceJob?.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel((job ?? forceJob)!.state)}</strong></div> : null}
+        </div>
+      </aside>
+      <div className="page-frame app-content">
+        <header className="app-header">
+          <div className="page-context">
+            <span className="page-eyebrow">{tx("ui.observability_console")}</span>
+            <h1>{tx("ui.account_management")}</h1>
+            <p>{activeView === "dashboard"
+              ? tx("ui.dashboard")
+              : activeView === "accounts"
+                ? tx("ui.accounts")
+                : activeView === "inspection"
+                  ? tx("ui.inspection_and_automation")
+                  : activeView === "providers"
+                    ? tx("ui.ai_providers")
+                    : activeView === "operations"
+                      ? tx("ui.operation_log")
+                      : tx("ui.other_settings")} · CPA Account Config Manager</p>
+          </div>
           <div className="workspace-controls">
             <div className="header-status">
               <span><ShieldCheck size={15} />{tx("ui.count_accounts", { count: data.total })}</span>
@@ -1149,7 +1172,7 @@ function AccountManagerApp() {
               <a className="icon-button" href="https://github.com/Mxucc/cpa-account-config-manager/" target="_blank" rel="noopener noreferrer" aria-label={tx("ui.open_project_on_github")} title={tx("ui.open_project_on_github")}><Github size={17} /></a>
             </div>
           </div>
-        </div>
+        </header>
 
         {data.usage_storage_error ? <div className="notice-bar global-notice warning-notice" role="alert"><span>{tx("ui.usage_storage_error")}</span></div> : null}
         {data.account_concurrency?.storage_error ? <div className="notice-bar global-notice warning-notice" role="alert"><span>{tx("ui.account_concurrency_storage_error")}</span></div> : null}

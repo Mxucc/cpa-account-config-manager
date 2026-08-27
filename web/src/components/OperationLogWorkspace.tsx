@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  Clock3,
   Download,
   Eye,
   FileJson2,
@@ -359,6 +360,7 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
   };
 
   const hasFilters = Boolean(category || status || source || searchDraft || search);
+  const recentOperations = useMemo(() => [...data.operations].sort((left, right) => new Date(right.finished_at || right.started_at).getTime() - new Date(left.finished_at || left.started_at).getTime()).slice(0, 6), [data.operations]);
   return (
     <section className="operation-panel" aria-label={tx("ui.operation_log")}>
       <header className="operation-toolbar">
@@ -389,6 +391,17 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
         <OperationMetric label={tx("ui.failed")} value={data.summary.failed} tone="danger" icon={<XCircle size={14} />} />
         <OperationMetric label={tx("ui.attention")} value={data.summary.attention + data.summary.interrupted} tone="warning" icon={<AlertTriangle size={14} />} />
       </div>
+
+      <section className="operation-timeline" aria-label={tx("ui.operation_timeline")}>
+        <header className="operation-timeline-heading"><div><Clock3 size={16} /><div><strong>{tx("ui.operation_timeline")}</strong><span>{tx("ui.operation_log_metrics")}</span></div></div><strong>{recentOperations.length}</strong></header>
+        {recentOperations.length ? <ol className="operation-timeline-list">{recentOperations.map((operation) => (
+          <li key={`timeline-${operation.id}`} className={`operation-timeline-item status-${operation.status}`}>
+            <span className="operation-timeline-marker" />
+            <div className="operation-timeline-body"><div><strong title={actionLabelForOperation(operation.action, locale)}>{statusLabel(operation.status, locale)}</strong><span>{categoryLabel(operation.category, locale)} · {sourceLabel(operation.source, locale)}</span></div><small>{tx("ui.operation_target_summary", { targets: operation.target_count, succeeded: operation.succeeded, failed: operation.failed, skipped: operation.skipped })}</small></div>
+            <div className="operation-timeline-meta"><OperationStatusBadge status={operation.status} /><time dateTime={operation.finished_at || operation.started_at}>{formatDateTime(operation.finished_at || operation.started_at)}</time></div>
+          </li>
+        ))}</ol> : <div className="operation-timeline-empty">{tx("ui.no_matching_operation_records")}</div>}
+      </section>
 
       <div className="operation-filters">
         <label className="search-box operation-search">

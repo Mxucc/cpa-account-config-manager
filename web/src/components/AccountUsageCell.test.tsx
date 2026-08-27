@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { Account } from "../types";
+import type { Account, UsageLimitsSnapshot } from "../types";
 import { AccountUsageCell } from "./AccountUsageCell";
 
 const baseAccount: Account = {
@@ -410,5 +410,56 @@ describe("AccountUsageCell", () => {
       },
     }} />);
     expect(screen.getByRole("status")).toHaveTextContent("额度已用尽透支探测未完成，等待下次巡检 · 等待已认证的巡检请求");
+  });
+});
+
+function usageLimitsSnapshot(total: UsageLimitsSnapshot["config"]["total"]): UsageLimitsSnapshot {
+  return {
+    config: { enabled: true, total, models: [] },
+    credit_used_usd: 0,
+    updated_at: "2026-08-27T08:00:00Z",
+  };
+}
+
+describe("AccountUsageCell configured usage limits", () => {
+  it("shows the configured account percentage and remaining headroom", () => {
+    const account: Account = {
+      ...baseAccount,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 20,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 30,
+        codex: {
+          observed_at: "2026-08-27T08:00:00Z",
+          five_hour: { used_percent: 64 },
+          seven_day: { used_percent: 12 },
+        },
+      },
+    };
+    render(
+      <AccountUsageCell
+        account={account}
+        usageLimits={usageLimitsSnapshot({ enabled: true, basis: "account", window: "five_hour", percent: 80 })}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: "5h 账号限额" })).toHaveTextContent("64% / 80%");
+    expect(screen.getByRole("meter", { name: /5h 剩余 16 空间/ })).toHaveAttribute("aria-valuenow", "64");
+  });
+
+  it("does not invent quota percentages when usage is unavailable", () => {
+    render(
+      <AccountUsageCell
+        account={{ ...baseAccount, usage: undefined }}
+        usageLimits={usageLimitsSnapshot({ enabled: true, basis: "account", window: "seven_day", percent: 75 })}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: "7d 账号限额" })).toHaveTextContent("尚未采集用量");
+    expect(screen.getByRole("meter", { name: /7d 尚未采集用量/ })).toHaveAttribute("aria-valuenow", "0");
   });
 });

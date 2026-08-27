@@ -4,20 +4,26 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.select_proxy_profile": "Профиль прокси",
   "ui.manual_proxy_url": "Ручной URL прокси",
   "ui.proxy_profiles": "Профили прокси",
-  "ui.proxy_profiles_description": "Создавайте переиспользуемые пресеты прокси без раскрытия учетных данных и используйте их при массовом редактировании.",
-  "ui.proxy_profiles_storage_error": "Не удалось прочитать или сохранить профили прокси; проверьте каталог данных плагина.",
+  "ui.proxy_profiles_description":
+    "Создавайте переиспользуемые пресеты прокси без раскрытия учетных данных и используйте их при массовом редактировании.",
+  "ui.proxy_profiles_storage_error":
+    "Не удалось прочитать или сохранить профили прокси; проверьте каталог данных плагина.",
   "ui.profile_name": "Название профиля",
   "ui.provider_scope": "Провайдеры",
-  "ui.provider_scope_placeholder": "Пусто — все провайдеры; разделяйте запятыми",
+  "ui.provider_scope_placeholder":
+    "Пусто — все провайдеры; разделяйте запятыми",
   "ui.add_proxy_profile": "Добавить профиль",
   "ui.no_proxy_profiles": "Профилей прокси пока нет",
   "ui.assigned_accounts": "Привязано аккаунтов: {count}",
   "ui.proxy_profile_saved": "Профиль прокси сохранен",
   "ui.proxy_profile_deleted": "Профиль прокси удален",
-  "ui.proxy_profile_delete_confirm": "Удалить профиль прокси \"{name}\"?",
-  "ui.proxy_profile_delete_force_confirm": "Профиль \"{name}\" привязан к аккаунтам. Удаление не изменит их URL автоматически. Продолжить?",
-  "ui.proxy_profile_edit_secret_notice": "Для безопасности существующий секрет не возвращается при редактировании. Введите полный URL заново для замены.",
-  "ui.proxy_profile_keep_existing": "Оставьте пустым, чтобы сохранить текущий URL прокси",
+  "ui.proxy_profile_delete_confirm": 'Удалить профиль прокси "{name}"?',
+  "ui.proxy_profile_delete_force_confirm":
+    'Профиль "{name}" привязан к аккаунтам. Удаление не изменит их URL автоматически. Продолжить?',
+  "ui.proxy_profile_edit_secret_notice":
+    "Для безопасности существующий секрет не возвращается при редактировании. Введите полный URL заново для замены.",
+  "ui.proxy_profile_keep_existing":
+    "Оставьте пустым, чтобы сохранить текущий URL прокси",
   "ui.default_account_proxy": "Прокси аккаунтов по умолчанию",
   "ui.default_ai_provider_proxy": "Прокси AI-провайдеров по умолчанию",
   "ui.account_proxy_profile": "Прокси-профиль аккаунта",
@@ -26,7 +32,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.account_management": "Управление учётными записями",
   "ui.accounts": "Учётные записи",
   "ui.dashboard": "Обзор",
-  "ui.dashboard_description": "Сводка состояния учётных записей, расхода, стоимости и активности.",
+  "ui.dashboard_description":
+    "Сводка состояния учётных записей, расхода, стоимости и активности.",
   "ui.total_accounts": "Всего учётных записей",
   "ui.healthy_accounts": "Исправные учётные записи",
   "ui.unhealthy_accounts": "Проблемные учётные записи",
@@ -53,7 +60,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.plugin_configuration_and_version": "Конфигурация плагина и версия",
   "ui.font_size": "Размер шрифта",
   "ui.plugin_appearance": "Внешний вид и тема",
-  "ui.plugin_appearance_description": "Применяется только к этому плагину и не меняет встроенные страницы CPA.",
+  "ui.plugin_appearance_description":
+    "Применяется только к этому плагину и не меняет встроенные страницы CPA.",
   "ui.plugin_theme_preset": "Тема",
   "ui.plugin_theme_neutral": "Нейтральная",
   "ui.plugin_theme_indigo": "Индиго",
@@ -64,70 +72,137 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.plugin_density_compact": "Компактная",
   "ui.reset_plugin_appearance": "Сбросить внешний вид",
 
-  "ui.font_size_description": "Изменяет размер шрифта всех подписей, таблиц, форм, диалогов и статусов плагина.",
+  "ui.font_size_description":
+    "Изменяет размер шрифта всех подписей, таблиц, форм, диалогов и статусов плагина.",
   "ui.font_size_small": "Маленький",
   "ui.font_size_medium": "Средний",
   "ui.font_size_large": "Большой",
   "ui.font_size_current": "Текущий: {size}",
   "ui.typography_distinction": "Различать размеры текста",
-  "ui.typography_distinction_description": "Разделять размеры заголовков и описаний. Отключите, чтобы описания использовали размер заголовка.",
+  "ui.typography_distinction_description":
+    "Разделять размеры заголовков и описаний. Отключите, чтобы описания использовали размер заголовка.",
+  "ui.usage_limits": "Лимиты использования",
+  "ui.usage_limits_description":
+    "Новые запросы останавливаются после достижения лимита процента аккаунта или оценочной суммы. Лимит суммы полезен для AI-провайдеров без данных квоты.",
+  "ui.usage_limits_enabled": "Лимиты включены",
+  "ui.usage_limits_disabled": "Лимиты выключены",
+  "ui.usage_limit_basis": "Основа лимита",
+  "ui.usage_limit_account": "Лимит аккаунта",
+  "ui.usage_limit_credit": "Лимит суммы",
+  "ui.usage_limit_window": "Окно квоты",
+  "ui.usage_limit_five_hour": "Окно 5 часов",
+  "ui.usage_limit_seven_day": "Окно 7 дней",
+  "ui.usage_limit_percent": "Максимальный процент",
+  "ui.usage_limit_amount": "Максимальная сумма",
+  "ui.usage_limit_total": "Общий лимит",
+  "ui.usage_limit_total_description":
+    "Общий предел по умолчанию. Лимиты моделей могут учитывать его или работать независимо.",
+  "ui.usage_limit_models": "Лимиты моделей",
+  "ui.usage_limit_models_description":
+    "Добавьте отдельный лимит аккаунта или суммы для каждой модели.",
+  "ui.usage_limit_add_model": "Добавить модель",
+  "ui.usage_limit_model_name": "Имя модели",
+  "ui.usage_limit_within_total": "Учитывать в общем лимите",
+  "ui.usage_limit_no_models": "Лимиты моделей не настроены.",
+  "ui.usage_limit_credit_used": "Сумма с момента включения лимитов",
+  "ui.usage_limit_credit_note":
+    "Оценка основана на таблице цен моделей; запросы без тарифа не учитываются.",
+  "ui.usage_limits_saved": "Лимиты использования сохранены",
+  "ui.usage_limit_reached": "Лимит достигнут",
+  "ui.usage_limit_not_configured": "Не настроено",
+  "ui.usage_limit_uncollected": "Данные не собраны",
+  "ui.usage_limit_remaining": "Осталось {percent}",
+  "ui.usage_limit_account_status": "Лимит аккаунта {label}",
+  "ui.usage_limit_credit_status": "Состояние кредитного лимита",
+  "ui.usage_limit_model_status": "Лимит модели по кредиту",
+  "ui.usage_limit_counted_with_total": "в общем лимите",
+  "ui.usage_limit_independent": "независимый",
+  "ui.usage_limit_provider_note": "Если у AI Provider нет квот upstream за 5 или 7 дней, используйте кредитный лимит.",
+  "ui.usage_limit_provider_observed": "Наблюдаемая стоимость Provider",
   "ui.experimental_features": "Экспериментальные функции",
   "ui.experimental_features_warning": "Экспериментальное поведение",
-  "ui.experimental_features_may_change_or_stop_working": "Эти функции зависят от поведения вышестоящего сервиса и могут измениться или перестать работать без предупреждения.",
-  "ui.experimental_settings_storage_error": "Не удалось загрузить экспериментальные настройки из постоянного хранилища. До повторного сохранения функция останется выключенной.",
+  "ui.experimental_features_may_change_or_stop_working":
+    "Эти функции зависят от поведения вышестоящего сервиса и могут измениться или перестать работать без предупреждения.",
+  "ui.experimental_settings_storage_error":
+    "Не удалось загрузить экспериментальные настройки из постоянного хранилища. До повторного сохранения функция останется выключенной.",
   "ui.sub2api_credit_usage": "Учёт стоимости Sub2API",
-  "ui.sub2api_credit_usage_description": "Преобразует новые успешные запросы в приблизительную стоимость в USD по таблице цен Sub2API. Исходная статистика токенов сохраняется.",
+  "ui.sub2api_credit_usage_description":
+    "Преобразует новые успешные запросы в приблизительную стоимость в USD по таблице цен Sub2API. Исходная статистика токенов сохраняется.",
   "ui.credit_pricing_source": "Источник цен",
-  "ui.credit_pricing_source_description": "Встроенная совместимая с Sub2API таблица цен Wei-Shaw и последняя успешно проверенная локальная копия.",
+  "ui.credit_pricing_source_description":
+    "Встроенная совместимая с Sub2API таблица цен Wei-Shaw и последняя успешно проверенная локальная копия.",
   "ui.credit_pricing_sync_behavior": "Синхронизация",
-  "ui.credit_pricing_sync_behavior_description": "После включения цены обновляются асинхронно в фоне и не блокируют сбор статистики использования.",
+  "ui.credit_pricing_sync_behavior_description":
+    "После включения цены обновляются асинхронно в фоне и не блокируют сбор статистики использования.",
   "ui.credit_usage_history_boundary": "Граница учёта",
-  "ui.credit_usage_history_boundary_description": "Учитываются только успешные запросы после включения эксперимента. Исторические токены и окна квоты не меняются; если также включено продолжение после лимита Codex, стоимость после базовой точки каждого окна 5ч/7д показывается отдельно и входит в общий итог аккаунта.",
+  "ui.credit_usage_history_boundary_description":
+    "Учитываются только успешные запросы после включения эксперимента. Исторические токены и окна квоты не меняются; если также включено продолжение после лимита Codex, стоимость после базовой точки каждого окна 5ч/7д показывается отдельно и входит в общий итог аккаунта.",
   "ui.estimated_credit_usage": "Расчётная стоимость",
-  "ui.estimated_credit_usage_detail": "Стоимость: {amount}; запросов с ценой: {rated}; без цены: {unrated}; исходные токены: {tokens}",
+  "ui.estimated_credit_usage_detail":
+    "Стоимость: {amount}; запросов с ценой: {rated}; без цены: {unrated}; исходные токены: {tokens}",
   "ui.rated_requests": "Запросы с ценой",
   "ui.unrated_requests": "Запросы без цены",
   "ui.unrated_requests_count": "Без цены: {count}",
   "ui.credit_usage_started_at": "Начало учёта стоимости",
   "ui.pricing_updated_at": "Обновление цен",
-  "ui.awaiting_credit_usage_collection": "Ожидание данных для расчёта стоимости",
-  "ui.some_requests_could_not_be_priced": "Для {count} успешных запросов модели отсутствуют в текущей таблице цен. Они остаются в статистике токенов, но не включаются в оценку USD.",
-  "ui.codex_auto_model_whitelist": "Автоматический список разрешённых моделей Codex",
-  "ui.codex_auto_model_whitelist_description": "Определяет ограниченные модели при ручной проверке или проверке нового аккаунта политикой по умолчанию и применяет список разрешённых моделей.",
+  "ui.awaiting_credit_usage_collection":
+    "Ожидание данных для расчёта стоимости",
+  "ui.some_requests_could_not_be_priced":
+    "Для {count} успешных запросов модели отсутствуют в текущей таблице цен. Они остаются в статистике токенов, но не включаются в оценку USD.",
+  "ui.codex_auto_model_whitelist":
+    "Автоматический список разрешённых моделей Codex",
+  "ui.codex_auto_model_whitelist_description":
+    "Определяет ограниченные модели при ручной проверке или проверке нового аккаунта политикой по умолчанию и применяет список разрешённых моделей.",
   "ui.detection_evidence": "Доказательства проверки",
-  "ui.auto_model_whitelist_detection_behavior": "Запускается только после известного ответа о несовместимости gpt-5.6-sol и требует успешных проверок gpt-5.5 и gpt-5.4-mini.",
+  "ui.auto_model_whitelist_detection_behavior":
+    "Запускается только после известного ответа о несовместимости gpt-5.6-sol и требует успешных проверок gpt-5.5 и gpt-5.4-mini.",
   "ui.policy_write_behavior": "Запись политики",
-  "ui.auto_model_whitelist_policy_behavior": "Применяется только при отсутствии ручного списка разрешений или запретов. Пользовательские политики моделей сохраняются.",
-  "ui.auto_model_whitelist_safety_notice": "По умолчанию выключено. Автопроверка также требует переключателя в политике по умолчанию; ошибка отдельной модели не отключает весь аккаунт.",
+  "ui.auto_model_whitelist_policy_behavior":
+    "Применяется только при отсутствии ручного списка разрешений или запретов. Пользовательские политики моделей сохраняются.",
+  "ui.auto_model_whitelist_safety_notice":
+    "По умолчанию выключено. Автопроверка также требует переключателя в политике по умолчанию; ошибка отдельной модели не отключает весь аккаунт.",
   "ui.auto_model_whitelist_applied": "Применить автоматический список моделей",
-  "ui.existing_model_policy_preserved": "Существующая политика моделей сохранена",
-  "ui.model_blocked_by_account_policy": "Модель заблокирована политикой моделей аккаунта",
+  "ui.existing_model_policy_preserved":
+    "Существующая политика моделей сохранена",
+  "ui.model_blocked_by_account_policy":
+    "Модель заблокирована политикой моделей аккаунта",
   "ui.model_catalog_unavailable": "Каталог моделей аккаунта недоступен",
-  "ui.model_compatibility_detected": "Обнаружена ограниченная совместимость моделей",
+  "ui.model_compatibility_detected":
+    "Обнаружена ограниченная совместимость моделей",
   "ui.model_allow_list_applied": "Список разрешённых моделей применён",
   "ui.model_allow_list_not_applied": "Список разрешённых моделей не применён",
   "ui.compatibility_attempt": "Проверка совместимости",
   "ui.codex_identity_convergence": "Сходимость идентификации Codex",
-  "ui.codex_identity_convergence_description": "Сходить запросы Codex OAuth и проверки codex-api-key к официальному отпечатку клиента из Sub2API.",
+  "ui.codex_identity_convergence_description":
+    "Сходить запросы Codex OAuth и проверки codex-api-key к официальному отпечатку клиента из Sub2API.",
   "ui.codex_outbound_convergence": "Исходящая сходимость",
-  "ui.codex_outbound_convergence_behavior": "Сопоставляет User-Agent, Originator и Version после всех других изменений заголовков; несопоставимый идентификатор возвращается к текущему официальному CLI.",
+  "ui.codex_outbound_convergence_behavior":
+    "Сопоставляет User-Agent, Originator и Version после всех других изменений заголовков; несопоставимый идентификатор возвращается к текущему официальному CLI.",
   "ui.codex_api_key_probe": "Проверки codex-api-key",
-  "ui.codex_api_key_probe_behavior": "Проверки доступности AI Provider для codex-api-key используют тот же сходный идентификатор.",
+  "ui.codex_api_key_probe_behavior":
+    "Проверки доступности AI Provider для codex-api-key используют тот же сходный идентификатор.",
   "ui.internal_probe_requests": "Внутренние проверки",
-  "ui.codex_internal_probe_behavior": "Запросы моделей, квоты, обновления токена, PAT и Agent Identity используют совместимый официальный идентификатор.",
+  "ui.codex_internal_probe_behavior":
+    "Запросы моделей, квоты, обновления токена, PAT и Agent Identity используют совместимый официальный идентификатор.",
   "ui.codex_ingress_gate": "Входные ворота официальных клиентов",
-  "ui.codex_ingress_gate_description": "Для учетных записей с codex_cli_only запрет выполняется до upstream по черному списку, белому списку, границам версий и отпечаткам движка.",
+  "ui.codex_ingress_gate_description":
+    "Для учетных записей с codex_cli_only запрет выполняется до upstream по черному списку, белому списку, границам версий и отпечаткам движка.",
   "ui.codex_app_server_clients": "Клиенты App Server",
-  "ui.codex_app_server_clients_behavior": "Глобальный переключатель или extra.codex_cli_only_allow_app_server у учетной записи открывает неуказанных клиентов; они все равно проходят проверку отпечатка.",
+  "ui.codex_app_server_clients_behavior":
+    "Глобальный переключатель или extra.codex_cli_only_allow_app_server у учетной записи открывает неуказанных клиентов; они все равно проходят проверку отпечатка.",
   "ui.codex_version_bounds": "Границы версии",
-  "ui.codex_version_bounds_behavior": "Официальные кандидаты требуют разбираемую версию X.Y.Z в настроенных минимальных и максимальных границах.",
+  "ui.codex_version_bounds_behavior":
+    "Официальные кандидаты требуют разбираемую версию X.Y.Z в настроенных минимальных и максимальных границах.",
   "ui.codex_fingerprint_signals": "Ворота отпечатков",
-  "ui.codex_fingerprint_signals_behavior": "Все обязательные сигналы должны совпасть. Варианты внутри сигнала образуют ИЛИ; по умолчанию требуется заголовок x-codex-*.",
+  "ui.codex_fingerprint_signals_behavior":
+    "Все обязательные сигналы должны совпасть. Варианты внутри сигнала образуют ИЛИ; по умолчанию требуется заголовок x-codex-*.",
   "ui.codex_convergence_mode": "Режим сходимости",
   "ui.codex_convergence_legacy_full": "По умолчанию выключено (режим не задан)",
   "ui.codex_convergence_off": "Выключено (исходная идентификация)",
-  "ui.codex_convergence_device": "Только устройство (фиксированный installation_id)",
-  "ui.codex_convergence_session": "Сессия (фиксированная сессия, производный thread)",
+  "ui.codex_convergence_device":
+    "Только устройство (фиксированный installation_id)",
+  "ui.codex_convergence_session":
+    "Сессия (фиксированная сессия, производный thread)",
   "ui.codex_convergence_full": "Полная сходимость (одно устройство/сессия)",
   "ui.codex_advanced_policy_json": "Расширенный JSON политики",
   "ui.codex_min_version": "Минимальная версия",
@@ -135,84 +210,132 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.codex_allow_app_server": "Разрешить клиенты App Server глобально",
   "ui.codex_whitelist_json": "Белый список JSON (originator + все ua_contains)",
   "ui.codex_blacklist_json": "Черный список JSON (совпадение по ИЛИ)",
-  "ui.codex_fingerprint_json": "JSON сигналов отпечатка (обязательные записи объединяются по И)",
+  "ui.codex_fingerprint_json":
+    "JSON сигналов отпечатка (обязательные записи объединяются по И)",
   "ui.codex_weekly_quota_overdraft": "Продолжение после квоты Codex 5 ч / 7 дн",
-  "ui.codex_weekly_quota_overdraft_description": "Если последний элемент ввода Codex является сообщением пользователя, перед отправкой добавляется связанная пара холостого вызова инструмента и его результата.",
+  "ui.codex_weekly_quota_overdraft_description":
+    "Если последний элемент ввода Codex является сообщением пользователя, перед отправкой добавляется связанная пара холостого вызова инструмента и его результата.",
   "ui.request_behavior": "Обработка запроса",
-  "ui.weekly_overdraft_request_behavior": "Обрабатываются только тела запросов Codex. Некорректные, слишком большие, уже изменённые запросы и запросы без сообщения пользователя в конце передаются без изменений. Обход ограничения 429 изменяет цепочку вызовов инструментов Codex и добавляет накладные расходы, поэтому на менее производительных серверах может увеличиться задержка до первого токена.",
+  "ui.weekly_overdraft_request_behavior":
+    "Обрабатываются только тела запросов Codex. Некорректные, слишком большие, уже изменённые запросы и запросы без сообщения пользователя в конце передаются без изменений. Обход ограничения 429 изменяет цепочку вызовов инструментов Codex и добавляет накладные расходы, поэтому на менее производительных серверах может увеличиться задержка до первого токена.",
   "ui.automation_behavior": "Автоматизация",
-  "ui.weekly_overdraft_automation_behavior": "После исчерпания пятичасовой или семидневной квоты проверка выполняет до пяти экспериментальных запросов. Любой успешный запрос оставляет аккаунт включённым; пять неудач разрешают автоотключение с восстановлением после сброса соответствующего окна, если включено автовключение.",
+  "ui.weekly_overdraft_automation_behavior":
+    "После исчерпания пятичасовой или семидневной квоты проверка выполняет до пяти экспериментальных запросов. Любой успешный запрос оставляет аккаунт включённым; пять неудач разрешают автоотключение с восстановлением после сброса соответствующего окна, если включено автовключение.",
   "ui.availability_notice": "Доступность",
-  "ui.weekly_overdraft_availability_notice": "Продолжение не гарантируется, а доступный перерасход может зависеть от подписки.",
+  "ui.weekly_overdraft_availability_notice":
+    "Продолжение не гарантируется, а доступный перерасход может зависеть от подписки.",
   "ui.weekly_overdraft_probe_gate": "Проверка перерасхода квоты",
-  "ui.weekly_overdraft_probe_running": "Проверка доступности перерасхода ({current}/{total})",
+  "ui.weekly_overdraft_probe_running":
+    "Проверка доступности перерасхода ({current}/{total})",
   "ui.weekly_overdraft_probe_running_short": "Проверка доступности перерасхода",
-  "ui.weekly_overdraft_probe_passed": "Перерасход доступен; аккаунт остаётся включённым",
-  "ui.weekly_overdraft_probe_failed": "Все пять проверок неуспешны; ожидается автоотключение",
-  "ui.weekly_overdraft_probe_inconclusive": "Проверка не завершена; ожидание следующей инспекции",
-  "ui.weekly_overdraft_probe_management_auth_unavailable": "Ожидание авторизованного запроса проверки",
-  "ui.weekly_overdraft_probe_experiment_unavailable": "Вышестоящий запрос не применил экспериментальную проверку перерасхода",
+  "ui.weekly_overdraft_probe_passed":
+    "Перерасход доступен; аккаунт остаётся включённым",
+  "ui.weekly_overdraft_probe_failed":
+    "Все пять проверок неуспешны; ожидается автоотключение",
+  "ui.weekly_overdraft_probe_inconclusive":
+    "Проверка не завершена; ожидание следующей инспекции",
+  "ui.weekly_overdraft_probe_management_auth_unavailable":
+    "Ожидание авторизованного запроса проверки",
+  "ui.weekly_overdraft_probe_experiment_unavailable":
+    "Вышестоящий запрос не применил экспериментальную проверку перерасхода",
   "ui.weekly_overdraft_probe_timeout": "Истекло время ожидания проверки",
-  "ui.weekly_overdraft_probe_upstream_unavailable": "Вышестоящий сервис временно недоступен",
+  "ui.weekly_overdraft_probe_upstream_unavailable":
+    "Вышестоящий сервис временно недоступен",
   "ui.codex_agent_identity": "Codex Agent Identity / PAT",
-  "ui.codex_agent_identity_description": "Аутентификация Codex с помощью подписанного AgentAssertion или персонального токена at-* из экспорта Sub2API.",
+  "ui.codex_agent_identity_description":
+    "Аутентификация Codex с помощью подписанного AgentAssertion или персонального токена at-* из экспорта Sub2API.",
   "ui.authentication_path": "Способ аутентификации",
-  "ui.agent_identity_authentication_behavior": "Agent Identity подписывает каждый запрос; Codex PAT использует Bearer-аутентификацию плагина. Существующие аккаунты Codex OAuth не изменяются.",
+  "ui.agent_identity_authentication_behavior":
+    "Agent Identity подписывает каждый запрос; Codex PAT использует Bearer-аутентификацию плагина. Существующие аккаунты Codex OAuth не изменяются.",
   "ui.supported_imports": "Поддерживаемый импорт",
-  "ui.agent_identity_import_formats": "Официальные JWT, объекты codex-agent-identity-web и экспорты Sub2API в JSON или ZIP с Agent Identity либо at-* PAT.",
+  "ui.agent_identity_import_formats":
+    "Официальные JWT, объекты codex-agent-identity-web и экспорты Sub2API в JSON или ZIP с Agent Identity либо at-* PAT.",
   "ui.security_notice": "Безопасность",
-  "ui.agent_identity_security_notice": "Файлы содержат закрытые ключи подписи или персональные токены. Импортируйте только доверенные файлы; предпросмотр и журналы не показывают эти значения.",
+  "ui.agent_identity_security_notice":
+    "Файлы содержат закрытые ключи подписи или персональные токены. Импортируйте только доверенные файлы; предпросмотр и журналы не показывают эти значения.",
   "ui.agent_identity": "Agent Identity",
   "ui.codex_personal_access_token": "Codex PAT",
   "ui.agent_identity_session_login": "Вход Agent Identity",
-  "ui.agent_identity_session_login_description": "Вставьте JSON сеанса ChatGPT, чтобы создать учётные данные через авторизованный плагин CPA.",
+  "ui.agent_identity_session_login_description":
+    "Вставьте JSON сеанса ChatGPT, чтобы создать учётные данные через авторизованный плагин CPA.",
   "ui.open_chatgpt_session": "Открыть сеанс ChatGPT",
   "ui.chatgpt_session_json": "JSON сеанса ChatGPT",
-  "ui.chatgpt_session_json_placeholder": "Вставьте полный JSON из /api/auth/session",
+  "ui.chatgpt_session_json_placeholder":
+    "Вставьте полный JSON из /api/auth/session",
   "ui.show_session_json": "Показать JSON сеанса",
   "ui.hide_session_json": "Скрыть JSON сеанса",
   "ui.convert_and_login": "Преобразовать и войти",
   "ui.converting_agent_identity": "Создание Agent Identity",
   "ui.agent_identity_login_complete": "Agent Identity готов",
-  "ui.cpa_is_saving_agent_identity": "CPA завершает создание и сохраняет учётные данные. Теперь это окно можно закрыть.",
+  "ui.cpa_is_saving_agent_identity":
+    "CPA завершает создание и сохраняет учётные данные. Теперь это окно можно закрыть.",
   "ui.close_login_window": "Закрыть окно входа",
-  "ui.session_json_privacy_notice": "JSON сеанса отправляется один раз через авторизованное соединение CPA, немедленно очищается со страницы и не записывается в хранилище или журналы плагина.",
-  "ui.invalid_agent_identity_login_state": "Запрос на вход недействителен или неполон.",
-  "ui.agent_identity_login_expired": "Срок действия запроса Agent Identity истёк. Вернитесь в CPA и начните вход заново.",
-  "ui.agent_identity_experiment_disabled": "Вход через GPT требует включения Codex Agent Identity в «Настройки \u2192 Экспериментальные функции»; вход через OpenCode не зависит от этого.",
-  "ui.choose_login_method": "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0441\u043f\u043e\u0441\u043e\u0431 \u0432\u0445\u043e\u0434\u0430",
+  "ui.session_json_privacy_notice":
+    "JSON сеанса отправляется один раз через авторизованное соединение CPA, немедленно очищается со страницы и не записывается в хранилище или журналы плагина.",
+  "ui.invalid_agent_identity_login_state":
+    "Запрос на вход недействителен или неполон.",
+  "ui.agent_identity_login_expired":
+    "Срок действия запроса Agent Identity истёк. Вернитесь в CPA и начните вход заново.",
+  "ui.agent_identity_experiment_disabled":
+    "Вход через GPT требует включения Codex Agent Identity в «Настройки \u2192 Экспериментальные функции»; вход через OpenCode не зависит от этого.",
+  "ui.choose_login_method":
+    "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0441\u043f\u043e\u0441\u043e\u0431 \u0432\u0445\u043e\u0434\u0430",
   "ui.gpt_login": "\u0412\u0445\u043e\u0434 GPT",
   "ui.opencode_login": "opencode",
-  "ui.opencode_login_description": "\u0412\u043e\u0439\u0434\u0438\u0442\u0435 \u043d\u0430 opencode.ai, \u043e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 Go-\u0432\u043e\u0440\u043a\u0441\u043f\u0435\u0439\u0441\u0430 \u0438 \u0443\u043a\u0430\u0436\u0438\u0442\u0435 Workspace ID \u0438 auth cookie (\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 auth), \u0447\u0442\u043e\u0431\u044b \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442.",
+  "ui.opencode_login_description":
+    "\u0412\u043e\u0439\u0434\u0438\u0442\u0435 \u043d\u0430 opencode.ai, \u043e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 Go-\u0432\u043e\u0440\u043a\u0441\u043f\u0435\u0439\u0441\u0430 \u0438 \u0443\u043a\u0430\u0436\u0438\u0442\u0435 Workspace ID \u0438 auth cookie (\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 auth), \u0447\u0442\u043e\u0431\u044b \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442.",
   "ui.opencode_workspace_id": "Workspace ID",
-  "ui.opencode_auth_cookie": "Auth Cookie (\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 auth)",
+  "ui.opencode_auth_cookie":
+    "Auth Cookie (\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 auth)",
   "ui.opencode_workspace_placeholder": "wrk_xxxxxxxx",
   "ui.opencode_auth_cookie_placeholder": "Fe26.2*...",
-  "ui.opencode_save_and_query": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c",
-  "ui.opencode_saving": "\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0430 OpenCode",
-  "ui.opencode_login_complete": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 OpenCode \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
-  "ui.opencode_is_saved": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043a\u0432\u043e\u0442\u044b OpenCode Go \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u043d. \u041c\u043e\u0436\u043d\u043e \u0437\u0430\u043a\u0440\u044b\u0442\u044c \u044d\u0442\u043e \u043e\u043a\u043d\u043e.",
-  "ui.opencode_saved_account": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043a\u0432\u043e\u0442\u044b OpenCode Go",
-  "ui.opencode_rolling": "\u041a\u0432\u043e\u0442\u0430 5 \u0447\u0430\u0441\u043e\u0432",
-  "ui.opencode_weekly": "\u041a\u0432\u043e\u0442\u0430 7 \u0434\u043d\u0435\u0439",
-  "ui.opencode_monthly": "\u041a\u0432\u043e\u0442\u0430 30 \u0434\u043d\u0435\u0439",
-  "ui.opencode_reset_in": "\u0441\u0431\u0440\u043e\u0441 \u0447\u0435\u0440\u0435\u0437 {time}",
-  "ui.opencode_open_status": "\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043c\u043e\u043d\u0438\u0442\u043e\u0440\u0438\u043d\u0433 \u043a\u0432\u043e\u0442 OpenCode Go",
-  "ui.opencode_privacy_notice": "Cookie \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u043e\u0434\u0438\u043d \u0440\u0430\u0437 \u0447\u0435\u0440\u0435\u0437 \u0430\u0443\u0442\u0435\u043d\u0442\u0438\u0444\u0438\u0446\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0435 \u0441\u043e\u0435\u0434\u0438\u043d\u0435\u043d\u0438\u0435 CPA \u0438 \u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u0438\u0432\u0430\u0442\u043d\u043e\u0439 \u043f\u0430\u043f\u043a\u0435 \u0434\u0430\u043d\u043d\u044b\u0445 \u043f\u043b\u0430\u0433\u0438\u043d\u0430; \u043e\u043d \u043d\u0435 \u0432\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u0435\u0442\u0441\u044f \u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u0438 \u043d\u0435 \u043f\u043e\u043f\u0430\u0434\u0430\u0435\u0442 \u0432 \u043b\u043e\u0433\u0438.",
+  "ui.opencode_save_and_query":
+    "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c",
+  "ui.opencode_saving":
+    "\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0430 OpenCode",
+  "ui.opencode_login_complete":
+    "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 OpenCode \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
+  "ui.opencode_is_saved":
+    "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043a\u0432\u043e\u0442\u044b OpenCode Go \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u043d. \u041c\u043e\u0436\u043d\u043e \u0437\u0430\u043a\u0440\u044b\u0442\u044c \u044d\u0442\u043e \u043e\u043a\u043d\u043e.",
+  "ui.opencode_saved_account":
+    "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043a\u0432\u043e\u0442\u044b OpenCode Go",
+  "ui.opencode_rolling":
+    "\u041a\u0432\u043e\u0442\u0430 5 \u0447\u0430\u0441\u043e\u0432",
+  "ui.opencode_weekly":
+    "\u041a\u0432\u043e\u0442\u0430 7 \u0434\u043d\u0435\u0439",
+  "ui.opencode_monthly":
+    "\u041a\u0432\u043e\u0442\u0430 30 \u0434\u043d\u0435\u0439",
+  "ui.opencode_reset_in":
+    "\u0441\u0431\u0440\u043e\u0441 \u0447\u0435\u0440\u0435\u0437 {time}",
+  "ui.opencode_open_status":
+    "\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043c\u043e\u043d\u0438\u0442\u043e\u0440\u0438\u043d\u0433 \u043a\u0432\u043e\u0442 OpenCode Go",
+  "ui.opencode_privacy_notice":
+    "Cookie \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u043e\u0434\u0438\u043d \u0440\u0430\u0437 \u0447\u0435\u0440\u0435\u0437 \u0430\u0443\u0442\u0435\u043d\u0442\u0438\u0444\u0438\u0446\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0435 \u0441\u043e\u0435\u0434\u0438\u043d\u0435\u043d\u0438\u0435 CPA \u0438 \u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u0438\u0432\u0430\u0442\u043d\u043e\u0439 \u043f\u0430\u043f\u043a\u0435 \u0434\u0430\u043d\u043d\u044b\u0445 \u043f\u043b\u0430\u0433\u0438\u043d\u0430; \u043e\u043d \u043d\u0435 \u0432\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u0435\u0442\u0441\u044f \u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u0438 \u043d\u0435 \u043f\u043e\u043f\u0430\u0434\u0430\u0435\u0442 \u0432 \u043b\u043e\u0433\u0438.",
   "ui.opencode": "OpenCode Go",
-  "ui.opencode_save_action": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442 OpenCode",
-  "ui.opencode_remove_action": "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442 OpenCode",
-  "ui.opencode_refresh_action": "\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u043a\u0432\u043e\u0442\u0443 OpenCode",
-  "ui.opencode_reason_account_saved": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
-  "ui.opencode_reason_account_removed": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u0443\u0434\u0430\u043b\u0451\u043d",
-  "ui.opencode_reason_all_refreshed": "\u0412\u0441\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u044b \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b",
-  "ui.opencode_reason_partial_refresh_failed": "\u041d\u0435\u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u044b \u043d\u0435 \u043e\u0431\u043d\u043e\u0432\u0438\u043b\u0438\u0441\u044c",
-  "ui.opencode_reason_refresh_failed": "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c",
-  "ui.opencode_reason_invalid_credential": "\u041d\u0435\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0443\u0447\u0451\u0442\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435",
-  "ui.opencode_reason_account_not_found": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d",
+  "ui.opencode_save_action":
+    "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442 OpenCode",
+  "ui.opencode_remove_action":
+    "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0430\u043a\u043a\u0430\u0443\u043d\u0442 OpenCode",
+  "ui.opencode_refresh_action":
+    "\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u043a\u0432\u043e\u0442\u0443 OpenCode",
+  "ui.opencode_reason_account_saved":
+    "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
+  "ui.opencode_reason_account_removed":
+    "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u0443\u0434\u0430\u043b\u0451\u043d",
+  "ui.opencode_reason_all_refreshed":
+    "\u0412\u0441\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u044b \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b",
+  "ui.opencode_reason_partial_refresh_failed":
+    "\u041d\u0435\u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u044b \u043d\u0435 \u043e\u0431\u043d\u043e\u0432\u0438\u043b\u0438\u0441\u044c",
+  "ui.opencode_reason_refresh_failed":
+    "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c",
+  "ui.opencode_reason_invalid_credential":
+    "\u041d\u0435\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0443\u0447\u0451\u0442\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435",
+  "ui.opencode_reason_account_not_found":
+    "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d",
   "ui.experimental_settings_saved": "Экспериментальные настройки сохранены",
   "ui.load_experimental_feature": "Загрузить экспериментальную функцию",
-  "ui.experimental_model_test_description": "Экспериментальная проверка отправляет реальный запрос модели Codex с новым идентификатором связанного вызова инструмента и показывает очищенный ответ сервиса.",
+  "ui.experimental_model_test_description":
+    "Экспериментальная проверка отправляет реальный запрос модели Codex с новым идентификатором связанного вызова инструмента и показывает очищенный ответ сервиса.",
   "ui.experimental_feature_loaded": "Экспериментальный запрос загружен",
   "ui.correlation_call_id": "Идентификатор связанного вызова",
   "ui.refresh": "Обновить",
@@ -238,13 +361,17 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.add_accounts": "Добавить учётные записи",
   "ui.deduplicate_accounts": "Удалить дубликаты",
   "ui.account_deduplication": "Дедупликация аккаунтов",
-  "ui.account_deduplication_description": "Поиск файлов учётных данных, относящихся к одному аккаунту вышестоящего сервиса.",
-  "ui.account_deduplication_safety_note": "Проверьте сохраняемые и удаляемые данные. Затем потребуется отдельный просмотр удаления и повторное подтверждение.",
+  "ui.account_deduplication_description":
+    "Поиск файлов учётных данных, относящихся к одному аккаунту вышестоящего сервиса.",
+  "ui.account_deduplication_safety_note":
+    "Проверьте сохраняемые и удаляемые данные. Затем потребуется отдельный просмотр удаления и повторное подтверждение.",
   "ui.deduplication_rules": "Правила сопоставления",
   "ui.ignore_account_ids": "Игнорировать ID аккаунтов",
-  "ui.ignore_account_ids_description": "Сопоставлять только по нормализованной почте, если участники команды используют общий ID.",
+  "ui.ignore_account_ids_description":
+    "Сопоставлять только по нормализованной почте, если участники команды используют общий ID.",
   "ui.exclude_team_accounts": "Исключить аккаунты k12/team",
-  "ui.exclude_team_accounts_description": "Эти аккаунты не попадут в группы дубликатов и предложения об удалении.",
+  "ui.exclude_team_accounts_description":
+    "Эти аккаунты не попадут в группы дубликатов и предложения об удалении.",
   "ui.refreshing_deduplication": "Повторное сканирование",
   "ui.scanned_credentials": "Проверено данных",
   "ui.excluded_credentials": "Исключено данных",
@@ -254,10 +381,12 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.read_only_skipped": "Только чтение",
   "ui.missing_identity": "Нет стабильного ID",
   "ui.no_duplicate_accounts": "Дубликаты не найдены",
-  "ui.no_duplicate_accounts_description": "В текущем наборе CPA нет данных с общим надёжным ID аккаунта или нормализованным адресом электронной почты.",
+  "ui.no_duplicate_accounts_description":
+    "В текущем наборе CPA нет данных с общим надёжным ID аккаунта или нормализованным адресом электронной почты.",
   "ui.selected_duplicate_credentials": "Выбрано дубликатов: {count}",
   "ui.review_duplicate_deletions": "Проверить удаление ({count})",
-  "ui.unable_to_prepare_deletion_preview": "Не удалось подготовить просмотр удаления",
+  "ui.unable_to_prepare_deletion_preview":
+    "Не удалось подготовить просмотр удаления",
   "ui.duplicate_identity": "Повторяющаяся учётная запись",
   "ui.duplicate_match_account_id": "Совпадение по ID аккаунта",
   "ui.duplicate_match_email": "Совпадение по нормализованной почте",
@@ -287,9 +416,11 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.ascending": "по возрастанию",
   "ui.descending": "по убыванию",
   "ui.sort_column_next": "Сортировать «{column}» {next}",
-  "ui.sort_column_current_next": "«{column}» сейчас отсортировано {current}; нажмите для сортировки {next}",
+  "ui.sort_column_current_next":
+    "«{column}» сейчас отсортировано {current}; нажмите для сортировки {next}",
   "ui.search": "Поиск",
-  "ui.account_email_filename_or_type": "Учётная запись, email, имя файла или тип",
+  "ui.account_email_filename_or_type":
+    "Учётная запись, email, имя файла или тип",
   "ui.search_accounts": "Поиск учётных записей",
   "ui.clear_search": "Очистить поиск",
   "ui.provider": "Провайдер",
@@ -335,7 +466,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.batch_edit": "Пакетное редактирование",
   "ui.batch_delete": "Пакетное удаление",
   "ui.batch_delete_preview": "Предпросмотр пакетного удаления",
-  "ui.batch_delete_warning": "Плагин не сможет восстановить удалённые файлы Auth. Перед продолжением проверьте область действия.",
+  "ui.batch_delete_warning":
+    "Плагин не сможет восстановить удалённые файлы Auth. Перед продолжением проверьте область действия.",
   "ui.delete_count_accounts": "Удалить аккаунты: {count}",
   "ui.batch_delete_job": "Задание пакетного удаления",
   "ui.deleted": "Удалено",
@@ -348,31 +480,45 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.account_index": "Индекс учётной записи",
   "ui.account_type": "Тип учётной записи",
   "ui.plan_type": "Тип плана",
-	"ui.active_reset_count": "Активные сбросы",
-	"ui.refresh_plan_and_active_reset": "Обновить план и активные сбросы для {account}",
-	"ui.refresh_quota_metadata_action": "Обновить данные квоты",
-	"ui.refresh_token": "Обновить токен",
-	"ui.more_actions_for_account": "Другие действия для {account}",
-	"ui.account_more_actions": "Действия с учётной записью",
-	"ui.token_refreshed_for_account": "Учётные данные {account} обновлены",
-	"ui.host_refresh_unsupported": "Эта версия CPA не поддерживает ручное обновление токена",
-	"ui.refresh_credential_missing": "У этой учётной записи нет токена обновления",
-	"ui.refresh_rejected": "Токен обновления отклонён; войдите снова",
-	"ui.refresh_already_running": "Учётные данные этой учётной записи уже обновляются",
-	"ui.refresh_provider_unsupported": "Обновление токена на стороне плагина пока не поддерживается для этого провайдера",
-	"ui.refresh_conflict": "Учётные данные изменились во время обновления; запись отменена. Повторите с актуальными данными",
-	"ui.refresh_verification_failed": "Учётные данные записаны, но проверка не удалась; перезагрузите учётную запись перед повторной попыткой",
-	"ui.token_refreshed_native": "Учётные данные обновлены встроенными средствами CPA",
-	"ui.token_refreshed_plugin": "В CPA нет встроенного API обновления; плагин безопасно обновил учётные данные Codex",
-	"ui.quota_metadata_refreshed": "План и активные сбросы для {account} обновлены",
-	"ui.quota_metadata_refreshed_with_warning": "План для {account} обновлён, но число активных сбросов сейчас недоступно",
-	"ui.not_collected": "Не получено",
-	"ui.quota_metadata_collected_at": "Получено {time}",
-	"ui.use_active_reset": "Активный сброс",
-	"ui.confirm_active_reset": "Подтвердить активный сброс",
-	"ui.confirm_active_reset_description": "Использовать один активный сброс для {account}? Соответствующая квота Codex будет сброшена немедленно; отменить действие нельзя.",
-	"ui.active_reset_succeeded": "Активный сброс для {account} выполнен; план, квота и остаток сбросов обновлены",
-	"ui.active_reset_succeeded_with_warning": "Активный сброс для {account} выполнен, но свежие данные квоты временно недоступны",
+  "ui.active_reset_count": "Активные сбросы",
+  "ui.refresh_plan_and_active_reset":
+    "Обновить план и активные сбросы для {account}",
+  "ui.refresh_quota_metadata_action": "Обновить данные квоты",
+  "ui.refresh_token": "Обновить токен",
+  "ui.more_actions_for_account": "Другие действия для {account}",
+  "ui.account_more_actions": "Действия с учётной записью",
+  "ui.token_refreshed_for_account": "Учётные данные {account} обновлены",
+  "ui.host_refresh_unsupported":
+    "Эта версия CPA не поддерживает ручное обновление токена",
+  "ui.refresh_credential_missing":
+    "У этой учётной записи нет токена обновления",
+  "ui.refresh_rejected": "Токен обновления отклонён; войдите снова",
+  "ui.refresh_already_running":
+    "Учётные данные этой учётной записи уже обновляются",
+  "ui.refresh_provider_unsupported":
+    "Обновление токена на стороне плагина пока не поддерживается для этого провайдера",
+  "ui.refresh_conflict":
+    "Учётные данные изменились во время обновления; запись отменена. Повторите с актуальными данными",
+  "ui.refresh_verification_failed":
+    "Учётные данные записаны, но проверка не удалась; перезагрузите учётную запись перед повторной попыткой",
+  "ui.token_refreshed_native":
+    "Учётные данные обновлены встроенными средствами CPA",
+  "ui.token_refreshed_plugin":
+    "В CPA нет встроенного API обновления; плагин безопасно обновил учётные данные Codex",
+  "ui.quota_metadata_refreshed":
+    "План и активные сбросы для {account} обновлены",
+  "ui.quota_metadata_refreshed_with_warning":
+    "План для {account} обновлён, но число активных сбросов сейчас недоступно",
+  "ui.not_collected": "Не получено",
+  "ui.quota_metadata_collected_at": "Получено {time}",
+  "ui.use_active_reset": "Активный сброс",
+  "ui.confirm_active_reset": "Подтвердить активный сброс",
+  "ui.confirm_active_reset_description":
+    "Использовать один активный сброс для {account}? Соответствующая квота Codex будет сброшена немедленно; отменить действие нельзя.",
+  "ui.active_reset_succeeded":
+    "Активный сброс для {account} выполнен; план, квота и остаток сбросов обновлены",
+  "ui.active_reset_succeeded_with_warning":
+    "Активный сброс для {account} выполнен, но свежие данные квоты временно недоступны",
   "ui.source": "Источник",
   "ui.status_detail": "Описание статуса",
   "ui.read_only_reason": "Причина режима чтения",
@@ -385,7 +531,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.auto_enable_status": "Автовключение: {status}",
   "ui.auto_enable": "Автовключение",
   "ui.quota_recovery_priority": "Приоритет восстановленной квоты Codex",
-  "ui.quota_recovery_priority_description": "Если свежие данные квоты подтверждают восстановление аккаунта, отключённого проверкой, аккаунт немедленно включается, а его CPA Priority повышается как минимум до 100. Ручные отключения и ошибки учётных данных не изменяются.",
+  "ui.quota_recovery_priority_description":
+    "Если свежие данные квоты подтверждают восстановление аккаунта, отключённого проверкой, аккаунт немедленно включается, а его CPA Priority повышается как минимум до 100. Ручные отключения и ошибки учётных данных не изменяются.",
   "ui.auto_delete": "Автоудаление",
   "ui.manual_inspection_delete": "Удаление по ручной проверке",
   "ui.manual_inspection_bulk_delete": "Пакетное удаление по ручной проверке",
@@ -407,38 +554,46 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.on_2": "Вкл.",
   "ui.off_2": "Выкл.",
   "ui.headers": "Заголовки",
-	"ui.model_policy": "Политика моделей",
-	"ui.model_policy_mode": "Режим политики моделей",
-	"ui.all_models": "Все модели",
-	"ui.model_allowlist": "Белый список",
-	"ui.model_blocklist": "Чёрный список",
-	"ui.loading_models": "Загрузка моделей",
-	"ui.models_could_not_be_loaded": "Не удалось загрузить модели",
-	"ui.common_models_count": "Общих моделей: {count}",
-	"ui.model_catalog_loaded_count": "Загружено аккаунтов: {loaded}/{total}",
-	"ui.model_catalog_failed_count": "Ошибок: {count}",
-	"ui.search_models": "Поиск моделей",
-	"ui.select_all": "Выбрать все",
-	"ui.clear": "Очистить",
-	"ui.available_models": "Доступные модели",
-	"ui.no_matching_models": "Подходящие модели не найдены",
-	"ui.all_models_policy_help": "Снять ограничения моделей, управляемые плагином, сохранив исключения, настроенные вне плагина.",
-	"ui.enable_model_policy_to_load": "Включите это поле, чтобы загрузить эффективный список моделей.",
-	"ui.load_models_before_submitting": "Перед созданием предпросмотра загрузите список моделей.",
-	"ui.select_at_least_one_model": "Для этого режима выберите хотя бы одну модель.",
-	"ui.current_account_configuration": "Текущая конфигурация аккаунта",
-	"ui.current_account_configuration_description": "Загружено из текущего Auth-файла. В предпросмотр попадут только отмеченные поля.",
-	"ui.loading_account_configuration": "Загрузка текущей конфигурации аккаунта",
-	"ui.account_configuration_load_failed": "Не удалось загрузить текущую конфигурацию аккаунта.",
-	"ui.retry_loading_configuration": "Загрузить конфигурацию снова",
-	"ui.plugin_configuration": "Конфигурация плагина",
-	"ui.plugin_configuration_state": "Состояние управления плагином",
-	"ui.managed_by_plugin": "Управляется плагином",
-	"ui.not_managed_by_plugin": "Не управляется плагином",
-	"ui.managed_models": "Управляемые модели",
-	"ui.managed_model_exclusions": "Управляемые исключения",
-	"ui.proxy_credentials_hidden": "Учётные данные прокси скрыты. Выбор поля прокси заменит или очистит текущий адрес.",
-	"ui.header_values_hidden": "Значения заголовков скрыты. Выбор поля заголовков явно добавляет, заменяет или удаляет записи по имени.",
+  "ui.model_policy": "Политика моделей",
+  "ui.model_policy_mode": "Режим политики моделей",
+  "ui.all_models": "Все модели",
+  "ui.model_allowlist": "Белый список",
+  "ui.model_blocklist": "Чёрный список",
+  "ui.loading_models": "Загрузка моделей",
+  "ui.models_could_not_be_loaded": "Не удалось загрузить модели",
+  "ui.common_models_count": "Общих моделей: {count}",
+  "ui.model_catalog_loaded_count": "Загружено аккаунтов: {loaded}/{total}",
+  "ui.model_catalog_failed_count": "Ошибок: {count}",
+  "ui.search_models": "Поиск моделей",
+  "ui.select_all": "Выбрать все",
+  "ui.clear": "Очистить",
+  "ui.available_models": "Доступные модели",
+  "ui.no_matching_models": "Подходящие модели не найдены",
+  "ui.all_models_policy_help":
+    "Снять ограничения моделей, управляемые плагином, сохранив исключения, настроенные вне плагина.",
+  "ui.enable_model_policy_to_load":
+    "Включите это поле, чтобы загрузить эффективный список моделей.",
+  "ui.load_models_before_submitting":
+    "Перед созданием предпросмотра загрузите список моделей.",
+  "ui.select_at_least_one_model":
+    "Для этого режима выберите хотя бы одну модель.",
+  "ui.current_account_configuration": "Текущая конфигурация аккаунта",
+  "ui.current_account_configuration_description":
+    "Загружено из текущего Auth-файла. В предпросмотр попадут только отмеченные поля.",
+  "ui.loading_account_configuration": "Загрузка текущей конфигурации аккаунта",
+  "ui.account_configuration_load_failed":
+    "Не удалось загрузить текущую конфигурацию аккаунта.",
+  "ui.retry_loading_configuration": "Загрузить конфигурацию снова",
+  "ui.plugin_configuration": "Конфигурация плагина",
+  "ui.plugin_configuration_state": "Состояние управления плагином",
+  "ui.managed_by_plugin": "Управляется плагином",
+  "ui.not_managed_by_plugin": "Не управляется плагином",
+  "ui.managed_models": "Управляемые модели",
+  "ui.managed_model_exclusions": "Управляемые исключения",
+  "ui.proxy_credentials_hidden":
+    "Учётные данные прокси скрыты. Выбор поля прокси заменит или очистит текущий адрес.",
+  "ui.header_values_hidden":
+    "Значения заголовков скрыты. Выбор поля заголовков явно добавляет, заменяет или удаляет записи по имени.",
   "ui.note": "Примечание",
   "ui.header_names": "Имена заголовков",
   "ui.usage_and_activity": "Использование и активность",
@@ -453,7 +608,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.last_refresh": "Последнее обновление",
   "ui.next_retry": "Следующая попытка",
   "ui.model_availability_test": "Проверка доступности модели",
-  "ui.single_account_minimal_upstream_usage": "Одна учётная запись · минимальный расход квоты",
+  "ui.single_account_minimal_upstream_usage":
+    "Одна учётная запись · минимальный расход квоты",
   "ui.testing": "Проверка",
   "ui.test_again": "Проверить снова",
   "ui.start_test": "Начать проверку",
@@ -467,7 +623,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.primary_model": "Основная модель",
   "ui.fallback_model": "Резервная модель",
   "ui.final_model": "Доступная модель",
-  "ui.model_fallback_succeeded": "Основная модель не поддерживается; учётная запись доступна через {model}",
+  "ui.model_fallback_succeeded":
+    "Основная модель не поддерживается; учётная запись доступна через {model}",
   "ui.no_available_model": "Доступная модель не найдена",
   "ui.model_probe_attempts": "Попытки проверки модели",
   "ui.primary_attempt": "Основная попытка",
@@ -476,15 +633,21 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.testing_unsupported": "Проверка не поддерживается",
   "ui.manual_confirmation_required": "Требуется ручное подтверждение",
   "ui.received_the_expected_model_response": "Получен ожидаемый ответ модели",
-  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist": "Учётная запись не может использовать эту модель либо модель не существует",
+  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist":
+    "Учётная запись не может использовать эту модель либо модель не существует",
   "ui.account_is_currently_unavailable": "Учётная запись сейчас недоступна",
-  "ui.authentication_failed_check_credential_status": "Ошибка авторизации; проверьте учётные данные",
+  "ui.authentication_failed_check_credential_status":
+    "Ошибка авторизации; проверьте учётные данные",
   "ui.upstream_quota_or_rate_limited": "Ограничена квота или частота запросов",
   "ui.test_request_timed_out": "Истекло время ожидания проверки",
-  "ui.upstream_service_is_temporarily_unavailable": "Вышестоящий сервис временно недоступен",
-  "ui.the_upstream_response_cannot_confirm_model_availability": "Ответ сервиса не подтверждает доступность модели",
-  "ui.this_provider_does_not_support_safe_model_testing_yet": "Безопасная проверка модели для этого провайдера пока не поддерживается",
-  "ui.the_test_result_requires_manual_confirmation": "Результат проверки требует ручного подтверждения",
+  "ui.upstream_service_is_temporarily_unavailable":
+    "Вышестоящий сервис временно недоступен",
+  "ui.the_upstream_response_cannot_confirm_model_availability":
+    "Ответ сервиса не подтверждает доступность модели",
+  "ui.this_provider_does_not_support_safe_model_testing_yet":
+    "Безопасная проверка модели для этого провайдера пока не поддерживается",
+  "ui.the_test_result_requires_manual_confirmation":
+    "Результат проверки требует ручного подтверждения",
   "ui.model": "Модель",
   "ui.latency": "Задержка",
   "ui.tested_at": "Время проверки",
@@ -498,8 +661,10 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.empty_response_body": "Пустое тело ответа",
   "ui.truncated": "Обрезано",
   "ui.delete_account": "Удалить учётную запись",
-  "ui.this_permanently_deletes_the_cpa_auth_file": "Файл авторизации CPA будет удалён безвозвратно",
-  "ui.the_file_is_revalidated_before_deletion": "Перед удалением файл будет повторно проверен на изменения.",
+  "ui.this_permanently_deletes_the_cpa_auth_file":
+    "Файл авторизации CPA будет удалён безвозвратно",
+  "ui.the_file_is_revalidated_before_deletion":
+    "Перед удалением файл будет повторно проверен на изменения.",
   "ui.validating_deletion_target": "Проверка цели удаления",
   "ui.download_account_credentials": "Скачать учётные данные",
   "ui.download_format": "Скачать {format}",
@@ -537,7 +702,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.force_sync_preview": "Предпросмотр принудительной синхронизации",
   "ui.overwrite_count_files": "Перезаписать файлов: {count}",
   "ui.managed_fields": "Перезаписываемые поля",
-  "ui.existing_field_values_will_be_overwritten": "Существующие значения будут перезаписаны",
+  "ui.existing_field_values_will_be_overwritten":
+    "Существующие значения будут перезаписаны",
   "ui.only_the_managed_fields_above": "Только управляемые поля выше",
   "ui.will_overwrite": "Будет перезаписано",
   "ui.mode_fill_missing_fields": "Режим: заполнить отсутствующие поля",
@@ -554,9 +720,12 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.failed": "Ошибка",
   "ui.enable_default_policy": "Включить политику по умолчанию",
   "ui.new_account_model_probe": "Проверка моделей новых аккаунтов",
-  "ui.new_account_model_probe_description": "Проверять основную, резервную и совместимую модели при обнаружении нового аккаунта Codex",
-  "ui.enable_new_account_model_probe": "Включить проверку моделей новых аккаунтов",
-  "ui.new_account_model_probe_storage_error": "Не удалось сохранить состояние проверки новых аккаунтов. Убедитесь, что data_dir плагина доступен для записи и подключён к постоянному хранилищу.",
+  "ui.new_account_model_probe_description":
+    "Проверять основную, резервную и совместимую модели при обнаружении нового аккаунта Codex",
+  "ui.enable_new_account_model_probe":
+    "Включить проверку моделей новых аккаунтов",
+  "ui.new_account_model_probe_storage_error":
+    "Не удалось сохранить состояние проверки новых аккаунтов. Убедитесь, что data_dir плагина доступен для записи и подключён к постоянному хранилищу.",
   "ui.default_priority": "Приоритет по умолчанию",
   "ui.default_websockets": "WebSockets по умолчанию",
   "ui.scan_interval": "Интервал проверки",
@@ -580,14 +749,17 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.interrupted_2": "Прервано",
   "ui.no_item_results_yet": "Результатов по элементам пока нет",
   "ui.inspection_and_automation_settings": "Настройки проверки и автоматизации",
-  "ui.all_writes_require_management_authentication": "Все операции записи защищены авторизацией управления",
+  "ui.all_writes_require_management_authentication":
+    "Все операции записи защищены авторизацией управления",
   "ui.save_settings": "Сохранить настройки",
   "ui.inspection_schedule": "Расписание проверки",
-  "ui.cpa_native_status_and_usage_evidence": "Каждый запуск проверяет все подключённые к CPA аккаунты по статусам и данным использования CPA",
+  "ui.cpa_native_status_and_usage_evidence":
+    "Каждый запуск проверяет все подключённые к CPA аккаунты по статусам и данным использования CPA",
   "ui.scheduled_inspection": "Проверка по расписанию",
   "ui.full_scheduled_active_inspection": "Полная плановая активная проверка",
   "ui.anomaly_trigger": "Запуск по доле аномалий",
-  "ui.anomaly_trigger_description": "При достижении порога достоверных аномалий можно запустить полную активную проверку",
+  "ui.anomaly_trigger_description":
+    "При достижении порога достоверных аномалий можно запустить полную активную проверку",
   "ui.enable_anomaly_trigger": "Включить запуск по доле аномалий",
   "ui.anomaly_threshold": "Порог аномалий",
   "ui.minimum_sample": "Минимальная достоверная выборка",
@@ -595,62 +767,90 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.external_get_notification": "Внешнее GET-уведомление",
   "ui.notification_only_mode": "Только уведомление, без повторной проверки",
   "ui.external_notifications": "Внешние уведомления",
-  "ui.external_notifications_description": "Проверять условия пула после инспекции и отправлять одно сводное GET-уведомление при достижении порога",
+  "ui.external_notifications_description":
+    "Проверять условия пула после инспекции и отправлять одно сводное GET-уведомление при достижении порога",
   "ui.notification_endpoints": "Адреса уведомлений",
   "ui.generic_notifications": "Общие уведомления",
-  "ui.generic_notifications_description": "Глобальные пороги доступности и аномалий отправляются только на адреса с общим режимом.",
+  "ui.generic_notifications_description":
+    "Глобальные пороги доступности и аномалий отправляются только на адреса с общим режимом.",
   "ui.policy_notifications": "Уведомления по политикам",
-  "ui.policy_notifications_description": "Фильтруйте аккаунты вложенными условиями поставщика, тарифа и домена, затем уведомляйте при пересечении порога доступности.",
+  "ui.policy_notifications_description":
+    "Фильтруйте аккаунты вложенными условиями поставщика, тарифа и домена, затем уведомляйте при пересечении порога доступности.",
   "ui.add_notification_policy": "Добавить уведомление по политике",
   "ui.add_policy_notification_endpoint": "Добавить адрес политики",
   "ui.policy_notification_endpoints": "Адреса уведомлений по политикам",
   "ui.policy_notification_endpoints_for": "Адреса уведомлений политики {name}",
-  "ui.policy_notification_endpoints_description": "Эти адреса независимо запускаются текущей политикой.",
-  "ui.no_generic_notification_endpoints": "Общие адреса уведомлений не настроены",
-  "ui.no_policy_notification_endpoints": "Адреса уведомлений по политикам не настроены",
+  "ui.policy_notification_endpoints_description":
+    "Эти адреса независимо запускаются текущей политикой.",
+  "ui.no_generic_notification_endpoints":
+    "Общие адреса уведомлений не настроены",
+  "ui.no_policy_notification_endpoints":
+    "Адреса уведомлений по политикам не настроены",
   "ui.move_notification_endpoint_up": "Переместить адрес выше",
   "ui.move_notification_endpoint_down": "Переместить адрес ниже",
   "ui.no_notification_policies": "Политики уведомлений не настроены",
   "ui.notification_policy_name": "Название политики",
   "ui.default_notification_policy_name": "Уведомление политики {number}",
   "ui.notification_policy_number": "Политика уведомлений {number}",
-  "ui.notification_policy_name_number": "Название политики уведомлений {number}",
+  "ui.notification_policy_name_number":
+    "Название политики уведомлений {number}",
   "ui.move_notification_policy_up": "Переместить политику выше",
   "ui.move_notification_policy_down": "Переместить политику ниже",
   "ui.delete_notification_policy": "Удалить политику уведомлений",
-  "ui.confirm_remove_notification_policy": "Удалить уведомление политики {name} и все его адреса?",
+  "ui.confirm_remove_notification_policy":
+    "Удалить уведомление политики {name} и все его адреса?",
   "ui.notification_threshold_conditions": "Условия запуска",
   "ui.notification_threshold_operator": "Оператор условий запуска",
-  "ui.threshold_match_all_hint": "Уведомление отправляется, когда достигнуты все включенные пороги",
-  "ui.threshold_match_any_hint": "Уведомление отправляется, когда достигнут любой включенный порог",
-  "ui.notification_policy_name_required": "У каждой политики уведомлений должно быть название",
-  "ui.notification_policy_name_duplicate": "Название политики «{name}» уже существует; используйте уникальное название",
-  "ui.notification_policy_threshold_required": "В каждой политике должен быть включён хотя бы один порог доступности",
-  "ui.notification_policy_binding_invalid": "У адреса уведомления политики недопустимый владелец; обновите страницу и настройте его снова",
-  "ui.generic_notification_endpoint_required": "Для общих уведомлений включите хотя бы один адрес в общем режиме",
-  "ui.policy_notification_endpoint_required": "Включите хотя бы один адрес внутри активного уведомления политики",
-  "ui.policy_notification_endpoint_required_named": "Включите адрес внутри уведомления политики {name}",
-  "ui.notification_policy_order_hint": "Порядок нужен только для управления; все совпавшие политики проверяются независимо.",
-  "ui.save_notification_policy_before_testing": "Сохраните уведомление политики перед предварительным просмотром или тестом",
+  "ui.threshold_match_all_hint":
+    "Уведомление отправляется, когда достигнуты все включенные пороги",
+  "ui.threshold_match_any_hint":
+    "Уведомление отправляется, когда достигнут любой включенный порог",
+  "ui.notification_policy_name_required":
+    "У каждой политики уведомлений должно быть название",
+  "ui.notification_policy_name_duplicate":
+    "Название политики «{name}» уже существует; используйте уникальное название",
+  "ui.notification_policy_threshold_required":
+    "В каждой политике должен быть включён хотя бы один порог доступности",
+  "ui.notification_policy_binding_invalid":
+    "У адреса уведомления политики недопустимый владелец; обновите страницу и настройте его снова",
+  "ui.generic_notification_endpoint_required":
+    "Для общих уведомлений включите хотя бы один адрес в общем режиме",
+  "ui.policy_notification_endpoint_required":
+    "Включите хотя бы один адрес внутри активного уведомления политики",
+  "ui.policy_notification_endpoint_required_named":
+    "Включите адрес внутри уведомления политики {name}",
+  "ui.notification_policy_order_hint":
+    "Порядок нужен только для управления; все совпавшие политики проверяются независимо.",
+  "ui.save_notification_policy_before_testing":
+    "Сохраните уведомление политики перед предварительным просмотром или тестом",
   "ui.add_notification_endpoint": "Добавить адрес",
   "ui.notification_endpoint_name": "Название",
   "ui.notification_endpoint_name_number": "Название адреса {number}",
   "ui.notification_endpoint_number": "Адрес уведомлений {number}",
-  "ui.notification_endpoint_enabled_number": "Включить адрес уведомлений {number}",
+  "ui.notification_endpoint_enabled_number":
+    "Включить адрес уведомлений {number}",
   "ui.notification_endpoint_url_number": "Шаблон URL адреса {number}",
-  "ui.notification_endpoint_parameter_number": "Вставить параметр в адрес {number}",
+  "ui.notification_endpoint_parameter_number":
+    "Вставить параметр в адрес {number}",
   "ui.remove_notification_endpoint": "Удалить адрес",
-  "ui.remove_notification_endpoint_number": "Удалить адрес уведомлений {number}",
-  "ui.confirm_remove_notification_endpoint": "Удалить адрес уведомлений {name}?",
-  "ui.confirm_remove_notification_endpoint_number": "Удалить адрес уведомлений {number}?",
+  "ui.remove_notification_endpoint_number":
+    "Удалить адрес уведомлений {number}",
+  "ui.confirm_remove_notification_endpoint":
+    "Удалить адрес уведомлений {name}?",
+  "ui.confirm_remove_notification_endpoint_number":
+    "Удалить адрес уведомлений {number}?",
   "ui.no_notification_endpoints": "Адреса уведомлений не настроены",
   "ui.notification_endpoint_count": "Адресов: {count} из {max}",
-  "ui.notification_endpoint_limit_reached": "Разрешено не более {count} адресов уведомлений",
-  "ui.notification_duplicate_url": "URL адресов уведомлений должны быть уникальными",
-  "ui.notification_enabled_endpoint_required": "Перед включением условия уведомления включите хотя бы один адрес",
+  "ui.notification_endpoint_limit_reached":
+    "Разрешено не более {count} адресов уведомлений",
+  "ui.notification_duplicate_url":
+    "URL адресов уведомлений должны быть уникальными",
+  "ui.notification_enabled_endpoint_required":
+    "Перед включением условия уведомления включите хотя бы один адрес",
   "ui.notification_settings_saved": "Настройки внешних уведомлений сохранены",
   "ui.notify_on_anomaly_ratio": "Уведомлять при достижении порога аномалий",
-  "ui.notify_when_available_accounts_low": "Уведомлять при малом числе доступных аккаунтов",
+  "ui.notify_when_available_accounts_low":
+    "Уведомлять при малом числе доступных аккаунтов",
   "ui.available_accounts_threshold": "Доступных аккаунтов меньше",
   "ui.notify_when_availability_low": "Уведомлять при низкой общей доступности",
   "ui.availability_percent_threshold": "Общая доступность ниже",
@@ -658,13 +858,19 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.notification_url_template": "Шаблон URL уведомления",
   "ui.insert_notification_parameter": "Вставить параметр уведомления",
   "ui.select_parameter": "Выберите параметр",
-  "ui.notification_url_is_required": "При включенных внешних уведомлениях требуется шаблон URL",
-  "ui.notification_url_must_use_https": "URL уведомления должен использовать HTTPS",
-  "ui.notification_available_accounts_must_be_between_1_and_10000": "Порог доступных аккаунтов должен быть от 1 до 10000",
-  "ui.notification_availability_percent_must_be_between_1_and_100": "Порог общей доступности должен быть от 1% до 100%",
-  "ui.notification_cooldown_must_be_between_5_and_1440_minutes": "Пауза между уведомлениями должна быть от 5 до 1440 минут",
+  "ui.notification_url_is_required":
+    "При включенных внешних уведомлениях требуется шаблон URL",
+  "ui.notification_url_must_use_https":
+    "URL уведомления должен использовать HTTPS",
+  "ui.notification_available_accounts_must_be_between_1_and_10000":
+    "Порог доступных аккаунтов должен быть от 1 до 10000",
+  "ui.notification_availability_percent_must_be_between_1_and_100":
+    "Порог общей доступности должен быть от 1% до 100%",
+  "ui.notification_cooldown_must_be_between_5_and_1440_minutes":
+    "Пауза между уведомлениями должна быть от 5 до 1440 минут",
   "ui.notification_parameter_full_details": "Вставить полный набор параметров",
-  "ui.notification_full_message_template": "Событие ${event}; доступно ${available_accounts}/${total_accounts}; доступность ${available_percent}; аномальных ${abnormal_accounts} (${abnormal_percent}); квота исчерпана ${quota_limited_accounts}; недействительные данные ${invalid_credential_accounts}; временно недоступно ${unavailable_accounts}; отключено ${disabled_accounts}; время ${triggered_at}",
+  "ui.notification_full_message_template":
+    "Событие ${event}; доступно ${available_accounts}/${total_accounts}; доступность ${available_percent}; аномальных ${abnormal_accounts} (${abnormal_percent}); квота исчерпана ${quota_limited_accounts}; недействительные данные ${invalid_credential_accounts}; временно недоступно ${unavailable_accounts}; отключено ${disabled_accounts}; время ${triggered_at}",
   "ui.notification_preview_and_test": "Предпросмотр и тест уведомления",
   "ui.preview_notification": "Предпросмотр",
   "ui.send_test_notification": "Отправить тест",
@@ -682,14 +888,20 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.notification_parameter_available_percent": "Общая доступность",
   "ui.notification_parameter_abnormal_accounts": "Аномальные учетные записи",
   "ui.notification_parameter_abnormal_percent": "Доля аномалий",
-  "ui.notification_parameter_quota_limited_accounts": "Учетные записи с ограниченной квотой",
-  "ui.notification_parameter_invalid_credential_accounts": "Учетные записи с недействительными данными",
-  "ui.notification_parameter_deactivated_accounts": "Деактивированные учетные записи",
-  "ui.notification_parameter_unavailable_accounts": "Временно недоступные учетные записи",
+  "ui.notification_parameter_quota_limited_accounts":
+    "Учетные записи с ограниченной квотой",
+  "ui.notification_parameter_invalid_credential_accounts":
+    "Учетные записи с недействительными данными",
+  "ui.notification_parameter_deactivated_accounts":
+    "Деактивированные учетные записи",
+  "ui.notification_parameter_unavailable_accounts":
+    "Временно недоступные учетные записи",
   "ui.notification_parameter_disabled_accounts": "Отключенные учетные записи",
   "ui.notification_parameter_threshold_percent": "Порог запуска",
-  "ui.notification_parameter_available_accounts_threshold": "Порог доступных аккаунтов",
-  "ui.notification_parameter_availability_percent_threshold": "Порог общей доступности",
+  "ui.notification_parameter_available_accounts_threshold":
+    "Порог доступных аккаунтов",
+  "ui.notification_parameter_availability_percent_threshold":
+    "Порог общей доступности",
   "ui.notification_parameter_triggered_at": "Время запуска",
   "ui.notification_parameter_policy_name": "Название политики уведомлений",
   "ui.percent": "%",
@@ -701,42 +913,55 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.passive_failure_threshold": "Порог пассивных сбоев",
   "ui.passive_failure_window": "Окно пассивных сбоев",
   "ui.passive_circuit_duration": "Длительность временного отключения",
-  "ui.passive_circuit_description": "Повторяющиеся неоднозначные сбои запросов CPA или активных проверок могут временно отключить учётную запись. Ручные отключения не присваиваются, а временные отключения никогда не ведут к удалению.",
+  "ui.passive_circuit_description":
+    "Повторяющиеся неоднозначные сбои запросов CPA или активных проверок могут временно отключить учётную запись. Ручные отключения не присваиваются, а временные отключения никогда не ведут к удалению.",
   "ui.account_disposition": "Обработка учётных записей",
-  "ui.only_accounts_disabled_by_inspection_can_be_restored": "Восстанавливать только отключённые проверкой учётные записи",
+  "ui.only_accounts_disabled_by_inspection_can_be_restored":
+    "Восстанавливать только отключённые проверкой учётные записи",
   "ui.deletion_grace": "Льготный период удаления",
   "ui.hours": "часов",
   "ui.deletes_per_run": "Удалений за запуск",
   "ui.accounts_2": "учётных записей",
   "ui.confirm_auto_delete": "Подтвердить автоудаление",
-  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period": "Подтвердите автоудаление только явно деактивированных и отключённых проверкой учётных записей после льготного периода",
-  "ui.delete_persistent_invalid_credentials": "Удалять постоянно недействительные учётные данные",
-  "ui.confirm_invalid_credential_deletion": "Подтвердить удаление недействительных данных",
-  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation": "Подтвердите удаление только после устойчивого достоверного сбоя аутентификации, отключения проверкой, периода ожидания и повторной проверки перед удалением",
+  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period":
+    "Подтвердите автоудаление только явно деактивированных и отключённых проверкой учётных записей после льготного периода",
+  "ui.delete_persistent_invalid_credentials":
+    "Удалять постоянно недействительные учётные данные",
+  "ui.confirm_invalid_credential_deletion":
+    "Подтвердить удаление недействительных данных",
+  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation":
+    "Подтвердите удаление только после устойчивого достоверного сбоя аутентификации, отключения проверкой, периода ожидания и повторной проверки перед удалением",
   "ui.plugin_updates": "Обновления плагина",
   "ui.cpa_plugin_store_updates": "Магазин плагинов CPA",
   "ui.check_for_updates": "Проверить обновления",
   "ui.check_interval": "Интервал проверки",
   "ui.auto_update": "Автообновление",
   "ui.confirm_auto_update": "Подтвердить автообновление",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "Подтвердите автоматическую установку версий, проверенных магазином CPA, пока активно авторизованное управление плагином",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active":
+    "Подтвердите автоматическую установку версий, проверенных магазином CPA, пока активно авторизованное управление плагином",
   "ui.authentication_failed": "Ошибка авторизации",
   "ui.request_failed": "Ошибка запроса",
   "ui.request_timeout": "Время ожидания запроса истекло. Повторите попытку.",
   "ui.invalid_json_response": "Сервер вернул некорректный JSON-ответ",
-  "ui.invalid_api_response": "Сервер вернул ответ с недопустимой структурой; текущие данные сохранены. Повторите попытку позже.",
-  "ui.invalid_accounts_response": "CPA вернул недопустимый список аккаунтов; текущие данные сохранены. Повторите попытку позже.",
+  "ui.invalid_api_response":
+    "Сервер вернул ответ с недопустимой структурой; текущие данные сохранены. Повторите попытку позже.",
+  "ui.invalid_accounts_response":
+    "CPA вернул недопустимый список аккаунтов; текущие данные сохранены. Повторите попытку позже.",
   "ui.deleted_account_account": "Учётная запись {account} удалена",
   "ui.added_count_accounts": "Добавлено учётных записей: {count}",
-  "ui.added_count_accounts_failed_not_written": "Добавлено учётных записей: {count}; не записано: {failed}",
-  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped": "Скачаны учётные данные {format}: {count}; пропущено: {skipped}",
+  "ui.added_count_accounts_failed_not_written":
+    "Добавлено учётных записей: {count}; не записано: {failed}",
+  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped":
+    "Скачаны учётные данные {format}: {count}; пропущено: {skipped}",
   "ui.exported_results_as_format": "Результаты экспортированы в {format}",
   "ui.count_selected_accounts": "Выбрано учётных записей: {count}",
   "ui.count_filtered_accounts": "Отфильтровано учётных записей: {count}",
   "ui.selected_accounts": "Выбранные учётные записи",
   "ui.count_accounts": "Учётных записей: {count}",
-  "ui.count_records_page_page_slash_pages": "Записей: {count} · Страница {page}/{pages}",
-  "ui.select_editable_accounts_on_this_page": "Выбрать редактируемые учётные записи на этой странице",
+  "ui.count_records_page_page_slash_pages":
+    "Записей: {count} · Страница {page}/{pages}",
+  "ui.select_editable_accounts_on_this_page":
+    "Выбрать редактируемые учётные записи на этой странице",
   "ui.select_account": "Выбрать {account}",
   "ui.view_account": "Просмотреть {account}",
   "ui.test_model_for_account": "Проверить модель для {account}",
@@ -746,24 +971,33 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.policy_unavailable": "Политика недоступна",
   "ui.retry": "Повторить",
   "ui.default_policy_sync": "Синхронизация политики по умолчанию",
-  "ui.default_policy_force_sync": "Принудительная синхронизация политики по умолчанию",
+  "ui.default_policy_force_sync":
+    "Принудительная синхронизация политики по умолчанию",
   "ui.proxy_configured": "Прокси настроен",
   "ui.no_proxy": "Прокси не настроен",
   "ui.total_tokens_count": "Всего токенов: {count}",
   "ui.no_cpa_usage_data_received": "Данные использования CPA ещё не получены",
   "ui.awaiting_usage_collection": "Ожидание данных об использовании",
   "ui.waiting_for_quota_recovery": "Ожидание восстановления квоты",
-  "ui.collecting_usage_for_count_imported_accounts": "Сбор данных для импортированных аккаунтов: {count}",
-  "ui.total_requests_success_succeeded_failed_failed": "Всего запросов: успешно {success}, с ошибкой {failed}",
-  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time": "Недавние запросы CPA: {count} за {windows} интервалов; последний запрос {time}",
-  "ui.recent_cpa_requests_count_across_windows_windows": "Недавние запросы CPA: {count} за {windows} интервалов",
+  "ui.collecting_usage_for_count_imported_accounts":
+    "Сбор данных для импортированных аккаунтов: {count}",
+  "ui.total_requests_success_succeeded_failed_failed":
+    "Всего запросов: успешно {success}, с ошибкой {failed}",
+  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time":
+    "Недавние запросы CPA: {count} за {windows} интервалов; последний запрос {time}",
+  "ui.recent_cpa_requests_count_across_windows_windows":
+    "Недавние запросы CPA: {count} за {windows} интервалов",
   "ui.last_request_time": "Последний запрос {time}",
   "ui.no_recent_cpa_request_windows": "Нет недавних интервалов запросов CPA",
-  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "Квота Codex появится после получения CPA соответствующих заголовков ответа",
-  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA пока не предоставляет данные о квоте Agent Identity",
+  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers":
+    "Квота Codex появится после получения CPA соответствующих заголовков ответа",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota":
+    "CPA пока не предоставляет данные о квоте Agent Identity",
   "ui.quota": "Квота",
-  "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label}: использовано {percent}%, сброс {reset}, окно {minutes} мин.",
-  "ui.label_percent_percent_used_resets_reset": "{label}: использовано {percent}%, сброс {reset}",
+  "ui.label_percent_percent_used_resets_reset_minutes_minute_window":
+    "{label}: использовано {percent}%, сброс {reset}, окно {minutes} мин.",
+  "ui.label_percent_percent_used_resets_reset":
+    "{label}: использовано {percent}%, сброс {reset}",
   "ui.label_usage_percent_percent": "Использование {label}: {percent}%",
   "ui.overdraft_usage": "Перерасход квоты",
 
@@ -771,35 +1005,52 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.overdraft_cycle_inconclusive": "Овердрафт не определён",
   "ui.overdraft_cycle_failed": "Овердрафт не подтверждён",
   "ui.overdraft_cycle_passed": "Овердрафт подтверждён",
-  "ui.overdraft_cycle_pending": "Овердрафт проверяется",  "ui.overdraft_credit_usage_window": "Расчётная стоимость перерасхода {label}: {amount}; с ценой: {rated}; без цены: {unrated}. Сумма уже включена в общий итог аккаунта.",
-  "ui.overdraft_credit_usage_detail": "{amount} · с ценой {rated} · без цены {unrated} · включено в итог аккаунта",
+  "ui.overdraft_cycle_pending": "Овердрафт проверяется",
+  "ui.overdraft_credit_usage_window":
+    "Расчётная стоимость перерасхода {label}: {amount}; с ценой: {rated}; без цены: {unrated}. Сумма уже включена в общий итог аккаунта.",
+  "ui.overdraft_credit_usage_detail":
+    "{amount} · с ценой {rated} · без цены {unrated} · включено в итог аккаунта",
   "ui.5_hour_overdraft_credit_usage": "Стоимость перерасхода за 5 часов",
   "ui.7_day_overdraft_credit_usage": "Стоимость перерасхода за 7 дней",
-  "ui.overdraft_usage_window": "Перерасход {label}: {percent}% (общее использование {total}%)",
-  "ui.overdraft_usage_window_observed": "Перерасход {label} от базового значения, зафиксированного после неудачной обычной проверки: {tokens} токенов в {requests} успешных запросах (официальное использование {total}%)",
+  "ui.overdraft_usage_window":
+    "Перерасход {label}: {percent}% (общее использование {total}%)",
+  "ui.overdraft_usage_window_observed":
+    "Перерасход {label} от базового значения, зафиксированного после неудачной обычной проверки: {tokens} токенов в {requests} успешных запросах (официальное использование {total}%)",
   "ui.overdraft_tokens_value": "{count} ток.",
   "ui.overdraft_requests_value": "{count} запросов",
-  "ui.overdraft_usage_included_in_total": "Учёт начинается только после того, как обычная проверка подтверждает отказ при 100%; неудачные запросы не учитываются. Последующий перерасход не сдвигает зафиксированное время исчерпания и автовключения. Цикл завершается при возврате квоты к 0% или успешном автовключении. Окна 5 ч и 7 дн учитываются отдельно.",
-  "ui.count_read_only_targets_will_be_skipped": "Целей только для чтения будет пропущено: {count}",
-  "ui.count_targets_are_read_only_and_will_be_skipped": "Целей только для чтения будет автоматически пропущено: {count}",
-  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped": "Выбранных целей больше не существует и будет пропущено: {count}",
-  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts": "Цели относятся к нескольким провайдерам; подтвердите применимость полей ко всем учётным записям",
-  "ui.select_at_least_one_default_field_before_enabling_the_policy": "Перед включением политики выберите хотя бы одно поле по умолчанию",
+  "ui.overdraft_usage_included_in_total":
+    "Учёт начинается только после того, как обычная проверка подтверждает отказ при 100%; неудачные запросы не учитываются. Последующий перерасход не сдвигает зафиксированное время исчерпания и автовключения. Цикл завершается при возврате квоты к 0% или успешном автовключении. Окна 5 ч и 7 дн учитываются отдельно.",
+  "ui.count_read_only_targets_will_be_skipped":
+    "Целей только для чтения будет пропущено: {count}",
+  "ui.count_targets_are_read_only_and_will_be_skipped":
+    "Целей только для чтения будет автоматически пропущено: {count}",
+  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped":
+    "Выбранных целей больше не существует и будет пропущено: {count}",
+  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts":
+    "Цели относятся к нескольким провайдерам; подтвердите применимость полей ко всем учётным записям",
+  "ui.select_at_least_one_default_field_before_enabling_the_policy":
+    "Перед включением политики выберите хотя бы одно поле по умолчанию",
   "ui.priority_must_be_an_integer": "Приоритет должен быть целым числом",
   "ui.account_concurrency": "Параллельность аккаунта",
   "ui.account_concurrency_value": "Значение параллельности аккаунта",
-  "ui.account_concurrency_must_be_an_integer": "Параллельность аккаунта должна быть целым числом",
-  "ui.account_concurrency_range": "Параллельность аккаунта должна быть от 0 до 1000",
+  "ui.account_concurrency_must_be_an_integer":
+    "Параллельность аккаунта должна быть целым числом",
+  "ui.account_concurrency_range":
+    "Параллельность аккаунта должна быть от 0 до 1000",
   "ui.account_concurrency_zero_unlimited": "0 означает без ограничения",
-  "ui.account_concurrency_unavailable_old_cpa": "Эта версия CPA не поддерживает параллельность аккаунтов. Обновитесь до версии с request lifecycle schema v2.",
+  "ui.account_concurrency_unavailable_old_cpa":
+    "Эта версия CPA не поддерживает параллельность аккаунтов. Обновитесь до версии с request lifecycle schema v2.",
   "ui.account_concurrency_active_limit": "{active}/{limit}",
   "ui.unlimited": "Без ограничения",
-  "ui.scan_interval_must_be_an_integer": "Интервал проверки должен быть целым числом",
-  "ui.scan_interval_must_be_between_5_and_300_seconds": "Интервал проверки должен быть от 5 до 300 секунд",
+  "ui.scan_interval_must_be_an_integer":
+    "Интервал проверки должен быть целым числом",
+  "ui.scan_interval_must_be_between_5_and_300_seconds":
+    "Интервал проверки должен быть от 5 до 300 секунд",
   "ui.auth_files": "Файлы авторизации",
   "ui.header_name_is_duplicated": "Заголовок {name} повторяется",
   "ui.header_name_has_no_value": "У заголовка {name} отсутствует значение",
-  "ui.add_at_least_one_header_operation": "Добавьте хотя бы одну операцию с заголовком",
+  "ui.add_at_least_one_header_operation":
+    "Добавьте хотя бы одну операцию с заголовком",
   "ui.generate_preview": "Создать предпросмотр",
   "ui.enabled_state_value": "Значение состояния включения",
   "ui.enable": "Включить",
@@ -810,28 +1061,49 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.set": "Задать",
   "ui.remove": "Удалить",
   "ui.delete_header_row": "Удалить строку заголовка",
-  "ui.inspection_interval_must_be_between_5_and_1440_minutes": "Интервал проверки должен быть от 5 до 1440 минут",
-  "ui.failure_threshold_must_be_between_2_and_10_events": "Порог сбоев должен быть от 2 до 10 событий",
-  "ui.recovery_threshold_must_be_between_1_and_10_events": "Порог восстановления должен быть от 1 до 10 событий",
-  "ui.passive_failure_threshold_must_be_between_2_and_100_events": "Порог пассивных сбоев должен быть от 2 до 100 событий",
-  "ui.passive_failure_window_must_be_between_1_and_1440_minutes": "Окно пассивных сбоев должно быть от 1 до 1440 минут",
-  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes": "Длительность пассивного отключения должна быть от 1 до 1440 минут",
-  "ui.passive_circuit_requires_auto_disable_and_auto_enable": "Пассивный предохранитель требует автоотключения и автовключения",
-  "ui.deletion_grace_must_be_between_24_and_8760_hours": "Льготный период удаления должен быть от 24 до 8760 часов",
-  "ui.deletes_per_run_must_be_between_1_and_100": "Число удалений за запуск должно быть от 1 до 100",
-  "ui.update_check_interval_must_be_between_1_and_168_hours": "Интервал проверки обновлений должен быть от 1 до 168 часов",
-  "ui.anomaly_threshold_must_be_between_1_and_100_percent": "Порог аномалий должен быть от 1% до 100%",
-  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts": "Минимальная достоверная выборка должна быть от 1 до 10 000 учётных записей",
-  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes": "Пауза между запусками должна быть от 5 до 1440 минут",
-  "ui.confirm_the_risk_before_deleting_invalid_credentials": "Подтвердите риск перед включением удаления недействительных учётных данных",
+  "ui.inspection_interval_must_be_between_5_and_1440_minutes":
+    "Интервал проверки должен быть от 5 до 1440 минут",
+  "ui.failure_threshold_must_be_between_2_and_10_events":
+    "Порог сбоев должен быть от 2 до 10 событий",
+  "ui.recovery_threshold_must_be_between_1_and_10_events":
+    "Порог восстановления должен быть от 1 до 10 событий",
+  "ui.passive_failure_threshold_must_be_between_2_and_100_events":
+    "Порог пассивных сбоев должен быть от 2 до 100 событий",
+  "ui.passive_failure_window_must_be_between_1_and_1440_minutes":
+    "Окно пассивных сбоев должно быть от 1 до 1440 минут",
+  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes":
+    "Длительность пассивного отключения должна быть от 1 до 1440 минут",
+  "ui.passive_circuit_requires_auto_disable_and_auto_enable":
+    "Пассивный предохранитель требует автоотключения и автовключения",
+  "ui.deletion_grace_must_be_between_24_and_8760_hours":
+    "Льготный период удаления должен быть от 24 до 8760 часов",
+  "ui.deletes_per_run_must_be_between_1_and_100":
+    "Число удалений за запуск должно быть от 1 до 100",
+  "ui.update_check_interval_must_be_between_1_and_168_hours":
+    "Интервал проверки обновлений должен быть от 1 до 168 часов",
+  "ui.anomaly_threshold_must_be_between_1_and_100_percent":
+    "Порог аномалий должен быть от 1% до 100%",
+  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts":
+    "Минимальная достоверная выборка должна быть от 1 до 10 000 учётных записей",
+  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes":
+    "Пауза между запусками должна быть от 5 до 1440 минут",
+  "ui.confirm_the_risk_before_deleting_invalid_credentials":
+    "Подтвердите риск перед включением удаления недействительных учётных данных",
   "ui.auto_delete_requires_auto_disable": "Автоудаление требует автоотключения",
-  "ui.confirm_the_risk_before_enabling_auto_delete": "Подтвердите риск перед включением автоудаления",
-  "ui.auto_update_requires_update_checks": "Автообновление требует проверки обновлений",
-  "ui.confirm_the_risk_before_enabling_auto_update": "Подтвердите риск перед включением автообновления",
-  "ui.file_is_not_a_json_text_json_or_zip_file": "Файл {file} не является JSON, текстовым JSON или ZIP",
-  "ui.select_at_most_count_files_at_once": "За один раз можно выбрать не более {count} файлов",
-  "ui.selected_files_exceed_12_mib_in_total": "Общий размер выбранных файлов превышает 12 МиБ",
-  "ui.select_json_text_json_or_zip_files": "Выберите файлы JSON, текстовый JSON или ZIP",
+  "ui.confirm_the_risk_before_enabling_auto_delete":
+    "Подтвердите риск перед включением автоудаления",
+  "ui.auto_update_requires_update_checks":
+    "Автообновление требует проверки обновлений",
+  "ui.confirm_the_risk_before_enabling_auto_update":
+    "Подтвердите риск перед включением автообновления",
+  "ui.file_is_not_a_json_text_json_or_zip_file":
+    "Файл {file} не является JSON, текстовым JSON или ZIP",
+  "ui.select_at_most_count_files_at_once":
+    "За один раз можно выбрать не более {count} файлов",
+  "ui.selected_files_exceed_12_mib_in_total":
+    "Общий размер выбранных файлов превышает 12 МиБ",
+  "ui.select_json_text_json_or_zip_files":
+    "Выберите файлы JSON, текстовый JSON или ZIP",
   "ui.enter_json_content": "Введите содержимое JSON",
   "ui.json_content_exceeds_12_mib": "Содержимое JSON превышает 12 МиБ",
   "ui.add_more": "Добавить ещё",
@@ -841,7 +1113,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.multiple_files": "Несколько файлов",
   "ui.text_json": "Текстовый JSON",
   "ui.select_json_slash_text_slash_zip": "Выбрать JSON / текст / ZIP",
-  "ui.select_json_text_json_or_zip_files_2": "Выбрать файлы JSON, текстовый JSON или ZIP",
+  "ui.select_json_text_json_or_zip_files_2":
+    "Выбрать файлы JSON, текстовый JSON или ZIP",
   "ui.selected_import_files": "Выбранные файлы импорта",
   "ui.remove_file": "Удалить {file}",
   "ui.json_text": "Текст JSON",
@@ -854,37 +1127,57 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.import_complete": "Импорт завершён",
   "ui.import_started_in_background": "Импорт учётных записей запущен в фоне",
   "ui.import_running_in_background": "Учётные записи импортируются в фоне",
-  "ui.import_can_continue_after_closing": "Это окно можно закрыть: задача продолжится и останется доступна в журнале операций.",
+  "ui.import_can_continue_after_closing":
+    "Это окно можно закрыть: задача продолжится и останется доступна в журнале операций.",
   "ui.import_partially_complete": "Импорт завершён частично",
   "ui.import_failed": "Ошибка импорта",
-  "ui.imported_slash_total_written_to_cpa": "Записано в CPA: {imported}/{total}",
+  "ui.imported_slash_total_written_to_cpa":
+    "Записано в CPA: {imported}/{total}",
   "ui.total": "Всего",
   "ui.imported": "Импортировано",
   "ui.skipped_2": "Пропущено",
-  "ui.existing_auth_files_will_not_be_overwritten": "Существующие файлы авторизации не будут перезаписаны",
+  "ui.existing_auth_files_will_not_be_overwritten":
+    "Существующие файлы авторизации не будут перезаписаны",
   "ui.refresh_token_is_missing": "Отсутствует токен обновления",
-  "ui.id_token_was_synthesized_from_account_metadata": "Совместимый ID-токен создан из данных учётной записи",
+  "ui.id_token_was_synthesized_from_account_metadata":
+    "Совместимый ID-токен создан из данных учётной записи",
   "ui.account_id_is_missing": "Отсутствует ID учётной записи",
-  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file": "Имя целевого файла изменено, чтобы не затронуть существующий файл авторизации",
-  "ui.zip_entry_is_not_a_json_or_text_json_file": "Элемент ZIP не является JSON или текстовым JSON",
-  "ui.zip_entry_does_not_contain_valid_json": "Элемент ZIP не содержит допустимый JSON",
-  "ui.uploaded_file_does_not_contain_valid_json": "Загруженный файл не содержит допустимый JSON",
+  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file":
+    "Имя целевого файла изменено, чтобы не затронуть существующий файл авторизации",
+  "ui.zip_entry_is_not_a_json_or_text_json_file":
+    "Элемент ZIP не является JSON или текстовым JSON",
+  "ui.zip_entry_does_not_contain_valid_json":
+    "Элемент ZIP не содержит допустимый JSON",
+  "ui.uploaded_file_does_not_contain_valid_json":
+    "Загруженный файл не содержит допустимый JSON",
   "ui.uploaded_file_is_empty": "Загруженный файл пуст",
   "ui.duplicate_credential_record": "Дубликат учётных данных",
-  "ui.target_auth_file_already_exists": "Целевой файл авторизации уже существует",
-  "ui.could_not_verify_the_target_auth_filename": "Не удалось проверить имя целевого файла авторизации",
-  "ui.cpa_rejected_the_converted_auth_file": "CPA отклонил преобразованный файл авторизации",
+  "ui.target_auth_file_already_exists":
+    "Целевой файл авторизации уже существует",
+  "ui.could_not_verify_the_target_auth_filename":
+    "Не удалось проверить имя целевого файла авторизации",
+  "ui.cpa_rejected_the_converted_auth_file":
+    "CPA отклонил преобразованный файл авторизации",
   "ui.import_was_cancelled": "Импорт отменён",
   "ui.cpa_auth_storage_is_unavailable": "Хранилище CPA Auth недоступно",
-  "ui.count_unsupported_or_duplicate_record_s_were_skipped": "Неподдерживаемых или повторяющихся записей пропущено: {count}",
-  "ui.inspection_auto_deleted_count_expired_accounts": "Проверка автоматически удалила просроченных учётных записей: {count}",
-  "ui.count_auto_delete_operations_failed_and_will_retry_later": "Операций автоудаления завершились ошибкой и будут повторены: {count}",
-  "ui.plugin_version_installed_restart_cpa_to_activate_it": "Плагин {version} установлен; перезапустите CPA для активации",
-  "ui.plugin_version_installed_refresh_to_use_the_new_version": "Плагин {version} установлен; обновите страницу для использования новой версии",
-	 "ui.runtime_ownership_storage_is_unavailable": "Состояние единственного активного экземпляра недоступно, поэтому фоновая автоматизация безопасно приостановлена; проверьте права записи data_dir",
-  "ui.runtime_hot_reload_restart_recommended": "Обнаружен предыдущий экземпляр плагина в текущем процессе CPA; ожидается его остановка. Обычно достаточно обновить страницу. Если фоновая автоматизация долго не возобновляется, перезапустите CPA, чтобы завершить устаревший экземпляр",
-  "ui.auto_update_did_not_complete_retry_it_from_update_status": "Автообновление не завершено; повторите его в статусе обновления",
-  "ui.inspection_and_update_settings_saved": "Настройки проверки и обновлений сохранены",
+  "ui.count_unsupported_or_duplicate_record_s_were_skipped":
+    "Неподдерживаемых или повторяющихся записей пропущено: {count}",
+  "ui.inspection_auto_deleted_count_expired_accounts":
+    "Проверка автоматически удалила просроченных учётных записей: {count}",
+  "ui.count_auto_delete_operations_failed_and_will_retry_later":
+    "Операций автоудаления завершились ошибкой и будут повторены: {count}",
+  "ui.plugin_version_installed_restart_cpa_to_activate_it":
+    "Плагин {version} установлен; перезапустите CPA для активации",
+  "ui.plugin_version_installed_refresh_to_use_the_new_version":
+    "Плагин {version} установлен; обновите страницу для использования новой версии",
+  "ui.runtime_ownership_storage_is_unavailable":
+    "Состояние единственного активного экземпляра недоступно, поэтому фоновая автоматизация безопасно приостановлена; проверьте права записи data_dir",
+  "ui.runtime_hot_reload_restart_recommended":
+    "Обнаружен предыдущий экземпляр плагина в текущем процессе CPA; ожидается его остановка. Обычно достаточно обновить страницу. Если фоновая автоматизация долго не возобновляется, перезапустите CPA, чтобы завершить устаревший экземпляр",
+  "ui.auto_update_did_not_complete_retry_it_from_update_status":
+    "Автообновление не завершено; повторите его в статусе обновления",
+  "ui.inspection_and_update_settings_saved":
+    "Настройки проверки и обновлений сохранены",
   "ui.manual": "Вручную",
   "ui.account_health_inspection": "Проверка состояния учётных записей",
   "ui.reading_cpa_status": "Чтение статусов CPA",
@@ -893,7 +1186,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.quick_native_inspection": "Быстрая проверка",
   "ui.full_server_inspection": "Полная серверная проверка",
   "ui.full_server_inspection_progress": "Прогресс полной проверки",
-  "ui.completed_count_of_total_remaining_remaining": "Завершено {completed}/{total} · осталось {remaining}",
+  "ui.completed_count_of_total_remaining_remaining":
+    "Завершено {completed}/{total} · осталось {remaining}",
   "ui.remaining_count": "Осталось: {count}",
   "ui.manual_full_inspection": "Ручная полная проверка",
   "ui.scheduled_full_inspection": "Плановая полная проверка",
@@ -904,7 +1198,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.inspection_waiting_for_auth": "Ожидание аутентификации управления",
   "ui.refresh_inspection": "Обновить проверку",
   "ui.version_version_available": "Доступна версия {version}",
-  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store": "Текущая {version} · проверена и установлена через магазин плагинов CPA",
+  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store":
+    "Текущая {version} · проверена и установлена через магазин плагинов CPA",
   "ui.release_notes": "Примечания к выпуску",
   "ui.dismiss_inspection_message": "Закрыть сообщение проверки",
   "ui.inspection_metrics": "Статистика проверки",
@@ -912,7 +1207,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.anomaly_ratio": "Доля аномалий",
   "ui.abnormal_sample": "Аномальная выборка",
   "ui.active_sweep_remaining": "Осталось активных проверок",
-  "ui.full_active_inspection_queued": "Полная активная проверка поставлена в очередь",
+  "ui.full_active_inspection_queued":
+    "Полная активная проверка поставлена в очередь",
   "ui.last_triggered_time": "Последний запуск: {time}",
   "ui.not_triggered_yet": "Ещё не запускалось",
   "ui.healthy": "Исправна",
@@ -951,23 +1247,27 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.update_available": "Доступно обновление",
   "ui.up_to_date": "Актуальная версия",
   "ui.cpa_server_version": "Версия сервера CPA",
-  "ui.cpa_server_version_description": "Подключённый сервер и статус официального выпуска",
+  "ui.cpa_server_version_description":
+    "Подключённый сервер и статус официального выпуска",
   "ui.server_build_date": "Дата сборки сервера",
   "ui.new_server_version_available": "Доступна новая версия {version}",
   "ui.check_server_version": "Проверить версию сервера",
   "ui.current_server_version_unavailable": "Текущая версия сервера недоступна",
   "ui.server_version_check_failed": "Последняя версия сервера недоступна",
-  "ui.server_version_comparison_unavailable": "Невозможно сравнить версии сервера",
+  "ui.server_version_comparison_unavailable":
+    "Невозможно сравнить версии сервера",
   "ui.update_settings_saved": "Настройки обновления сохранены",
   "ui.inspection_settings_saved": "Настройки проверки сохранены",
-  "ui.settings_persistence_failed": "Не удалось сохранить настройки в постоянной конфигурации плагина CPA",
+  "ui.settings_persistence_failed":
+    "Не удалось сохранить настройки в постоянной конфигурации плагина CPA",
   "ui.failures_count": "Сбоев: {count}",
   "ui.recovery_count": "Восстановлений: {count}",
   "ui.unavailable": "Недоступна",
   "ui.recent_request_succeeded": "Недавний запрос успешен",
   "ui.quota_exhausted": "Квота исчерпана",
   "ui.token_revoked": "Токен отозван",
-  "ui.credentials_invalid_or_expired": "Учётные данные недействительны или просрочены",
+  "ui.credentials_invalid_or_expired":
+    "Учётные данные недействительны или просрочены",
   "ui.workspace_deactivated": "Рабочая область деактивирована",
   "ui.authentication_needs_review": "Требуется проверка авторизации",
   "ui.billing_or_quota_needs_review": "Требуется проверка оплаты или квоты",
@@ -989,19 +1289,30 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.inspection_owns_disable": "Отключение принадлежит проверке",
   "ui.record_only": "Только запись",
   "ui.operation_log_request_failed": "Ошибка запроса журнала операций",
-  "ui.operation_log_exported_as_file": "Журнал операций экспортирован как {file}",
-  "ui.operation_log_cleared_this_cleanup_event_was_retained": "Журнал операций очищен; запись об очистке сохранена",
-  "ui.account_manager_operation_log": "Журнал операций менеджера учётных записей",
+  "ui.operation_log_exported_as_file":
+    "Журнал операций экспортирован как {file}",
+  "ui.operation_log_cleared_this_cleanup_event_was_retained":
+    "Журнал операций очищен; запись об очистке сохранена",
+  "ui.account_manager_operation_log":
+    "Журнал операций менеджера учётных записей",
   "ui.storage_state_error": "Ошибка состояния хранилища",
-  "ui.usage_storage_error": "Состояние использования аккаунтов не удалось сохранить; отображаемые данные могут быть устаревшими. Проверьте доступность data_dir для записи.",
-  "ui.account_concurrency_storage_error": "Настройки параллелизма аккаунтов не удалось загрузить или сохранить. Проверьте доступность data_dir для записи и перезагрузите конфигурацию плагина.",
-  "ui.job_storage_error": "Результаты пакетной задачи не удалось сохранить; после перезапуска состояние может быть потеряно. Проверьте доступность data_dir для записи.",
-  "ui.retaining_the_latest_count_audit_records": "Сохраняются последние записи аудита: {count}",
-  "ui.retaining_count_audit_records_in_count_files": "Сохранено записей аудита: {count}; файлов: {files}",
+  "ui.usage_storage_error":
+    "Состояние использования аккаунтов не удалось сохранить; отображаемые данные могут быть устаревшими. Проверьте доступность data_dir для записи.",
+  "ui.account_concurrency_storage_error":
+    "Настройки параллелизма аккаунтов не удалось загрузить или сохранить. Проверьте доступность data_dir для записи и перезагрузите конфигурацию плагина.",
+  "ui.job_storage_error":
+    "Результаты пакетной задачи не удалось сохранить; после перезапуска состояние может быть потеряно. Проверьте доступность data_dir для записи.",
+  "ui.retaining_the_latest_count_audit_records":
+    "Сохраняются последние записи аудита: {count}",
+  "ui.retaining_count_audit_records_in_count_files":
+    "Сохранено записей аудита: {count}; файлов: {files}",
   "ui.extended_operation_history": "Расширенная история",
-  "ui.retain_operation_logs_beyond_latest_count": "Сохранять журнал операций сверх последних {count} записей",
-  "ui.extended_operation_history_enabled": "Расширенная история операций включена",
-  "ui.extended_operation_history_disabled": "Расширенная история отключена; сохранены только последние 500 записей",
+  "ui.retain_operation_logs_beyond_latest_count":
+    "Сохранять журнал операций сверх последних {count} записей",
+  "ui.extended_operation_history_enabled":
+    "Расширенная история операций включена",
+  "ui.extended_operation_history_disabled":
+    "Расширенная история отключена; сохранены только последние 500 записей",
   "ui.export": "Экспорт",
   "ui.refresh_operation_log": "Обновить журнал операций",
   "ui.clear_operation_log": "Очистить журнал операций",
@@ -1011,7 +1322,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.running_2": "Выполняется",
   "ui.attention": "Требует внимания",
   "ui.search_operation_log": "Поиск в журнале операций",
-  "ui.action_account_job_id_or_reason": "Действие, учётная запись, ID задания или причина",
+  "ui.action_account_job_id_or_reason":
+    "Действие, учётная запись, ID задания или причина",
   "ui.clear_log_search": "Очистить поиск журнала",
   "ui.operation_category": "Категория операции",
   "ui.all_categories": "Все категории",
@@ -1021,18 +1333,23 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.related_object": "Связанный объект",
   "ui.operation_details": "Сведения об операции",
   "ui.operation_timeline": "Последние операции",
-  "ui.operation_target_summary": "Целей: {targets} · успешно: {succeeded} · ошибок: {failed} · пропущено: {skipped}",
+  "ui.operation_target_summary":
+    "Целей: {targets} · успешно: {succeeded} · ошибок: {failed} · пропущено: {skipped}",
   "ui.open_related_job": "Открыть связанное задание",
   "ui.view_operation_details": "Просмотреть сведения об операции",
   "ui.no_matching_operation_records": "Подходящих записей операций нет",
   "ui.operation_logs_per_page": "Записей операций на странице",
-  "ui.fixed_count_operation_logs_per_page": "Фиксировано по {count} записей операций на странице",
-  "ui.page_page_slash_pages_count_records": "Страница {page}/{pages} · записей: {count}",
+  "ui.fixed_count_operation_logs_per_page":
+    "Фиксировано по {count} записей операций на странице",
+  "ui.page_page_slash_pages_count_records":
+    "Страница {page}/{pages} · записей: {count}",
   "ui.previous_log_page": "Предыдущая страница журнала",
   "ui.next_log_page": "Следующая страница журнала",
   "ui.confirm_clear": "Подтвердить очистку",
-  "ui.clear_the_current_count_operation_records": "Очистить текущие записи операций: {count}",
-  "ui.only_this_cleanup_event_will_remain_afterward": "После завершения останется только запись об этой очистке.",
+  "ui.clear_the_current_count_operation_records":
+    "Очистить текущие записи операций: {count}",
+  "ui.only_this_cleanup_event_will_remain_afterward":
+    "После завершения останется только запись об этой очистке.",
   "ui.succeeded_slash_failed_slash_skipped": "Успешно / Ошибка / Пропущено",
   "ui.operation_id": "ID операции",
   "ui.category": "Категория",
@@ -1084,36 +1401,57 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.some_operations_failed": "Некоторые операции завершились ошибкой",
   "ui.operation_failed": "Ошибка операции",
   "ui.failure_basis": "Основание ошибки",
-  "ui.policy_failure_sample_limit_note": "Для каждой причины показано не более {count} обезличенных ID; итоговое количество остаётся полным.",
+  "ui.policy_failure_sample_limit_note":
+    "Для каждой причины показано не более {count} обезличенных ID; итоговое количество остаётся полным.",
   "ui.policy_failure_account_count": "Ошибок учётных записей: {count}",
   "ui.account_id_samples": "Примеры ID учётных записей",
-  "ui.additional_similar_failures": "Ещё {count} ошибок этого типа не показаны отдельно",
+  "ui.additional_similar_failures":
+    "Ещё {count} ошибок этого типа не показаны отдельно",
   "ui.policy_failure_summary": "{reason} ({count})",
-  "ui.policy_failure_summary_multiple": "{reason} ({count}); всего категорий: {categories}",
+  "ui.policy_failure_summary_multiple":
+    "{reason} ({count}); всего категорий: {categories}",
   "ui.policy_failure_unknown": "Неклассифицированная ошибка операции политики",
   "ui.policy_failure_auth_scan": "Не удалось прочитать список файлов Auth CPA",
-  "ui.policy_failure_auth_read": "Не удалось прочитать файл Auth учётной записи",
-  "ui.policy_failure_account_identity_changed": "Идентификатор учётной записи изменился во время сканирования",
-  "ui.policy_failure_auth_source_changed": "Источник Auth изменился во время сканирования",
+  "ui.policy_failure_auth_read":
+    "Не удалось прочитать файл Auth учётной записи",
+  "ui.policy_failure_account_identity_changed":
+    "Идентификатор учётной записи изменился во время сканирования",
+  "ui.policy_failure_auth_source_changed":
+    "Источник Auth изменился во время сканирования",
   "ui.policy_failure_auth_filename_invalid": "Недопустимое имя файла Auth",
-  "ui.policy_failure_auth_projection": "Не удалось безопасно разобрать метаданные учётной записи",
+  "ui.policy_failure_auth_projection":
+    "Не удалось безопасно разобрать метаданные учётной записи",
   "ui.policy_failure_auth_json_invalid": "Недопустимый JSON в файле Auth",
   "ui.policy_failure_auth_update": "Не удалось сформировать поля политики",
-  "ui.policy_failure_auth_save": "Не удалось сохранить файл Auth учётной записи",
-  "ui.policy_failure_model_policy_unavailable": "Сервис условной политики моделей не готов",
-  "ui.policy_failure_model_policy_apply": "Не удалось применить условную политику моделей",
-  "ui.policy_failure_quota_metadata": "Ошибка проверки плана Codex и данных сброса",
-  "ui.policy_failure_state_persist": "Не удалось сохранить состояние сканирования политики по умолчанию",
-  "ui.inspection_failure_auth_host": "Проверка не может получить доступ к узлу Auth",
-  "ui.inspection_failure_account_not_editable": "Учётную запись нельзя безопасно изменить",
-  "ui.inspection_failure_ownership_changed": "Изменился владелец автоматического отключения",
-  "ui.inspection_failure_auth_read": "Не удалось прочитать файл Auth учётной записи",
-  "ui.inspection_failure_auth_identity_changed": "Идентификатор учётной записи изменился во время записи",
-  "ui.inspection_failure_auth_source_changed": "Источник Auth изменился во время записи",
+  "ui.policy_failure_auth_save":
+    "Не удалось сохранить файл Auth учётной записи",
+  "ui.policy_failure_model_policy_unavailable":
+    "Сервис условной политики моделей не готов",
+  "ui.policy_failure_model_policy_apply":
+    "Не удалось применить условную политику моделей",
+  "ui.policy_failure_quota_metadata":
+    "Ошибка проверки плана Codex и данных сброса",
+  "ui.policy_failure_state_persist":
+    "Не удалось сохранить состояние сканирования политики по умолчанию",
+  "ui.inspection_failure_auth_host":
+    "Проверка не может получить доступ к узлу Auth",
+  "ui.inspection_failure_account_not_editable":
+    "Учётную запись нельзя безопасно изменить",
+  "ui.inspection_failure_ownership_changed":
+    "Изменился владелец автоматического отключения",
+  "ui.inspection_failure_auth_read":
+    "Не удалось прочитать файл Auth учётной записи",
+  "ui.inspection_failure_auth_identity_changed":
+    "Идентификатор учётной записи изменился во время записи",
+  "ui.inspection_failure_auth_source_changed":
+    "Источник Auth изменился во время записи",
   "ui.inspection_failure_auth_json_invalid": "JSON файла Auth недействителен",
-  "ui.inspection_failure_auth_field_invalid": "Поле disabled или priority недействительно",
-  "ui.inspection_failure_auth_update": "CPA не удалось обновить состояние учётной записи",
-  "ui.inspection_failure_auth_save": "Не удалось сохранить файл Auth учётной записи",
+  "ui.inspection_failure_auth_field_invalid":
+    "Поле disabled или priority недействительно",
+  "ui.inspection_failure_auth_update":
+    "CPA не удалось обновить состояние учётной записи",
+  "ui.inspection_failure_auth_save":
+    "Не удалось сохранить файл Auth учётной записи",
   "ui.inspection_failure_mutation": "Ошибка записи учётной записи при проверке",
   "ui.operation_interrupted": "Операция прервана",
   "ui.account_state_conflict": "Конфликт состояния учётной записи",
@@ -1135,19 +1473,23 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.account_manually_disabled": "Учётная запись отключена вручную",
   "ui.temporary_upstream_failure_2": "Временный сбой вышестоящего сервиса",
   "ui.no_recent_evidence": "Нет недавних данных о работе",
-  "ui.another_account_change_is_running": "Выполняется другое изменение учётной записи",
+  "ui.another_account_change_is_running":
+    "Выполняется другое изменение учётной записи",
   "ui.account_state_changed": "Состояние учётной записи изменилось",
   "ui.account_missing": "Учётная запись отсутствует",
   "ui.account_is_read_only": "Учётная запись доступна только для чтения",
   "ui.cpa_management_api_unavailable": "API управления CPA недоступен",
   "ui.account_deletion_failed": "Ошибка удаления учётной записи",
   "ui.model_response_is_healthy": "Ответ модели корректен",
-  "ui.credential_usage_response_is_healthy": "Ответ об использовании учётных данных корректен",
+  "ui.credential_usage_response_is_healthy":
+    "Ответ об использовании учётных данных корректен",
   "ui.model_unavailable_or_missing": "Модель недоступна или отсутствует",
-  "ui.upstream_quota_or_rate_limited_2": "Ограничена квота или частота запросов",
+  "ui.upstream_quota_or_rate_limited_2":
+    "Ограничена квота или частота запросов",
   "ui.model_test_timed_out": "Время проверки модели истекло",
   "ui.upstream_service_unavailable": "Вышестоящий сервис временно недоступен",
-  "ui.could_not_validate_upstream_response": "Не удалось проверить ответ вышестоящего сервиса",
+  "ui.could_not_validate_upstream_response":
+    "Не удалось проверить ответ вышестоящего сервиса",
   "ui.circuit_recovers_at_time": "Восстановление в {time}",
   "ui.cpa_native_evidence": "Данные CPA",
   "ui.passive_request_evidence": "Пассивные запросы",
@@ -1155,11 +1497,13 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.provider_unsupported": "Провайдер не поддерживается",
   "ui.other_reason": "Другая причина",
   "ui.manual_2": "Вручную",
-  "ui.a_single_import_supports_at_most_count_accounts": "За один импорт можно добавить не более {count} учётных записей",
+  "ui.a_single_import_supports_at_most_count_accounts":
+    "За один импорт можно добавить не более {count} учётных записей",
   "ui.request_failed_code": "Ошибка запроса ({code})",
   "ui.export_failed_code": "Ошибка экспорта ({code})",
   "ui.management_key_is_not_set": "Management Key не задан",
-  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store": "Плагин управления учётными записями не найден в магазине плагинов",
+  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store":
+    "Плагин управления учётными записями не найден в магазине плагинов",
   "ui.account_deactivated": "Учётная запись деактивирована",
   "ui.priority_value": "Значение Priority",
   "ui.note_value": "Значение Note",
@@ -1175,9 +1519,11 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.inspection_interval": "Интервал проверки",
   "ui.codex_auth": "Codex Auth",
   "ui.server_model_inspection": "Серверная проверка моделей",
-  "ui.server_model_inspection_description": "Активная проверка доступности аккаунтов через защищенный канал запросов CPA",
+  "ui.server_model_inspection_description":
+    "Активная проверка доступности аккаунтов через защищенный канал запросов CPA",
   "ui.scheduled_model_probes": "Проверки моделей по расписанию",
-  "ui.probe_manually_disabled_accounts": "Проверять отключенные вручную аккаунты по расписанию",
+  "ui.probe_manually_disabled_accounts":
+    "Проверять отключенные вручную аккаунты по расписанию",
   "ui.model_probe_interval": "Интервал проверки",
   "ui.accounts_per_probe_run": "Аккаунтов за проверку",
   "ui.codex_model": "Модель Codex",
@@ -1185,10 +1531,14 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.claude_model": "Модель Claude",
   "ui.gemini_model": "Модель Gemini",
   "ui.grok_xai_model": "Модель Grok / xAI",
-  "ui.active_probe_key_memory_note": "Ключ управления хранится только в памяти процесса. После перезапуска CPA авторизованное открытие страницы повторно активирует проверки.",
-  "ui.model_probe_interval_must_be_between_5_and_1440_minutes": "Интервал проверки моделей должен быть от 5 до 1440 минут",
-  "ui.model_probe_batch_must_be_between_1_and_200_accounts": "За один запуск можно проверить от 1 до 200 аккаунтов",
-  "ui.model_probe_models_are_required": "Для каждого поддерживаемого провайдера требуется тестовая модель",
+  "ui.active_probe_key_memory_note":
+    "Ключ управления хранится только в памяти процесса. После перезапуска CPA авторизованное открытие страницы повторно активирует проверки.",
+  "ui.model_probe_interval_must_be_between_5_and_1440_minutes":
+    "Интервал проверки моделей должен быть от 5 до 1440 минут",
+  "ui.model_probe_batch_must_be_between_1_and_200_accounts":
+    "За один запуск можно проверить от 1 до 200 аккаунтов",
+  "ui.model_probe_models_are_required":
+    "Для каждого поддерживаемого провайдера требуется тестовая модель",
   "ui.active_probe_ready": "Активные проверки готовы",
   "ui.active_probe_waiting_for_auth": "Активные проверки ожидают авторизацию",
   "ui.model_probe": "Проверка модели",
@@ -1220,7 +1570,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.notification_failed": "Не удалось отправить внешнее уведомление",
   "ui.notification_rejected": "URL уведомления отклонен политикой безопасности",
   "ui.notification_queue_full": "Очередь уведомлений заполнена",
-	 "ui.notification_superseded": "Уведомление отменено: управление перешло к более новой версии плагина",
+  "ui.notification_superseded":
+    "Уведомление отменено: управление перешло к более новой версии плагина",
   "ui.review_state": "Статус рассмотрения",
   "ui.pending_review": "Ожидает рассмотрения",
   "ui.review_resolved": "Решено",
@@ -1229,42 +1580,58 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.mark_resolved": "Отметить решённым",
   "ui.ignore_result": "Игнорировать результат",
   "ui.reopen_review": "Возобновить рассмотрение",
-  "ui.review_safety_note": "Одного статуса HTTP недостаточно для разрушительного действия. Повторите тест или явно выберите действие оператора.",
+  "ui.review_safety_note":
+    "Одного статуса HTTP недостаточно для разрушительного действия. Повторите тест или явно выберите действие оператора.",
   "ui.change_started": "Изменение записи запущено",
   "ui.review_updated": "Статус рассмотрения обновлён",
-  "ui.select_health_filter_before_scoped_inspection": "Выберите фильтр состояния перед запуском проверки области",
-  "ui.select_accounts_before_scoped_inspection": "Выберите хотя бы одну запись перед запуском проверки области",
+  "ui.select_health_filter_before_scoped_inspection":
+    "Выберите фильтр состояния перед запуском проверки области",
+  "ui.select_accounts_before_scoped_inspection":
+    "Выберите хотя бы одну запись перед запуском проверки области",
   "ui.export_inspection_results": "Экспортировать результаты проверки",
-  "ui.inspection_results_exported_as_file": "Результаты проверки экспортированы в {file}",
+  "ui.inspection_results_exported_as_file":
+    "Результаты проверки экспортированы в {file}",
   "ui.inspection_run_history": "История запусков проверки",
   "ui.enable_filtered_results": "Включить отфильтрованные",
   "ui.disable_filtered_results": "Отключить отфильтрованные",
-  "ui.no_editable_inspection_results": "В текущем фильтре проверки нет редактируемых записей",
+  "ui.no_editable_inspection_results":
+    "В текущем фильтре проверки нет редактируемых записей",
   "ui.live_inspection": "Проверка в реальном времени",
   "ui.live_results_count": "Результатов в реальном времени: {count}",
   "ui.waiting_for_first_live_result": "Ожидание первого результата",
   "ui.live_updated_at": "Обновлено {time}",
   "ui.quota_and_usage": "Квота / использование",
   "ui.quota_reset_at": "Сброс {time}",
-  "ui.passive_circuit_open_reason": "Учётная запись временно отключена после повторных сбоев сервиса",
-  "ui.quota_reset_reason": "Учётная запись включена после наступления времени восстановления квоты",
-  "ui.passive_circuit_recovered_reason": "Учётная запись включена после завершения временной блокировки",
-  "ui.health_recovered_reason": "Учётная запись включена после достижения порога успешных проверок",
-  "ui.credential_refreshed_reason": "Учётная запись включена после обновления учётных данных",
+  "ui.passive_circuit_open_reason":
+    "Учётная запись временно отключена после повторных сбоев сервиса",
+  "ui.quota_reset_reason":
+    "Учётная запись включена после наступления времени восстановления квоты",
+  "ui.passive_circuit_recovered_reason":
+    "Учётная запись включена после завершения временной блокировки",
+  "ui.health_recovered_reason":
+    "Учётная запись включена после достижения порога успешных проверок",
+  "ui.credential_refreshed_reason":
+    "Учётная запись включена после обновления учётных данных",
   "ui.quota_window_five_hour": "Окно 5 часов",
   "ui.quota_window_seven_day": "Окно 7 дней",
   "ui.quota_window_multiple": "Несколько окон",
   "ui.quota_window_five_hour_fallback": "Защитное окно 5 часов",
   "ui.inspecting_now": "Выполняется проверка",
   "ui.batch_job_was_replaced": "Пакетная операция была заменена другой задачей",
-  "ui.batch_job_did_not_finish_in_time": "Пакетная операция не завершилась вовремя; проверьте журнал операций",
-  "ui.account_change_finished_with_failures": "Изменение завершено: успешно {succeeded}, ошибок {failed}",
+  "ui.batch_job_did_not_finish_in_time":
+    "Пакетная операция не завершилась вовремя; проверьте журнал операций",
+  "ui.account_change_finished_with_failures":
+    "Изменение завершено: успешно {succeeded}, ошибок {failed}",
   "ui.account_change_completed": "Обновлено записей: {count}",
-  "ui.no_recommended_actions_available": "Для текущей области нет доступных рекомендуемых действий",
-  "ui.remediation_finished_with_result": "Завершено: успешно {succeeded}, ошибок {failed}, пропущено {skipped}",
-  "ui.remediation_completed_count": "Рекомендуемые действия выполнены для {count} записей",
+  "ui.no_recommended_actions_available":
+    "Для текущей области нет доступных рекомендуемых действий",
+  "ui.remediation_finished_with_result":
+    "Завершено: успешно {succeeded}, ошибок {failed}, пропущено {skipped}",
+  "ui.remediation_completed_count":
+    "Рекомендуемые действия выполнены для {count} записей",
   "ui.inspection_remediation_queue": "Очередь обработки проверки",
-  "ui.inspection_remediation_description": "Просмотр рекомендаций и выполнение проверенных действий",
+  "ui.inspection_remediation_description":
+    "Просмотр рекомендаций и выполнение проверенных действий",
   "ui.recommended_action_count": "Рекомендуемых действий: {count}",
   "ui.suggested_delete": "Рекомендуется удалить",
   "ui.suggested_disable": "Рекомендуется отключить",
@@ -1274,33 +1641,45 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.credential_preflight": "Проверка учетных данных",
   "ui.execute_recommended_actions": "Выполнить рекомендации",
   "ui.delete_relogin_accounts": "Удалить записи для повторного входа ({count})",
-  "ui.enable_filtered_disabled_accounts": "Включить отключённые в фильтре ({count})",
-  "ui.disable_filtered_enabled_accounts": "Отключить включённые в фильтре ({count})",
-  "ui.enable_selected_disabled_accounts": "Включить выбранные отключённые ({count})",
-  "ui.disable_selected_enabled_accounts": "Отключить выбранные включённые ({count})",
+  "ui.enable_filtered_disabled_accounts":
+    "Включить отключённые в фильтре ({count})",
+  "ui.disable_filtered_enabled_accounts":
+    "Отключить включённые в фильтре ({count})",
+  "ui.enable_selected_disabled_accounts":
+    "Включить выбранные отключённые ({count})",
+  "ui.disable_selected_enabled_accounts":
+    "Отключить выбранные включённые ({count})",
   "ui.delete_selected_recommendations": "Удалить выбранные рекомендации",
-  "ui.confirm_delete_relogin_accounts": "Подтвердить удаление записей для повторного входа",
+  "ui.confirm_delete_relogin_accounts":
+    "Подтвердить удаление записей для повторного входа",
   "ui.confirm_selected_remediation": "Подтвердить обработку выбранных записей",
   "ui.confirm_recommended_actions": "Подтвердить рекомендуемые действия",
   "ui.executing_remediation": "Выполняется",
   "ui.confirm_and_execute": "Подтвердить и выполнить",
   "ui.deletion_cannot_be_undone": "Удаление нельзя отменить",
-  "ui.bulk_inspection_delete_revalidates_each_file": "Принимаются только надёжные рекомендации на удаление или повторный вход. Каждый файл CPA Auth и его физическая ревизия повторно проверяются непосредственно перед удалением.",
+  "ui.bulk_inspection_delete_revalidates_each_file":
+    "Принимаются только надёжные рекомендации на удаление или повторный вход. Каждый файл CPA Auth и его физическая ревизия повторно проверяются непосредственно перед удалением.",
   "ui.automation_policy": "Политика автоматизации",
   "ui.automation_policy_saved": "Политика автоматизации сохранена",
-  "ui.automation_policy_scan_started": "Политика автоматизации запущена в фоновом режиме",
+  "ui.automation_policy_scan_started":
+    "Политика автоматизации запущена в фоновом режиме",
   "ui.run_automation_policy_after_save": "Запустить сохранённую политику?",
-  "ui.run_automation_policy_after_save_description": "Сохранение не изменяет учётные записи немедленно. Запустите фоновое сканирование сейчас или дождитесь следующего запуска по расписанию.",
+  "ui.run_automation_policy_after_save_description":
+    "Сохранение не изменяет учётные записи немедленно. Запустите фоновое сканирование сейчас или дождитесь следующего запуска по расписанию.",
   "ui.save_only": "Только сохранить",
   "ui.run_asynchronously": "Запустить в фоне",
   "ui.global_default_policy": "Глобальная политика по умолчанию",
-  "ui.global_default_policy_description": "Резервные действия для новых файлов Auth, которые не переопределены подходящим правилом",
+  "ui.global_default_policy_description":
+    "Резервные действия для новых файлов Auth, которые не переопределены подходящим правилом",
   "ui.conditional_policies": "Условные политики",
-  "ui.conditional_policies_description": "Сопоставляйте поставщика, тип учетной записи или тарифа и домен почты с вложенными условиями и приоритетами",
+  "ui.conditional_policies_description":
+    "Сопоставляйте поставщика, тип учетной записи или тарифа и домен почты с вложенными условиями и приоритетами",
   "ui.add_policy": "Добавить политику",
   "ui.no_conditional_policies": "Условных политик нет",
-  "ui.no_conditional_policies_description": "Добавьте правило для раздельной автоматизации групп учетных записей.",
-  "ui.higher_priority_policy_overrides_actions": "Политика с более высоким приоритетом переопределяет только управляемые ею действия.",
+  "ui.no_conditional_policies_description":
+    "Добавьте правило для раздельной автоматизации групп учетных записей.",
+  "ui.higher_priority_policy_overrides_actions":
+    "Политика с более высоким приоритетом переопределяет только управляемые ею действия.",
   "ui.policy_name": "Название политики",
   "ui.policy_priority": "Приоритет политики",
   "ui.move_policy_up": "Переместить политику вверх",
@@ -1311,8 +1690,10 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.condition_operator": "Оператор условий",
   "ui.match_all": "Все условия",
   "ui.match_any": "Любое условие",
-  "ui.condition_match_all_hint": "Учетная запись должна соответствовать всем условиям группы",
-  "ui.condition_match_any_hint": "Учетная запись соответствует группе при выполнении любого условия",
+  "ui.condition_match_all_hint":
+    "Учетная запись должна соответствовать всем условиям группы",
+  "ui.condition_match_any_hint":
+    "Учетная запись соответствует группе при выполнении любого условия",
   "ui.add_condition": "Добавить условие",
   "ui.add_condition_group": "Добавить вложенную группу",
   "ui.delete_condition_group": "Удалить группу условий",
@@ -1328,7 +1709,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.model_ids": "ID моделей",
   "ui.remediation_result": "Результат обработки",
   "ui.ai_providers": "AI-провайдеры",
-  "ui.ai_providers_description": "Управление каналами AI-провайдеров, настроенными в CPA: OpenAI-совместимые, Gemini, Interactions, Claude, Codex, xAI, Vertex и общие API-ключи.",
+  "ui.ai_providers_description":
+    "Управление каналами AI-провайдеров, настроенными в CPA: OpenAI-совместимые, Gemini, Interactions, Claude, Codex, xAI, Vertex и общие API-ключи.",
   "ui.add_ai_provider": "Добавить AI-провайдера",
   "ui.choose_ai_provider_type": "Выберите тип провайдера",
   "ui.ai_provider_type": "Тип провайдера",
@@ -1340,17 +1722,23 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_name": "Имя провайдера",
   "ui.ai_provider_base_url": "Base URL",
   "ui.ai_provider_api_key": "API-ключ",
-  "ui.ai_provider_edit_key_note": "Оставьте ключ пустым, чтобы сохранить текущий.",
-  "ui.ai_provider_key_placeholder": "sk-... (оставьте пустым, чтобы сохранить ключ)",
-  "ui.ai_provider_key_keep_placeholder": "Введите новый ключ для замены текущего",
+  "ui.ai_provider_edit_key_note":
+    "Оставьте ключ пустым, чтобы сохранить текущий.",
+  "ui.ai_provider_key_placeholder":
+    "sk-... (оставьте пустым, чтобы сохранить ключ)",
+  "ui.ai_provider_key_keep_placeholder":
+    "Введите новый ключ для замены текущего",
   "ui.ai_provider_current_key": "Текущий ключ",
   "ui.ai_provider_field_prefix": "Префикс модели",
   "ui.ai_provider_field_priority": "Приоритет (больше — лучше)",
   "ui.ai_provider_field_weight": "Вес (взвешенный round-robin)",
   "ui.ai_provider_field_proxy_url": "Переопределение прокси",
-  "ui.ai_provider_field_excluded_models": "Исключённые модели (по одной на строку)",
-  "ui.ai_provider_field_excluded_models_placeholder": "например gpt-4o-mini\nclaude-sonnet-4-*",
-  "ui.ai_provider_field_headers": "Дополнительные заголовки (Key: value, по одному на строку)",
+  "ui.ai_provider_field_excluded_models":
+    "Исключённые модели (по одной на строку)",
+  "ui.ai_provider_field_excluded_models_placeholder":
+    "например gpt-4o-mini\nclaude-sonnet-4-*",
+  "ui.ai_provider_field_headers":
+    "Дополнительные заголовки (Key: value, по одному на строку)",
   "ui.ai_provider_field_models": "Модели",
   "ui.ai_provider_field_model_name": "Имя на стороне провайдера",
   "ui.ai_provider_field_alias": "Псевдоним",
@@ -1363,28 +1751,41 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_field_add_api_key": "Добавить API-ключ",
   "ui.ai_provider_field_support_prompt_cache_key": "Поддержка prompt cache key",
   "ui.ai_provider_field_disable_cooling": "Отключить охлаждение",
-  "ui.ai_provider_field_request_retry": "Переопределение повторов запроса (пусто — глобально, 0 — отключить)",
-  "ui.ai_provider_field_request_scoped_errors": "Правила ошибок по области запроса (по одному JSON-объекту в строке)",
+  "ui.ai_provider_field_request_retry":
+    "Переопределение повторов запроса (пусто — глобально, 0 — отключить)",
+  "ui.ai_provider_field_request_scoped_errors":
+    "Правила ошибок по области запроса (по одному JSON-объекту в строке)",
   "ui.ai_provider_field_alpha_search": "Alpha search",
   "ui.ai_provider_field_websockets": "WebSockets",
-  "ui.ai_provider_field_rebuild_mid_system_message": "Пересобирать mid-system сообщение",
+  "ui.ai_provider_field_rebuild_mid_system_message":
+    "Пересобирать mid-system сообщение",
   "ui.ai_provider_field_fingerprint_profile": "Профиль отпечатка",
   "ui.ai_provider_field_fingerprint_default": "По умолчанию",
   "ui.ai_provider_field_fingerprint_claude_code": "Claude Code CLI",
   "ui.ai_provider_disabled": "Отключено",
   "ui.ai_provider_channel_empty": "Каналы не настроены",
-  "ui.ai_provider_channel_unavailable": "Канал временно недоступен; он не считался пустым.",
+  "ui.ai_provider_channel_unavailable":
+    "Канал временно недоступен; он не считался пустым.",
   "ui.ai_provider_response_invalid": "CPA вернул неизвестный формат канала.",
-  "ui.ai_provider_storage_unavailable": "Сохранённые данные канала временно недоступны.",
+  "ui.ai_provider_storage_unavailable":
+    "Сохранённые данные канала временно недоступны.",
   "ui.ai_provider_channel_openai_compatibility": "OpenAI-совместимые",
-  "ui.ai_provider_channel_openai_compatibility_description": "Подключите любой OpenAI-совместимый сервис: укажите имя, Base URL и API-ключ.",
-  "ui.ai_provider_channel_gemini_description": "Добавить API-ключ Gemini (Base URL — по желанию).",
-  "ui.ai_provider_channel_interactions_description": "Добавить API-ключ Interactions (Base URL — по желанию).",
-  "ui.ai_provider_channel_claude_description": "Добавить API-ключ Claude (Base URL — по желанию).",
-  "ui.ai_provider_channel_codex_description": "Добавить API-ключ Codex (Base URL — по желанию).",
-  "ui.ai_provider_channel_xai_description": "Добавить API-ключ xAI (Base URL — по желанию).",
-  "ui.ai_provider_channel_vertex_description": "Добавить Vertex-совместимый API-ключ (Base URL — по желанию).",
-  "ui.ai_provider_channel_api_keys_description": "Добавить один универсальный API-ключ (список строк OpenAI-совместимых ключей).",
+  "ui.ai_provider_channel_openai_compatibility_description":
+    "Подключите любой OpenAI-совместимый сервис: укажите имя, Base URL и API-ключ.",
+  "ui.ai_provider_channel_gemini_description":
+    "Добавить API-ключ Gemini (Base URL — по желанию).",
+  "ui.ai_provider_channel_interactions_description":
+    "Добавить API-ключ Interactions (Base URL — по желанию).",
+  "ui.ai_provider_channel_claude_description":
+    "Добавить API-ключ Claude (Base URL — по желанию).",
+  "ui.ai_provider_channel_codex_description":
+    "Добавить API-ключ Codex (Base URL — по желанию).",
+  "ui.ai_provider_channel_xai_description":
+    "Добавить API-ключ xAI (Base URL — по желанию).",
+  "ui.ai_provider_channel_vertex_description":
+    "Добавить Vertex-совместимый API-ключ (Base URL — по желанию).",
+  "ui.ai_provider_channel_api_keys_description":
+    "Добавить один универсальный API-ключ (список строк OpenAI-совместимых ключей).",
   "ui.ai_provider_channel_gemini": "Gemini",
   "ui.ai_provider_channel_interactions": "Interactions",
   "ui.ai_provider_channel_claude": "Claude",
@@ -1393,13 +1794,16 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_channel_vertex": "Vertex",
   "ui.ai_provider_channel_api_keys": "API-ключи",
   "ui.ai_provider_channel_opencode": "OpenCode Go",
-  "ui.opencode_edit_cookie_note": "Введите новый cookie, чтобы обновить учётные данные рабочей области; оставьте пустым, чтобы сохранить текущие.",
+  "ui.opencode_edit_cookie_note":
+    "Введите новый cookie, чтобы обновить учётные данные рабочей области; оставьте пустым, чтобы сохранить текущие.",
   "ui.ai_provider_channel_opencode_zen": "OpenCode Zen",
-  "ui.opencode_zen_login_description": "Управление API-ключом OpenCode Zen. Укажите шлюз Zen (https://opencode.ai/zen) или самоподдерживаемый мост opencode-cc (например, http://localhost:8787).",
+  "ui.opencode_zen_login_description":
+    "Управление API-ключом OpenCode Zen. Укажите шлюз Zen (https://opencode.ai/zen) или самоподдерживаемый мост opencode-cc (например, http://localhost:8787).",
   "ui.opencode_zen_base_url": "Базовый URL (Zen или opencode-cc)",
   "ui.opencode_zen_api_key": "Zen API Key",
   "ui.opencode_zen_key_set": "Ключ сохранён",
-  "ui.opencode_zen_edit_key_note": "Введите новый ключ для ротации; оставьте пустым, чтобы сохранить текущий.",
+  "ui.opencode_zen_edit_key_note":
+    "Введите новый ключ для ротации; оставьте пустым, чтобы сохранить текущий.",
   "ui.view_ai_provider": "Просмотр {name}",
   "ui.test_ai_provider": "Проверить {name}",
   "ui.test_ai_provider_title": "Проверка канала: {name}",
@@ -1421,17 +1825,21 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.last_updated": "Последнее обновление",
   "ui.loading": "Загрузка",
   "ui.ai_provider_concurrency": "Параллельность",
-  "ui.ai_provider_concurrency_observable_only": "Текущая версия CPA позволяет только наблюдать параллелизм провайдера; настроить его лимит здесь нельзя",
+  "ui.ai_provider_concurrency_observable_only":
+    "Текущая версия CPA позволяет только наблюдать параллелизм провайдера; настроить его лимит здесь нельзя",
   "ui.total_accounts_and_providers": "Всего аккаунтов и провайдеров",
-  "ui.ai_provider_model_catalog_unavailable": "Каталог моделей недоступен; продолжаем с настроенными моделями",
-  "ui.ai_provider_no_models_available": "Нет доступных моделей: каталог недоступен, а для канала модели не настроены",
+  "ui.ai_provider_model_catalog_unavailable":
+    "Каталог моделей недоступен; продолжаем с настроенными моделями",
+  "ui.ai_provider_no_models_available":
+    "Нет доступных моделей: каталог недоступен, а для канала модели не настроены",
   "ui.ai_provider_usage": "Использование",
   "ui.ai_provider_runtime_details": "Сведения в реальном времени",
   "ui.ai_provider_active": "Активные запросы",
   "ui.ai_provider_limit": "Лимит",
   "ui.ai_provider_total_tokens": "Всего токенов",
   "ui.ai_provider_estimated_cost": "Оценочная стоимость",
-  "ui.provider_credentials_enabled_disabled": "{enabled} включено · {disabled} отключено",
+  "ui.provider_credentials_enabled_disabled":
+    "{enabled} включено · {disabled} отключено",
   "ui.ai_provider_updated_at": "Обновлено",
   "ui.ai_provider_no_usage": "Данных пока нет",
   "ui.ai_provider_identity_unavailable": "Идентификатор недоступен",

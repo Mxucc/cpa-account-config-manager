@@ -1,10 +1,10 @@
 import { Activity, AlertTriangle, Gauge } from "lucide-react";
-import type { Account, UsageWindowSnapshot } from "../types";
+import type { Account, UsageLimitsSnapshot, UsageWindowSnapshot } from "../types";
 import { localeFormats, useI18n, type Locale } from "../i18n";
 import { formatCreditUSD } from "../format/currency";
 import type { UIMessageKey } from "../i18n/uiText";
 
-export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, creditUsageEnabled = false }: { account: Account; weeklyOverdraftEnabled?: boolean; creditUsageEnabled?: boolean }) {
+export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, creditUsageEnabled = false, usageLimits = null }: { account: Account; weeklyOverdraftEnabled?: boolean; creditUsageEnabled?: boolean; usageLimits?: UsageLimitsSnapshot | null }) {
   const { locale, t, tx, formatDateTime, formatNumber } = useI18n();
   const usage = account.usage;
   const agentIdentity = String(account.provider || account.type).trim().toLowerCase() === "codex-agent-identity";
@@ -60,6 +60,10 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   const fiveHourExhausted = safePercent(codex?.five_hour?.used_percent ?? 0) >= 100;
   const longWindowExhausted = safePercent(codex?.seven_day?.used_percent ?? 0) >= 100;
   const quotaExhausted = fiveHourExhausted || longWindowExhausted;
+  const totalAccountLimit = usageLimits?.config?.enabled && usageLimits.config.total?.enabled && usageLimits.config.total.basis === "account"
+    ? usageLimits.config.total
+    : null;
+  const accountLimitWindow = totalAccountLimit?.window === "seven_day" ? codex?.seven_day : codex?.five_hour;
   const overdraftWindows = weeklyOverdraftEnabled ? [
     codex?.five_hour?.overdraft_active
       ? { label: "5h" as const, window: codex.five_hour }
@@ -117,6 +121,7 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
           <AlertTriangle size={10} aria-hidden="true" /><b>{tx("ui.unrated_requests_count", { count: formatNumber(credit?.unrated_requests ?? 0) })}</b>
         </div>
       ) : null}
+      {totalAccountLimit ? <AccountLimitStatus rule={totalAccountLimit} window={accountLimitWindow} /> : null}
       {hasQuota ? (
         <div className="usage-quota-list">
           {codex?.five_hour ? <UsageQuota label="5h" window={codex.five_hour} /> : null}
@@ -186,6 +191,27 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   );
 }
 
+
+function AccountLimitStatus({ rule, window }: { rule: NonNullable<UsageLimitsSnapshot["config"]["total"]>; window?: UsageWindowSnapshot }) {
+  const { tx } = useI18n();
+  const limit = Math.min(100, Math.max(0, Number.isFinite(rule.percent ?? 0) ? (rule.percent ?? 0) : 0));
+  const used = window && Number.isFinite(window.used_percent) ? Math.max(0, window.used_percent) : null;
+  const reached = used !== null && used >= limit;
+  const ratio = used === null || limit <= 0 ? 0 : Math.min(100, (used / limit) * 100);
+  const label = rule.window === "seven_day" ? "7d" : "5h";
+  const status = used === null
+    ? tx("ui.usage_limit_uncollected")
+    : reached
+      ? tx("ui.usage_limit_reached")
+      : tx("ui.usage_limit_remaining", { percent: formatPercent(Math.max(0, limit - used)) });
+  return (
+    <div className={`usage-account-limit ${reached ? "is-reached" : used === null ? "is-uncollected" : ""}`} role="group" aria-label={tx("ui.usage_limit_account_status", { label })}>
+      <div className="usage-account-limit-heading"><span>{tx("ui.usage_limit_account_status", { label })}</span><b>{used === null ? "—" : `${formatPercent(used)}% / ${formatPercent(limit)}%`}</b></div>
+      <span className="usage-account-limit-track" role="meter" aria-label={`${label} ${status}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={used === null ? 0 : Math.min(100, used)}><span style={{ width: `${ratio}%` }} /></span>
+      <small>{status}</small>
+    </div>
+  );
+}
 
 function overdraftStatusLabel(status: string | undefined, tx: (key: UIMessageKey) => string): string {
   switch (status) {

@@ -41,7 +41,24 @@ func (h *RequestHook) Register(transformer RequestTransformer) {
 	h.mu.Unlock()
 }
 
-func (h *RequestHook) InterceptBefore(cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
+func (h *RequestHook) InterceptBefore(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
+	if h == nil {
+		return cpaapi.RequestInterceptResponse{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, transformer := range h.transformers {
+		modification, changed := transformer.InterceptRequest(request)
+		if !changed {
+			continue
+		}
+		if modification.Terminate {
+			return modification
+		}
+		if len(modification.Body) > 0 {
+			request.Body = modification.Body
+		}
+	}
 	return cpaapi.RequestInterceptResponse{}
 }
 

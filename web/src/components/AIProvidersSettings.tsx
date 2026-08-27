@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ShieldQuestion, XCircle } from "lucide-react";
 import * as api from "../api/client";
 import { technicalLabel } from "../format/accountDisplay";
+import { formatCreditUSD } from "../format/currency";
 import { operatorMessage } from "../format/operatorMessage";
 import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { useI18n } from "../i18n";
@@ -15,6 +16,7 @@ import type {
   AIProviderChannelSnapshot,
   AIProviderRuntimeModelUsage,
   AIProviderRuntimeSnapshot,
+  UsageLimitsSnapshot,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
@@ -397,6 +399,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
   const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
+  const [usageLimits, setUsageLimits] = useState<UsageLimitsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -482,6 +485,20 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       runtimeRequest.current += 1;
     };
   }, [refreshRuntime, refreshRevision]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refreshLimits = async () => {
+      try {
+        setUsageLimits(await api.getUsageLimits(controller.signal));
+      } catch (caught) {
+        if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+        if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
+      }
+    };
+    void refreshLimits();
+    return () => controller.abort();
+  }, [onAPIError, refreshRevision]);
 
   const runtimeForEntry = (entry: AIProviderChannelEntry): AIProviderRuntimeSnapshot | undefined => {
     // A provider may have one runtime identity per API key. CPA exposes those
@@ -850,6 +867,12 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     return stats;
   }, { channels: 0, credentials: 0, enabled: 0, disabled: 0 });
   const activeProviderRequests = runtimeSnapshots.reduce((total, snapshot) => total + Math.max(0, snapshot.active || 0), 0);
+  const providerCreditObserved = runtimeSnapshots.reduce((total, snapshot) => total + safeNumber(snapshot.amount_usd), 0);
+  const totalCreditRule = usageLimits?.config?.enabled && usageLimits.config.total?.enabled && usageLimits.config.total.basis === "credit"
+    ? usageLimits.config.total
+    : null;
+  const totalCreditUsed = safeNumber(usageLimits?.credit_used_usd);
+  const modelCreditRules = (usageLimits?.config?.models ?? []).filter((item) => item.rule.enabled && item.rule.basis === "credit");
 
   return (
     <section className="ai-providers-section" role="tabpanel" aria-label={tx("ui.ai_providers")}>
@@ -878,6 +901,34 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         <div><span>{tx("ui.disabled")}</span><strong className="status-warning">{providerStats.disabled}</strong></div>
         <div><span>{tx("ui.active_requests")}</span><strong className={activeProviderRequests > 0 ? "status-live" : ""}>{formatTokens(activeProviderRequests)}</strong></div>
         <div><span>{tx("ui.last_updated")}</span><strong>{runtimeUpdatedAt ? formatDateTime(runtimeUpdatedAt) : tx("ui.no_data_collected")}</strong></div>
+      </div>
+      <div className="provider-usage-limit-summary" aria-label={tx("ui.usage_limits")}>
+        <div className="provider-usage-limit-primary">
+          <div><span>{tx("ui.usage_limit_credit_status")}</span><strong>{totalCreditRule ? `${formatCreditUSD(totalCreditUsed, locale)} / ${formatCreditUSD(totalCreditRule.amount_usd ?? 0, locale)}` : tx("ui.usage_limit_not_configured")}</strong></div>
+          <small>{totalCreditRule ? tx("ui.usage_limit_remaining", { percent: formatCreditHeadroomPercent(totalCreditUsed, totalCreditRule.amount_usd ?? 0) }) : tx("ui.usage_limit_provider_note")}</small>
+        </div>
+        <div className="provider-usage-limit-secondary">
+          <span>{tx("ui.estimated_credit_usage")}</span><strong>{formatCreditUSD(providerCreditObserved, locale)}</strong><small>{tx("ui.usage_limit_provider_observed")}</small>
+        </div>
+        {modelCreditRules.length > 0 ? <div className="provider-usage-limit-models">
+          <span>{tx("ui.usage_limit_models")}</span>
+          {modelCreditRules.map((item) => {
+            const used = safeNumber(usageLimits?.credit_model_used_usd?.[item.model]);
+            const limit = item.rule.amount_usd ?? 0;
+            const reached = used >= limit;
+            const scope = item.within_total ? tx("ui.usage_limit_counted_with_total") : tx("ui.usage_limit_independent");
+            const status = reached
+              ? tx("ui.usage_limit_reached")
+              : `${tx("ui.usage_limit_remaining", { percent: formatCreditHeadroomPercent(used, limit) })} · ${scope}`;
+            return (
+              <div key={item.model} className={reached ? "is-reached" : ""}>
+                <code>{item.model}</code>
+                <b>{formatCreditUSD(used, locale)} / {formatCreditUSD(limit, locale)}</b>
+                <small>{status}</small>
+              </div>
+            );
+          })}
+        </div> : null}
       </div>
 
       {adding ? (
@@ -1273,4 +1324,13 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       )}
     </section>
   );
+}
+
+function safeNumber(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function formatCreditHeadroomPercent(used: number, limit: number): string {
+  if (!Number.isFinite(limit) || limit <= 0) return "0%";
+  return `${Math.max(0, Math.round((1 - used / limit) * 1000) / 10)}%`;
 }

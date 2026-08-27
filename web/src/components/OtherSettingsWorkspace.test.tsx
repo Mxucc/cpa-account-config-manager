@@ -53,7 +53,7 @@ describe("OtherSettingsWorkspace", () => {
 
     const workspace = await screen.findByRole("region", { name: "其他配置" });
     const settingsTabs = within(workspace).getByRole("tablist", { name: "其他配置分栏" });
-    expect(within(settingsTabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["自动策略", "外部通知", "插件配置与版本", "实验性功能"]);
+    expect(within(settingsTabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["自动策略", "外部通知", "插件配置与版本", "实验性功能", "用量限额"]);
     expect(within(workspace).getByRole("tab", { name: "自动策略" })).toHaveAttribute("aria-selected", "true");
     await user.click(within(workspace).getByRole("tab", { name: "插件配置与版本" }));
     const fontSettings = within(workspace).getByRole("region", { name: "字体大小" });

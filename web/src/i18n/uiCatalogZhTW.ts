@@ -4,8 +4,10 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.select_proxy_profile": "代理設定檔",
   "ui.manual_proxy_url": "手動代理位址",
   "ui.proxy_profiles": "代理設定檔",
-  "ui.proxy_profiles_description": "建立可重複使用且不洩漏憑證的代理預設，並在批次編輯中引用。",
-  "ui.proxy_profiles_storage_error": "代理設定檔無法讀取或儲存；請檢查外掛資料目錄。",
+  "ui.proxy_profiles_description":
+    "建立可重複使用且不洩漏憑證的代理預設，並在批次編輯中引用。",
+  "ui.proxy_profiles_storage_error":
+    "代理設定檔無法讀取或儲存；請檢查外掛資料目錄。",
   "ui.profile_name": "設定檔名稱",
   "ui.provider_scope": "供應商範圍",
   "ui.provider_scope_placeholder": "留空表示全部供應商；多個以逗號分隔",
@@ -15,8 +17,10 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.proxy_profile_saved": "代理設定檔已儲存",
   "ui.proxy_profile_deleted": "代理設定檔已刪除",
   "ui.proxy_profile_delete_confirm": "確定刪除代理設定檔「{name}」？",
-  "ui.proxy_profile_delete_force_confirm": "「{name}」仍關聯帳號。刪除設定檔不會自動變更帳號內的代理位址，是否繼續？",
-  "ui.proxy_profile_edit_secret_notice": "為保護憑證，編輯時不會回傳既有代理金鑰。如需更換請重新輸入完整代理位址。",
+  "ui.proxy_profile_delete_force_confirm":
+    "「{name}」仍關聯帳號。刪除設定檔不會自動變更帳號內的代理位址，是否繼續？",
+  "ui.proxy_profile_edit_secret_notice":
+    "為保護憑證，編輯時不會回傳既有代理金鑰。如需更換請重新輸入完整代理位址。",
   "ui.proxy_profile_keep_existing": "留空以保留現有代理位址",
   "ui.default_account_proxy": "預設帳號代理",
   "ui.default_ai_provider_proxy": "預設 AI 供應商代理",
@@ -53,7 +57,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.plugin_configuration_and_version": "外掛程式設定與版本",
   "ui.font_size": "字型大小",
   "ui.plugin_appearance": "介面與主題",
-  "ui.plugin_appearance_description": "僅套用於此外掛程式，不會覆蓋 CPA 原生頁面。",
+  "ui.plugin_appearance_description":
+    "僅套用於此外掛程式，不會覆蓋 CPA 原生頁面。",
   "ui.plugin_theme_preset": "主題預設",
   "ui.plugin_theme_neutral": "中性",
   "ui.plugin_theme_indigo": "靛藍",
@@ -64,41 +69,92 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.plugin_density_compact": "緊湊",
   "ui.reset_plugin_appearance": "恢復預設外觀",
 
-  "ui.font_size_description": "調整外掛程式內所有標籤、表格、表單、對話框與狀態資訊的字型。",
+  "ui.font_size_description":
+    "調整外掛程式內所有標籤、表格、表單、對話框與狀態資訊的字型。",
   "ui.font_size_small": "小",
   "ui.font_size_medium": "中",
   "ui.font_size_large": "大",
   "ui.font_size_current": "目前：{size}",
   "ui.typography_distinction": "字級區分",
-  "ui.typography_distinction_description": "嚴格區分主標題與描述文字字級；關閉後描述文字將使用與主標題相同的字級。",
+  "ui.typography_distinction_description":
+    "嚴格區分主標題與描述文字字級；關閉後描述文字將使用與主標題相同的字級。",
+  "ui.usage_limits": "用量上限",
+  "ui.usage_limits_description":
+    "達到帳號百分比上限或預估額度上限後，停止新的請求。AI Provider 無法提供上游配額資料時，可使用額度上限。",
+  "ui.usage_limits_enabled": "已啟用用量上限",
+  "ui.usage_limits_disabled": "已停用用量上限",
+  "ui.usage_limit_basis": "上限依據",
+  "ui.usage_limit_account": "帳號上限",
+  "ui.usage_limit_credit": "額度上限",
+  "ui.usage_limit_window": "配額視窗",
+  "ui.usage_limit_five_hour": "5 小時視窗",
+  "ui.usage_limit_seven_day": "7 天視窗",
+  "ui.usage_limit_percent": "最大已用百分比",
+  "ui.usage_limit_amount": "最大額度",
+  "ui.usage_limit_total": "總上限",
+  "ui.usage_limit_total_description":
+    "預設總上限。模型上限可選擇受總上限約束，也可以獨立運作。",
+  "ui.usage_limit_models": "模型上限",
+  "ui.usage_limit_models_description": "為每個模型單獨新增帳號上限或額度上限。",
+  "ui.usage_limit_add_model": "新增模型",
+  "ui.usage_limit_model_name": "模型名稱",
+  "ui.usage_limit_within_total": "計入總上限",
+  "ui.usage_limit_no_models": "尚未設定模型上限。",
+  "ui.usage_limit_credit_used": "啟用上限以來已統計額度",
+  "ui.usage_limit_credit_note":
+    "預估費用依目前模型價格表計算；沒有可計費價格的請求不會計入。",
+  "ui.usage_limits_saved": "用量上限已儲存",
+  "ui.usage_limit_reached": "已達到上限",
+  "ui.usage_limit_not_configured": "未設定",
+  "ui.usage_limit_uncollected": "尚未收集用量",
+  "ui.usage_limit_remaining": "剩餘 {percent} 空間",
+  "ui.usage_limit_account_status": "{label} 帳號上限",
+  "ui.usage_limit_credit_status": "額度上限狀態",
+  "ui.usage_limit_model_status": "模型額度上限",
+  "ui.usage_limit_counted_with_total": "計入總上限",
+  "ui.usage_limit_independent": "獨立上限",
+  "ui.usage_limit_provider_note": "AI Provider 沒有上游 5 天或 7 天配額資料時，可使用額度上限。",
+  "ui.usage_limit_provider_observed": "Provider 執行時已觀測額度",
   "ui.experimental_features": "實驗性功能",
   "ui.experimental_features_warning": "實驗性行為",
-  "ui.experimental_features_may_change_or_stop_working": "這些功能依賴上游行為，可能隨時變更或失效。",
-  "ui.experimental_settings_storage_error": "無法從持久化儲存讀取實驗設定。重新儲存前，此功能將保持關閉。",
+  "ui.experimental_features_may_change_or_stop_working":
+    "這些功能依賴上游行為，可能隨時變更或失效。",
+  "ui.experimental_settings_storage_error":
+    "無法從持久化儲存讀取實驗設定。重新儲存前，此功能將保持關閉。",
   "ui.sub2api_credit_usage": "Sub2API 額度計費用量",
-  "ui.sub2api_credit_usage_description": "使用 Sub2API 維護的模型價格資料，將啟用後新採集的成功請求換算為 USD 預估成本；原始 Token 用量仍會保留。",
+  "ui.sub2api_credit_usage_description":
+    "使用 Sub2API 維護的模型價格資料，將啟用後新採集的成功請求換算為 USD 預估成本；原始 Token 用量仍會保留。",
   "ui.credit_pricing_source": "價格來源",
-  "ui.credit_pricing_source_description": "內建相容 Sub2API 的 Wei-Shaw 模型價格表，並保留最近一次校驗成功的本機副本。",
+  "ui.credit_pricing_source_description":
+    "內建相容 Sub2API 的 Wei-Shaw 模型價格表，並保留最近一次校驗成功的本機副本。",
   "ui.credit_pricing_sync_behavior": "同步行為",
-  "ui.credit_pricing_sync_behavior_description": "啟用後在背景非同步更新價格，不阻塞用量採集路徑，也不會增加請求首字延遲。",
+  "ui.credit_pricing_sync_behavior_description":
+    "啟用後在背景非同步更新價格，不阻塞用量採集路徑，也不會增加請求首字延遲。",
   "ui.credit_usage_history_boundary": "統計邊界",
-  "ui.credit_usage_history_boundary_description": "只計費啟用後新採集的成功請求；既有 Token 彙總與額度視窗保持不變。同時開啟 Codex 額度透支續用後，會從每個 5h/7d 凍結基準起單獨顯示透支費用，並繼續計入帳號總費用。",
+  "ui.credit_usage_history_boundary_description":
+    "只計費啟用後新採集的成功請求；既有 Token 彙總與額度視窗保持不變。同時開啟 Codex 額度透支續用後，會從每個 5h/7d 凍結基準起單獨顯示透支費用，並繼續計入帳號總費用。",
   "ui.estimated_credit_usage": "預估額度用量",
-  "ui.estimated_credit_usage_detail": "預估成本：{amount}；已計價請求：{rated}；未計價請求：{unrated}；原始 Token：{tokens}",
+  "ui.estimated_credit_usage_detail":
+    "預估成本：{amount}；已計價請求：{rated}；未計價請求：{unrated}；原始 Token：{tokens}",
   "ui.rated_requests": "已計價請求",
   "ui.unrated_requests": "未計價請求",
   "ui.unrated_requests_count": "未計價 {count}",
   "ui.credit_usage_started_at": "額度統計開始時間",
   "ui.pricing_updated_at": "價格更新時間",
   "ui.awaiting_credit_usage_collection": "等待額度計費採集",
-  "ui.some_requests_could_not_be_priced": "有 {count} 個成功請求使用目前價格表未收錄的模型。它們仍計入 Token 總量，但不計入 USD 預估成本。",
+  "ui.some_requests_could_not_be_priced":
+    "有 {count} 個成功請求使用目前價格表未收錄的模型。它們仍計入 Token 總量，但不計入 USD 預估成本。",
   "ui.codex_auto_model_whitelist": "Codex 自動模型白名單",
-  "ui.codex_auto_model_whitelist_description": "在手動測試或預設策略的新帳號探測中辨識受限模型集合，並為該帳號套用白名單。",
+  "ui.codex_auto_model_whitelist_description":
+    "在手動測試或預設策略的新帳號探測中辨識受限模型集合，並為該帳號套用白名單。",
   "ui.detection_evidence": "探測證據",
-  "ui.auto_model_whitelist_detection_behavior": "僅在出現已知的 gpt-5.6-sol 不相容回應後繼續，並要求 gpt-5.5 與 gpt-5.4-mini 都實際探測成功。",
+  "ui.auto_model_whitelist_detection_behavior":
+    "僅在出現已知的 gpt-5.6-sol 不相容回應後繼續，並要求 gpt-5.5 與 gpt-5.4-mini 都實際探測成功。",
   "ui.policy_write_behavior": "策略寫入",
-  "ui.auto_model_whitelist_policy_behavior": "僅在帳號沒有人工白名單或黑名單時套用；既有的使用者模型策略不會被覆寫。",
-  "ui.auto_model_whitelist_safety_notice": "預設關閉。新帳號自動探測需另行啟用預設策略中的開關；單一模型失敗不會停用整個帳號。",
+  "ui.auto_model_whitelist_policy_behavior":
+    "僅在帳號沒有人工白名單或黑名單時套用；既有的使用者模型策略不會被覆寫。",
+  "ui.auto_model_whitelist_safety_notice":
+    "預設關閉。新帳號自動探測需另行啟用預設策略中的開關；單一模型失敗不會停用整個帳號。",
   "ui.auto_model_whitelist_applied": "套用自動模型白名單",
   "ui.existing_model_policy_preserved": "已保留既有模型策略",
   "ui.model_blocked_by_account_policy": "該模型已被帳號模型策略阻止",
@@ -108,21 +164,29 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.model_allow_list_not_applied": "未套用模型白名單",
   "ui.compatibility_attempt": "相容性探測",
   "ui.codex_identity_convergence": "Codex 指紋收斂",
-  "ui.codex_identity_convergence_description": "將 Codex OAuth 請求與 codex-api-key 健康檢查收斂到 Sub2API 同款官方用戶端指紋。",
+  "ui.codex_identity_convergence_description":
+    "將 Codex OAuth 請求與 codex-api-key 健康檢查收斂到 Sub2API 同款官方用戶端指紋。",
   "ui.codex_outbound_convergence": "出站收斂",
-  "ui.codex_outbound_convergence_behavior": "在所有請求標頭改寫後配對 User-Agent、Originator 與 Version；無法安全配對時回退目前官方 CLI 身分。",
+  "ui.codex_outbound_convergence_behavior":
+    "在所有請求標頭改寫後配對 User-Agent、Originator 與 Version；無法安全配對時回退目前官方 CLI 身分。",
   "ui.codex_api_key_probe": "codex-api-key 探測",
-  "ui.codex_api_key_probe_behavior": "AI Provider 頁面的 codex-api-key 連通性檢查使用相同收斂身分。",
+  "ui.codex_api_key_probe_behavior":
+    "AI Provider 頁面的 codex-api-key 連通性檢查使用相同收斂身分。",
   "ui.internal_probe_requests": "內部探測請求",
-  "ui.codex_internal_probe_behavior": "模型、額度、Token 重新整理、PAT 和 Agent Identity 請求同步使用相容官方身分。",
+  "ui.codex_internal_probe_behavior":
+    "模型、額度、Token 重新整理、PAT 和 Agent Identity 請求同步使用相容官方身分。",
   "ui.codex_ingress_gate": "官方用戶端入口門",
-  "ui.codex_ingress_gate_description": "對開啟 codex_cli_only 的帳號，在上游前以黑名單、白名單、版本範圍和引擎指紋判定並拒絕。",
+  "ui.codex_ingress_gate_description":
+    "對開啟 codex_cli_only 的帳號，在上游前以黑名單、白名單、版本範圍和引擎指紋判定並拒絕。",
   "ui.codex_app_server_clients": "App Server 用戶端",
-  "ui.codex_app_server_clients_behavior": "全域開關或帳號 extra.codex_cli_only_allow_app_server 可放行未列名用戶端；仍必須通過指紋門。",
+  "ui.codex_app_server_clients_behavior":
+    "全域開關或帳號 extra.codex_cli_only_allow_app_server 可放行未列名用戶端；仍必須通過指紋門。",
   "ui.codex_version_bounds": "版本範圍",
-  "ui.codex_version_bounds_behavior": "官方候選必須能解析 X.Y.Z 版本；設定後不得低於最小值或高於最大值。",
+  "ui.codex_version_bounds_behavior":
+    "官方候選必須能解析 X.Y.Z 版本；設定後不得低於最小值或高於最大值。",
   "ui.codex_fingerprint_signals": "引擎指紋門",
-  "ui.codex_fingerprint_signals_behavior": "所有勾選訊號都必須命中；同一訊號多個變體為 OR。預設要求存在 x-codex-* 請求標頭。",
+  "ui.codex_fingerprint_signals_behavior":
+    "所有勾選訊號都必須命中；同一訊號多個變體為 OR。預設要求存在 x-codex-* 請求標頭。",
   "ui.codex_convergence_mode": "收斂模式",
   "ui.codex_convergence_legacy_full": "預設關閉（未明確設定）",
   "ui.codex_convergence_off": "關閉（透傳原始標識）",
@@ -137,38 +201,51 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.codex_blacklist_json": "黑名單 JSON（任一命中拒絕）",
   "ui.codex_fingerprint_json": "指紋訊號 JSON（required 之間 AND）",
   "ui.codex_weekly_quota_overdraft": "Codex 5h / 7d 額度透支續用",
-  "ui.codex_weekly_quota_overdraft_description": "當 Codex 輸入最後一項是使用者訊息時，在送往上游前加入一組相關聯的無操作工具呼叫與輸出。",
+  "ui.codex_weekly_quota_overdraft_description":
+    "當 Codex 輸入最後一項是使用者訊息時，在送往上游前加入一組相關聯的無操作工具呼叫與輸出。",
   "ui.request_behavior": "請求行為",
-  "ui.weekly_overdraft_request_behavior": "僅處理 Codex 請求本文；無效、過大、非使用者結尾或已注入的請求均原樣放行。啟用 429 破限會修改 Codex 工具呼叫鏈並產生額外開銷，在效能較低的伺服器上可能增加首字延遲。",
+  "ui.weekly_overdraft_request_behavior":
+    "僅處理 Codex 請求本文；無效、過大、非使用者結尾或已注入的請求均原樣放行。啟用 429 破限會修改 Codex 工具呼叫鏈並產生額外開銷，在效能較低的伺服器上可能增加首字延遲。",
   "ui.automation_behavior": "自動化行為",
-  "ui.weekly_overdraft_automation_behavior": "5 小時或 7 天額度耗盡後隨巡檢執行最多 5 次實驗探測；任一次成功則保持啟用，5 次全部失敗才自動停用，並在自動啟用開啟時於對應額度視窗重設後恢復。",
+  "ui.weekly_overdraft_automation_behavior":
+    "5 小時或 7 天額度耗盡後隨巡檢執行最多 5 次實驗探測；任一次成功則保持啟用，5 次全部失敗才自動停用，並在自動啟用開啟時於對應額度視窗重設後恢復。",
   "ui.availability_notice": "可用性",
-  "ui.weekly_overdraft_availability_notice": "不保證一定能繼續產生內容，可透支額度也可能因訂閱類型而不同。",
+  "ui.weekly_overdraft_availability_notice":
+    "不保證一定能繼續產生內容，可透支額度也可能因訂閱類型而不同。",
   "ui.weekly_overdraft_probe_gate": "額度透支探測",
-  "ui.weekly_overdraft_probe_running": "正在驗證透支可用性（{current}/{total}）",
+  "ui.weekly_overdraft_probe_running":
+    "正在驗證透支可用性（{current}/{total}）",
   "ui.weekly_overdraft_probe_running_short": "正在驗證透支可用性",
   "ui.weekly_overdraft_probe_passed": "透支探測可用，保持啟用",
   "ui.weekly_overdraft_probe_failed": "5 次透支探測均失敗，等待自動停用",
   "ui.weekly_overdraft_probe_inconclusive": "透支探測未完成，等待下次巡檢",
-  "ui.weekly_overdraft_probe_management_auth_unavailable": "等待已驗證的巡檢請求",
-  "ui.weekly_overdraft_probe_experiment_unavailable": "上游未執行實驗性破限請求",
+  "ui.weekly_overdraft_probe_management_auth_unavailable":
+    "等待已驗證的巡檢請求",
+  "ui.weekly_overdraft_probe_experiment_unavailable":
+    "上游未執行實驗性破限請求",
   "ui.weekly_overdraft_probe_timeout": "探測請求逾時",
   "ui.weekly_overdraft_probe_upstream_unavailable": "暫時無法連線上游服務",
   "ui.codex_agent_identity": "Codex Agent Identity / PAT",
-  "ui.codex_agent_identity_description": "透過簽章 AgentAssertion 身分或 Sub2API 匯出的 at-* 個人存取權杖驗證 Codex。",
+  "ui.codex_agent_identity_description":
+    "透過簽章 AgentAssertion 身分或 Sub2API 匯出的 at-* 個人存取權杖驗證 Codex。",
   "ui.authentication_path": "驗證路徑",
-  "ui.agent_identity_authentication_behavior": "Agent Identity 對每次請求簽章；Codex PAT 由外掛使用 Bearer 驗證；現有 Codex OAuth 帳號維持不變。",
+  "ui.agent_identity_authentication_behavior":
+    "Agent Identity 對每次請求簽章；Codex PAT 由外掛使用 Bearer 驗證；現有 Codex OAuth 帳號維持不變。",
   "ui.supported_imports": "支援的匯入格式",
-  "ui.agent_identity_import_formats": "支援官方 JWT、codex-agent-identity-web 物件，以及包含 Agent Identity 或 at-* PAT 帳號的 Sub2API JSON、ZIP 匯出。",
+  "ui.agent_identity_import_formats":
+    "支援官方 JWT、codex-agent-identity-web 物件，以及包含 Agent Identity 或 at-* PAT 帳號的 Sub2API JSON、ZIP 匯出。",
   "ui.security_notice": "安全提示",
-  "ui.agent_identity_security_notice": "身分檔案包含簽章私密金鑰或個人存取權杖，請僅匯入可信檔案；預覽與日誌不會顯示這些值。",
+  "ui.agent_identity_security_notice":
+    "身分檔案包含簽章私密金鑰或個人存取權杖，請僅匯入可信檔案；預覽與日誌不會顯示這些值。",
   "ui.agent_identity": "Agent Identity",
   "ui.codex_personal_access_token": "Codex PAT",
   "ui.agent_identity_session_login": "Agent Identity 登入",
-  "ui.agent_identity_session_login_description": "貼上 ChatGPT Session JSON，由已驗證的 CPA 外掛程式直接轉換為憑證。",
+  "ui.agent_identity_session_login_description":
+    "貼上 ChatGPT Session JSON，由已驗證的 CPA 外掛程式直接轉換為憑證。",
   "ui.open_chatgpt_session": "開啟 ChatGPT Session",
   "ui.chatgpt_session_json": "ChatGPT Session JSON",
-  "ui.chatgpt_session_json_placeholder": "貼上 /api/auth/session 回傳的完整 JSON",
+  "ui.chatgpt_session_json_placeholder":
+    "貼上 /api/auth/session 回傳的完整 JSON",
   "ui.show_session_json": "顯示 Session JSON",
   "ui.hide_session_json": "隱藏 Session JSON",
   "ui.convert_and_login": "轉換並登入",
@@ -176,14 +253,18 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.agent_identity_login_complete": "Agent Identity 已就緒",
   "ui.cpa_is_saving_agent_identity": "CPA 正在儲存此憑證，現在可以關閉此視窗。",
   "ui.close_login_window": "關閉登入視窗",
-  "ui.session_json_privacy_notice": "Session JSON 僅透過已驗證的 CPA 連線提交一次；頁面會立即清除，外掛程式不會將其寫入儲存空間或日誌。",
+  "ui.session_json_privacy_notice":
+    "Session JSON 僅透過已驗證的 CPA 連線提交一次；頁面會立即清除，外掛程式不會將其寫入儲存空間或日誌。",
   "ui.invalid_agent_identity_login_state": "目前的登入要求無效或不完整。",
-  "ui.agent_identity_login_expired": "此 Agent Identity 登入要求已過期，請返回 CPA 重新發起登入。",
-  "ui.agent_identity_experiment_disabled": "GPT 登入需先在「設定 \u2192 實驗性功能」中開啟 Codex Agent Identity；OpenCode 登入不受影響。",
+  "ui.agent_identity_login_expired":
+    "此 Agent Identity 登入要求已過期，請返回 CPA 重新發起登入。",
+  "ui.agent_identity_experiment_disabled":
+    "GPT 登入需先在「設定 \u2192 實驗性功能」中開啟 Codex Agent Identity；OpenCode 登入不受影響。",
   "ui.choose_login_method": "\u9078\u64c7\u767b\u5165\u65b9\u5f0f",
   "ui.gpt_login": "gpt \u767b\u5165",
   "ui.opencode_login": "opencode",
-  "ui.opencode_login_description": "\u767b\u5165 opencode.ai \u5f8c\u958b\u555f Go \u5de5\u4f5c\u5340\u9801\u9762\uff0c\u586b\u5165 Workspace ID \u8207 auth Cookie\uff08auth \u7684\u503c\uff09\u5373\u53ef\u7d81\u5b9a\u8a72\u5e33\u865f\u3002",
+  "ui.opencode_login_description":
+    "\u767b\u5165 opencode.ai \u5f8c\u958b\u555f Go \u5de5\u4f5c\u5340\u9801\u9762\uff0c\u586b\u5165 Workspace ID \u8207 auth Cookie\uff08auth \u7684\u503c\uff09\u5373\u53ef\u7d81\u5b9a\u8a72\u5e33\u865f\u3002",
   "ui.opencode_workspace_id": "Workspace ID",
   "ui.opencode_auth_cookie": "Auth Cookie\uff08auth \u7684\u503c\uff09",
   "ui.opencode_workspace_placeholder": "wrk_xxxxxxxx",
@@ -191,28 +272,35 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.opencode_save_and_query": "\u67e5\u8a62\u4e26\u5132\u5b58",
   "ui.opencode_saving": "\u6b63\u5728\u5132\u5b58 OpenCode \u5e33\u865f",
   "ui.opencode_login_complete": "OpenCode \u5e33\u865f\u5df2\u5132\u5b58",
-  "ui.opencode_is_saved": "OpenCode Go \u984d\u5ea6\u5e33\u865f\u5df2\u7d81\u5b9a\uff0c\u53ef\u4ee5\u95dc\u9589\u6b64\u8996\u7a97\u3002",
+  "ui.opencode_is_saved":
+    "OpenCode Go \u984d\u5ea6\u5e33\u865f\u5df2\u7d81\u5b9a\uff0c\u53ef\u4ee5\u95dc\u9589\u6b64\u8996\u7a97\u3002",
   "ui.opencode_saved_account": "OpenCode Go \u984d\u5ea6\u5e33\u865f",
   "ui.opencode_rolling": "5 \u5c0f\u6642\u984d\u5ea6",
   "ui.opencode_weekly": "7 \u5929\u984d\u5ea6",
   "ui.opencode_monthly": "30 \u5929\u984d\u5ea6",
   "ui.opencode_reset_in": "{time} \u5f8c\u91cd\u7f6e",
-  "ui.opencode_open_status": "\u958b\u555f OpenCode Go \u984d\u5ea6\u76e3\u63a7",
-  "ui.opencode_privacy_notice": "Cookie \u50c5\u900f\u904e\u5df2\u8a8d\u8b49\u7684 CPA \u9023\u7dda\u63d0\u4ea4\u4e00\u6b21\uff0c\u4e26\u5132\u5b58\u5728\u5916\u639b\u79c1\u6709\u8cc7\u6599\u76ee\u9304\u4e2d\uff0c\u4e0d\u6703\u56de\u50b3\u7d66\u700f\u89bd\u5668\u6216\u5beb\u5165\u65e5\u8a8c\u3002",
+  "ui.opencode_open_status":
+    "\u958b\u555f OpenCode Go \u984d\u5ea6\u76e3\u63a7",
+  "ui.opencode_privacy_notice":
+    "Cookie \u50c5\u900f\u904e\u5df2\u8a8d\u8b49\u7684 CPA \u9023\u7dda\u63d0\u4ea4\u4e00\u6b21\uff0c\u4e26\u5132\u5b58\u5728\u5916\u639b\u79c1\u6709\u8cc7\u6599\u76ee\u9304\u4e2d\uff0c\u4e0d\u6703\u56de\u50b3\u7d66\u700f\u89bd\u5668\u6216\u5beb\u5165\u65e5\u8a8c\u3002",
   "ui.opencode": "OpenCode Go",
   "ui.opencode_save_action": "\u5132\u5b58 OpenCode \u5e33\u865f",
   "ui.opencode_remove_action": "\u522a\u9664 OpenCode \u5e33\u865f",
-  "ui.opencode_refresh_action": "\u91cd\u65b0\u6574\u7406 OpenCode \u984d\u5ea6",
+  "ui.opencode_refresh_action":
+    "\u91cd\u65b0\u6574\u7406 OpenCode \u984d\u5ea6",
   "ui.opencode_reason_account_saved": "\u5e33\u865f\u5df2\u5132\u5b58",
   "ui.opencode_reason_account_removed": "\u5e33\u865f\u5df2\u522a\u9664",
-  "ui.opencode_reason_all_refreshed": "\u5168\u90e8\u91cd\u65b0\u6574\u7406\u6210\u529f",
-  "ui.opencode_reason_partial_refresh_failed": "\u90e8\u5206\u5e33\u865f\u91cd\u65b0\u6574\u7406\u5931\u6557",
+  "ui.opencode_reason_all_refreshed":
+    "\u5168\u90e8\u91cd\u65b0\u6574\u7406\u6210\u529f",
+  "ui.opencode_reason_partial_refresh_failed":
+    "\u90e8\u5206\u5e33\u865f\u91cd\u65b0\u6574\u7406\u5931\u6557",
   "ui.opencode_reason_refresh_failed": "\u91cd\u65b0\u6574\u7406\u5931\u6557",
   "ui.opencode_reason_invalid_credential": "\u6191\u64da\u7121\u6548",
   "ui.opencode_reason_account_not_found": "\u5e33\u865f\u4e0d\u5b58\u5728",
   "ui.experimental_settings_saved": "實驗性設定已儲存",
   "ui.load_experimental_feature": "載入實驗性功能",
-  "ui.experimental_model_test_description": "實驗測試會使用新的關聯工具呼叫編號執行真實 Codex 模型探測，並顯示脫敏後的上游回應。",
+  "ui.experimental_model_test_description":
+    "實驗測試會使用新的關聯工具呼叫編號執行真實 Codex 模型探測，並顯示脫敏後的上游回應。",
   "ui.experimental_feature_loaded": "已載入實驗請求",
   "ui.correlation_call_id": "關聯呼叫編號",
   "ui.refresh": "重新整理",
@@ -238,13 +326,17 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.add_accounts": "新增帳號",
   "ui.deduplicate_accounts": "帳號去重",
   "ui.account_deduplication": "帳號去重",
-  "ui.account_deduplication_description": "尋找實際指向同一上游帳號的不同憑證檔案。",
-  "ui.account_deduplication_safety_note": "請複核保留憑證和待刪除項目；下一步仍需經過獨立的刪除預覽與二次確認。",
+  "ui.account_deduplication_description":
+    "尋找實際指向同一上游帳號的不同憑證檔案。",
+  "ui.account_deduplication_safety_note":
+    "請複核保留憑證和待刪除項目；下一步仍需經過獨立的刪除預覽與二次確認。",
   "ui.deduplication_rules": "去重規則",
   "ui.ignore_account_ids": "忽略帳號 ID 去重",
-  "ui.ignore_account_ids_description": "只依正規化電子郵件識別重複帳號，適用於團隊帳號共用 ID。",
+  "ui.ignore_account_ids_description":
+    "只依正規化電子郵件識別重複帳號，適用於團隊帳號共用 ID。",
   "ui.exclude_team_accounts": "排除 k12/team 方案帳號",
-  "ui.exclude_team_accounts_description": "這些帳號不會進入去重群組或刪除建議。",
+  "ui.exclude_team_accounts_description":
+    "這些帳號不會進入去重群組或刪除建議。",
   "ui.refreshing_deduplication": "正在重新掃描",
   "ui.scanned_credentials": "已掃描憑證",
   "ui.excluded_credentials": "已排除憑證",
@@ -254,7 +346,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.read_only_skipped": "唯讀跳過",
   "ui.missing_identity": "無穩定身分",
   "ui.no_duplicate_accounts": "未發現重複帳號",
-  "ui.no_duplicate_accounts_description": "目前 CPA 帳號中沒有憑證共用可靠的上游帳號 ID 或正規化電子郵件。",
+  "ui.no_duplicate_accounts_description":
+    "目前 CPA 帳號中沒有憑證共用可靠的上游帳號 ID 或正規化電子郵件。",
   "ui.selected_duplicate_credentials": "已選擇 {count} 個重複憑證",
   "ui.review_duplicate_deletions": "複核刪除（{count}）",
   "ui.unable_to_prepare_deletion_preview": "無法產生刪除預覽",
@@ -335,7 +428,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.batch_edit": "批次編輯",
   "ui.batch_delete": "批次刪除",
   "ui.batch_delete_preview": "批次刪除預覽",
-  "ui.batch_delete_warning": "刪除後無法透過外掛程式還原這些 Auth 檔案，請確認目標範圍後再繼續。",
+  "ui.batch_delete_warning":
+    "刪除後無法透過外掛程式還原這些 Auth 檔案，請確認目標範圍後再繼續。",
   "ui.delete_count_accounts": "刪除 {count} 個帳號",
   "ui.batch_delete_job": "批次刪除工作",
   "ui.deleted": "已刪除",
@@ -348,31 +442,38 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.account_index": "帳號索引",
   "ui.account_type": "帳號類型",
   "ui.plan_type": "方案類型",
-	"ui.active_reset_count": "主動重設次數",
-	"ui.refresh_plan_and_active_reset": "重新整理 {account} 的方案與主動重設次數",
-	"ui.refresh_quota_metadata_action": "重新整理額度中繼資料",
-	"ui.refresh_token": "重新整理權杖",
-	"ui.more_actions_for_account": "{account} 的更多操作",
-	"ui.account_more_actions": "帳號操作",
-	"ui.token_refreshed_for_account": "已重新整理 {account} 的憑據",
-	"ui.host_refresh_unsupported": "目前 CPA 版本不支援手動重新整理權杖",
-	"ui.refresh_credential_missing": "此帳號沒有 Refresh Token",
-	"ui.refresh_rejected": "重新整理憑據已失效，請重新登入",
-	"ui.refresh_already_running": "此帳號正在重新整理憑據",
-	"ui.refresh_provider_unsupported": "此供應商暫不支援外掛側權杖重新整理",
-	"ui.refresh_conflict": "重新整理期間帳號憑據已變更，已停止寫入，請使用最新憑據重試",
-	"ui.refresh_verification_failed": "憑據已寫入但無法驗證，請先重新載入帳號再決定是否重試",
-	"ui.token_refreshed_native": "已透過 CPA 原生能力重新整理帳號憑據",
-	"ui.token_refreshed_plugin": "CPA 無原生重新整理介面，已由外掛安全重新整理 Codex 憑據",
-	"ui.quota_metadata_refreshed": "已重新整理 {account} 的方案與主動重設次數",
-	"ui.quota_metadata_refreshed_with_warning": "已重新整理 {account} 的方案，但目前無法取得主動重設次數",
-	"ui.not_collected": "尚未收集",
-	"ui.quota_metadata_collected_at": "取得於 {time}",
-	"ui.use_active_reset": "主動重設",
-	"ui.confirm_active_reset": "確認主動重設",
-	"ui.confirm_active_reset_description": "確定要為 {account} 使用 1 次主動重設機會嗎？這會立即重設對應的 Codex 額度，且無法復原。",
-	"ui.active_reset_succeeded": "已完成 {account} 的主動重設，並重新整理方案、額度與剩餘次數",
-	"ui.active_reset_succeeded_with_warning": "已完成 {account} 的主動重設，但暫時無法重新整理最新額度中繼資料",
+  "ui.active_reset_count": "主動重設次數",
+  "ui.refresh_plan_and_active_reset": "重新整理 {account} 的方案與主動重設次數",
+  "ui.refresh_quota_metadata_action": "重新整理額度中繼資料",
+  "ui.refresh_token": "重新整理權杖",
+  "ui.more_actions_for_account": "{account} 的更多操作",
+  "ui.account_more_actions": "帳號操作",
+  "ui.token_refreshed_for_account": "已重新整理 {account} 的憑據",
+  "ui.host_refresh_unsupported": "目前 CPA 版本不支援手動重新整理權杖",
+  "ui.refresh_credential_missing": "此帳號沒有 Refresh Token",
+  "ui.refresh_rejected": "重新整理憑據已失效，請重新登入",
+  "ui.refresh_already_running": "此帳號正在重新整理憑據",
+  "ui.refresh_provider_unsupported": "此供應商暫不支援外掛側權杖重新整理",
+  "ui.refresh_conflict":
+    "重新整理期間帳號憑據已變更，已停止寫入，請使用最新憑據重試",
+  "ui.refresh_verification_failed":
+    "憑據已寫入但無法驗證，請先重新載入帳號再決定是否重試",
+  "ui.token_refreshed_native": "已透過 CPA 原生能力重新整理帳號憑據",
+  "ui.token_refreshed_plugin":
+    "CPA 無原生重新整理介面，已由外掛安全重新整理 Codex 憑據",
+  "ui.quota_metadata_refreshed": "已重新整理 {account} 的方案與主動重設次數",
+  "ui.quota_metadata_refreshed_with_warning":
+    "已重新整理 {account} 的方案，但目前無法取得主動重設次數",
+  "ui.not_collected": "尚未收集",
+  "ui.quota_metadata_collected_at": "取得於 {time}",
+  "ui.use_active_reset": "主動重設",
+  "ui.confirm_active_reset": "確認主動重設",
+  "ui.confirm_active_reset_description":
+    "確定要為 {account} 使用 1 次主動重設機會嗎？這會立即重設對應的 Codex 額度，且無法復原。",
+  "ui.active_reset_succeeded":
+    "已完成 {account} 的主動重設，並重新整理方案、額度與剩餘次數",
+  "ui.active_reset_succeeded_with_warning":
+    "已完成 {account} 的主動重設，但暫時無法重新整理最新額度中繼資料",
   "ui.source": "來源",
   "ui.status_detail": "狀態說明",
   "ui.read_only_reason": "唯讀原因",
@@ -385,7 +486,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.auto_enable_status": "自動啟用 {status}",
   "ui.auto_enable": "自動啟用",
   "ui.quota_recovery_priority": "Codex 額度恢復優先調度",
-  "ui.quota_recovery_priority_description": "新額度快照確認巡檢停用的帳號已恢復時，立即啟用並將 CPA Priority 至少提高到 100。手動停用與憑據失效帳號不會被修改。",
+  "ui.quota_recovery_priority_description":
+    "新額度快照確認巡檢停用的帳號已恢復時，立即啟用並將 CPA Priority 至少提高到 100。手動停用與憑據失效帳號不會被修改。",
   "ui.auto_delete": "自動刪除",
   "ui.manual_inspection_delete": "手動巡檢刪除",
   "ui.manual_inspection_bulk_delete": "手動巡檢批次刪除",
@@ -407,38 +509,42 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.on_2": "開啟",
   "ui.off_2": "關閉",
   "ui.headers": "請求標頭",
-	"ui.model_policy": "模型策略",
-	"ui.model_policy_mode": "模型策略模式",
-	"ui.all_models": "全部模型",
-	"ui.model_allowlist": "白名單模式",
-	"ui.model_blocklist": "黑名單模式",
-	"ui.loading_models": "正在載入模型",
-	"ui.models_could_not_be_loaded": "無法載入模型清單",
-	"ui.common_models_count": "{count} 個共用模型",
-	"ui.model_catalog_loaded_count": "已載入 {loaded}/{total} 個帳號",
-	"ui.model_catalog_failed_count": "{count} 個載入失敗",
-	"ui.search_models": "搜尋模型",
-	"ui.select_all": "全選",
-	"ui.clear": "清空",
-	"ui.available_models": "可用模型",
-	"ui.no_matching_models": "沒有符合的模型",
-	"ui.all_models_policy_help": "撤銷外掛管理的模型限制，同時保留在外掛外設定的排除項。",
-	"ui.enable_model_policy_to_load": "勾選此欄位後載入帳號的有效模型清單。",
-	"ui.load_models_before_submitting": "產生預覽前需要先載入模型清單。",
-	"ui.select_at_least_one_model": "目前策略模式至少需要選擇一個模型。",
-	"ui.current_account_configuration": "目前帳號設定",
-	"ui.current_account_configuration_description": "已從目前的 Auth 檔案載入；只有勾選的欄位會進入變更預覽。",
-	"ui.loading_account_configuration": "正在載入目前帳號設定",
-	"ui.account_configuration_load_failed": "無法載入目前帳號設定。",
-	"ui.retry_loading_configuration": "重新載入設定",
-	"ui.plugin_configuration": "外掛設定",
-	"ui.plugin_configuration_state": "外掛管理狀態",
-	"ui.managed_by_plugin": "由外掛管理",
-	"ui.not_managed_by_plugin": "未由外掛管理",
-	"ui.managed_models": "策略模型",
-	"ui.managed_model_exclusions": "外掛管理的排除模型",
-	"ui.proxy_credentials_hidden": "Proxy 憑證已隱藏；勾選 Proxy 欄位後將設定新位址或清除現有設定。",
-	"ui.header_values_hidden": "Header 值已隱藏；勾選請求標頭欄位後可依名稱新增、取代或移除。",
+  "ui.model_policy": "模型策略",
+  "ui.model_policy_mode": "模型策略模式",
+  "ui.all_models": "全部模型",
+  "ui.model_allowlist": "白名單模式",
+  "ui.model_blocklist": "黑名單模式",
+  "ui.loading_models": "正在載入模型",
+  "ui.models_could_not_be_loaded": "無法載入模型清單",
+  "ui.common_models_count": "{count} 個共用模型",
+  "ui.model_catalog_loaded_count": "已載入 {loaded}/{total} 個帳號",
+  "ui.model_catalog_failed_count": "{count} 個載入失敗",
+  "ui.search_models": "搜尋模型",
+  "ui.select_all": "全選",
+  "ui.clear": "清空",
+  "ui.available_models": "可用模型",
+  "ui.no_matching_models": "沒有符合的模型",
+  "ui.all_models_policy_help":
+    "撤銷外掛管理的模型限制，同時保留在外掛外設定的排除項。",
+  "ui.enable_model_policy_to_load": "勾選此欄位後載入帳號的有效模型清單。",
+  "ui.load_models_before_submitting": "產生預覽前需要先載入模型清單。",
+  "ui.select_at_least_one_model": "目前策略模式至少需要選擇一個模型。",
+  "ui.current_account_configuration": "目前帳號設定",
+  "ui.current_account_configuration_description":
+    "已從目前的 Auth 檔案載入；只有勾選的欄位會進入變更預覽。",
+  "ui.loading_account_configuration": "正在載入目前帳號設定",
+  "ui.account_configuration_load_failed": "無法載入目前帳號設定。",
+  "ui.retry_loading_configuration": "重新載入設定",
+  "ui.plugin_configuration": "外掛設定",
+  "ui.plugin_configuration_state": "外掛管理狀態",
+  "ui.managed_by_plugin": "由外掛管理",
+  "ui.not_managed_by_plugin": "未由外掛管理",
+  "ui.managed_models": "策略模型",
+  "ui.managed_model_exclusions": "外掛管理的排除模型",
+  "ui.proxy_credentials_hidden":
+    "Proxy 憑證已隱藏；勾選 Proxy 欄位後將設定新位址或清除現有設定。",
+  "ui.header_values_hidden":
+    "Header 值已隱藏；勾選請求標頭欄位後可依名稱新增、取代或移除。",
   "ui.note": "備註",
   "ui.header_names": "請求標頭名稱",
   "ui.usage_and_activity": "用量與活動",
@@ -467,7 +573,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.primary_model": "主要模型",
   "ui.fallback_model": "回退模型",
   "ui.final_model": "可用模型",
-  "ui.model_fallback_succeeded": "主要模型不受支援，帳號已透過 {model} 驗證可用",
+  "ui.model_fallback_succeeded":
+    "主要模型不受支援，帳號已透過 {model} 驗證可用",
   "ui.no_available_model": "找不到可用模型",
   "ui.model_probe_attempts": "模型探測過程",
   "ui.primary_attempt": "主要模型探測",
@@ -476,14 +583,18 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.testing_unsupported": "暫不支援測試",
   "ui.manual_confirmation_required": "需要手動確認",
   "ui.received_the_expected_model_response": "已收到符合預期的模型回應",
-  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist": "此帳號無法使用此模型，或模型名稱不存在",
+  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist":
+    "此帳號無法使用此模型，或模型名稱不存在",
   "ui.account_is_currently_unavailable": "帳號目前不可用",
-  "ui.authentication_failed_check_credential_status": "帳號驗證失敗，請檢查憑證狀態",
+  "ui.authentication_failed_check_credential_status":
+    "帳號驗證失敗，請檢查憑證狀態",
   "ui.upstream_quota_or_rate_limited": "上游額度或請求頻率受限",
   "ui.test_request_timed_out": "測試請求逾時",
   "ui.upstream_service_is_temporarily_unavailable": "暫時無法連線上游服務",
-  "ui.the_upstream_response_cannot_confirm_model_availability": "上游回應無法確認模型可用性",
-  "ui.this_provider_does_not_support_safe_model_testing_yet": "此提供者暫未支援安全模型測試",
+  "ui.the_upstream_response_cannot_confirm_model_availability":
+    "上游回應無法確認模型可用性",
+  "ui.this_provider_does_not_support_safe_model_testing_yet":
+    "此提供者暫未支援安全模型測試",
   "ui.the_test_result_requires_manual_confirmation": "測試結果需要手動確認",
   "ui.model": "模型",
   "ui.latency": "延遲",
@@ -499,7 +610,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.truncated": "已截斷",
   "ui.delete_account": "刪除帳號",
   "ui.this_permanently_deletes_the_cpa_auth_file": "將永久刪除 CPA Auth 檔案",
-  "ui.the_file_is_revalidated_before_deletion": "刪除前會再次檢查檔案在預覽後是否有變更。",
+  "ui.the_file_is_revalidated_before_deletion":
+    "刪除前會再次檢查檔案在預覽後是否有變更。",
   "ui.validating_deletion_target": "正在驗證刪除目標",
   "ui.download_account_credentials": "下載帳號憑證",
   "ui.download_format": "下載 {format}",
@@ -554,9 +666,11 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.failed": "失敗",
   "ui.enable_default_policy": "啟用預設策略",
   "ui.new_account_model_probe": "新帳號模型探測",
-  "ui.new_account_model_probe_description": "發現新 Codex 帳號後自動測試主要模型、回退模型和相容模型",
+  "ui.new_account_model_probe_description":
+    "發現新 Codex 帳號後自動測試主要模型、回退模型和相容模型",
   "ui.enable_new_account_model_probe": "啟用新帳號模型探測",
-  "ui.new_account_model_probe_storage_error": "新帳號模型探測狀態無法持久化，請檢查外掛 data_dir 是否可寫並已持久化掛載。",
+  "ui.new_account_model_probe_storage_error":
+    "新帳號模型探測狀態無法持久化，請檢查外掛 data_dir 是否可寫並已持久化掛載。",
   "ui.default_priority": "預設 Priority",
   "ui.default_websockets": "預設 WebSockets",
   "ui.scan_interval": "掃描間隔",
@@ -580,14 +694,17 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.interrupted_2": "已中斷",
   "ui.no_item_results_yet": "暫無逐項結果",
   "ui.inspection_and_automation_settings": "巡檢與自動化設定",
-  "ui.all_writes_require_management_authentication": "所有寫入操作均受 Management 驗證保護",
+  "ui.all_writes_require_management_authentication":
+    "所有寫入操作均受 Management 驗證保護",
   "ui.save_settings": "儲存設定",
   "ui.inspection_schedule": "巡檢排程",
-  "ui.cpa_native_status_and_usage_evidence": "每輪使用 CPA 原生狀態和用量資料巡檢全部已接入帳號",
+  "ui.cpa_native_status_and_usage_evidence":
+    "每輪使用 CPA 原生狀態和用量資料巡檢全部已接入帳號",
   "ui.scheduled_inspection": "排程巡檢",
   "ui.full_scheduled_active_inspection": "全量定時主動巡檢",
   "ui.anomaly_trigger": "異常占比觸發",
-  "ui.anomaly_trigger_description": "可靠異常結果達到設定比例時，可依設定啟動一輪全量主動巡檢",
+  "ui.anomaly_trigger_description":
+    "可靠異常結果達到設定比例時，可依設定啟動一輪全量主動巡檢",
   "ui.enable_anomaly_trigger": "啟用異常占比觸發",
   "ui.anomaly_threshold": "異常閾值",
   "ui.minimum_sample": "最小可靠樣本",
@@ -595,17 +712,21 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.external_get_notification": "外部 GET 通知",
   "ui.notification_only_mode": "僅傳送通知，不觸發二次巡檢",
   "ui.external_notifications": "外部通知",
-  "ui.external_notifications_description": "巡檢後評估帳號池條件，達到閾值時傳送一則彙總 GET 通知",
+  "ui.external_notifications_description":
+    "巡檢後評估帳號池條件，達到閾值時傳送一則彙總 GET 通知",
   "ui.notification_endpoints": "通知連結",
   "ui.generic_notifications": "通用通知",
-  "ui.generic_notifications_description": "全域可用率與異常觸發只會傳送到使用通用通知的連結。",
+  "ui.generic_notifications_description":
+    "全域可用率與異常觸發只會傳送到使用通用通知的連結。",
   "ui.policy_notifications": "策略通知",
-  "ui.policy_notifications_description": "依供應商、方案類型和信箱網域巢狀篩選帳號，並在篩選集合低於可用閾值時通知。",
+  "ui.policy_notifications_description":
+    "依供應商、方案類型和信箱網域巢狀篩選帳號，並在篩選集合低於可用閾值時通知。",
   "ui.add_notification_policy": "新增策略通知",
   "ui.add_policy_notification_endpoint": "新增策略通知連結",
   "ui.policy_notification_endpoints": "策略通知連結",
   "ui.policy_notification_endpoints_for": "{name} 的策略通知連結",
-  "ui.policy_notification_endpoints_description": "這些連結由目前策略獨立觸發。",
+  "ui.policy_notification_endpoints_description":
+    "這些連結由目前策略獨立觸發。",
   "ui.no_generic_notification_endpoints": "尚未設定通用通知連結",
   "ui.no_policy_notification_endpoints": "尚未設定策略通知連結",
   "ui.move_notification_endpoint_up": "上移通知連結",
@@ -618,20 +739,29 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.move_notification_policy_up": "上移通知策略",
   "ui.move_notification_policy_down": "下移通知策略",
   "ui.delete_notification_policy": "刪除通知策略",
-  "ui.confirm_remove_notification_policy": "確定刪除策略通知 {name} 及其全部通知連結？",
+  "ui.confirm_remove_notification_policy":
+    "確定刪除策略通知 {name} 及其全部通知連結？",
   "ui.notification_threshold_conditions": "觸發條件",
   "ui.notification_threshold_operator": "觸發條件組合方式",
   "ui.threshold_match_all_hint": "所有已啟用的門檻都達到時觸發通知",
   "ui.threshold_match_any_hint": "任意一個已啟用的門檻達到時觸發通知",
   "ui.notification_policy_name_required": "每條通知策略都必須填寫名稱",
-  "ui.notification_policy_name_duplicate": "策略名稱「{name}」已存在，請使用唯一名稱",
-  "ui.notification_policy_threshold_required": "每條通知策略至少需要啟用一個可用性觸發條件",
-  "ui.notification_policy_binding_invalid": "策略通知連結歸屬無效，請重新整理後再次設定",
-  "ui.generic_notification_endpoint_required": "啟用通用通知觸發前，至少啟用一條通用通知連結",
-  "ui.policy_notification_endpoint_required": "啟用策略通知前，至少啟用一條策略內通知連結",
-  "ui.policy_notification_endpoint_required_named": "請為策略通知 {name} 啟用一條通知連結",
-  "ui.notification_policy_order_hint": "排序僅用於管理顯示；所有符合的策略都會獨立判斷和觸發。",
-  "ui.save_notification_policy_before_testing": "請先儲存目前策略通知，再進行預覽或測試",
+  "ui.notification_policy_name_duplicate":
+    "策略名稱「{name}」已存在，請使用唯一名稱",
+  "ui.notification_policy_threshold_required":
+    "每條通知策略至少需要啟用一個可用性觸發條件",
+  "ui.notification_policy_binding_invalid":
+    "策略通知連結歸屬無效，請重新整理後再次設定",
+  "ui.generic_notification_endpoint_required":
+    "啟用通用通知觸發前，至少啟用一條通用通知連結",
+  "ui.policy_notification_endpoint_required":
+    "啟用策略通知前，至少啟用一條策略內通知連結",
+  "ui.policy_notification_endpoint_required_named":
+    "請為策略通知 {name} 啟用一條通知連結",
+  "ui.notification_policy_order_hint":
+    "排序僅用於管理顯示；所有符合的策略都會獨立判斷和觸發。",
+  "ui.save_notification_policy_before_testing":
+    "請先儲存目前策略通知，再進行預覽或測試",
   "ui.add_notification_endpoint": "新增通知連結",
   "ui.notification_endpoint_name": "名稱",
   "ui.notification_endpoint_name_number": "通知連結 {number} 名稱",
@@ -642,12 +772,14 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.remove_notification_endpoint": "刪除通知連結",
   "ui.remove_notification_endpoint_number": "刪除通知連結 {number}",
   "ui.confirm_remove_notification_endpoint": "確定刪除通知連結 {name}？",
-  "ui.confirm_remove_notification_endpoint_number": "確定刪除第 {number} 條通知連結？",
+  "ui.confirm_remove_notification_endpoint_number":
+    "確定刪除第 {number} 條通知連結？",
   "ui.no_notification_endpoints": "尚未設定通知連結",
   "ui.notification_endpoint_count": "已設定 {count}/{max} 條通知連結",
   "ui.notification_endpoint_limit_reached": "最多允許 {count} 條通知連結",
   "ui.notification_duplicate_url": "通知連結 URL 不可重複",
-  "ui.notification_enabled_endpoint_required": "啟用通知觸發條件前，至少要啟用一條通知連結",
+  "ui.notification_enabled_endpoint_required":
+    "啟用通知觸發條件前，至少要啟用一條通知連結",
   "ui.notification_settings_saved": "外部通知設定已儲存",
   "ui.notify_on_anomaly_ratio": "異常占比達到閾值時通知",
   "ui.notify_when_available_accounts_low": "可用帳號數不足時通知",
@@ -660,11 +792,15 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.select_parameter": "選擇參數",
   "ui.notification_url_is_required": "啟用外部通知時必須填寫通知 URL 範本",
   "ui.notification_url_must_use_https": "通知 URL 必須使用 HTTPS",
-  "ui.notification_available_accounts_must_be_between_1_and_10000": "可用帳號數通知閾值必須介於 1 到 10000",
-  "ui.notification_availability_percent_must_be_between_1_and_100": "總可用率通知閾值必須介於 1% 到 100%",
-  "ui.notification_cooldown_must_be_between_5_and_1440_minutes": "通知冷卻時間必須介於 5 到 1440 分鐘",
+  "ui.notification_available_accounts_must_be_between_1_and_10000":
+    "可用帳號數通知閾值必須介於 1 到 10000",
+  "ui.notification_availability_percent_must_be_between_1_and_100":
+    "總可用率通知閾值必須介於 1% 到 100%",
+  "ui.notification_cooldown_must_be_between_5_and_1440_minutes":
+    "通知冷卻時間必須介於 5 到 1440 分鐘",
   "ui.notification_parameter_full_details": "插入完整詳情參數",
-  "ui.notification_full_message_template": "事件 ${event}；可用帳號 ${available_accounts}/${total_accounts}；可用率 ${available_percent}；異常帳號 ${abnormal_accounts}（${abnormal_percent}）；額度受限 ${quota_limited_accounts}；憑據失效 ${invalid_credential_accounts}；暫不可用 ${unavailable_accounts}；已停用 ${disabled_accounts}；觸發時間 ${triggered_at}",
+  "ui.notification_full_message_template":
+    "事件 ${event}；可用帳號 ${available_accounts}/${total_accounts}；可用率 ${available_percent}；異常帳號 ${abnormal_accounts}（${abnormal_percent}）；額度受限 ${quota_limited_accounts}；憑據失效 ${invalid_credential_accounts}；暫不可用 ${unavailable_accounts}；已停用 ${disabled_accounts}；觸發時間 ${triggered_at}",
   "ui.notification_preview_and_test": "通知預覽與測試",
   "ui.preview_notification": "預覽",
   "ui.send_test_notification": "傳送測試",
@@ -701,41 +837,51 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.passive_failure_threshold": "被動失敗門檻",
   "ui.passive_failure_window": "被動失敗時間窗",
   "ui.passive_circuit_duration": "暫時停用時間",
-  "ui.passive_circuit_description": "CPA 請求或主動模型探測連續出現證據不足的失敗時，可暫時停用帳號。不會接管手動停用，暫時熔斷也永遠不會進入自動刪除。",
+  "ui.passive_circuit_description":
+    "CPA 請求或主動模型探測連續出現證據不足的失敗時，可暫時停用帳號。不會接管手動停用，暫時熔斷也永遠不會進入自動刪除。",
   "ui.account_disposition": "帳號處置",
-  "ui.only_accounts_disabled_by_inspection_can_be_restored": "僅恢復由巡檢停用的帳號",
+  "ui.only_accounts_disabled_by_inspection_can_be_restored":
+    "僅恢復由巡檢停用的帳號",
   "ui.deletion_grace": "刪除寬限期",
   "ui.hours": "小時",
   "ui.deletes_per_run": "每次刪除",
   "ui.accounts_2": "個",
   "ui.confirm_auto_delete": "確認開啟自動刪除",
-  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period": "確認僅自動刪除明確停用、由巡檢停用且超過寬限期的帳號",
+  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period":
+    "確認僅自動刪除明確停用、由巡檢停用且超過寬限期的帳號",
   "ui.delete_persistent_invalid_credentials": "刪除持續失效的憑證",
   "ui.confirm_invalid_credential_deletion": "確認刪除失效憑證",
-  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation": "確認僅在持續高信心鑑權失敗、由巡檢停用、超過寬限期且刪除前複核通過後執行刪除",
+  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation":
+    "確認僅在持續高信心鑑權失敗、由巡檢停用、超過寬限期且刪除前複核通過後執行刪除",
   "ui.plugin_updates": "外掛程式更新",
   "ui.cpa_plugin_store_updates": "CPA 外掛程式商店",
   "ui.check_for_updates": "檢查更新",
   "ui.check_interval": "檢查間隔",
   "ui.auto_update": "自動更新",
   "ui.confirm_auto_update": "確認開啟自動更新",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "確認登入外掛程式管理介面後，自動安裝通過 CPA 外掛程式商店驗證的新版本",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active":
+    "確認登入外掛程式管理介面後，自動安裝通過 CPA 外掛程式商店驗證的新版本",
   "ui.authentication_failed": "驗證失敗",
   "ui.request_failed": "請求失敗",
   "ui.request_timeout": "請求逾時，請稍後重試",
   "ui.invalid_json_response": "服務端返回了無效的 JSON 回應",
-  "ui.invalid_api_response": "服務端返回的資料結構無效，已保留目前頁面資料，請稍後重試",
-  "ui.invalid_accounts_response": "CPA 返回的帳號列表無效，已保留目前頁面資料，請稍後重試",
+  "ui.invalid_api_response":
+    "服務端返回的資料結構無效，已保留目前頁面資料，請稍後重試",
+  "ui.invalid_accounts_response":
+    "CPA 返回的帳號列表無效，已保留目前頁面資料，請稍後重試",
   "ui.deleted_account_account": "已刪除帳號 {account}",
   "ui.added_count_accounts": "已新增 {count} 個帳號",
-  "ui.added_count_accounts_failed_not_written": "已新增 {count} 個帳號，{failed} 個未寫入",
-  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped": "已下載 {format} 憑證，共 {count} 個帳號，略過 {skipped} 個",
+  "ui.added_count_accounts_failed_not_written":
+    "已新增 {count} 個帳號，{failed} 個未寫入",
+  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped":
+    "已下載 {format} 憑證，共 {count} 個帳號，略過 {skipped} 個",
   "ui.exported_results_as_format": "已匯出結果 {format}",
   "ui.count_selected_accounts": "已選取 {count} 個帳號",
   "ui.count_filtered_accounts": "目前篩選出 {count} 個帳號",
   "ui.selected_accounts": "已選取帳號",
   "ui.count_accounts": "{count} 個帳號",
-  "ui.count_records_page_page_slash_pages": "{count} 筆記錄 · 第 {page}/{pages} 頁",
+  "ui.count_records_page_page_slash_pages":
+    "{count} 筆記錄 · 第 {page}/{pages} 頁",
   "ui.select_editable_accounts_on_this_page": "選取本頁可編輯帳號",
   "ui.select_account": "選取 {account}",
   "ui.view_account": "檢視 {account}",
@@ -753,17 +899,25 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.no_cpa_usage_data_received": "尚未收到 CPA Usage 資料",
   "ui.awaiting_usage_collection": "等待用量採集",
   "ui.waiting_for_quota_recovery": "等待額度恢復",
-  "ui.collecting_usage_for_count_imported_accounts": "正在採集 {count} 個匯入帳號的用量",
-  "ui.total_requests_success_succeeded_failed_failed": "累計請求：成功 {success}，失敗 {failed}",
-  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time": "CPA 近期請求：{count}（{windows} 個時段）；最近請求 {time}",
-  "ui.recent_cpa_requests_count_across_windows_windows": "CPA 近期請求：{count}（{windows} 個時段）",
+  "ui.collecting_usage_for_count_imported_accounts":
+    "正在採集 {count} 個匯入帳號的用量",
+  "ui.total_requests_success_succeeded_failed_failed":
+    "累計請求：成功 {success}，失敗 {failed}",
+  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time":
+    "CPA 近期請求：{count}（{windows} 個時段）；最近請求 {time}",
+  "ui.recent_cpa_requests_count_across_windows_windows":
+    "CPA 近期請求：{count}（{windows} 個時段）",
   "ui.last_request_time": "最近請求 {time}",
   "ui.no_recent_cpa_request_windows": "CPA 暫無近期請求時段",
-  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "CPA 擷取到對應上游回應標頭後會顯示 Codex 額度",
-  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA 目前未提供 Agent Identity 額度",
+  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers":
+    "CPA 擷取到對應上游回應標頭後會顯示 Codex 額度",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota":
+    "CPA 目前未提供 Agent Identity 額度",
   "ui.quota": "額度",
-  "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label} 已用 {percent}%，重設 {reset}，視窗 {minutes} 分鐘",
-  "ui.label_percent_percent_used_resets_reset": "{label} 已用 {percent}%，重設 {reset}",
+  "ui.label_percent_percent_used_resets_reset_minutes_minute_window":
+    "{label} 已用 {percent}%，重設 {reset}，視窗 {minutes} 分鐘",
+  "ui.label_percent_percent_used_resets_reset":
+    "{label} 已用 {percent}%，重設 {reset}",
   "ui.label_usage_percent_percent": "{label} 用量 {percent}%",
   "ui.overdraft_usage": "透支用量",
 
@@ -771,31 +925,42 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.overdraft_cycle_inconclusive": "透支結果未定",
   "ui.overdraft_cycle_failed": "透支確認失敗",
   "ui.overdraft_cycle_passed": "透支已確認",
-  "ui.overdraft_cycle_pending": "透支驗證中",  "ui.overdraft_credit_usage_window": "{label} 透支預估費用 {amount}；已計價 {rated} 次，未計價 {unrated} 次；此費用已包含於帳號總預估費用。",
-  "ui.overdraft_credit_usage_detail": "{amount} · 已計價 {rated} 次 · 未計價 {unrated} 次 · 已計入帳號總費用",
+  "ui.overdraft_cycle_pending": "透支驗證中",
+  "ui.overdraft_credit_usage_window":
+    "{label} 透支預估費用 {amount}；已計價 {rated} 次，未計價 {unrated} 次；此費用已包含於帳號總預估費用。",
+  "ui.overdraft_credit_usage_detail":
+    "{amount} · 已計價 {rated} 次 · 未計價 {unrated} 次 · 已計入帳號總費用",
   "ui.5_hour_overdraft_credit_usage": "5 小時透支費用",
   "ui.7_day_overdraft_credit_usage": "7 天透支費用",
   "ui.overdraft_usage_window": "{label} 透支 {percent}%（總用量 {total}%）",
-  "ui.overdraft_usage_window_observed": "{label} 從一般探測失敗時的凍結基準起，已觀測透支 {tokens} Tokens，共 {requests} 個成功請求（官方總用量 {total}%）",
+  "ui.overdraft_usage_window_observed":
+    "{label} 從一般探測失敗時的凍結基準起，已觀測透支 {tokens} Tokens，共 {requests} 個成功請求（官方總用量 {total}%）",
   "ui.overdraft_tokens_value": "{count} tok",
   "ui.overdraft_requests_value": "{count} 次",
-  "ui.overdraft_usage_included_in_total": "只有一般探測在 100% 時確認不可用後才凍結基準並開始計算；失敗請求不計入。凍結的耗盡時間與自動啟用時間不會被後續透支請求順延，額度恢復至 0% 或自動啟用後結束本輪。5h 與 7d 分別計算。",
+  "ui.overdraft_usage_included_in_total":
+    "只有一般探測在 100% 時確認不可用後才凍結基準並開始計算；失敗請求不計入。凍結的耗盡時間與自動啟用時間不會被後續透支請求順延，額度恢復至 0% 或自動啟用後結束本輪。5h 與 7d 分別計算。",
   "ui.count_read_only_targets_will_be_skipped": "將略過 {count} 個唯讀目標",
-  "ui.count_targets_are_read_only_and_will_be_skipped": "{count} 個目標為唯讀，將自動略過",
-  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped": "{count} 個已選目標已不存在，將自動略過",
-  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts": "目標包含多個 Provider，請確認欄位適用於全部帳號",
-  "ui.select_at_least_one_default_field_before_enabling_the_policy": "啟用自動策略前請至少選取一個預設欄位",
+  "ui.count_targets_are_read_only_and_will_be_skipped":
+    "{count} 個目標為唯讀，將自動略過",
+  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped":
+    "{count} 個已選目標已不存在，將自動略過",
+  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts":
+    "目標包含多個 Provider，請確認欄位適用於全部帳號",
+  "ui.select_at_least_one_default_field_before_enabling_the_policy":
+    "啟用自動策略前請至少選取一個預設欄位",
   "ui.priority_must_be_an_integer": "Priority 必須是整數",
   "ui.account_concurrency": "帳號並行",
   "ui.account_concurrency_value": "帳號並行值",
   "ui.account_concurrency_must_be_an_integer": "帳號並行必須是整數",
   "ui.account_concurrency_range": "帳號並行必須介於 0 到 1000 之間",
   "ui.account_concurrency_zero_unlimited": "0 表示不限制",
-  "ui.account_concurrency_unavailable_old_cpa": "目前 CPA 版本不支援帳號並行控制，請升級至支援 request lifecycle schema v2 的版本。",
+  "ui.account_concurrency_unavailable_old_cpa":
+    "目前 CPA 版本不支援帳號並行控制，請升級至支援 request lifecycle schema v2 的版本。",
   "ui.account_concurrency_active_limit": "{active}/{limit}",
   "ui.unlimited": "不限制",
   "ui.scan_interval_must_be_an_integer": "掃描間隔必須是整數",
-  "ui.scan_interval_must_be_between_5_and_300_seconds": "掃描間隔必須介於 5 到 300 秒",
+  "ui.scan_interval_must_be_between_5_and_300_seconds":
+    "掃描間隔必須介於 5 到 300 秒",
   "ui.auth_files": "Auth 檔案",
   "ui.header_name_is_duplicated": "Header {name} 重複",
   "ui.header_name_has_no_value": "Header {name} 缺少值",
@@ -810,25 +975,42 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.set": "設定",
   "ui.remove": "移除",
   "ui.delete_header_row": "刪除 Header 列",
-  "ui.inspection_interval_must_be_between_5_and_1440_minutes": "巡檢間隔必須介於 5 到 1440 分鐘",
-  "ui.failure_threshold_must_be_between_2_and_10_events": "連續異常門檻必須介於 2 到 10 次",
-  "ui.recovery_threshold_must_be_between_1_and_10_events": "連續恢復門檻必須介於 1 到 10 次",
-  "ui.passive_failure_threshold_must_be_between_2_and_100_events": "被動失敗門檻必須介於 2 到 100 次",
-  "ui.passive_failure_window_must_be_between_1_and_1440_minutes": "被動失敗時間窗必須介於 1 到 1440 分鐘",
-  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes": "被動熔斷時間必須介於 1 到 1440 分鐘",
-  "ui.passive_circuit_requires_auto_disable_and_auto_enable": "被動熔斷需要同時開啟自動停用和自動啟用",
-  "ui.deletion_grace_must_be_between_24_and_8760_hours": "刪除寬限期必須介於 24 到 8760 小時",
-  "ui.deletes_per_run_must_be_between_1_and_100": "每次刪除上限必須介於 1 到 100",
-  "ui.update_check_interval_must_be_between_1_and_168_hours": "更新檢查間隔必須介於 1 到 168 小時",
-  "ui.anomaly_threshold_must_be_between_1_and_100_percent": "異常閾值必須介於 1% 到 100%",
-  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts": "最小可靠樣本必須介於 1 到 10000 個帳號",
-  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes": "觸發冷卻時間必須介於 5 到 1440 分鐘",
-  "ui.confirm_the_risk_before_deleting_invalid_credentials": "啟用失效憑證刪除前需要確認風險",
+  "ui.inspection_interval_must_be_between_5_and_1440_minutes":
+    "巡檢間隔必須介於 5 到 1440 分鐘",
+  "ui.failure_threshold_must_be_between_2_and_10_events":
+    "連續異常門檻必須介於 2 到 10 次",
+  "ui.recovery_threshold_must_be_between_1_and_10_events":
+    "連續恢復門檻必須介於 1 到 10 次",
+  "ui.passive_failure_threshold_must_be_between_2_and_100_events":
+    "被動失敗門檻必須介於 2 到 100 次",
+  "ui.passive_failure_window_must_be_between_1_and_1440_minutes":
+    "被動失敗時間窗必須介於 1 到 1440 分鐘",
+  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes":
+    "被動熔斷時間必須介於 1 到 1440 分鐘",
+  "ui.passive_circuit_requires_auto_disable_and_auto_enable":
+    "被動熔斷需要同時開啟自動停用和自動啟用",
+  "ui.deletion_grace_must_be_between_24_and_8760_hours":
+    "刪除寬限期必須介於 24 到 8760 小時",
+  "ui.deletes_per_run_must_be_between_1_and_100":
+    "每次刪除上限必須介於 1 到 100",
+  "ui.update_check_interval_must_be_between_1_and_168_hours":
+    "更新檢查間隔必須介於 1 到 168 小時",
+  "ui.anomaly_threshold_must_be_between_1_and_100_percent":
+    "異常閾值必須介於 1% 到 100%",
+  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts":
+    "最小可靠樣本必須介於 1 到 10000 個帳號",
+  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes":
+    "觸發冷卻時間必須介於 5 到 1440 分鐘",
+  "ui.confirm_the_risk_before_deleting_invalid_credentials":
+    "啟用失效憑證刪除前需要確認風險",
   "ui.auto_delete_requires_auto_disable": "自動刪除需要先啟用自動停用",
-  "ui.confirm_the_risk_before_enabling_auto_delete": "開啟自動刪除前需要確認風險",
+  "ui.confirm_the_risk_before_enabling_auto_delete":
+    "開啟自動刪除前需要確認風險",
   "ui.auto_update_requires_update_checks": "自動更新需要先啟用更新檢查",
-  "ui.confirm_the_risk_before_enabling_auto_update": "開啟自動更新前需要確認風險",
-  "ui.file_is_not_a_json_text_json_or_zip_file": "{file} 不是 JSON、文字 JSON 或 ZIP 檔案",
+  "ui.confirm_the_risk_before_enabling_auto_update":
+    "開啟自動更新前需要確認風險",
+  "ui.file_is_not_a_json_text_json_or_zip_file":
+    "{file} 不是 JSON、文字 JSON 或 ZIP 檔案",
   "ui.select_at_most_count_files_at_once": "一次最多選取 {count} 個檔案",
   "ui.selected_files_exceed_12_mib_in_total": "所選檔案總大小超過 12 MiB",
   "ui.select_json_text_json_or_zip_files": "請選取 JSON、文字 JSON 或 ZIP 檔案",
@@ -854,7 +1036,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.import_complete": "匯入完成",
   "ui.import_started_in_background": "帳號匯入工作已在背景啟動",
   "ui.import_running_in_background": "正在背景匯入帳號",
-  "ui.import_can_continue_after_closing": "可以關閉此視窗，工作會繼續執行，並可在操作日誌中查看。",
+  "ui.import_can_continue_after_closing":
+    "可以關閉此視窗，工作會繼續執行，並可在操作日誌中查看。",
   "ui.import_partially_complete": "部分匯入完成",
   "ui.import_failed": "匯入失敗",
   "ui.imported_slash_total_written_to_cpa": "{imported}/{total} 已寫入 CPA",
@@ -863,10 +1046,13 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.skipped_2": "已略過",
   "ui.existing_auth_files_will_not_be_overwritten": "不會覆寫現有 Auth 檔案",
   "ui.refresh_token_is_missing": "缺少 Refresh Token",
-  "ui.id_token_was_synthesized_from_account_metadata": "已根據帳號資訊產生相容的 ID Token",
+  "ui.id_token_was_synthesized_from_account_metadata":
+    "已根據帳號資訊產生相容的 ID Token",
   "ui.account_id_is_missing": "缺少 Account ID",
-  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file": "目標檔名已避開現有 Auth 檔案",
-  "ui.zip_entry_is_not_a_json_or_text_json_file": "ZIP 項目不是 JSON 或文字 JSON 檔案",
+  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file":
+    "目標檔名已避開現有 Auth 檔案",
+  "ui.zip_entry_is_not_a_json_or_text_json_file":
+    "ZIP 項目不是 JSON 或文字 JSON 檔案",
   "ui.zip_entry_does_not_contain_valid_json": "ZIP 項目不是有效 JSON",
   "ui.uploaded_file_does_not_contain_valid_json": "上傳檔案不是有效 JSON",
   "ui.uploaded_file_is_empty": "檔案為空",
@@ -876,14 +1062,22 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.cpa_rejected_the_converted_auth_file": "CPA 拒絕轉換後的 Auth 檔案",
   "ui.import_was_cancelled": "匯入已取消",
   "ui.cpa_auth_storage_is_unavailable": "CPA Auth 儲存空間無法使用",
-  "ui.count_unsupported_or_duplicate_record_s_were_skipped": "已略過 {count} 筆不支援或重複的記錄",
-  "ui.inspection_auto_deleted_count_expired_accounts": "巡檢已自動刪除 {count} 個到期失效帳號",
-  "ui.count_auto_delete_operations_failed_and_will_retry_later": "{count} 個自動刪除操作失敗，稍後將重試",
-  "ui.plugin_version_installed_restart_cpa_to_activate_it": "外掛程式 {version} 已安裝，重新啟動 CPA 後生效",
-  "ui.plugin_version_installed_refresh_to_use_the_new_version": "外掛程式 {version} 已安裝，重新整理頁面後使用新版本",
-	 "ui.runtime_ownership_storage_is_unavailable": "單一實例執行狀態無法持久化，背景自動化已安全停用，請檢查 data_dir 寫入權限",
-  "ui.runtime_hot_reload_restart_recommended": "偵測到同一 CPA 處理程序內的舊外掛實例，正在等待其停止；通常重新整理頁面即可完成接管。若背景自動化長時間未恢復，建議重新啟動 CPA 以清理殘留實例",
-  "ui.auto_update_did_not_complete_retry_it_from_update_status": "自動更新未完成，可在更新狀態中手動重試",
+  "ui.count_unsupported_or_duplicate_record_s_were_skipped":
+    "已略過 {count} 筆不支援或重複的記錄",
+  "ui.inspection_auto_deleted_count_expired_accounts":
+    "巡檢已自動刪除 {count} 個到期失效帳號",
+  "ui.count_auto_delete_operations_failed_and_will_retry_later":
+    "{count} 個自動刪除操作失敗，稍後將重試",
+  "ui.plugin_version_installed_restart_cpa_to_activate_it":
+    "外掛程式 {version} 已安裝，重新啟動 CPA 後生效",
+  "ui.plugin_version_installed_refresh_to_use_the_new_version":
+    "外掛程式 {version} 已安裝，重新整理頁面後使用新版本",
+  "ui.runtime_ownership_storage_is_unavailable":
+    "單一實例執行狀態無法持久化，背景自動化已安全停用，請檢查 data_dir 寫入權限",
+  "ui.runtime_hot_reload_restart_recommended":
+    "偵測到同一 CPA 處理程序內的舊外掛實例，正在等待其停止；通常重新整理頁面即可完成接管。若背景自動化長時間未恢復，建議重新啟動 CPA 以清理殘留實例",
+  "ui.auto_update_did_not_complete_retry_it_from_update_status":
+    "自動更新未完成，可在更新狀態中手動重試",
   "ui.inspection_and_update_settings_saved": "巡檢與更新設定已儲存",
   "ui.manual": "手動巡檢",
   "ui.account_health_inspection": "帳號健康巡檢",
@@ -893,7 +1087,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.quick_native_inspection": "快速巡檢",
   "ui.full_server_inspection": "全量伺服器巡檢",
   "ui.full_server_inspection_progress": "全量巡檢進度",
-  "ui.completed_count_of_total_remaining_remaining": "已完成 {completed}/{total} · 剩餘 {remaining}",
+  "ui.completed_count_of_total_remaining_remaining":
+    "已完成 {completed}/{total} · 剩餘 {remaining}",
   "ui.remaining_count": "剩餘 {count}",
   "ui.manual_full_inspection": "手動全量巡檢",
   "ui.scheduled_full_inspection": "排程全量巡檢",
@@ -904,7 +1099,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.inspection_waiting_for_auth": "等待 Management 驗證",
   "ui.refresh_inspection": "重新整理巡檢",
   "ui.version_version_available": "發現版本 {version}",
-  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store": "目前 {version} · 由 CPA 外掛程式商店驗證並安裝",
+  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store":
+    "目前 {version} · 由 CPA 外掛程式商店驗證並安裝",
   "ui.release_notes": "版本說明",
   "ui.dismiss_inspection_message": "關閉巡檢提示",
   "ui.inspection_metrics": "巡檢統計",
@@ -990,18 +1186,26 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.record_only": "僅記錄",
   "ui.operation_log_request_failed": "操作日誌請求失敗",
   "ui.operation_log_exported_as_file": "操作日誌已匯出為 {file}",
-  "ui.operation_log_cleared_this_cleanup_event_was_retained": "操作日誌已清理，並保留本次清理記錄",
+  "ui.operation_log_cleared_this_cleanup_event_was_retained":
+    "操作日誌已清理，並保留本次清理記錄",
   "ui.account_manager_operation_log": "帳號管理器操作日誌",
   "ui.storage_state_error": "儲存狀態異常",
-  "ui.usage_storage_error": "帳號用量狀態無法持久化，顯示的用量可能不是最新值；請檢查外掛 data_dir 是否可寫入。",
-  "ui.account_concurrency_storage_error": "帳號並行設定無法讀取或持久化；請檢查外掛 data_dir 是否可寫入，並重新載入外掛設定。",
-  "ui.job_storage_error": "批次任務結果無法持久化，重新啟動後任務狀態可能遺失；請檢查外掛 data_dir 是否可寫入。",
-  "ui.retaining_the_latest_count_audit_records": "持續保留最近 {count} 筆稽核記錄",
-  "ui.retaining_count_audit_records_in_count_files": "已在 {files} 個檔案中保留 {count} 筆稽核記錄",
+  "ui.usage_storage_error":
+    "帳號用量狀態無法持久化，顯示的用量可能不是最新值；請檢查外掛 data_dir 是否可寫入。",
+  "ui.account_concurrency_storage_error":
+    "帳號並行設定無法讀取或持久化；請檢查外掛 data_dir 是否可寫入，並重新載入外掛設定。",
+  "ui.job_storage_error":
+    "批次任務結果無法持久化，重新啟動後任務狀態可能遺失；請檢查外掛 data_dir 是否可寫入。",
+  "ui.retaining_the_latest_count_audit_records":
+    "持續保留最近 {count} 筆稽核記錄",
+  "ui.retaining_count_audit_records_in_count_files":
+    "已在 {files} 個檔案中保留 {count} 筆稽核記錄",
   "ui.extended_operation_history": "擴充歷史保留",
-  "ui.retain_operation_logs_beyond_latest_count": "保留超過最近 {count} 筆的操作日誌",
+  "ui.retain_operation_logs_beyond_latest_count":
+    "保留超過最近 {count} 筆的操作日誌",
   "ui.extended_operation_history_enabled": "已開啟操作日誌擴充歷史保留",
-  "ui.extended_operation_history_disabled": "已關閉擴充歷史保留，僅保留最近 500 筆記錄",
+  "ui.extended_operation_history_disabled":
+    "已關閉擴充歷史保留，僅保留最近 500 筆記錄",
   "ui.export": "匯出",
   "ui.refresh_operation_log": "重新整理操作日誌",
   "ui.clear_operation_log": "清理操作日誌",
@@ -1021,7 +1225,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.related_object": "關聯物件",
   "ui.operation_details": "操作詳細資料",
   "ui.operation_timeline": "最近操作時間軸",
-  "ui.operation_target_summary": "目標 {targets} · 成功 {succeeded} · 失敗 {failed} · 略過 {skipped}",
+  "ui.operation_target_summary":
+    "目標 {targets} · 成功 {succeeded} · 失敗 {failed} · 略過 {skipped}",
   "ui.open_related_job": "開啟關聯工作",
   "ui.view_operation_details": "檢視操作詳細資料",
   "ui.no_matching_operation_records": "沒有符合的操作記錄",
@@ -1032,7 +1237,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.next_log_page": "日誌下一頁",
   "ui.confirm_clear": "確認清理",
   "ui.clear_the_current_count_operation_records": "清除目前 {count} 筆操作記錄",
-  "ui.only_this_cleanup_event_will_remain_afterward": "完成後僅保留本次日誌清理記錄。",
+  "ui.only_this_cleanup_event_will_remain_afterward":
+    "完成後僅保留本次日誌清理記錄。",
   "ui.succeeded_slash_failed_slash_skipped": "成功 / 失敗 / 略過",
   "ui.operation_id": "操作 ID",
   "ui.category": "類別",
@@ -1084,12 +1290,14 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.some_operations_failed": "部分操作失敗",
   "ui.operation_failed": "操作失敗",
   "ui.failure_basis": "失敗依據",
-  "ui.policy_failure_sample_limit_note": "每類原因最多顯示 {count} 個脫敏帳號 ID，完整數量以統計值為準。",
+  "ui.policy_failure_sample_limit_note":
+    "每類原因最多顯示 {count} 個脫敏帳號 ID，完整數量以統計值為準。",
   "ui.policy_failure_account_count": "{count} 個帳號失敗",
   "ui.account_id_samples": "帳號 ID 範例",
   "ui.additional_similar_failures": "另有 {count} 個同類失敗未逐項顯示",
   "ui.policy_failure_summary": "{reason}（{count}）",
-  "ui.policy_failure_summary_multiple": "{reason}（{count}）等 {categories} 類失敗",
+  "ui.policy_failure_summary_multiple":
+    "{reason}（{count}）等 {categories} 類失敗",
   "ui.policy_failure_unknown": "未分類的策略操作失敗",
   "ui.policy_failure_auth_scan": "無法讀取 CPA Auth 檔案清單",
   "ui.policy_failure_auth_read": "無法讀取帳號 Auth 檔案",
@@ -1111,7 +1319,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.inspection_failure_auth_identity_changed": "寫入期間帳號身分發生變化",
   "ui.inspection_failure_auth_source_changed": "寫入期間帳號 Auth 來源發生變化",
   "ui.inspection_failure_auth_json_invalid": "帳號 Auth JSON 無效",
-  "ui.inspection_failure_auth_field_invalid": "帳號 disabled 或 priority 欄位無效",
+  "ui.inspection_failure_auth_field_invalid":
+    "帳號 disabled 或 priority 欄位無效",
   "ui.inspection_failure_auth_update": "無法透過 CPA 更新帳號狀態",
   "ui.inspection_failure_auth_save": "無法儲存帳號 Auth 檔案",
   "ui.inspection_failure_mutation": "巡檢帳號寫入失敗",
@@ -1155,11 +1364,13 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.provider_unsupported": "暫不支援此提供者",
   "ui.other_reason": "其他原因",
   "ui.manual_2": "手動",
-  "ui.a_single_import_supports_at_most_count_accounts": "一次最多匯入 {count} 個帳號",
+  "ui.a_single_import_supports_at_most_count_accounts":
+    "一次最多匯入 {count} 個帳號",
   "ui.request_failed_code": "請求失敗（{code}）",
   "ui.export_failed_code": "匯出失敗（{code}）",
   "ui.management_key_is_not_set": "未設定 Management Key",
-  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store": "外掛程式商店中找不到帳號管理外掛程式",
+  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store":
+    "外掛程式商店中找不到帳號管理外掛程式",
   "ui.account_deactivated": "帳號已停用",
   "ui.priority_value": "Priority 值",
   "ui.note_value": "Note 值",
@@ -1175,7 +1386,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.inspection_interval": "巡檢間隔",
   "ui.codex_auth": "Codex Auth",
   "ui.server_model_inspection": "伺服器模型巡檢",
-  "ui.server_model_inspection_description": "透過 CPA 的安全模型請求路徑主動測試帳號可用性",
+  "ui.server_model_inspection_description":
+    "透過 CPA 的安全模型請求路徑主動測試帳號可用性",
   "ui.scheduled_model_probes": "定時模型測試",
   "ui.probe_manually_disabled_accounts": "排程巡檢人工停用帳號",
   "ui.model_probe_interval": "測試週期",
@@ -1185,9 +1397,12 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.claude_model": "Claude 測試模型",
   "ui.gemini_model": "Gemini 測試模型",
   "ui.grok_xai_model": "Grok / xAI 測試模型",
-  "ui.active_probe_key_memory_note": "管理金鑰僅保留在程序記憶體中。CPA 重新啟動後，經過驗證造訪本頁即可重新啟用定時測試。",
-  "ui.model_probe_interval_must_be_between_5_and_1440_minutes": "模型測試週期必須介於 5 到 1440 分鐘",
-  "ui.model_probe_batch_must_be_between_1_and_200_accounts": "每輪模型測試必須介於 1 到 200 個帳號",
+  "ui.active_probe_key_memory_note":
+    "管理金鑰僅保留在程序記憶體中。CPA 重新啟動後，經過驗證造訪本頁即可重新啟用定時測試。",
+  "ui.model_probe_interval_must_be_between_5_and_1440_minutes":
+    "模型測試週期必須介於 5 到 1440 分鐘",
+  "ui.model_probe_batch_must_be_between_1_and_200_accounts":
+    "每輪模型測試必須介於 1 到 200 個帳號",
   "ui.model_probe_models_are_required": "每個支援的服務商都必須填寫測試模型",
   "ui.active_probe_ready": "主動巡檢已就緒",
   "ui.active_probe_waiting_for_auth": "主動巡檢等待驗證",
@@ -1220,7 +1435,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.notification_failed": "外部通知傳送失敗",
   "ui.notification_rejected": "通知 URL 被安全策略拒絕",
   "ui.notification_queue_full": "通知佇列已滿",
-	 "ui.notification_superseded": "通知已取消：目前外掛程式實例已由新版本接管",
+  "ui.notification_superseded": "通知已取消：目前外掛程式實例已由新版本接管",
   "ui.review_state": "複核狀態",
   "ui.pending_review": "待複核",
   "ui.review_resolved": "已解決",
@@ -1229,11 +1444,14 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.mark_resolved": "標記已解決",
   "ui.ignore_result": "忽略此結果",
   "ui.reopen_review": "重新開啟複核",
-  "ui.review_safety_note": "僅憑 HTTP 狀態不足以執行破壞性操作，請重新測試或明確選擇人工處置。",
+  "ui.review_safety_note":
+    "僅憑 HTTP 狀態不足以執行破壞性操作，請重新測試或明確選擇人工處置。",
   "ui.change_started": "帳號變更已開始",
   "ui.review_updated": "複核狀態已更新",
-  "ui.select_health_filter_before_scoped_inspection": "請先選擇健康狀態篩選，再開始範圍巡檢",
-  "ui.select_accounts_before_scoped_inspection": "請先選擇至少一個帳號，再開始範圍巡檢",
+  "ui.select_health_filter_before_scoped_inspection":
+    "請先選擇健康狀態篩選，再開始範圍巡檢",
+  "ui.select_accounts_before_scoped_inspection":
+    "請先選擇至少一個帳號，再開始範圍巡檢",
   "ui.export_inspection_results": "匯出巡檢結果",
   "ui.inspection_results_exported_as_file": "巡檢結果已匯出為 {file}",
   "ui.inspection_run_history": "巡檢執行記錄",
@@ -1257,14 +1475,18 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.quota_window_five_hour_fallback": "5 小時安全視窗",
   "ui.inspecting_now": "正在巡檢",
   "ui.batch_job_was_replaced": "帳號批次處理已被另一個工作取代",
-  "ui.batch_job_did_not_finish_in_time": "帳號批次處理未在限定時間內完成，請到操作記錄查看",
-  "ui.account_change_finished_with_failures": "帳號變更完成：成功 {succeeded} 個，失敗 {failed} 個",
+  "ui.batch_job_did_not_finish_in_time":
+    "帳號批次處理未在限定時間內完成，請到操作記錄查看",
+  "ui.account_change_finished_with_failures":
+    "帳號變更完成：成功 {succeeded} 個，失敗 {failed} 個",
   "ui.account_change_completed": "已更新 {count} 個帳號",
   "ui.no_recommended_actions_available": "目前範圍沒有可執行的建議操作",
-  "ui.remediation_finished_with_result": "處置完成：成功 {succeeded} 個，失敗 {failed} 個，略過 {skipped} 個",
+  "ui.remediation_finished_with_result":
+    "處置完成：成功 {succeeded} 個，失敗 {failed} 個，略過 {skipped} 個",
   "ui.remediation_completed_count": "已完成 {count} 個帳號的建議操作",
   "ui.inspection_remediation_queue": "巡檢處置佇列",
-  "ui.inspection_remediation_description": "彙總下一步建議，並執行經過複核的帳號操作",
+  "ui.inspection_remediation_description":
+    "彙總下一步建議，並執行經過複核的帳號操作",
   "ui.recommended_action_count": "建議處理 {count} 項",
   "ui.suggested_delete": "建議刪除",
   "ui.suggested_disable": "建議停用",
@@ -1285,22 +1507,28 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.executing_remediation": "正在執行",
   "ui.confirm_and_execute": "確認並執行",
   "ui.deletion_cannot_be_undone": "刪除後無法復原",
-  "ui.bulk_inspection_delete_revalidates_each_file": "僅接受高可信度的建議刪除或重新登入結果；刪除前會再次核對每個 CPA Auth 檔案及其實體版本。",
+  "ui.bulk_inspection_delete_revalidates_each_file":
+    "僅接受高可信度的建議刪除或重新登入結果；刪除前會再次核對每個 CPA Auth 檔案及其實體版本。",
   "ui.automation_policy": "自動策略",
   "ui.automation_policy_saved": "自動策略已儲存",
   "ui.automation_policy_scan_started": "自動策略已在背景啟動",
   "ui.run_automation_policy_after_save": "儲存後執行自動策略？",
-  "ui.run_automation_policy_after_save_description": "儲存策略不會立即修改帳號。你可以現在啟動背景掃描，或等待下一次排程執行。",
+  "ui.run_automation_policy_after_save_description":
+    "儲存策略不會立即修改帳號。你可以現在啟動背景掃描，或等待下一次排程執行。",
   "ui.save_only": "僅儲存",
   "ui.run_asynchronously": "背景執行",
   "ui.global_default_policy": "全域預設策略",
-  "ui.global_default_policy_description": "為沒有被條件規則覆蓋的新 Auth 檔案提供後備動作",
+  "ui.global_default_policy_description":
+    "為沒有被條件規則覆蓋的新 Auth 檔案提供後備動作",
   "ui.conditional_policies": "條件策略",
-  "ui.conditional_policies_description": "透過巢狀條件比對供應商、帳號或方案類型和郵件後綴，並按優先級覆蓋動作",
+  "ui.conditional_policies_description":
+    "透過巢狀條件比對供應商、帳號或方案類型和郵件後綴，並按優先級覆蓋動作",
   "ui.add_policy": "新增策略",
   "ui.no_conditional_policies": "暫無條件策略",
-  "ui.no_conditional_policies_description": "新增規則後可分別自動管理不同帳號群組。",
-  "ui.higher_priority_policy_overrides_actions": "命中的高優先級策略只覆蓋自己管理的動作。",
+  "ui.no_conditional_policies_description":
+    "新增規則後可分別自動管理不同帳號群組。",
+  "ui.higher_priority_policy_overrides_actions":
+    "命中的高優先級策略只覆蓋自己管理的動作。",
   "ui.policy_name": "策略名稱",
   "ui.policy_priority": "策略優先級",
   "ui.move_policy_up": "上移策略",
@@ -1328,7 +1556,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.model_ids": "模型 ID",
   "ui.remediation_result": "處置結果",
   "ui.ai_providers": "AI 供應商",
-  "ui.ai_providers_description": "管理 CPA 中設定的 AI 供應商渠道：OpenAI 相容、Gemini、Interactions、Claude、Codex、xAI、Vertex 與通用 API Keys。",
+  "ui.ai_providers_description":
+    "管理 CPA 中設定的 AI 供應商渠道：OpenAI 相容、Gemini、Interactions、Claude、Codex、xAI、Vertex 與通用 API Keys。",
   "ui.add_ai_provider": "新增 AI 供應商",
   "ui.choose_ai_provider_type": "選擇供應商類型",
   "ui.ai_provider_type": "供應商類型",
@@ -1349,7 +1578,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_field_weight": "權重（加權輪詢）",
   "ui.ai_provider_field_proxy_url": "代理位址覆蓋",
   "ui.ai_provider_field_excluded_models": "排除模型（一行一個）",
-  "ui.ai_provider_field_excluded_models_placeholder": "例如 gpt-4o-mini\nclaude-sonnet-4-*",
+  "ui.ai_provider_field_excluded_models_placeholder":
+    "例如 gpt-4o-mini\nclaude-sonnet-4-*",
   "ui.ai_provider_field_headers": "附加請求頭（Key: value，一行一個）",
   "ui.ai_provider_field_models": "模型",
   "ui.ai_provider_field_model_name": "上游模型名",
@@ -1364,7 +1594,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_field_support_prompt_cache_key": "支援 prompt cache key",
   "ui.ai_provider_field_disable_cooling": "停用冷卻",
   "ui.ai_provider_field_request_retry": "請求重試覆蓋（留空使用全域，0 停用）",
-  "ui.ai_provider_field_request_scoped_errors": "請求範圍錯誤規則（每行一個 JSON 物件）",
+  "ui.ai_provider_field_request_scoped_errors":
+    "請求範圍錯誤規則（每行一個 JSON 物件）",
   "ui.ai_provider_field_alpha_search": "Alpha 搜尋",
   "ui.ai_provider_field_websockets": "WebSockets",
   "ui.ai_provider_field_rebuild_mid_system_message": "重建中段 system 訊息",
@@ -1377,14 +1608,22 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_response_invalid": "CPA 回傳的頻道資料格式無法識別。",
   "ui.ai_provider_storage_unavailable": "該頻道的持久化資料暫時不可用。",
   "ui.ai_provider_channel_openai_compatibility": "OpenAI 相容",
-  "ui.ai_provider_channel_openai_compatibility_description": "接入任意 OpenAI 相容的上游服務，可設定名稱、Base URL 與 API Key。",
-  "ui.ai_provider_channel_gemini_description": "新增 Gemini API Key，可選自訂 Base URL。",
-  "ui.ai_provider_channel_interactions_description": "新增 Interactions API Key，可選自訂 Base URL。",
-  "ui.ai_provider_channel_claude_description": "新增 Claude API Key，可選自訂 Base URL。",
-  "ui.ai_provider_channel_codex_description": "新增 Codex API Key，可選自訂 Base URL。",
-  "ui.ai_provider_channel_xai_description": "新增 xAI API Key，可選自訂 Base URL。",
-  "ui.ai_provider_channel_vertex_description": "新增 Vertex 相容 API Key，可選自訂 Base URL。",
-  "ui.ai_provider_channel_api_keys_description": "新增一個通用 API Key（OpenAI 相容字串清單）。",
+  "ui.ai_provider_channel_openai_compatibility_description":
+    "接入任意 OpenAI 相容的上游服務，可設定名稱、Base URL 與 API Key。",
+  "ui.ai_provider_channel_gemini_description":
+    "新增 Gemini API Key，可選自訂 Base URL。",
+  "ui.ai_provider_channel_interactions_description":
+    "新增 Interactions API Key，可選自訂 Base URL。",
+  "ui.ai_provider_channel_claude_description":
+    "新增 Claude API Key，可選自訂 Base URL。",
+  "ui.ai_provider_channel_codex_description":
+    "新增 Codex API Key，可選自訂 Base URL。",
+  "ui.ai_provider_channel_xai_description":
+    "新增 xAI API Key，可選自訂 Base URL。",
+  "ui.ai_provider_channel_vertex_description":
+    "新增 Vertex 相容 API Key，可選自訂 Base URL。",
+  "ui.ai_provider_channel_api_keys_description":
+    "新增一個通用 API Key（OpenAI 相容字串清單）。",
   "ui.ai_provider_channel_gemini": "Gemini",
   "ui.ai_provider_channel_interactions": "Interactions",
   "ui.ai_provider_channel_claude": "Claude",
@@ -1393,9 +1632,11 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_channel_vertex": "Vertex",
   "ui.ai_provider_channel_api_keys": "API Keys",
   "ui.ai_provider_channel_opencode": "OpenCode Go",
-  "ui.opencode_edit_cookie_note": "填入新 Cookie 可更新該工作區的憑據；留空則保持不變。",
+  "ui.opencode_edit_cookie_note":
+    "填入新 Cookie 可更新該工作區的憑據；留空則保持不變。",
   "ui.ai_provider_channel_opencode_zen": "OpenCode Zen",
-  "ui.opencode_zen_login_description": "管理 OpenCode Zen API。基地址填 Zen 閘道（https://opencode.ai/zen）或自建 opencode-cc 橋接（如 http://localhost:8787）。",
+  "ui.opencode_zen_login_description":
+    "管理 OpenCode Zen API。基地址填 Zen 閘道（https://opencode.ai/zen）或自建 opencode-cc 橋接（如 http://localhost:8787）。",
   "ui.opencode_zen_base_url": "基地址（Zen 閘道或 opencode-cc）",
   "ui.opencode_zen_api_key": "Zen API Key",
   "ui.opencode_zen_key_set": "金鑰已儲存",
@@ -1421,17 +1662,21 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.last_updated": "最近更新",
   "ui.loading": "載入中",
   "ui.ai_provider_concurrency": "並發",
-  "ui.ai_provider_concurrency_observable_only": "目前 CPA 僅支援觀察 AI 供應商即時並發，不支援在此配置供應商並發上限",
+  "ui.ai_provider_concurrency_observable_only":
+    "目前 CPA 僅支援觀察 AI 供應商即時並發，不支援在此配置供應商並發上限",
   "ui.total_accounts_and_providers": "帳號與供應商總數",
-  "ui.ai_provider_model_catalog_unavailable": "模型目錄不可用，已改用已配置模型繼續測試",
-  "ui.ai_provider_no_models_available": "沒有可用模型：模型目錄不可用且該渠道未配置模型",
+  "ui.ai_provider_model_catalog_unavailable":
+    "模型目錄不可用，已改用已配置模型繼續測試",
+  "ui.ai_provider_no_models_available":
+    "沒有可用模型：模型目錄不可用且該渠道未配置模型",
   "ui.ai_provider_usage": "用量",
   "ui.ai_provider_runtime_details": "即時詳情",
   "ui.ai_provider_active": "活動請求",
   "ui.ai_provider_limit": "並發上限",
   "ui.ai_provider_total_tokens": "總 Token",
   "ui.ai_provider_estimated_cost": "預估費用",
-  "ui.provider_credentials_enabled_disabled": "啟用 {enabled} · 禁用 {disabled}",
+  "ui.provider_credentials_enabled_disabled":
+    "啟用 {enabled} · 禁用 {disabled}",
   "ui.ai_provider_updated_at": "更新時間",
   "ui.ai_provider_no_usage": "暫無用量",
   "ui.ai_provider_identity_unavailable": "暫無身份資料",

@@ -4,8 +4,10 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.select_proxy_profile": "代理档案",
   "ui.manual_proxy_url": "手动代理地址",
   "ui.proxy_profiles": "代理档案",
-  "ui.proxy_profiles_description": "创建可复用且不泄露凭据的代理预设，并在批量编辑中引用。",
-  "ui.proxy_profiles_storage_error": "代理档案无法读取或保存；请检查插件数据目录。",
+  "ui.proxy_profiles_description":
+    "创建可复用且不泄露凭据的代理预设，并在批量编辑中引用。",
+  "ui.proxy_profiles_storage_error":
+    "代理档案无法读取或保存；请检查插件数据目录。",
   "ui.profile_name": "档案名称",
   "ui.provider_scope": "供应商范围",
   "ui.provider_scope_placeholder": "留空表示全部供应商；多个用英文逗号分隔",
@@ -15,8 +17,10 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.proxy_profile_saved": "代理档案已保存",
   "ui.proxy_profile_deleted": "代理档案已删除",
   "ui.proxy_profile_delete_confirm": "确定删除代理档案“{name}”？",
-  "ui.proxy_profile_delete_force_confirm": "“{name}”仍关联账号。删除档案不会自动修改账号里的代理地址，是否继续？",
-  "ui.proxy_profile_edit_secret_notice": "为保护凭据，编辑时不会返回已有代理密钥。如需更换请重新输入完整代理地址。",
+  "ui.proxy_profile_delete_force_confirm":
+    "“{name}”仍关联账号。删除档案不会自动修改账号里的代理地址，是否继续？",
+  "ui.proxy_profile_edit_secret_notice":
+    "为保护凭据，编辑时不会返回已有代理密钥。如需更换请重新输入完整代理地址。",
   "ui.proxy_profile_keep_existing": "留空以保留现有代理地址",
   "ui.default_account_proxy": "默认账号代理",
   "ui.default_ai_provider_proxy": "默认 AI 供应商代理",
@@ -53,7 +57,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.plugin_configuration_and_version": "插件配置与版本",
   "ui.font_size": "字体大小",
   "ui.plugin_appearance": "界面与主题",
-  "ui.plugin_appearance_description": "仅作用于本插件界面，不覆盖 CPA 原生页面。",
+  "ui.plugin_appearance_description":
+    "仅作用于本插件界面，不覆盖 CPA 原生页面。",
   "ui.plugin_theme_preset": "主题预设",
   "ui.plugin_theme_neutral": "中性",
   "ui.plugin_theme_indigo": "靛蓝",
@@ -64,41 +69,92 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.plugin_density_compact": "紧凑",
   "ui.reset_plugin_appearance": "恢复默认外观",
 
-  "ui.font_size_description": "调整插件内所有标签、表格、表单、弹窗和状态信息的字体。",
+  "ui.font_size_description":
+    "调整插件内所有标签、表格、表单、弹窗和状态信息的字体。",
   "ui.font_size_small": "小",
   "ui.font_size_medium": "中",
   "ui.font_size_large": "大",
   "ui.font_size_current": "当前：{size}",
   "ui.typography_distinction": "字号区分",
-  "ui.typography_distinction_description": "严格区分主标题与描述文本字号；关闭后描述文本将使用与主标题相同的字号。",
+  "ui.typography_distinction_description":
+    "严格区分主标题与描述文本字号；关闭后描述文本将使用与主标题相同的字号。",
+  "ui.usage_limits": "用量限额",
+  "ui.usage_limits_description":
+    "达到账号百分比限额或预估额度上限后，停止新的请求。AI Provider 无法提供上游配额数据时，可使用额度限额。",
+  "ui.usage_limits_enabled": "已启用用量限额",
+  "ui.usage_limits_disabled": "已停用用量限额",
+  "ui.usage_limit_basis": "限额依据",
+  "ui.usage_limit_account": "账号限额",
+  "ui.usage_limit_credit": "额度限额",
+  "ui.usage_limit_window": "配额窗口",
+  "ui.usage_limit_five_hour": "5 小时窗口",
+  "ui.usage_limit_seven_day": "7 天窗口",
+  "ui.usage_limit_percent": "最大已用百分比",
+  "ui.usage_limit_amount": "最大额度",
+  "ui.usage_limit_total": "总限额",
+  "ui.usage_limit_total_description":
+    "默认总上限。模型限额可选择受总限额约束，也可以独立运行。",
+  "ui.usage_limit_models": "模型限额",
+  "ui.usage_limit_models_description": "为每个模型单独添加账号限额或额度限额。",
+  "ui.usage_limit_add_model": "添加模型",
+  "ui.usage_limit_model_name": "模型名称",
+  "ui.usage_limit_within_total": "计入总限额",
+  "ui.usage_limit_no_models": "尚未配置模型限额。",
+  "ui.usage_limit_credit_used": "启用限额以来已统计额度",
+  "ui.usage_limit_credit_note":
+    "预估费用基于当前模型价格表；没有可计费价格的请求不会计入。",
+  "ui.usage_limits_saved": "用量限额已保存",
+  "ui.usage_limit_reached": "已达到限额",
+  "ui.usage_limit_not_configured": "未配置",
+  "ui.usage_limit_uncollected": "尚未采集用量",
+  "ui.usage_limit_remaining": "剩余 {percent} 空间",
+  "ui.usage_limit_account_status": "{label} 账号限额",
+  "ui.usage_limit_credit_status": "额度限额状态",
+  "ui.usage_limit_model_status": "模型额度限额",
+  "ui.usage_limit_counted_with_total": "计入总限额",
+  "ui.usage_limit_independent": "独立限额",
+  "ui.usage_limit_provider_note": "AI Provider 没有上游 5 天或 7 天配额数据时，可使用额度限额。",
+  "ui.usage_limit_provider_observed": "Provider 运行时已观测额度",
   "ui.experimental_features": "实验性功能",
   "ui.experimental_features_warning": "实验性行为",
-  "ui.experimental_features_may_change_or_stop_working": "这些功能依赖上游行为，可能随时变化或失效。",
-  "ui.experimental_settings_storage_error": "无法从持久化存储读取实验设置。重新保存前，该功能将保持关闭。",
+  "ui.experimental_features_may_change_or_stop_working":
+    "这些功能依赖上游行为，可能随时变化或失效。",
+  "ui.experimental_settings_storage_error":
+    "无法从持久化存储读取实验设置。重新保存前，该功能将保持关闭。",
   "ui.sub2api_credit_usage": "Sub2API 额度计费用量",
-  "ui.sub2api_credit_usage_description": "使用 Sub2API 维护的模型价格数据，将开启后新采集的成功请求折算为 USD 预估成本；原始 Token 用量仍会保留。",
+  "ui.sub2api_credit_usage_description":
+    "使用 Sub2API 维护的模型价格数据，将开启后新采集的成功请求折算为 USD 预估成本；原始 Token 用量仍会保留。",
   "ui.credit_pricing_source": "价格来源",
-  "ui.credit_pricing_source_description": "内置 Sub2API 兼容的 Wei-Shaw 模型价格表，并保留最近一次校验成功的本地副本。",
+  "ui.credit_pricing_source_description":
+    "内置 Sub2API 兼容的 Wei-Shaw 模型价格表，并保留最近一次校验成功的本地副本。",
   "ui.credit_pricing_sync_behavior": "同步行为",
-  "ui.credit_pricing_sync_behavior_description": "开启后在后台异步同步价格，不阻塞用量采集链路，也不会增加请求首字延迟。",
+  "ui.credit_pricing_sync_behavior_description":
+    "开启后在后台异步同步价格，不阻塞用量采集链路，也不会增加请求首字延迟。",
   "ui.credit_usage_history_boundary": "统计边界",
-  "ui.credit_usage_history_boundary_description": "只计费开启后新采集的成功请求；现有 Token 汇总与额度窗口保持不变。同时开启 Codex 额度透支续用后，会从每个 5h/7d 冻结基线起单独显示透支费用，并继续计入账号总费用。",
+  "ui.credit_usage_history_boundary_description":
+    "只计费开启后新采集的成功请求；现有 Token 汇总与额度窗口保持不变。同时开启 Codex 额度透支续用后，会从每个 5h/7d 冻结基线起单独显示透支费用，并继续计入账号总费用。",
   "ui.estimated_credit_usage": "预估额度用量",
-  "ui.estimated_credit_usage_detail": "预估成本：{amount}；已计价请求：{rated}；未计价请求：{unrated}；原始 Token：{tokens}",
+  "ui.estimated_credit_usage_detail":
+    "预估成本：{amount}；已计价请求：{rated}；未计价请求：{unrated}；原始 Token：{tokens}",
   "ui.rated_requests": "已计价请求",
   "ui.unrated_requests": "未计价请求",
   "ui.unrated_requests_count": "未计价 {count}",
   "ui.credit_usage_started_at": "额度统计开始时间",
   "ui.pricing_updated_at": "价格更新时间",
   "ui.awaiting_credit_usage_collection": "等待额度计费采集",
-  "ui.some_requests_could_not_be_priced": "有 {count} 个成功请求使用了当前价格表未收录的模型。它们仍计入 Token 总量，但不计入 USD 预估成本。",
+  "ui.some_requests_could_not_be_priced":
+    "有 {count} 个成功请求使用了当前价格表未收录的模型。它们仍计入 Token 总量，但不计入 USD 预估成本。",
   "ui.codex_auto_model_whitelist": "Codex 自动模型白名单",
-  "ui.codex_auto_model_whitelist_description": "在手动测试或默认策略的新账号探测中识别受限模型集合，并为该账号应用白名单。",
+  "ui.codex_auto_model_whitelist_description":
+    "在手动测试或默认策略的新账号探测中识别受限模型集合，并为该账号应用白名单。",
   "ui.detection_evidence": "探测证据",
-  "ui.auto_model_whitelist_detection_behavior": "仅在出现已知的 gpt-5.6-sol 不兼容响应后继续，并要求 gpt-5.5 与 gpt-5.4-mini 都真实探测成功。",
+  "ui.auto_model_whitelist_detection_behavior":
+    "仅在出现已知的 gpt-5.6-sol 不兼容响应后继续，并要求 gpt-5.5 与 gpt-5.4-mini 都真实探测成功。",
   "ui.policy_write_behavior": "策略写入",
-  "ui.auto_model_whitelist_policy_behavior": "仅在账号没有人工白名单或黑名单时应用；已有的用户模型策略不会被覆盖。",
-  "ui.auto_model_whitelist_safety_notice": "默认关闭。新账号自动探测需另行开启默认策略中的开关；单个模型失败不会禁用整个账号。",
+  "ui.auto_model_whitelist_policy_behavior":
+    "仅在账号没有人工白名单或黑名单时应用；已有的用户模型策略不会被覆盖。",
+  "ui.auto_model_whitelist_safety_notice":
+    "默认关闭。新账号自动探测需另行开启默认策略中的开关；单个模型失败不会禁用整个账号。",
   "ui.auto_model_whitelist_applied": "应用自动模型白名单",
   "ui.existing_model_policy_preserved": "已保留现有模型策略",
   "ui.model_blocked_by_account_policy": "该模型已被账号模型策略阻止",
@@ -108,21 +164,29 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.model_allow_list_not_applied": "未应用模型白名单",
   "ui.compatibility_attempt": "兼容性探测",
   "ui.codex_identity_convergence": "Codex 指纹收敛",
-  "ui.codex_identity_convergence_description": "将 Codex OAuth 请求与 codex-api-key 健康检查收敛到 Sub2API 同款官方客户端指纹。",
+  "ui.codex_identity_convergence_description":
+    "将 Codex OAuth 请求与 codex-api-key 健康检查收敛到 Sub2API 同款官方客户端指纹。",
   "ui.codex_outbound_convergence": "出站收敛",
-  "ui.codex_outbound_convergence_behavior": "在所有请求头改写后配对 User-Agent、Originator 与 Version；无法安全配对时回退当前官方 CLI 身份。",
+  "ui.codex_outbound_convergence_behavior":
+    "在所有请求头改写后配对 User-Agent、Originator 与 Version；无法安全配对时回退当前官方 CLI 身份。",
   "ui.codex_api_key_probe": "codex-api-key 探测",
-  "ui.codex_api_key_probe_behavior": "AI Provider 页面的 codex-api-key 连通性检查使用相同收敛身份。",
+  "ui.codex_api_key_probe_behavior":
+    "AI Provider 页面的 codex-api-key 连通性检查使用相同收敛身份。",
   "ui.internal_probe_requests": "内部探测请求",
-  "ui.codex_internal_probe_behavior": "模型、额度、Token 刷新、PAT 和 Agent Identity 请求同步使用兼容官方身份。",
+  "ui.codex_internal_probe_behavior":
+    "模型、额度、Token 刷新、PAT 和 Agent Identity 请求同步使用兼容官方身份。",
   "ui.codex_ingress_gate": "官方客户端入口门",
-  "ui.codex_ingress_gate_description": "对开启 codex_cli_only 的账号，在上游前用黑名单、白名单、版本范围和引擎指纹判定并拒绝。",
+  "ui.codex_ingress_gate_description":
+    "对开启 codex_cli_only 的账号，在上游前用黑名单、白名单、版本范围和引擎指纹判定并拒绝。",
   "ui.codex_app_server_clients": "App Server 客户端",
-  "ui.codex_app_server_clients_behavior": "全局开关或账号 extra.codex_cli_only_allow_app_server 可放行未列名客户端；仍必须通过指纹门。",
+  "ui.codex_app_server_clients_behavior":
+    "全局开关或账号 extra.codex_cli_only_allow_app_server 可放行未列名客户端；仍必须通过指纹门。",
   "ui.codex_version_bounds": "版本范围",
-  "ui.codex_version_bounds_behavior": "官方候选必须能解析 X.Y.Z 版本；配置后不得低于最小值或高于最大值。",
+  "ui.codex_version_bounds_behavior":
+    "官方候选必须能解析 X.Y.Z 版本；配置后不得低于最小值或高于最大值。",
   "ui.codex_fingerprint_signals": "引擎指纹门",
-  "ui.codex_fingerprint_signals_behavior": "所有勾选信号都必须命中；同一信号多个变体为 OR。默认要求存在 x-codex-* 请求头。",
+  "ui.codex_fingerprint_signals_behavior":
+    "所有勾选信号都必须命中；同一信号多个变体为 OR。默认要求存在 x-codex-* 请求头。",
   "ui.codex_convergence_mode": "收敛模式",
   "ui.codex_convergence_legacy_full": "默认关闭（未显式配置）",
   "ui.codex_convergence_off": "关闭（透传原始标识）",
@@ -137,38 +201,51 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.codex_blacklist_json": "黑名单 JSON（任一命中拒绝）",
   "ui.codex_fingerprint_json": "指纹信号 JSON（required 之间 AND）",
   "ui.codex_weekly_quota_overdraft": "Codex 5h / 7d 额度透支续用",
-  "ui.codex_weekly_quota_overdraft_description": "当 Codex 输入最后一项是用户消息时，在发送上游前追加一组关联的无操作工具调用与输出。",
+  "ui.codex_weekly_quota_overdraft_description":
+    "当 Codex 输入最后一项是用户消息时，在发送上游前追加一组关联的无操作工具调用与输出。",
   "ui.request_behavior": "请求行为",
-  "ui.weekly_overdraft_request_behavior": "仅处理 Codex 请求正文；无效、过大、非用户结尾或已注入的请求均原样放行。启用 429 破限会修改 Codex 工具调用链并产生额外开销，在性能较低的服务器上可能增加首字延迟。",
+  "ui.weekly_overdraft_request_behavior":
+    "仅处理 Codex 请求正文；无效、过大、非用户结尾或已注入的请求均原样放行。启用 429 破限会修改 Codex 工具调用链并产生额外开销，在性能较低的服务器上可能增加首字延迟。",
   "ui.automation_behavior": "自动化行为",
-  "ui.weekly_overdraft_automation_behavior": "5 小时或 7 天额度耗尽后随巡检执行最多 5 次实验探测；任意一次成功则保持启用，5 次全部失败才自动禁用，并在自动启用开启时于对应额度窗口重置后恢复。",
+  "ui.weekly_overdraft_automation_behavior":
+    "5 小时或 7 天额度耗尽后随巡检执行最多 5 次实验探测；任意一次成功则保持启用，5 次全部失败才自动禁用，并在自动启用开启时于对应额度窗口重置后恢复。",
   "ui.availability_notice": "可用性",
-  "ui.weekly_overdraft_availability_notice": "不保证一定能够继续生成，可透支额度也可能因订阅类型而不同。",
+  "ui.weekly_overdraft_availability_notice":
+    "不保证一定能够继续生成，可透支额度也可能因订阅类型而不同。",
   "ui.weekly_overdraft_probe_gate": "额度透支探测",
-  "ui.weekly_overdraft_probe_running": "正在验证透支可用性（{current}/{total}）",
+  "ui.weekly_overdraft_probe_running":
+    "正在验证透支可用性（{current}/{total}）",
   "ui.weekly_overdraft_probe_running_short": "正在验证透支可用性",
   "ui.weekly_overdraft_probe_passed": "透支探测可用，保持启用",
   "ui.weekly_overdraft_probe_failed": "5 次透支探测均失败，等待自动禁用",
   "ui.weekly_overdraft_probe_inconclusive": "透支探测未完成，等待下次巡检",
-  "ui.weekly_overdraft_probe_management_auth_unavailable": "等待已认证的巡检请求",
-  "ui.weekly_overdraft_probe_experiment_unavailable": "上游未执行实验性破限请求",
+  "ui.weekly_overdraft_probe_management_auth_unavailable":
+    "等待已认证的巡检请求",
+  "ui.weekly_overdraft_probe_experiment_unavailable":
+    "上游未执行实验性破限请求",
   "ui.weekly_overdraft_probe_timeout": "探测请求超时",
   "ui.weekly_overdraft_probe_upstream_unavailable": "暂时无法连接上游服务",
   "ui.codex_agent_identity": "Codex Agent Identity / PAT",
-  "ui.codex_agent_identity_description": "通过签名 AgentAssertion 身份或 Sub2API 导出的 at-* 个人访问令牌鉴权 Codex。",
+  "ui.codex_agent_identity_description":
+    "通过签名 AgentAssertion 身份或 Sub2API 导出的 at-* 个人访问令牌鉴权 Codex。",
   "ui.authentication_path": "鉴权路径",
-  "ui.agent_identity_authentication_behavior": "Agent Identity 逐请求签名；Codex PAT 由插件使用 Bearer 鉴权；现有 Codex OAuth 账号保持不变。",
+  "ui.agent_identity_authentication_behavior":
+    "Agent Identity 逐请求签名；Codex PAT 由插件使用 Bearer 鉴权；现有 Codex OAuth 账号保持不变。",
   "ui.supported_imports": "支持的导入格式",
-  "ui.agent_identity_import_formats": "支持官方 JWT、codex-agent-identity-web 对象，以及包含 Agent Identity 或 at-* PAT 账号的 Sub2API JSON、ZIP 导出。",
+  "ui.agent_identity_import_formats":
+    "支持官方 JWT、codex-agent-identity-web 对象，以及包含 Agent Identity 或 at-* PAT 账号的 Sub2API JSON、ZIP 导出。",
   "ui.security_notice": "安全提示",
-  "ui.agent_identity_security_notice": "身份文件含签名私钥或个人访问令牌，请仅导入可信文件；预览和日志不会显示这些值。",
+  "ui.agent_identity_security_notice":
+    "身份文件含签名私钥或个人访问令牌，请仅导入可信文件；预览和日志不会显示这些值。",
   "ui.agent_identity": "Agent Identity",
   "ui.codex_personal_access_token": "Codex PAT",
   "ui.agent_identity_session_login": "Agent Identity 登录",
-  "ui.agent_identity_session_login_description": "粘贴 ChatGPT Session JSON，由已认证的 CPA 插件直接转换为凭证。",
+  "ui.agent_identity_session_login_description":
+    "粘贴 ChatGPT Session JSON，由已认证的 CPA 插件直接转换为凭证。",
   "ui.open_chatgpt_session": "打开 ChatGPT Session",
   "ui.chatgpt_session_json": "ChatGPT Session JSON",
-  "ui.chatgpt_session_json_placeholder": "粘贴 /api/auth/session 返回的完整 JSON",
+  "ui.chatgpt_session_json_placeholder":
+    "粘贴 /api/auth/session 返回的完整 JSON",
   "ui.show_session_json": "显示 Session JSON",
   "ui.hide_session_json": "隐藏 Session JSON",
   "ui.convert_and_login": "转换并登录",
@@ -176,14 +253,18 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.agent_identity_login_complete": "Agent Identity 已就绪",
   "ui.cpa_is_saving_agent_identity": "CPA 正在保存该凭证，现在可以关闭此窗口。",
   "ui.close_login_window": "关闭登录窗口",
-  "ui.session_json_privacy_notice": "Session JSON 仅通过已认证的 CPA 连接提交一次；页面会立即清空，插件不会将其写入存储或日志。",
+  "ui.session_json_privacy_notice":
+    "Session JSON 仅通过已认证的 CPA 连接提交一次；页面会立即清空，插件不会将其写入存储或日志。",
   "ui.invalid_agent_identity_login_state": "当前登录请求无效或不完整。",
-  "ui.agent_identity_login_expired": "该 Agent Identity 登录请求已过期，请返回 CPA 重新发起登录。",
-  "ui.agent_identity_experiment_disabled": "GPT 登录需要先在“设置 → 实验性功能”中开启 Codex Agent Identity；OpenCode 登录不受影响。",
+  "ui.agent_identity_login_expired":
+    "该 Agent Identity 登录请求已过期，请返回 CPA 重新发起登录。",
+  "ui.agent_identity_experiment_disabled":
+    "GPT 登录需要先在“设置 → 实验性功能”中开启 Codex Agent Identity；OpenCode 登录不受影响。",
   "ui.choose_login_method": "\u9009\u62e9\u767b\u5f55\u65b9\u5f0f",
   "ui.gpt_login": "gpt \u767b\u5f55",
   "ui.opencode_login": "opencode",
-  "ui.opencode_login_description": "\u767b\u5f55 opencode.ai \u540e\u6253\u5f00 Go \u5de5\u4f5c\u533a\u9875\u9762\uff0c\u586b\u5165 Workspace ID \u4e0e auth Cookie\uff08auth \u7684\u503c\uff09\u5373\u53ef\u7ed1\u5b9a\u8be5\u8d26\u53f7\u3002",
+  "ui.opencode_login_description":
+    "\u767b\u5f55 opencode.ai \u540e\u6253\u5f00 Go \u5de5\u4f5c\u533a\u9875\u9762\uff0c\u586b\u5165 Workspace ID \u4e0e auth Cookie\uff08auth \u7684\u503c\uff09\u5373\u53ef\u7ed1\u5b9a\u8be5\u8d26\u53f7\u3002",
   "ui.opencode_workspace_id": "Workspace ID",
   "ui.opencode_auth_cookie": "Auth Cookie\uff08auth \u7684\u503c\uff09",
   "ui.opencode_workspace_placeholder": "wrk_xxxxxxxx",
@@ -191,14 +272,17 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.opencode_save_and_query": "\u67e5\u8be2\u5e76\u4fdd\u5b58",
   "ui.opencode_saving": "\u6b63\u5728\u4fdd\u5b58 OpenCode \u8d26\u53f7",
   "ui.opencode_login_complete": "OpenCode \u8d26\u53f7\u5df2\u4fdd\u5b58",
-  "ui.opencode_is_saved": "OpenCode Go \u989d\u5ea6\u8d26\u53f7\u5df2\u7ed1\u5b9a\uff0c\u53ef\u4ee5\u5173\u95ed\u6b64\u7a97\u53e3\u3002",
+  "ui.opencode_is_saved":
+    "OpenCode Go \u989d\u5ea6\u8d26\u53f7\u5df2\u7ed1\u5b9a\uff0c\u53ef\u4ee5\u5173\u95ed\u6b64\u7a97\u53e3\u3002",
   "ui.opencode_saved_account": "OpenCode Go \u989d\u5ea6\u8d26\u53f7",
   "ui.opencode_rolling": "5 \u5c0f\u65f6\u989d\u5ea6",
   "ui.opencode_weekly": "7 \u5929\u989d\u5ea6",
   "ui.opencode_monthly": "30 \u5929\u989d\u5ea6",
   "ui.opencode_reset_in": "{time} \u540e\u91cd\u7f6e",
-  "ui.opencode_open_status": "\u6253\u5f00 OpenCode Go \u989d\u5ea6\u76d1\u63a7",
-  "ui.opencode_privacy_notice": "Cookie \u4ec5\u901a\u8fc7\u5df2\u8ba4\u8bc1\u7684 CPA \u8fde\u63a5\u63d0\u4ea4\u4e00\u6b21\uff0c\u5e76\u4fdd\u5b58\u5728\u63d2\u4ef6\u79c1\u6709\u6570\u636e\u76ee\u5f55\u4e2d\uff0c\u4e0d\u4f1a\u8fd4\u56de\u7ed9\u6d4f\u89c8\u5668\u6216\u5199\u5165\u65e5\u5fd7\u3002",
+  "ui.opencode_open_status":
+    "\u6253\u5f00 OpenCode Go \u989d\u5ea6\u76d1\u63a7",
+  "ui.opencode_privacy_notice":
+    "Cookie \u4ec5\u901a\u8fc7\u5df2\u8ba4\u8bc1\u7684 CPA \u8fde\u63a5\u63d0\u4ea4\u4e00\u6b21\uff0c\u5e76\u4fdd\u5b58\u5728\u63d2\u4ef6\u79c1\u6709\u6570\u636e\u76ee\u5f55\u4e2d\uff0c\u4e0d\u4f1a\u8fd4\u56de\u7ed9\u6d4f\u89c8\u5668\u6216\u5199\u5165\u65e5\u5fd7\u3002",
   "ui.opencode": "OpenCode Go",
   "ui.opencode_save_action": "\u4fdd\u5b58 OpenCode \u8d26\u53f7",
   "ui.opencode_remove_action": "\u5220\u9664 OpenCode \u8d26\u53f7",
@@ -206,13 +290,15 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.opencode_reason_account_saved": "\u8d26\u53f7\u5df2\u4fdd\u5b58",
   "ui.opencode_reason_account_removed": "\u8d26\u53f7\u5df2\u5220\u9664",
   "ui.opencode_reason_all_refreshed": "\u5168\u90e8\u5237\u65b0\u6210\u529f",
-  "ui.opencode_reason_partial_refresh_failed": "\u90e8\u5206\u8d26\u53f7\u5237\u65b0\u5931\u8d25",
+  "ui.opencode_reason_partial_refresh_failed":
+    "\u90e8\u5206\u8d26\u53f7\u5237\u65b0\u5931\u8d25",
   "ui.opencode_reason_refresh_failed": "\u5237\u65b0\u5931\u8d25",
   "ui.opencode_reason_invalid_credential": "\u51ed\u636e\u65e0\u6548",
   "ui.opencode_reason_account_not_found": "\u8d26\u53f7\u4e0d\u5b58\u5728",
   "ui.experimental_settings_saved": "实验性设置已保存",
   "ui.load_experimental_feature": "加载实验性功能",
-  "ui.experimental_model_test_description": "实验测试会使用新的关联工具调用编号发起真实 Codex 模型探测，并显示脱敏后的上游响应。",
+  "ui.experimental_model_test_description":
+    "实验测试会使用新的关联工具调用编号发起真实 Codex 模型探测，并显示脱敏后的上游响应。",
   "ui.experimental_feature_loaded": "已加载实验请求",
   "ui.correlation_call_id": "关联调用编号",
   "ui.refresh": "刷新",
@@ -238,13 +324,17 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.add_accounts": "添加账号",
   "ui.deduplicate_accounts": "账号去重",
   "ui.account_deduplication": "账号去重",
-  "ui.account_deduplication_description": "查找实际指向同一上游账号的不同凭证文件。",
-  "ui.account_deduplication_safety_note": "请复核保留凭证和待删除项；下一步仍需经过独立的删除预览与二次确认。",
+  "ui.account_deduplication_description":
+    "查找实际指向同一上游账号的不同凭证文件。",
+  "ui.account_deduplication_safety_note":
+    "请复核保留凭证和待删除项；下一步仍需经过独立的删除预览与二次确认。",
   "ui.deduplication_rules": "判重规则",
   "ui.ignore_account_ids": "忽略账号 ID 判重",
-  "ui.ignore_account_ids_description": "只按规范化邮箱识别重复账号，适合团队账号共享 ID 的情况。",
+  "ui.ignore_account_ids_description":
+    "只按规范化邮箱识别重复账号，适合团队账号共享 ID 的情况。",
   "ui.exclude_team_accounts": "排除 k12/team 套餐账号",
-  "ui.exclude_team_accounts_description": "这些账号不会进入去重分组或删除建议。",
+  "ui.exclude_team_accounts_description":
+    "这些账号不会进入去重分组或删除建议。",
   "ui.refreshing_deduplication": "正在重新扫描",
   "ui.scanned_credentials": "已扫描凭证",
   "ui.excluded_credentials": "已排除凭证",
@@ -254,7 +344,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.read_only_skipped": "只读跳过",
   "ui.missing_identity": "无稳定身份",
   "ui.no_duplicate_accounts": "未发现重复账号",
-  "ui.no_duplicate_accounts_description": "当前 CPA 账号中没有凭证共享可靠的上游账号 ID 或规范化邮箱。",
+  "ui.no_duplicate_accounts_description":
+    "当前 CPA 账号中没有凭证共享可靠的上游账号 ID 或规范化邮箱。",
   "ui.selected_duplicate_credentials": "已选择 {count} 个重复凭证",
   "ui.review_duplicate_deletions": "复核删除（{count}）",
   "ui.unable_to_prepare_deletion_preview": "无法生成删除预览",
@@ -335,7 +426,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.batch_edit": "批量编辑",
   "ui.batch_delete": "批量删除",
   "ui.batch_delete_preview": "批量删除预览",
-  "ui.batch_delete_warning": "删除后无法通过插件恢复这些 Auth 文件，请确认目标范围后再继续。",
+  "ui.batch_delete_warning":
+    "删除后无法通过插件恢复这些 Auth 文件，请确认目标范围后再继续。",
   "ui.delete_count_accounts": "删除 {count} 个账号",
   "ui.batch_delete_job": "批量删除任务",
   "ui.deleted": "已删除",
@@ -348,31 +440,38 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.account_index": "账号索引",
   "ui.account_type": "账号类型",
   "ui.plan_type": "套餐类型",
-	"ui.active_reset_count": "主动重置次数",
-	"ui.refresh_plan_and_active_reset": "刷新 {account} 的套餐和主动重置次数",
-	"ui.refresh_quota_metadata_action": "刷新额度元数据",
-	"ui.refresh_token": "刷新令牌",
-	"ui.more_actions_for_account": "{account} 的更多操作",
-	"ui.account_more_actions": "账号操作",
-	"ui.token_refreshed_for_account": "已刷新 {account} 的凭据",
-	"ui.host_refresh_unsupported": "当前 CPA 版本不支持手动刷新令牌",
-	"ui.refresh_credential_missing": "该账号没有 Refresh Token",
-	"ui.refresh_rejected": "刷新凭据已失效，请重新登录",
-	"ui.refresh_already_running": "该账号正在刷新凭据",
-	"ui.refresh_provider_unsupported": "该供应商暂不支持插件侧令牌刷新",
-	"ui.refresh_conflict": "刷新期间账号凭据已变化，已停止写入，请使用最新凭据重试",
-	"ui.refresh_verification_failed": "凭据已写入但无法验证，请先重新加载账号再决定是否重试",
-	"ui.token_refreshed_native": "已通过 CPA 原生能力刷新账号凭据",
-	"ui.token_refreshed_plugin": "CPA 无原生刷新接口，已由插件安全刷新 Codex 凭据",
-	"ui.quota_metadata_refreshed": "已刷新 {account} 的套餐和主动重置次数",
-	"ui.quota_metadata_refreshed_with_warning": "已刷新 {account} 的套餐，但当前无法获取主动重置次数",
-	"ui.not_collected": "尚未采集",
-	"ui.quota_metadata_collected_at": "获取于 {time}",
-	"ui.use_active_reset": "主动重置",
-	"ui.confirm_active_reset": "确认主动重置",
-	"ui.confirm_active_reset_description": "确定要为 {account} 消耗 1 次主动重置机会吗？这会立即重置对应的 Codex 额度，操作无法撤销。",
-	"ui.active_reset_succeeded": "已完成 {account} 的主动重置，并刷新套餐、额度和剩余次数",
-	"ui.active_reset_succeeded_with_warning": "已完成 {account} 的主动重置，但暂时无法刷新最新额度元数据",
+  "ui.active_reset_count": "主动重置次数",
+  "ui.refresh_plan_and_active_reset": "刷新 {account} 的套餐和主动重置次数",
+  "ui.refresh_quota_metadata_action": "刷新额度元数据",
+  "ui.refresh_token": "刷新令牌",
+  "ui.more_actions_for_account": "{account} 的更多操作",
+  "ui.account_more_actions": "账号操作",
+  "ui.token_refreshed_for_account": "已刷新 {account} 的凭据",
+  "ui.host_refresh_unsupported": "当前 CPA 版本不支持手动刷新令牌",
+  "ui.refresh_credential_missing": "该账号没有 Refresh Token",
+  "ui.refresh_rejected": "刷新凭据已失效，请重新登录",
+  "ui.refresh_already_running": "该账号正在刷新凭据",
+  "ui.refresh_provider_unsupported": "该供应商暂不支持插件侧令牌刷新",
+  "ui.refresh_conflict":
+    "刷新期间账号凭据已变化，已停止写入，请使用最新凭据重试",
+  "ui.refresh_verification_failed":
+    "凭据已写入但无法验证，请先重新加载账号再决定是否重试",
+  "ui.token_refreshed_native": "已通过 CPA 原生能力刷新账号凭据",
+  "ui.token_refreshed_plugin":
+    "CPA 无原生刷新接口，已由插件安全刷新 Codex 凭据",
+  "ui.quota_metadata_refreshed": "已刷新 {account} 的套餐和主动重置次数",
+  "ui.quota_metadata_refreshed_with_warning":
+    "已刷新 {account} 的套餐，但当前无法获取主动重置次数",
+  "ui.not_collected": "尚未采集",
+  "ui.quota_metadata_collected_at": "获取于 {time}",
+  "ui.use_active_reset": "主动重置",
+  "ui.confirm_active_reset": "确认主动重置",
+  "ui.confirm_active_reset_description":
+    "确定要为 {account} 消耗 1 次主动重置机会吗？这会立即重置对应的 Codex 额度，操作无法撤销。",
+  "ui.active_reset_succeeded":
+    "已完成 {account} 的主动重置，并刷新套餐、额度和剩余次数",
+  "ui.active_reset_succeeded_with_warning":
+    "已完成 {account} 的主动重置，但暂时无法刷新最新额度元数据",
   "ui.source": "来源",
   "ui.status_detail": "状态说明",
   "ui.read_only_reason": "只读原因",
@@ -385,7 +484,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.auto_enable_status": "自动启用 {status}",
   "ui.auto_enable": "自动启用",
   "ui.quota_recovery_priority": "Codex 额度恢复优先调度",
-  "ui.quota_recovery_priority_description": "新配额快照确认巡检禁用的账号已经恢复时，立即启用并把 CPA Priority 至少提高到 100。人工禁用和凭据失效账号不会被修改。",
+  "ui.quota_recovery_priority_description":
+    "新配额快照确认巡检禁用的账号已经恢复时，立即启用并把 CPA Priority 至少提高到 100。人工禁用和凭据失效账号不会被修改。",
   "ui.auto_delete": "自动删除",
   "ui.manual_inspection_delete": "手动巡检删除",
   "ui.manual_inspection_bulk_delete": "手动巡检批量删除",
@@ -407,38 +507,42 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.on_2": "开启",
   "ui.off_2": "关",
   "ui.headers": "请求头",
-	"ui.model_policy": "模型策略",
-	"ui.model_policy_mode": "模型策略模式",
-	"ui.all_models": "全部模型",
-	"ui.model_allowlist": "白名单模式",
-	"ui.model_blocklist": "黑名单模式",
-	"ui.loading_models": "正在加载模型",
-	"ui.models_could_not_be_loaded": "无法加载模型列表",
-	"ui.common_models_count": "{count} 个公共模型",
-	"ui.model_catalog_loaded_count": "已加载 {loaded}/{total} 个账号",
-	"ui.model_catalog_failed_count": "{count} 个加载失败",
-	"ui.search_models": "搜索模型",
-	"ui.select_all": "全选",
-	"ui.clear": "清空",
-	"ui.available_models": "可用模型",
-	"ui.no_matching_models": "没有匹配的模型",
-	"ui.all_models_policy_help": "撤销插件管理的模型限制，同时保留在插件外配置的排除项。",
-	"ui.enable_model_policy_to_load": "勾选此字段后加载账号的有效模型列表。",
-	"ui.load_models_before_submitting": "生成预览前需要先加载模型列表。",
-	"ui.select_at_least_one_model": "当前策略模式至少需要选择一个模型。",
-	"ui.current_account_configuration": "当前账号配置",
-	"ui.current_account_configuration_description": "已从当前 Auth 文件加载；只有勾选的字段会进入变更预览。",
-	"ui.loading_account_configuration": "正在加载当前账号配置",
-	"ui.account_configuration_load_failed": "无法加载当前账号配置。",
-	"ui.retry_loading_configuration": "重新加载配置",
-	"ui.plugin_configuration": "插件配置",
-	"ui.plugin_configuration_state": "插件管理状态",
-	"ui.managed_by_plugin": "由插件管理",
-	"ui.not_managed_by_plugin": "未由插件管理",
-	"ui.managed_models": "策略模型",
-	"ui.managed_model_exclusions": "插件管理的排除模型",
-	"ui.proxy_credentials_hidden": "代理凭据已隐藏；勾选代理字段后将设置新地址或清除现有配置。",
-	"ui.header_values_hidden": "Header 值已隐藏；勾选请求头字段后可按名称新增、替换或移除。",
+  "ui.model_policy": "模型策略",
+  "ui.model_policy_mode": "模型策略模式",
+  "ui.all_models": "全部模型",
+  "ui.model_allowlist": "白名单模式",
+  "ui.model_blocklist": "黑名单模式",
+  "ui.loading_models": "正在加载模型",
+  "ui.models_could_not_be_loaded": "无法加载模型列表",
+  "ui.common_models_count": "{count} 个公共模型",
+  "ui.model_catalog_loaded_count": "已加载 {loaded}/{total} 个账号",
+  "ui.model_catalog_failed_count": "{count} 个加载失败",
+  "ui.search_models": "搜索模型",
+  "ui.select_all": "全选",
+  "ui.clear": "清空",
+  "ui.available_models": "可用模型",
+  "ui.no_matching_models": "没有匹配的模型",
+  "ui.all_models_policy_help":
+    "撤销插件管理的模型限制，同时保留在插件外配置的排除项。",
+  "ui.enable_model_policy_to_load": "勾选此字段后加载账号的有效模型列表。",
+  "ui.load_models_before_submitting": "生成预览前需要先加载模型列表。",
+  "ui.select_at_least_one_model": "当前策略模式至少需要选择一个模型。",
+  "ui.current_account_configuration": "当前账号配置",
+  "ui.current_account_configuration_description":
+    "已从当前 Auth 文件加载；只有勾选的字段会进入变更预览。",
+  "ui.loading_account_configuration": "正在加载当前账号配置",
+  "ui.account_configuration_load_failed": "无法加载当前账号配置。",
+  "ui.retry_loading_configuration": "重新加载配置",
+  "ui.plugin_configuration": "插件配置",
+  "ui.plugin_configuration_state": "插件管理状态",
+  "ui.managed_by_plugin": "由插件管理",
+  "ui.not_managed_by_plugin": "未由插件管理",
+  "ui.managed_models": "策略模型",
+  "ui.managed_model_exclusions": "插件管理的排除模型",
+  "ui.proxy_credentials_hidden":
+    "代理凭据已隐藏；勾选代理字段后将设置新地址或清除现有配置。",
+  "ui.header_values_hidden":
+    "Header 值已隐藏；勾选请求头字段后可按名称新增、替换或移除。",
   "ui.note": "备注",
   "ui.header_names": "请求头名称",
   "ui.usage_and_activity": "用量与活动",
@@ -476,14 +580,18 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.testing_unsupported": "暂不支持测试",
   "ui.manual_confirmation_required": "需要人工确认",
   "ui.received_the_expected_model_response": "已收到符合预期的模型响应",
-  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist": "该账号无法使用此模型，或模型名称不存在",
+  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist":
+    "该账号无法使用此模型，或模型名称不存在",
   "ui.account_is_currently_unavailable": "账号当前不可用",
-  "ui.authentication_failed_check_credential_status": "账号认证失败，请检查凭据状态",
+  "ui.authentication_failed_check_credential_status":
+    "账号认证失败，请检查凭据状态",
   "ui.upstream_quota_or_rate_limited": "上游额度或请求频率受限",
   "ui.test_request_timed_out": "测试请求超时",
   "ui.upstream_service_is_temporarily_unavailable": "暂时无法连接上游服务",
-  "ui.the_upstream_response_cannot_confirm_model_availability": "上游响应无法确认模型可用性",
-  "ui.this_provider_does_not_support_safe_model_testing_yet": "此提供方暂未接入安全模型测试",
+  "ui.the_upstream_response_cannot_confirm_model_availability":
+    "上游响应无法确认模型可用性",
+  "ui.this_provider_does_not_support_safe_model_testing_yet":
+    "此提供方暂未接入安全模型测试",
   "ui.the_test_result_requires_manual_confirmation": "测试结果需要人工确认",
   "ui.model": "模型",
   "ui.latency": "延迟",
@@ -499,7 +607,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.truncated": "已截断",
   "ui.delete_account": "删除账号",
   "ui.this_permanently_deletes_the_cpa_auth_file": "将永久删除 CPA Auth 文件",
-  "ui.the_file_is_revalidated_before_deletion": "删除前会再次检查文件是否自预览后发生变化。",
+  "ui.the_file_is_revalidated_before_deletion":
+    "删除前会再次检查文件是否自预览后发生变化。",
   "ui.validating_deletion_target": "正在校验删除目标",
   "ui.download_account_credentials": "下载账号凭据",
   "ui.download_format": "下载 {format}",
@@ -554,9 +663,11 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.failed": "失败",
   "ui.enable_default_policy": "启用默认策略",
   "ui.new_account_model_probe": "新账号模型探测",
-  "ui.new_account_model_probe_description": "发现新 Codex 账号后自动测试主模型、回退模型和兼容模型",
+  "ui.new_account_model_probe_description":
+    "发现新 Codex 账号后自动测试主模型、回退模型和兼容模型",
   "ui.enable_new_account_model_probe": "启用新账号模型探测",
-  "ui.new_account_model_probe_storage_error": "新账号模型探测状态无法持久化，请检查插件 data_dir 是否可写并已持久化挂载。",
+  "ui.new_account_model_probe_storage_error":
+    "新账号模型探测状态无法持久化，请检查插件 data_dir 是否可写并已持久化挂载。",
   "ui.default_priority": "默认 Priority",
   "ui.default_websockets": "默认 WebSockets",
   "ui.scan_interval": "扫描间隔",
@@ -580,14 +691,17 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.interrupted_2": "已中断",
   "ui.no_item_results_yet": "暂无逐项结果",
   "ui.inspection_and_automation_settings": "巡检与自动化设置",
-  "ui.all_writes_require_management_authentication": "所有写操作均受 Management 鉴权保护",
+  "ui.all_writes_require_management_authentication":
+    "所有写操作均受 Management 鉴权保护",
   "ui.save_settings": "保存设置",
   "ui.inspection_schedule": "巡检计划",
-  "ui.cpa_native_status_and_usage_evidence": "每轮使用 CPA 原生状态和用量数据巡检全部已接入账号",
+  "ui.cpa_native_status_and_usage_evidence":
+    "每轮使用 CPA 原生状态和用量数据巡检全部已接入账号",
   "ui.scheduled_inspection": "定时巡检",
   "ui.full_scheduled_active_inspection": "全量定时主动巡检",
   "ui.anomaly_trigger": "异常占比触发",
-  "ui.anomaly_trigger_description": "可靠异常结果达到设定比例时，可按配置启动一轮全量主动巡检",
+  "ui.anomaly_trigger_description":
+    "可靠异常结果达到设定比例时，可按配置启动一轮全量主动巡检",
   "ui.enable_anomaly_trigger": "启用异常占比触发",
   "ui.anomaly_threshold": "异常阈值",
   "ui.minimum_sample": "最小可靠样本",
@@ -595,17 +709,21 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.external_get_notification": "外部 GET 通知",
   "ui.notification_only_mode": "仅发送通知，不触发二次巡检",
   "ui.external_notifications": "外部通知",
-  "ui.external_notifications_description": "巡检后评估账号池条件，达到阈值时发送一条聚合 GET 通知",
+  "ui.external_notifications_description":
+    "巡检后评估账号池条件，达到阈值时发送一条聚合 GET 通知",
   "ui.notification_endpoints": "通知链接",
   "ui.generic_notifications": "通用通知",
-  "ui.generic_notifications_description": "全局可用率与异常触发只会发送到使用通用通知的链接。",
+  "ui.generic_notifications_description":
+    "全局可用率与异常触发只会发送到使用通用通知的链接。",
   "ui.policy_notifications": "策略通知",
-  "ui.policy_notifications_description": "按供应商、套餐类型和邮箱后缀嵌套筛选账号，并在筛选集合低于可用阈值时通知。",
+  "ui.policy_notifications_description":
+    "按供应商、套餐类型和邮箱后缀嵌套筛选账号，并在筛选集合低于可用阈值时通知。",
   "ui.add_notification_policy": "添加策略通知",
   "ui.add_policy_notification_endpoint": "添加策略通知链接",
   "ui.policy_notification_endpoints": "策略通知链接",
   "ui.policy_notification_endpoints_for": "{name} 的策略通知链接",
-  "ui.policy_notification_endpoints_description": "这些链接由当前策略独立触发。",
+  "ui.policy_notification_endpoints_description":
+    "这些链接由当前策略独立触发。",
   "ui.no_generic_notification_endpoints": "尚未配置通用通知链接",
   "ui.no_policy_notification_endpoints": "尚未配置策略通知链接",
   "ui.move_notification_endpoint_up": "上移通知链接",
@@ -618,20 +736,29 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.move_notification_policy_up": "上移通知策略",
   "ui.move_notification_policy_down": "下移通知策略",
   "ui.delete_notification_policy": "删除通知策略",
-  "ui.confirm_remove_notification_policy": "确定删除策略通知 {name} 及其全部通知链接？",
+  "ui.confirm_remove_notification_policy":
+    "确定删除策略通知 {name} 及其全部通知链接？",
   "ui.notification_threshold_conditions": "触发条件",
   "ui.notification_threshold_operator": "触发条件组合方式",
   "ui.threshold_match_all_hint": "所有已启用的阈值都达到时触发通知",
   "ui.threshold_match_any_hint": "任意一个已启用的阈值达到时触发通知",
   "ui.notification_policy_name_required": "每条通知策略都需要填写名称",
-  "ui.notification_policy_name_duplicate": "策略名称“{name}”已存在，请使用唯一名称",
-  "ui.notification_policy_threshold_required": "每条通知策略至少需要启用一个可用性触发条件",
-  "ui.notification_policy_binding_invalid": "策略通知链接归属无效，请刷新后重新配置",
-  "ui.generic_notification_endpoint_required": "启用通用通知触发前，至少启用一条通用通知链接",
-  "ui.policy_notification_endpoint_required": "启用策略通知前，至少启用一条策略内通知链接",
-  "ui.policy_notification_endpoint_required_named": "请为策略通知 {name} 启用一条通知链接",
-  "ui.notification_policy_order_hint": "排序仅用于管理展示；所有匹配策略都会独立判断和触发。",
-  "ui.save_notification_policy_before_testing": "请先保存当前策略通知，再进行预览或测试",
+  "ui.notification_policy_name_duplicate":
+    "策略名称“{name}”已存在，请使用唯一名称",
+  "ui.notification_policy_threshold_required":
+    "每条通知策略至少需要启用一个可用性触发条件",
+  "ui.notification_policy_binding_invalid":
+    "策略通知链接归属无效，请刷新后重新配置",
+  "ui.generic_notification_endpoint_required":
+    "启用通用通知触发前，至少启用一条通用通知链接",
+  "ui.policy_notification_endpoint_required":
+    "启用策略通知前，至少启用一条策略内通知链接",
+  "ui.policy_notification_endpoint_required_named":
+    "请为策略通知 {name} 启用一条通知链接",
+  "ui.notification_policy_order_hint":
+    "排序仅用于管理展示；所有匹配策略都会独立判断和触发。",
+  "ui.save_notification_policy_before_testing":
+    "请先保存当前策略通知，再进行预览或测试",
   "ui.add_notification_endpoint": "添加通知链接",
   "ui.notification_endpoint_name": "名称",
   "ui.notification_endpoint_name_number": "通知链接 {number} 名称",
@@ -642,12 +769,14 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.remove_notification_endpoint": "删除通知链接",
   "ui.remove_notification_endpoint_number": "删除通知链接 {number}",
   "ui.confirm_remove_notification_endpoint": "确定删除通知链接 {name}？",
-  "ui.confirm_remove_notification_endpoint_number": "确定删除第 {number} 条通知链接？",
+  "ui.confirm_remove_notification_endpoint_number":
+    "确定删除第 {number} 条通知链接？",
   "ui.no_notification_endpoints": "尚未配置通知链接",
   "ui.notification_endpoint_count": "已配置 {count}/{max} 条通知链接",
   "ui.notification_endpoint_limit_reached": "最多允许 {count} 条通知链接",
   "ui.notification_duplicate_url": "通知链接 URL 不能重复",
-  "ui.notification_enabled_endpoint_required": "开启通知触发条件前，至少要启用一条通知链接",
+  "ui.notification_enabled_endpoint_required":
+    "开启通知触发条件前，至少要启用一条通知链接",
   "ui.notification_settings_saved": "外部通知设置已保存",
   "ui.notify_on_anomaly_ratio": "异常占比达到阈值时通知",
   "ui.notify_when_available_accounts_low": "可用账号数不足时通知",
@@ -660,11 +789,15 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.select_parameter": "选择参数",
   "ui.notification_url_is_required": "开启外部通知时必须填写通知 URL 模板",
   "ui.notification_url_must_use_https": "通知 URL 必须使用 HTTPS",
-  "ui.notification_available_accounts_must_be_between_1_and_10000": "可用账号数通知阈值必须在 1 到 10000 之间",
-  "ui.notification_availability_percent_must_be_between_1_and_100": "总可用率通知阈值必须在 1% 到 100% 之间",
-  "ui.notification_cooldown_must_be_between_5_and_1440_minutes": "通知冷却时间必须在 5 到 1440 分钟之间",
+  "ui.notification_available_accounts_must_be_between_1_and_10000":
+    "可用账号数通知阈值必须在 1 到 10000 之间",
+  "ui.notification_availability_percent_must_be_between_1_and_100":
+    "总可用率通知阈值必须在 1% 到 100% 之间",
+  "ui.notification_cooldown_must_be_between_5_and_1440_minutes":
+    "通知冷却时间必须在 5 到 1440 分钟之间",
   "ui.notification_parameter_full_details": "插入完整详情参数",
-  "ui.notification_full_message_template": "事件 ${event}；可用账号 ${available_accounts}/${total_accounts}；可用率 ${available_percent}；异常账号 ${abnormal_accounts}（${abnormal_percent}）；额度受限 ${quota_limited_accounts}；凭据失效 ${invalid_credential_accounts}；暂不可用 ${unavailable_accounts}；已禁用 ${disabled_accounts}；触发时间 ${triggered_at}",
+  "ui.notification_full_message_template":
+    "事件 ${event}；可用账号 ${available_accounts}/${total_accounts}；可用率 ${available_percent}；异常账号 ${abnormal_accounts}（${abnormal_percent}）；额度受限 ${quota_limited_accounts}；凭据失效 ${invalid_credential_accounts}；暂不可用 ${unavailable_accounts}；已禁用 ${disabled_accounts}；触发时间 ${triggered_at}",
   "ui.notification_preview_and_test": "通知预览与测试",
   "ui.preview_notification": "预览",
   "ui.send_test_notification": "发送测试",
@@ -701,41 +834,51 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.passive_failure_threshold": "被动失败阈值",
   "ui.passive_failure_window": "被动失败时间窗",
   "ui.passive_circuit_duration": "临时禁用时长",
-  "ui.passive_circuit_description": "CPA 请求或主动模型探测连续出现证据不足的失败时，可临时禁用账号。不会接管人工禁用，临时熔断也永远不会进入自动删除。",
+  "ui.passive_circuit_description":
+    "CPA 请求或主动模型探测连续出现证据不足的失败时，可临时禁用账号。不会接管人工禁用，临时熔断也永远不会进入自动删除。",
   "ui.account_disposition": "账号处置",
-  "ui.only_accounts_disabled_by_inspection_can_be_restored": "只恢复由巡检禁用的账号",
+  "ui.only_accounts_disabled_by_inspection_can_be_restored":
+    "只恢复由巡检禁用的账号",
   "ui.deletion_grace": "删除宽限",
   "ui.hours": "小时",
   "ui.deletes_per_run": "单次删除",
   "ui.accounts_2": "个",
   "ui.confirm_auto_delete": "确认开启自动删除",
-  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period": "确认仅对明确停用、由巡检禁用且超过宽限期的账号自动删除",
+  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period":
+    "确认仅对明确停用、由巡检禁用且超过宽限期的账号自动删除",
   "ui.delete_persistent_invalid_credentials": "删除持续失效的凭据",
   "ui.confirm_invalid_credential_deletion": "确认删除失效凭据",
-  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation": "确认仅在持续高置信鉴权失败、由巡检禁用、超过宽限期且删除前复核通过后执行删除",
+  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation":
+    "确认仅在持续高置信鉴权失败、由巡检禁用、超过宽限期且删除前复核通过后执行删除",
   "ui.plugin_updates": "插件更新",
   "ui.cpa_plugin_store_updates": "CPA 插件商店",
   "ui.check_for_updates": "检查更新",
   "ui.check_interval": "检查间隔",
   "ui.auto_update": "自动更新",
   "ui.confirm_auto_update": "确认开启自动更新",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "确认登录插件管理界面后自动安装通过 CPA 插件商店校验的新版本",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active":
+    "确认登录插件管理界面后自动安装通过 CPA 插件商店校验的新版本",
   "ui.authentication_failed": "认证失败",
   "ui.request_failed": "请求失败",
   "ui.request_timeout": "请求超时，请稍后重试",
   "ui.invalid_json_response": "服务端返回了无效的 JSON 响应",
-  "ui.invalid_api_response": "服务端返回的数据结构无效，已保留当前页面数据，请稍后重试",
-  "ui.invalid_accounts_response": "CPA 返回的账号列表无效，已保留当前页面数据，请稍后重试",
+  "ui.invalid_api_response":
+    "服务端返回的数据结构无效，已保留当前页面数据，请稍后重试",
+  "ui.invalid_accounts_response":
+    "CPA 返回的账号列表无效，已保留当前页面数据，请稍后重试",
   "ui.deleted_account_account": "已删除账号 {account}",
   "ui.added_count_accounts": "已添加 {count} 个账号",
-  "ui.added_count_accounts_failed_not_written": "已添加 {count} 个账号，{failed} 个未写入",
-  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped": "已下载 {format} 凭据，共 {count} 个账号，跳过 {skipped} 个",
+  "ui.added_count_accounts_failed_not_written":
+    "已添加 {count} 个账号，{failed} 个未写入",
+  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped":
+    "已下载 {format} 凭据，共 {count} 个账号，跳过 {skipped} 个",
   "ui.exported_results_as_format": "已导出结果 {format}",
   "ui.count_selected_accounts": "已选 {count} 个账号",
   "ui.count_filtered_accounts": "当前筛选 {count} 个账号",
   "ui.selected_accounts": "已选账号",
   "ui.count_accounts": "{count} 个账号",
-  "ui.count_records_page_page_slash_pages": "{count} 条记录 · 第 {page}/{pages} 页",
+  "ui.count_records_page_page_slash_pages":
+    "{count} 条记录 · 第 {page}/{pages} 页",
   "ui.select_editable_accounts_on_this_page": "选择本页可编辑账号",
   "ui.select_account": "选择 {account}",
   "ui.view_account": "查看 {account}",
@@ -753,17 +896,25 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.no_cpa_usage_data_received": "尚未收到 CPA Usage 数据",
   "ui.awaiting_usage_collection": "等待用量采集",
   "ui.waiting_for_quota_recovery": "等待额度恢复",
-  "ui.collecting_usage_for_count_imported_accounts": "正在采集 {count} 个导入账号的用量",
-  "ui.total_requests_success_succeeded_failed_failed": "累计请求：成功 {success}，失败 {failed}",
-  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time": "CPA 近期请求：{count}（{windows} 个时段）；最近请求 {time}",
-  "ui.recent_cpa_requests_count_across_windows_windows": "CPA 近期请求：{count}（{windows} 个时段）",
+  "ui.collecting_usage_for_count_imported_accounts":
+    "正在采集 {count} 个导入账号的用量",
+  "ui.total_requests_success_succeeded_failed_failed":
+    "累计请求：成功 {success}，失败 {failed}",
+  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time":
+    "CPA 近期请求：{count}（{windows} 个时段）；最近请求 {time}",
+  "ui.recent_cpa_requests_count_across_windows_windows":
+    "CPA 近期请求：{count}（{windows} 个时段）",
   "ui.last_request_time": "最近请求 {time}",
   "ui.no_recent_cpa_request_windows": "CPA 暂无近期请求时段",
-  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "Codex 配额会在 CPA 捕获到对应上游响应头后显示",
-  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA 暂未提供 Agent Identity 配额",
+  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers":
+    "Codex 配额会在 CPA 捕获到对应上游响应头后显示",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota":
+    "CPA 暂未提供 Agent Identity 配额",
   "ui.quota": "配额",
-  "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label} 已用 {percent}%，重置 {reset}，窗口 {minutes} 分钟",
-  "ui.label_percent_percent_used_resets_reset": "{label} 已用 {percent}%，重置 {reset}",
+  "ui.label_percent_percent_used_resets_reset_minutes_minute_window":
+    "{label} 已用 {percent}%，重置 {reset}，窗口 {minutes} 分钟",
+  "ui.label_percent_percent_used_resets_reset":
+    "{label} 已用 {percent}%，重置 {reset}",
   "ui.label_usage_percent_percent": "{label} 用量 {percent}%",
   "ui.overdraft_usage": "透支用量",
 
@@ -771,31 +922,42 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.overdraft_cycle_inconclusive": "透支结果未定",
   "ui.overdraft_cycle_failed": "透支确认失败",
   "ui.overdraft_cycle_passed": "透支已确认",
-  "ui.overdraft_cycle_pending": "透支验证中",  "ui.overdraft_credit_usage_window": "{label} 透支预估费用 {amount}；已计价 {rated} 次，未计价 {unrated} 次；该费用已包含在账号总预估费用中。",
-  "ui.overdraft_credit_usage_detail": "{amount} · 已计价 {rated} 次 · 未计价 {unrated} 次 · 已计入账号总费用",
+  "ui.overdraft_cycle_pending": "透支验证中",
+  "ui.overdraft_credit_usage_window":
+    "{label} 透支预估费用 {amount}；已计价 {rated} 次，未计价 {unrated} 次；该费用已包含在账号总预估费用中。",
+  "ui.overdraft_credit_usage_detail":
+    "{amount} · 已计价 {rated} 次 · 未计价 {unrated} 次 · 已计入账号总费用",
   "ui.5_hour_overdraft_credit_usage": "5 小时透支费用",
   "ui.7_day_overdraft_credit_usage": "7 天透支费用",
   "ui.overdraft_usage_window": "{label} 透支 {percent}%（总用量 {total}%）",
-  "ui.overdraft_usage_window_observed": "{label} 从普通探测失败时的冻结基线起，已观测透支 {tokens} Tokens，共 {requests} 个成功请求（官方总用量 {total}%）",
+  "ui.overdraft_usage_window_observed":
+    "{label} 从普通探测失败时的冻结基线起，已观测透支 {tokens} Tokens，共 {requests} 个成功请求（官方总用量 {total}%）",
   "ui.overdraft_tokens_value": "{count} tok",
   "ui.overdraft_requests_value": "{count} 次",
-  "ui.overdraft_usage_included_in_total": "只有普通探测在 100% 时确认不可用后才冻结基线并开始计算；失败请求不计入。冻结的耗尽时间与自动启用时间不会被后续透支请求顺延，额度恢复到 0% 或自动启用后结束本轮。5h 与 7d 分别计算。",
+  "ui.overdraft_usage_included_in_total":
+    "只有普通探测在 100% 时确认不可用后才冻结基线并开始计算；失败请求不计入。冻结的耗尽时间与自动启用时间不会被后续透支请求顺延，额度恢复到 0% 或自动启用后结束本轮。5h 与 7d 分别计算。",
   "ui.count_read_only_targets_will_be_skipped": "{count} 个只读目标将跳过",
-  "ui.count_targets_are_read_only_and_will_be_skipped": "{count} 个目标为只读，将自动跳过",
-  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped": "{count} 个已选目标已不存在，将自动跳过",
-  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts": "目标包含多个 Provider，请确认字段适用于全部账号",
-  "ui.select_at_least_one_default_field_before_enabling_the_policy": "启用自动策略时至少选择一个默认字段",
+  "ui.count_targets_are_read_only_and_will_be_skipped":
+    "{count} 个目标为只读，将自动跳过",
+  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped":
+    "{count} 个已选目标已不存在，将自动跳过",
+  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts":
+    "目标包含多个 Provider，请确认字段适用于全部账号",
+  "ui.select_at_least_one_default_field_before_enabling_the_policy":
+    "启用自动策略时至少选择一个默认字段",
   "ui.priority_must_be_an_integer": "Priority 必须是整数",
   "ui.account_concurrency": "账号并发",
   "ui.account_concurrency_value": "账号并发值",
   "ui.account_concurrency_must_be_an_integer": "账号并发必须是整数",
   "ui.account_concurrency_range": "账号并发必须在 0 到 1000 之间",
   "ui.account_concurrency_zero_unlimited": "0 表示不限制",
-  "ui.account_concurrency_unavailable_old_cpa": "当前 CPA 版本不支持账号并发控制，请升级到支持 request lifecycle schema v2 的版本。",
+  "ui.account_concurrency_unavailable_old_cpa":
+    "当前 CPA 版本不支持账号并发控制，请升级到支持 request lifecycle schema v2 的版本。",
   "ui.account_concurrency_active_limit": "{active}/{limit}",
   "ui.unlimited": "不限制",
   "ui.scan_interval_must_be_an_integer": "扫描间隔必须是整数",
-  "ui.scan_interval_must_be_between_5_and_300_seconds": "扫描间隔必须在 5 到 300 秒之间",
+  "ui.scan_interval_must_be_between_5_and_300_seconds":
+    "扫描间隔必须在 5 到 300 秒之间",
   "ui.auth_files": "Auth 文件",
   "ui.header_name_is_duplicated": "Header {name} 重复",
   "ui.header_name_has_no_value": "Header {name} 缺少值",
@@ -810,25 +972,42 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.set": "设置",
   "ui.remove": "移除",
   "ui.delete_header_row": "删除 Header 行",
-  "ui.inspection_interval_must_be_between_5_and_1440_minutes": "巡检间隔必须在 5 到 1440 分钟之间",
-  "ui.failure_threshold_must_be_between_2_and_10_events": "连续异常阈值必须在 2 到 10 次之间",
-  "ui.recovery_threshold_must_be_between_1_and_10_events": "连续恢复阈值必须在 1 到 10 次之间",
-  "ui.passive_failure_threshold_must_be_between_2_and_100_events": "被动失败阈值必须在 2 到 100 次之间",
-  "ui.passive_failure_window_must_be_between_1_and_1440_minutes": "被动失败时间窗必须在 1 到 1440 分钟之间",
-  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes": "被动熔断时长必须在 1 到 1440 分钟之间",
-  "ui.passive_circuit_requires_auto_disable_and_auto_enable": "被动熔断需要同时开启自动禁用和自动启用",
-  "ui.deletion_grace_must_be_between_24_and_8760_hours": "删除宽限期必须在 24 到 8760 小时之间",
-  "ui.deletes_per_run_must_be_between_1_and_100": "单次删除上限必须在 1 到 100 之间",
-  "ui.update_check_interval_must_be_between_1_and_168_hours": "更新检查间隔必须在 1 到 168 小时之间",
-  "ui.anomaly_threshold_must_be_between_1_and_100_percent": "异常阈值必须在 1% 到 100% 之间",
-  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts": "最小可靠样本必须在 1 到 10000 个账号之间",
-  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes": "触发冷却时间必须在 5 到 1440 分钟之间",
-  "ui.confirm_the_risk_before_deleting_invalid_credentials": "启用失效凭据删除前需要确认风险",
+  "ui.inspection_interval_must_be_between_5_and_1440_minutes":
+    "巡检间隔必须在 5 到 1440 分钟之间",
+  "ui.failure_threshold_must_be_between_2_and_10_events":
+    "连续异常阈值必须在 2 到 10 次之间",
+  "ui.recovery_threshold_must_be_between_1_and_10_events":
+    "连续恢复阈值必须在 1 到 10 次之间",
+  "ui.passive_failure_threshold_must_be_between_2_and_100_events":
+    "被动失败阈值必须在 2 到 100 次之间",
+  "ui.passive_failure_window_must_be_between_1_and_1440_minutes":
+    "被动失败时间窗必须在 1 到 1440 分钟之间",
+  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes":
+    "被动熔断时长必须在 1 到 1440 分钟之间",
+  "ui.passive_circuit_requires_auto_disable_and_auto_enable":
+    "被动熔断需要同时开启自动禁用和自动启用",
+  "ui.deletion_grace_must_be_between_24_and_8760_hours":
+    "删除宽限期必须在 24 到 8760 小时之间",
+  "ui.deletes_per_run_must_be_between_1_and_100":
+    "单次删除上限必须在 1 到 100 之间",
+  "ui.update_check_interval_must_be_between_1_and_168_hours":
+    "更新检查间隔必须在 1 到 168 小时之间",
+  "ui.anomaly_threshold_must_be_between_1_and_100_percent":
+    "异常阈值必须在 1% 到 100% 之间",
+  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts":
+    "最小可靠样本必须在 1 到 10000 个账号之间",
+  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes":
+    "触发冷却时间必须在 5 到 1440 分钟之间",
+  "ui.confirm_the_risk_before_deleting_invalid_credentials":
+    "启用失效凭据删除前需要确认风险",
   "ui.auto_delete_requires_auto_disable": "自动删除依赖自动禁用",
-  "ui.confirm_the_risk_before_enabling_auto_delete": "开启自动删除前需要确认风险",
+  "ui.confirm_the_risk_before_enabling_auto_delete":
+    "开启自动删除前需要确认风险",
   "ui.auto_update_requires_update_checks": "自动更新依赖检查更新",
-  "ui.confirm_the_risk_before_enabling_auto_update": "开启自动更新前需要确认风险",
-  "ui.file_is_not_a_json_text_json_or_zip_file": "{file} 不是 JSON、文本 JSON 或 ZIP 文件",
+  "ui.confirm_the_risk_before_enabling_auto_update":
+    "开启自动更新前需要确认风险",
+  "ui.file_is_not_a_json_text_json_or_zip_file":
+    "{file} 不是 JSON、文本 JSON 或 ZIP 文件",
   "ui.select_at_most_count_files_at_once": "一次最多选择 {count} 个文件",
   "ui.selected_files_exceed_12_mib_in_total": "所选文件总大小超过 12 MiB",
   "ui.select_json_text_json_or_zip_files": "请选择 JSON、文本 JSON 或 ZIP 文件",
@@ -854,7 +1033,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.import_complete": "导入完成",
   "ui.import_started_in_background": "账号导入任务已在后台启动",
   "ui.import_running_in_background": "正在后台导入账号",
-  "ui.import_can_continue_after_closing": "可以关闭此弹窗，任务会继续执行，并可在操作日志中查看。",
+  "ui.import_can_continue_after_closing":
+    "可以关闭此弹窗，任务会继续执行，并可在操作日志中查看。",
   "ui.import_partially_complete": "部分导入完成",
   "ui.import_failed": "导入失败",
   "ui.imported_slash_total_written_to_cpa": "{imported}/{total} 已写入 CPA",
@@ -863,10 +1043,13 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.skipped_2": "已跳过",
   "ui.existing_auth_files_will_not_be_overwritten": "不会覆盖现有 Auth 文件",
   "ui.refresh_token_is_missing": "缺少 Refresh Token",
-  "ui.id_token_was_synthesized_from_account_metadata": "已根据账号信息生成兼容 ID Token",
+  "ui.id_token_was_synthesized_from_account_metadata":
+    "已根据账号信息生成兼容 ID Token",
   "ui.account_id_is_missing": "缺少 Account ID",
-  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file": "目标文件名已避让现有 Auth 文件",
-  "ui.zip_entry_is_not_a_json_or_text_json_file": "ZIP 条目不是 JSON 或文本 JSON 文件",
+  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file":
+    "目标文件名已避让现有 Auth 文件",
+  "ui.zip_entry_is_not_a_json_or_text_json_file":
+    "ZIP 条目不是 JSON 或文本 JSON 文件",
   "ui.zip_entry_does_not_contain_valid_json": "ZIP 条目不是有效 JSON",
   "ui.uploaded_file_does_not_contain_valid_json": "文件不是有效 JSON",
   "ui.uploaded_file_is_empty": "文件为空",
@@ -876,14 +1059,22 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.cpa_rejected_the_converted_auth_file": "CPA 拒绝了转换后的 Auth 文件",
   "ui.import_was_cancelled": "导入已取消",
   "ui.cpa_auth_storage_is_unavailable": "CPA Auth 存储不可用",
-  "ui.count_unsupported_or_duplicate_record_s_were_skipped": "{count} 条不支持或重复的记录已跳过",
-  "ui.inspection_auto_deleted_count_expired_accounts": "巡检已自动删除 {count} 个到期失效账号",
-  "ui.count_auto_delete_operations_failed_and_will_retry_later": "{count} 个自动删除操作失败，已进入延迟重试",
-  "ui.plugin_version_installed_restart_cpa_to_activate_it": "插件 {version} 已安装，重启 CPA 后生效",
-  "ui.plugin_version_installed_refresh_to_use_the_new_version": "插件 {version} 已安装，刷新页面后使用新版本",
-	 "ui.runtime_ownership_storage_is_unavailable": "单实例运行状态无法持久化，后台自动化已安全停用，请检查 data_dir 写入权限",
-  "ui.runtime_hot_reload_restart_recommended": "检测到同一 CPA 进程内的旧插件实例，正在等待其停止；通常刷新页面即可完成接管。若后台自动化长时间未恢复，建议重启 CPA 清理残留实例",
-  "ui.auto_update_did_not_complete_retry_it_from_update_status": "自动更新未完成，可在更新状态中手动重试",
+  "ui.count_unsupported_or_duplicate_record_s_were_skipped":
+    "{count} 条不支持或重复的记录已跳过",
+  "ui.inspection_auto_deleted_count_expired_accounts":
+    "巡检已自动删除 {count} 个到期失效账号",
+  "ui.count_auto_delete_operations_failed_and_will_retry_later":
+    "{count} 个自动删除操作失败，已进入延迟重试",
+  "ui.plugin_version_installed_restart_cpa_to_activate_it":
+    "插件 {version} 已安装，重启 CPA 后生效",
+  "ui.plugin_version_installed_refresh_to_use_the_new_version":
+    "插件 {version} 已安装，刷新页面后使用新版本",
+  "ui.runtime_ownership_storage_is_unavailable":
+    "单实例运行状态无法持久化，后台自动化已安全停用，请检查 data_dir 写入权限",
+  "ui.runtime_hot_reload_restart_recommended":
+    "检测到同一 CPA 进程内的旧插件实例，正在等待其停止；通常刷新页面即可完成接管。若后台自动化长时间未恢复，建议重启 CPA 清理残留实例",
+  "ui.auto_update_did_not_complete_retry_it_from_update_status":
+    "自动更新未完成，可在更新状态中手动重试",
   "ui.inspection_and_update_settings_saved": "巡检与更新设置已保存",
   "ui.manual": "手动巡检",
   "ui.account_health_inspection": "账号健康巡检",
@@ -893,7 +1084,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.quick_native_inspection": "快速巡检",
   "ui.full_server_inspection": "全量服务器巡检",
   "ui.full_server_inspection_progress": "全量巡检进度",
-  "ui.completed_count_of_total_remaining_remaining": "已完成 {completed}/{total} · 剩余 {remaining}",
+  "ui.completed_count_of_total_remaining_remaining":
+    "已完成 {completed}/{total} · 剩余 {remaining}",
   "ui.remaining_count": "剩余 {count}",
   "ui.manual_full_inspection": "手动全量巡检",
   "ui.scheduled_full_inspection": "定时全量巡检",
@@ -904,7 +1096,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.inspection_waiting_for_auth": "等待 Management 鉴权",
   "ui.refresh_inspection": "刷新巡检",
   "ui.version_version_available": "发现版本 {version}",
-  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store": "当前 {version} · 由 CPA 插件商店校验并安装",
+  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store":
+    "当前 {version} · 由 CPA 插件商店校验并安装",
   "ui.release_notes": "发行说明",
   "ui.dismiss_inspection_message": "关闭巡检提示",
   "ui.inspection_metrics": "巡检统计",
@@ -990,18 +1183,26 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.record_only": "仅记录",
   "ui.operation_log_request_failed": "操作日志请求失败",
   "ui.operation_log_exported_as_file": "操作日志已导出为 {file}",
-  "ui.operation_log_cleared_this_cleanup_event_was_retained": "操作日志已清理，并保留本次清理记录",
+  "ui.operation_log_cleared_this_cleanup_event_was_retained":
+    "操作日志已清理，并保留本次清理记录",
   "ui.account_manager_operation_log": "账号管理器操作日志",
   "ui.storage_state_error": "存储状态异常",
-  "ui.usage_storage_error": "账号用量状态未能持久化，当前显示的用量可能不是最新值；请检查插件 data_dir 是否可写。",
-  "ui.account_concurrency_storage_error": "账号并发配置未能读取或持久化；请检查插件 data_dir 是否可写，并重新加载插件配置。",
-  "ui.job_storage_error": "批量任务结果无法持久化，当前任务状态可能在重启后丢失；请检查插件 data_dir 是否可写。",
-  "ui.retaining_the_latest_count_audit_records": "持续保留最近 {count} 条审计记录",
-  "ui.retaining_count_audit_records_in_count_files": "已在 {files} 个文件中保留 {count} 条审计记录",
+  "ui.usage_storage_error":
+    "账号用量状态未能持久化，当前显示的用量可能不是最新值；请检查插件 data_dir 是否可写。",
+  "ui.account_concurrency_storage_error":
+    "账号并发配置未能读取或持久化；请检查插件 data_dir 是否可写，并重新加载插件配置。",
+  "ui.job_storage_error":
+    "批量任务结果无法持久化，当前任务状态可能在重启后丢失；请检查插件 data_dir 是否可写。",
+  "ui.retaining_the_latest_count_audit_records":
+    "持续保留最近 {count} 条审计记录",
+  "ui.retaining_count_audit_records_in_count_files":
+    "已在 {files} 个文件中保留 {count} 条审计记录",
   "ui.extended_operation_history": "扩展历史留存",
-  "ui.retain_operation_logs_beyond_latest_count": "保留超过最近 {count} 条的操作日志",
+  "ui.retain_operation_logs_beyond_latest_count":
+    "保留超过最近 {count} 条的操作日志",
   "ui.extended_operation_history_enabled": "已开启操作日志扩展历史留存",
-  "ui.extended_operation_history_disabled": "已关闭扩展历史留存，仅保留最近 500 条记录",
+  "ui.extended_operation_history_disabled":
+    "已关闭扩展历史留存，仅保留最近 500 条记录",
   "ui.export": "导出",
   "ui.refresh_operation_log": "刷新操作日志",
   "ui.clear_operation_log": "清理操作日志",
@@ -1021,7 +1222,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.related_object": "关联对象",
   "ui.operation_details": "操作详情",
   "ui.operation_timeline": "最近操作时间轴",
-  "ui.operation_target_summary": "目标 {targets} · 成功 {succeeded} · 失败 {failed} · 跳过 {skipped}",
+  "ui.operation_target_summary":
+    "目标 {targets} · 成功 {succeeded} · 失败 {failed} · 跳过 {skipped}",
   "ui.open_related_job": "打开关联任务",
   "ui.view_operation_details": "查看操作详情",
   "ui.no_matching_operation_records": "没有匹配的操作记录",
@@ -1032,7 +1234,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.next_log_page": "日志下一页",
   "ui.confirm_clear": "确认清理",
   "ui.clear_the_current_count_operation_records": "清除当前 {count} 条操作记录",
-  "ui.only_this_cleanup_event_will_remain_afterward": "完成后仅保留本次日志清理记录。",
+  "ui.only_this_cleanup_event_will_remain_afterward":
+    "完成后仅保留本次日志清理记录。",
   "ui.succeeded_slash_failed_slash_skipped": "成功 / 失败 / 跳过",
   "ui.operation_id": "操作 ID",
   "ui.category": "类别",
@@ -1084,12 +1287,14 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.some_operations_failed": "部分操作失败",
   "ui.operation_failed": "操作失败",
   "ui.failure_basis": "失败依据",
-  "ui.policy_failure_sample_limit_note": "每类原因最多显示 {count} 个脱敏账号 ID，完整数量以统计值为准。",
+  "ui.policy_failure_sample_limit_note":
+    "每类原因最多显示 {count} 个脱敏账号 ID，完整数量以统计值为准。",
   "ui.policy_failure_account_count": "{count} 个账号失败",
   "ui.account_id_samples": "账号 ID 样本",
   "ui.additional_similar_failures": "另有 {count} 个同类失败未逐项显示",
   "ui.policy_failure_summary": "{reason}（{count}）",
-  "ui.policy_failure_summary_multiple": "{reason}（{count}）等 {categories} 类失败",
+  "ui.policy_failure_summary_multiple":
+    "{reason}（{count}）等 {categories} 类失败",
   "ui.policy_failure_unknown": "未分类的策略操作失败",
   "ui.policy_failure_auth_scan": "无法读取 CPA Auth 文件列表",
   "ui.policy_failure_auth_read": "无法读取账号 Auth 文件",
@@ -1111,7 +1316,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.inspection_failure_auth_identity_changed": "写入期间账号身份发生变化",
   "ui.inspection_failure_auth_source_changed": "写入期间账号 Auth 来源发生变化",
   "ui.inspection_failure_auth_json_invalid": "账号 Auth JSON 无效",
-  "ui.inspection_failure_auth_field_invalid": "账号 disabled 或 priority 字段无效",
+  "ui.inspection_failure_auth_field_invalid":
+    "账号 disabled 或 priority 字段无效",
   "ui.inspection_failure_auth_update": "无法通过 CPA 更新账号状态",
   "ui.inspection_failure_auth_save": "无法保存账号 Auth 文件",
   "ui.inspection_failure_mutation": "巡检账号写入失败",
@@ -1155,11 +1361,13 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.provider_unsupported": "暂不支持此提供方",
   "ui.other_reason": "其他原因",
   "ui.manual_2": "手动",
-  "ui.a_single_import_supports_at_most_count_accounts": "一次最多导入 {count} 个账号",
+  "ui.a_single_import_supports_at_most_count_accounts":
+    "一次最多导入 {count} 个账号",
   "ui.request_failed_code": "请求失败（{code}）",
   "ui.export_failed_code": "导出失败（{code}）",
   "ui.management_key_is_not_set": "Management Key 未设置",
-  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store": "插件商店中未找到账号管理插件",
+  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store":
+    "插件商店中未找到账号管理插件",
   "ui.account_deactivated": "账号已停用",
   "ui.priority_value": "Priority 值",
   "ui.note_value": "Note 值",
@@ -1175,7 +1383,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.inspection_interval": "巡检间隔",
   "ui.codex_auth": "Codex Auth",
   "ui.server_model_inspection": "服务器模型巡检",
-  "ui.server_model_inspection_description": "通过 CPA 的安全模型请求链路主动测试账号可用性",
+  "ui.server_model_inspection_description":
+    "通过 CPA 的安全模型请求链路主动测试账号可用性",
   "ui.scheduled_model_probes": "定时模型测试",
   "ui.probe_manually_disabled_accounts": "定时巡检人工禁用账号",
   "ui.model_probe_interval": "测试周期",
@@ -1185,9 +1394,12 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.claude_model": "Claude 测试模型",
   "ui.gemini_model": "Gemini 测试模型",
   "ui.grok_xai_model": "Grok / xAI 测试模型",
-  "ui.active_probe_key_memory_note": "管理密钥仅保留在进程内存中。CPA 重启后，经过认证访问本页面即可重新激活定时测试。",
-  "ui.model_probe_interval_must_be_between_5_and_1440_minutes": "模型测试周期必须在 5 到 1440 分钟之间",
-  "ui.model_probe_batch_must_be_between_1_and_200_accounts": "每轮模型测试必须在 1 到 200 个账号之间",
+  "ui.active_probe_key_memory_note":
+    "管理密钥仅保留在进程内存中。CPA 重启后，经过认证访问本页面即可重新激活定时测试。",
+  "ui.model_probe_interval_must_be_between_5_and_1440_minutes":
+    "模型测试周期必须在 5 到 1440 分钟之间",
+  "ui.model_probe_batch_must_be_between_1_and_200_accounts":
+    "每轮模型测试必须在 1 到 200 个账号之间",
   "ui.model_probe_models_are_required": "每种支持的服务商都必须填写测试模型",
   "ui.active_probe_ready": "主动巡检已就绪",
   "ui.active_probe_waiting_for_auth": "主动巡检等待认证",
@@ -1220,7 +1432,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.notification_failed": "外部通知发送失败",
   "ui.notification_rejected": "通知 URL 被安全策略拒绝",
   "ui.notification_queue_full": "通知队列已满",
-	 "ui.notification_superseded": "通知已取消：当前插件实例已被新版本接管",
+  "ui.notification_superseded": "通知已取消：当前插件实例已被新版本接管",
   "ui.review_state": "复核状态",
   "ui.pending_review": "待复核",
   "ui.review_resolved": "已解决",
@@ -1229,11 +1441,14 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.mark_resolved": "标记已解决",
   "ui.ignore_result": "忽略本结果",
   "ui.reopen_review": "重新打开复核",
-  "ui.review_safety_note": "仅凭 HTTP 状态不足以执行破坏性操作，请重新测试或明确选择人工处置。",
+  "ui.review_safety_note":
+    "仅凭 HTTP 状态不足以执行破坏性操作，请重新测试或明确选择人工处置。",
   "ui.change_started": "账号变更已开始",
   "ui.review_updated": "复核状态已更新",
-  "ui.select_health_filter_before_scoped_inspection": "请先选择健康状态筛选，再开始范围巡检",
-  "ui.select_accounts_before_scoped_inspection": "请先选择至少一个账号，再开始范围巡检",
+  "ui.select_health_filter_before_scoped_inspection":
+    "请先选择健康状态筛选，再开始范围巡检",
+  "ui.select_accounts_before_scoped_inspection":
+    "请先选择至少一个账号，再开始范围巡检",
   "ui.export_inspection_results": "导出巡检结果",
   "ui.inspection_results_exported_as_file": "巡检结果已导出为 {file}",
   "ui.inspection_run_history": "巡检运行记录",
@@ -1257,14 +1472,18 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.quota_window_five_hour_fallback": "5 小时安全窗口",
   "ui.inspecting_now": "正在巡检",
   "ui.batch_job_was_replaced": "账号批处理已被另一个任务替换",
-  "ui.batch_job_did_not_finish_in_time": "账号批处理未在限定时间内完成，请到操作日志查看",
-  "ui.account_change_finished_with_failures": "账号变更完成：成功 {succeeded} 个，失败 {failed} 个",
+  "ui.batch_job_did_not_finish_in_time":
+    "账号批处理未在限定时间内完成，请到操作日志查看",
+  "ui.account_change_finished_with_failures":
+    "账号变更完成：成功 {succeeded} 个，失败 {failed} 个",
   "ui.account_change_completed": "已更新 {count} 个账号",
   "ui.no_recommended_actions_available": "当前范围没有可执行的建议操作",
-  "ui.remediation_finished_with_result": "处置完成：成功 {succeeded} 个，失败 {failed} 个，跳过 {skipped} 个",
+  "ui.remediation_finished_with_result":
+    "处置完成：成功 {succeeded} 个，失败 {failed} 个，跳过 {skipped} 个",
   "ui.remediation_completed_count": "已完成 {count} 个账号的建议操作",
   "ui.inspection_remediation_queue": "巡检处置队列",
-  "ui.inspection_remediation_description": "汇总下一步建议，并执行经过复核的账号操作",
+  "ui.inspection_remediation_description":
+    "汇总下一步建议，并执行经过复核的账号操作",
   "ui.recommended_action_count": "建议处理 {count} 项",
   "ui.suggested_delete": "建议删除",
   "ui.suggested_disable": "建议禁用",
@@ -1285,22 +1504,28 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.executing_remediation": "正在执行",
   "ui.confirm_and_execute": "确认并执行",
   "ui.deletion_cannot_be_undone": "删除后无法恢复",
-  "ui.bulk_inspection_delete_revalidates_each_file": "仅接受高置信度的建议删除或重新登录结果；删除前会再次核对每个 CPA Auth 文件及其物理版本。",
+  "ui.bulk_inspection_delete_revalidates_each_file":
+    "仅接受高置信度的建议删除或重新登录结果；删除前会再次核对每个 CPA Auth 文件及其物理版本。",
   "ui.automation_policy": "自动策略",
   "ui.automation_policy_saved": "自动策略已保存",
   "ui.automation_policy_scan_started": "自动策略已在后台启动",
   "ui.run_automation_policy_after_save": "保存后执行自动策略？",
-  "ui.run_automation_policy_after_save_description": "保存策略不会立即修改账号。你可以现在启动后台扫描，或等待下一次定时执行。",
+  "ui.run_automation_policy_after_save_description":
+    "保存策略不会立即修改账号。你可以现在启动后台扫描，或等待下一次定时执行。",
   "ui.save_only": "仅保存",
   "ui.run_asynchronously": "后台执行",
   "ui.global_default_policy": "全局默认策略",
-  "ui.global_default_policy_description": "为没有被条件规则覆盖的新 Auth 文件提供兜底动作",
+  "ui.global_default_policy_description":
+    "为没有被条件规则覆盖的新 Auth 文件提供兜底动作",
   "ui.conditional_policies": "条件策略",
-  "ui.conditional_policies_description": "通过嵌套条件匹配供应商、账号或套餐类型和邮箱后缀，并按优先级覆盖动作",
+  "ui.conditional_policies_description":
+    "通过嵌套条件匹配供应商、账号或套餐类型和邮箱后缀，并按优先级覆盖动作",
   "ui.add_policy": "添加策略",
   "ui.no_conditional_policies": "暂无条件策略",
-  "ui.no_conditional_policies_description": "添加规则后可分别自动管理不同账号组。",
-  "ui.higher_priority_policy_overrides_actions": "命中的高优先级策略只覆盖自己接管的动作。",
+  "ui.no_conditional_policies_description":
+    "添加规则后可分别自动管理不同账号组。",
+  "ui.higher_priority_policy_overrides_actions":
+    "命中的高优先级策略只覆盖自己接管的动作。",
   "ui.policy_name": "策略名称",
   "ui.policy_priority": "策略优先级",
   "ui.move_policy_up": "上移策略",
@@ -1328,7 +1553,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.model_ids": "模型 ID",
   "ui.remediation_result": "处置结果",
   "ui.ai_providers": "AI 提供商",
-  "ui.ai_providers_description": "管理 CPA 中配置的 AI 提供商渠道：OpenAI 兼容、Gemini、Interactions、Claude、Codex、xAI、Vertex 与通用 API Keys。",
+  "ui.ai_providers_description":
+    "管理 CPA 中配置的 AI 提供商渠道：OpenAI 兼容、Gemini、Interactions、Claude、Codex、xAI、Vertex 与通用 API Keys。",
   "ui.add_ai_provider": "添加 AI 提供商",
   "ui.choose_ai_provider_type": "选择提供商类型",
   "ui.ai_provider_type": "提供商类型",
@@ -1349,7 +1575,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_field_weight": "权重（加权轮询）",
   "ui.ai_provider_field_proxy_url": "代理地址覆盖",
   "ui.ai_provider_field_excluded_models": "排除模型（一行一个）",
-  "ui.ai_provider_field_excluded_models_placeholder": "例如 gpt-4o-mini\nclaude-sonnet-4-*",
+  "ui.ai_provider_field_excluded_models_placeholder":
+    "例如 gpt-4o-mini\nclaude-sonnet-4-*",
   "ui.ai_provider_field_headers": "附加请求头（Key: value，一行一个）",
   "ui.ai_provider_field_models": "模型",
   "ui.ai_provider_field_model_name": "上游模型名",
@@ -1364,7 +1591,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_field_support_prompt_cache_key": "支持 prompt cache key",
   "ui.ai_provider_field_disable_cooling": "禁用冷却",
   "ui.ai_provider_field_request_retry": "请求重试覆盖（留空使用全局，0 禁用）",
-  "ui.ai_provider_field_request_scoped_errors": "请求范围错误规则（每行一个 JSON 对象）",
+  "ui.ai_provider_field_request_scoped_errors":
+    "请求范围错误规则（每行一个 JSON 对象）",
   "ui.ai_provider_field_alpha_search": "Alpha 搜索",
   "ui.ai_provider_field_websockets": "WebSockets",
   "ui.ai_provider_field_rebuild_mid_system_message": "重建中段 system 消息",
@@ -1377,14 +1605,22 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_response_invalid": "CPA 返回的渠道数据格式无法识别。",
   "ui.ai_provider_storage_unavailable": "该渠道的持久化数据暂时不可用。",
   "ui.ai_provider_channel_openai_compatibility": "OpenAI 兼容",
-  "ui.ai_provider_channel_openai_compatibility_description": "接入任意 OpenAI 兼容的上游服务，可配置名称、Base URL 与 API Key。",
-  "ui.ai_provider_channel_gemini_description": "添加 Gemini API Key，可选自定义 Base URL。",
-  "ui.ai_provider_channel_interactions_description": "添加 Interactions API Key，可选自定义 Base URL。",
-  "ui.ai_provider_channel_claude_description": "添加 Claude API Key，可选自定义 Base URL。",
-  "ui.ai_provider_channel_codex_description": "添加 Codex API Key，可选自定义 Base URL。",
-  "ui.ai_provider_channel_xai_description": "添加 xAI API Key，可选自定义 Base URL。",
-  "ui.ai_provider_channel_vertex_description": "添加 Vertex 兼容 API Key，可选自定义 Base URL。",
-  "ui.ai_provider_channel_api_keys_description": "添加一个通用 API Key（OpenAI 兼容字符串列表）。",
+  "ui.ai_provider_channel_openai_compatibility_description":
+    "接入任意 OpenAI 兼容的上游服务，可配置名称、Base URL 与 API Key。",
+  "ui.ai_provider_channel_gemini_description":
+    "添加 Gemini API Key，可选自定义 Base URL。",
+  "ui.ai_provider_channel_interactions_description":
+    "添加 Interactions API Key，可选自定义 Base URL。",
+  "ui.ai_provider_channel_claude_description":
+    "添加 Claude API Key，可选自定义 Base URL。",
+  "ui.ai_provider_channel_codex_description":
+    "添加 Codex API Key，可选自定义 Base URL。",
+  "ui.ai_provider_channel_xai_description":
+    "添加 xAI API Key，可选自定义 Base URL。",
+  "ui.ai_provider_channel_vertex_description":
+    "添加 Vertex 兼容 API Key，可选自定义 Base URL。",
+  "ui.ai_provider_channel_api_keys_description":
+    "添加一个通用 API Key（OpenAI 兼容字符串列表）。",
   "ui.ai_provider_channel_gemini": "Gemini",
   "ui.ai_provider_channel_interactions": "Interactions",
   "ui.ai_provider_channel_claude": "Claude",
@@ -1393,13 +1629,16 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_channel_vertex": "Vertex",
   "ui.ai_provider_channel_api_keys": "API Keys",
   "ui.ai_provider_channel_opencode": "OpenCode Go",
-  "ui.opencode_edit_cookie_note": "填入新 Cookie 可更新该工作区的凭据；留空则保持不变。",
+  "ui.opencode_edit_cookie_note":
+    "填入新 Cookie 可更新该工作区的凭据；留空则保持不变。",
   "ui.ai_provider_channel_opencode_zen": "OpenCode Zen",
-  "ui.opencode_zen_login_description": "管理 OpenCode Zen API Key。基地址填 Zen 网关（https://opencode.ai/zen）或自建 opencode-cc 桥接（如 http://localhost:8787）。",
+  "ui.opencode_zen_login_description":
+    "管理 OpenCode Zen API Key。基地址填 Zen 网关（https://opencode.ai/zen）或自建 opencode-cc 桥接（如 http://localhost:8787）。",
   "ui.opencode_zen_base_url": "基地址（Zen 网关或 opencode-cc）",
   "ui.opencode_zen_api_key": "Zen API Key",
   "ui.opencode_zen_key_set": "Key 已保存",
-  "ui.opencode_zen_edit_key_note": "填入新 Key 可轮换；留空则保留已保存的 Key。",
+  "ui.opencode_zen_edit_key_note":
+    "填入新 Key 可轮换；留空则保留已保存的 Key。",
   "ui.view_ai_provider": "查看 {name}",
   "ui.test_ai_provider": "测试 {name}",
   "ui.test_ai_provider_title": "测试渠道：{name}",
@@ -1421,10 +1660,13 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.last_updated": "最近更新",
   "ui.total_accounts_and_providers": "账号和供应商总数",
   "ui.loading": "加载中",
-"ui.ai_provider_concurrency": "并发",
-  "ui.ai_provider_concurrency_observable_only": "当前 CPA 仅支持观察 AI 供应商实时并发，不支持在此配置供应商并发上限",
-  "ui.ai_provider_model_catalog_unavailable": "模型目录不可用，已改用已配置模型继续测试",
-  "ui.ai_provider_no_models_available": "没有可用模型：模型目录不可用且该渠道未配置模型",
+  "ui.ai_provider_concurrency": "并发",
+  "ui.ai_provider_concurrency_observable_only":
+    "当前 CPA 仅支持观察 AI 供应商实时并发，不支持在此配置供应商并发上限",
+  "ui.ai_provider_model_catalog_unavailable":
+    "模型目录不可用，已改用已配置模型继续测试",
+  "ui.ai_provider_no_models_available":
+    "没有可用模型：模型目录不可用且该渠道未配置模型",
   "ui.ai_provider_usage": "用量",
   "ui.ai_provider_runtime_details": "实时详情",
   "ui.ai_provider_active": "活动请求",
@@ -1441,7 +1683,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_total": "总计",
   "ui.ai_provider_cost": "费用",
   "ui.ai_provider_unlimited_concurrency": "无限制",
-  "ui.provider_credentials_enabled_disabled": "启用 {enabled} · 禁用 {disabled}",
+  "ui.provider_credentials_enabled_disabled":
+    "启用 {enabled} · 禁用 {disabled}",
   "ui.credential_runtime": "凭据运行时详情",
   "ui.runtime_loaded": "已加载 CPA 运行时凭据",
   "ui.list_metadata_fallback": "使用列表元数据（当前 CPA 不支持运行时详情）",

@@ -76,6 +76,7 @@ type App struct {
 	requestHooks    *RequestHook
 	concurrency     *AccountConcurrencyService
 	providerRuntime *ProviderRuntimeTracker
+	usageLimits     *UsageLimitService
 	hostSchema      uint32
 	runtime         *RuntimeOwnership
 	experiments     *ExperimentalSettingsService
@@ -125,7 +126,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
 	providerRuntime.SetAccountConcurrency(concurrency)
-	requestHooks := NewRequestHook(providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
+	usageLimits := NewUsageLimitService(usage, creditUsage)
+	requestHooks := NewRequestHook(usageLimits, providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -162,6 +164,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		requestHooks:    requestHooks,
 		concurrency:     concurrency,
 		providerRuntime: providerRuntime,
+		usageLimits:     usageLimits,
 		hostSchema:      cpaapi.SchemaVersion,
 		runtime:         runtime,
 		experiments:     experiments,
@@ -230,6 +233,10 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.proxyProfiles.SetBindingApplier(a.applyProxyProfileBindings)
 	a.experiments.Configure(config)
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
+	a.usageLimits.Configure(config)
+	if a.usageLimits.HasCreditLimits() {
+		a.creditUsage.SetEnabled(true)
+	}
 	a.newAccountProbe.Configure(config)
 	a.quotaBootstrap.Start()
 	a.jobs.Configure(config)
@@ -265,6 +272,7 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	}
 	a.usage.Observe(record)
 	a.providerRuntime.ObserveUsage(record)
+	a.usageLimits.ObserveUsage(record)
 	a.inspection.Observe(record)
 }
 
@@ -527,6 +535,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/usage-limits", Description: "Read configured account percentage and credit usage limits."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/usage-limits", Description: "Validate and save account percentage and credit usage limits."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/proxy-profiles", Description: "List redacted reusable proxy profiles."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/proxy-profiles", Description: "Create a reusable proxy profile."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/proxy-profiles", Description: "Update a reusable proxy profile."},
@@ -731,6 +741,13 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":
 		return a.handleAIProviderProbe(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/usage-limits":
+		if resolveManagementKey(req.Headers) == "" {
+			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+		}
+		return jsonResponse(http.StatusOK, a.usageLimits.Snapshot())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/usage-limits":
+		return a.handleUsageLimits(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/ai-providers/runtime":
 		if resolveManagementKey(req.Headers) == "" {
 			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
@@ -745,6 +762,18 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			"path":   path,
 		})
 	}
+}
+
+func (a *App) handleUsageLimits(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	var config UsageLimitsConfig
+	if errDecode := decodeJSONRequest(req.Body, &config); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	snapshot, errSet := a.usageLimits.Set(config)
+	if errSet != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSet.Error()})
+	}
+	return jsonResponse(http.StatusOK, snapshot)
 }
 
 func (a *App) handleAccountDeduplicationPreview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

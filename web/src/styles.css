@@ -2329,3 +2329,43 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
   .operation-timeline-item, .operation-timeline-item:nth-child(2n) { border-right: none; }
   .operation-timeline-item + .operation-timeline-item { border-top: 1px solid var(--border-color); }
 }
+
+/* Usage limit observability */
+.usage-account-limit {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 6px 7px;
+  border: 1px solid color-mix(in srgb, var(--obs-cyan) 22%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--obs-cyan) 5%, var(--surface));
+  color: var(--obs-cyan-strong);
+}
+.usage-account-limit.is-reached { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: var(--danger-soft); color: var(--danger); }
+.usage-account-limit.is-uncollected { color: var(--muted); }
+.usage-account-limit-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.usage-account-limit-heading span { overflow: hidden; color: var(--muted); font-size: calc(8px * var(--font-size-scale)); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.usage-account-limit-heading b { color: currentColor; font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(8px * var(--font-size-scale)); }
+.usage-account-limit-track { min-width: 0; height: 4px; display: block; overflow: hidden; border-radius: 999px; background: var(--surface-3); }
+.usage-account-limit-track > span { height: 100%; display: block; border-radius: inherit; background: currentColor; transition: width 180ms ease; }
+.usage-account-limit small { color: var(--muted); font-size: calc(8px * var(--font-size-scale)); }
+.provider-usage-limit-summary { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(170px, .8fr) minmax(280px, 1.8fr); gap: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--obs-cyan) 22%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--obs-cyan) 5%, var(--surface)); }
+.provider-usage-limit-primary, .provider-usage-limit-secondary, .provider-usage-limit-models { min-width: 0; display: grid; align-content: start; gap: 5px; }
+.provider-usage-limit-primary { padding-right: 12px; border-right: 1px solid var(--line); }
+.provider-usage-limit-primary > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.provider-usage-limit-summary span { color: var(--muted); font-size: calc(10px * var(--font-size-scale)); }
+.provider-usage-limit-summary strong { color: var(--ink, var(--text-primary)); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(13px * var(--font-size-scale)); }
+.provider-usage-limit-summary small { color: var(--muted); font-size: calc(9px * var(--font-size-scale)); line-height: 1.4; }
+.provider-usage-limit-models { max-height: 130px; overflow: auto; }
+.provider-usage-limit-models > div { min-width: 0; display: grid; grid-template-columns: minmax(80px, 1fr) auto; gap: 2px 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+.provider-usage-limit-models code { overflow: hidden; color: var(--text-primary); font-size: calc(9px * var(--font-size-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.provider-usage-limit-models b { color: var(--text-primary); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(9px * var(--font-size-scale)); }
+.provider-usage-limit-models small { grid-column: 1 / -1; }
+.provider-usage-limit-models .is-reached b, .provider-usage-limit-models .is-reached small { color: var(--danger); }
+@media (max-width: 820px) {
+  .provider-usage-limit-summary { grid-template-columns: 1fr; }
+  .provider-usage-limit-primary { padding-right: 0; padding-bottom: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-account-limit-track > span { transition: none; }
+}

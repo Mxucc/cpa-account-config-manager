@@ -67,77 +67,78 @@ export interface Account {
   updated_at?: string;
   last_refresh?: string;
   automation?: AccountAutomationSummary;
-	model_policy?: AccountModelPolicySummary;
-	concurrency?: AccountConcurrencySummary;
-	credential?: CredentialSummary;
+  model_policy?: AccountModelPolicySummary;
+  concurrency?: AccountConcurrencySummary;
+  credential?: CredentialSummary;
 }
 
 export interface AccountConcurrencyAvailability {
-	supported: boolean;
-	host_schema_version: number;
-	required_schema_version: number;
-	reason?: "host_schema_v2_required";
-	storage_error?: string;
+  supported: boolean;
+  host_schema_version: number;
+  required_schema_version: number;
+  reason?: "host_schema_v2_required";
+  storage_error?: string;
 }
 
 export interface AccountConcurrencySummary {
-	supported: boolean;
-	limit: number;
-	active: number;
+  supported: boolean;
+  limit: number;
+  active: number;
 }
 
 export type ModelPolicyMode = "all" | "allow_only" | "deny_only";
 
 export interface AccountModelPolicySummary {
-	mode: ModelPolicyMode;
-	models?: string[];
-	excluded_count: number;
+  mode: ModelPolicyMode;
+  models?: string[];
+  excluded_count: number;
 }
 
 export interface AccountEditableConfig {
-	account_id: string;
-	disabled: boolean;
-	priority: number | null;
-	note: string;
-	prefix: string;
-	proxy: string;
-	proxy_configured: boolean;
-	websockets: boolean | null;
-	header_names: string[];
-	model_policy: AccountModelPolicySummary | null;
-	concurrency?: AccountConcurrencySummary;
-	account_concurrency?: AccountConcurrencyAvailability;
-	credential?: CredentialSummary;
+  account_id: string;
+  disabled: boolean;
+  priority: number | null;
+  note: string;
+  prefix: string;
+  proxy: string;
+  proxy_configured: boolean;
+  websockets: boolean | null;
+  header_names: string[];
+  model_policy: AccountModelPolicySummary | null;
+  concurrency?: AccountConcurrencySummary;
+  account_concurrency?: AccountConcurrencyAvailability;
+  credential?: CredentialSummary;
 }
 
 export interface ModelPolicyPatch {
-	mode: ModelPolicyMode;
-	models?: string[];
+  mode: ModelPolicyMode;
+  models?: string[];
 }
 
 export interface AccountModelOption {
-	id: string;
-	display_name?: string;
-	type?: string;
-	owned_by?: string;
+  id: string;
+  display_name?: string;
+  type?: string;
+  owned_by?: string;
 }
 
 export interface AccountModelCatalogResponse {
-	models: AccountModelOption[];
-	current_policy?: AccountModelPolicySummary;
-	total: number;
-	eligible: number;
-	loaded: number;
-	failed: number;
-	read_only: number;
-	missing: number;
-	warnings?: string[];
+  models: AccountModelOption[];
+  current_policy?: AccountModelPolicySummary;
+  total: number;
+  eligible: number;
+  loaded: number;
+  failed: number;
+  read_only: number;
+  missing: number;
+  warnings?: string[];
 }
 
 export interface AccountAutomationSummary {
   health: InspectionHealth;
   reason_code: string;
-  recommendation: "keep" | "reauth" | "review" | "disable" | "enable" | "delete";
+  recommendation:
+    "keep" | "reauth" | "review" | "disable" | "enable" | "delete";
   last_checked_at: string;
   owned_disable: boolean;
   disable_reason?: string;
@@ -180,42 +181,44 @@ export interface UsageWindowSnapshot {
   used_percent: number;
   reset_at?: string;
   window_minutes?: number;
-	overdraft_active?: boolean;
-	overdraft_status?: string;
-	overdraft_tokens?: number;
-	overdraft_requests?: number;
-	overdraft_amount_usd?: number;
-	overdraft_rated_requests?: number;
-	overdraft_unrated_requests?: number;
-	overdraft_started_at?: string;
-	overdraft_recover_at?: string;
+  overdraft_active?: boolean;
+  overdraft_status?: string;
+  overdraft_tokens?: number;
+  overdraft_requests?: number;
+  overdraft_amount_usd?: number;
+  overdraft_rated_requests?: number;
+  overdraft_unrated_requests?: number;
+  overdraft_started_at?: string;
+  overdraft_recover_at?: string;
 }
 
 export interface CodexUsageSnapshot {
   five_hour?: UsageWindowSnapshot;
   seven_day?: UsageWindowSnapshot;
-	plan_type?: string;
-	active_reset_count?: number;
-	metadata_observed_at?: string;
+  plan_type?: string;
+  active_reset_count?: number;
+  metadata_observed_at?: string;
   observed_at: string;
 }
 
 export interface QuotaMetadataResponse {
-	account_id: string;
-	plan_type?: string;
-	active_reset_count?: number;
-	observed_at: string;
-	warning?: "active_reset_count_unavailable" | "quota_metadata_refresh_after_reset_unavailable";
-	reset_credit_used?: boolean;
+  account_id: string;
+  plan_type?: string;
+  active_reset_count?: number;
+  observed_at: string;
+  warning?:
+    | "active_reset_count_unavailable"
+    | "quota_metadata_refresh_after_reset_unavailable";
+  reset_credit_used?: boolean;
 }
 
 export interface AccountTokenRefreshResult {
-	account_id: string;
-	provider?: string;
-	refresh_source: "cpa_native" | "plugin_codex";
-	refreshed_at: string;
-	expires_at?: string;
-	refresh_token_rotated: boolean;
+  account_id: string;
+  provider?: string;
+  refresh_source: "cpa_native" | "plugin_codex";
+  refreshed_at: string;
+  expires_at?: string;
+  refresh_token_rotated: boolean;
 }
 
 export interface AccountUsageSnapshot {
@@ -251,7 +254,19 @@ export interface AccountFilters {
   search?: string;
 }
 
-export type AccountSortField = "account" | "provider" | "type" | "usage" | "active_reset_count" | "concurrency" | "created_at" | "disabled_at" | "access" | "status" | "priority" | "routing";
+export type AccountSortField =
+  | "account"
+  | "provider"
+  | "type"
+  | "usage"
+  | "active_reset_count"
+  | "concurrency"
+  | "created_at"
+  | "disabled_at"
+  | "access"
+  | "status"
+  | "priority"
+  | "routing";
 export type AccountSortOrder = "asc" | "desc";
 
 export interface AccountSort {
@@ -265,8 +280,8 @@ export interface AccountListResponse {
   page: number;
   page_size: number;
   pages: number;
-	account_concurrency?: AccountConcurrencyAvailability;
-	usage_storage_error?: string;
+  account_concurrency?: AccountConcurrencyAvailability;
+  usage_storage_error?: string;
 }
 
 export type AccountDeduplicationMatch = "account_id" | "email" | "multiple";
@@ -300,7 +315,13 @@ export interface AccountDeduplicationGroup {
   matched_by: AccountDeduplicationMatch;
   identity_label: string;
   keep_id: string;
-  keep_reason: "editable_physical_file" | "enabled_account" | "healthier_account" | "newer_evidence" | "more_complete_credential" | "deterministic_order";
+  keep_reason:
+    | "editable_physical_file"
+    | "enabled_account"
+    | "healthier_account"
+    | "newer_evidence"
+    | "more_complete_credential"
+    | "deterministic_order";
   members: AccountDeduplicationMember[];
 }
 
@@ -317,7 +338,8 @@ export interface AccountDeduplicationPreview {
   groups: AccountDeduplicationGroup[];
 }
 
-export type ModelTestStatus = "available" | "unavailable" | "unsupported" | "review";
+export type ModelTestStatus =
+  "available" | "unavailable" | "unsupported" | "review";
 
 export interface ModelTestResult {
   account_id: string;
@@ -409,29 +431,29 @@ export interface HeaderPatch {
 }
 
 export interface ProxyProfileView {
-	id: string;
-	name: string;
-	proxy_url_masked: string;
-	note?: string;
-	providers?: string[];
-	enabled: boolean;
-	account_count: number;
-	created_at: string;
-	updated_at: string;
+  id: string;
+  name: string;
+  proxy_url_masked: string;
+  note?: string;
+  providers?: string[];
+  enabled: boolean;
+  account_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ProxyProfileListResponse {
-	profiles: ProxyProfileView[];
-	storage_error?: string;
+  profiles: ProxyProfileView[];
+  storage_error?: string;
 }
 
 export interface ProxyProfileInput {
-	id?: string;
-	name: string;
-	proxy_url: string;
-	note?: string;
-	providers?: string[];
-	enabled?: boolean;
+  id?: string;
+  name: string;
+  proxy_url: string;
+  note?: string;
+  providers?: string[];
+  enabled?: boolean;
 }
 
 export interface BatchPatch {
@@ -440,11 +462,11 @@ export interface BatchPatch {
   note?: string;
   prefix?: string;
   proxy_url?: string;
-	proxy_profile_id?: string;
+  proxy_profile_id?: string;
   websockets?: boolean;
   headers?: HeaderPatch;
-	model_policy?: ModelPolicyPatch;
-	concurrency_limit?: number;
+  model_policy?: ModelPolicyPatch;
+  concurrency_limit?: number;
 }
 
 export interface TargetScope {
@@ -486,14 +508,22 @@ export interface BatchPreview {
   targets: PreviewTarget[];
 }
 
-export type JobState = "idle" | "running" | "completed" | "partial" | "failed" | "interrupted";
+export type JobState =
+  "idle" | "running" | "completed" | "partial" | "failed" | "interrupted";
 
 export interface JobResult {
   id: string;
   name?: string;
   provider?: string;
   label?: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "conflict" | "skipped" | "interrupted";
+  status:
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "conflict"
+    | "skipped"
+    | "interrupted";
   error?: string;
   applied_fields?: string[];
   retryable: boolean;
@@ -689,15 +719,44 @@ export interface ImportResult {
   usage_collection_targets?: number;
 }
 
-export type AccountExportFormat = "cpa" | "sub2api" | "cockpit" | "9router" | "codex" | "axonhub" | "codexmanager";
+export type AccountExportFormat =
+  | "cpa"
+  | "sub2api"
+  | "cockpit"
+  | "9router"
+  | "codex"
+  | "axonhub"
+  | "codexmanager";
 
 export type ResultExportFormat = "json" | "csv" | "jsonl";
 
 export type ExportFormat = AccountExportFormat | ResultExportFormat;
 
-export type OperationCategory = "account" | "batch" | "import" | "export" | "default_policy" | "inspection" | "update" | "journal" | "opencode";
-export type OperationStatus = "running" | "succeeded" | "partial" | "failed" | "interrupted" | "warning" | "skipped";
-export type OperationSource = "manual" | "background" | "default_policy" | "inspection" | "import" | "plugin_store";
+export type OperationCategory =
+  | "account"
+  | "batch"
+  | "import"
+  | "export"
+  | "default_policy"
+  | "inspection"
+  | "update"
+  | "journal"
+  | "opencode";
+export type OperationStatus =
+  | "running"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "interrupted"
+  | "warning"
+  | "skipped";
+export type OperationSource =
+  | "manual"
+  | "background"
+  | "default_policy"
+  | "inspection"
+  | "import"
+  | "plugin_store";
 export type OperationExportFormat = "json" | "csv" | "jsonl";
 
 export interface OperationFailureDetail {
@@ -774,7 +833,15 @@ export interface Session {
   managementKey: string;
 }
 
-export type InspectionHealth = "healthy" | "quota_limited" | "invalid_credentials" | "deactivated" | "review" | "unavailable" | "disabled" | "unknown";
+export type InspectionHealth =
+  | "healthy"
+  | "quota_limited"
+  | "invalid_credentials"
+  | "deactivated"
+  | "review"
+  | "unavailable"
+  | "disabled"
+  | "unknown";
 
 export interface InspectionPolicy {
   enabled: boolean;
@@ -840,7 +907,12 @@ export interface InspectionNotificationPolicy {
   availability_percent_below: number;
 }
 
-export type InspectionNotificationScenario = "manual_test" | "anomaly_threshold" | "available_accounts_low" | "availability_percent_low" | "combined";
+export type InspectionNotificationScenario =
+  | "manual_test"
+  | "anomaly_threshold"
+  | "available_accounts_low"
+  | "availability_percent_low"
+  | "combined";
 
 export interface InspectionNotificationRequest {
   endpoint_id?: string;
@@ -921,7 +993,8 @@ export interface InspectionSnapshot {
   probe_sweep_total?: number;
   probe_sweep_completed?: number;
   probe_sweep_source?: "manual" | "scheduled" | "anomaly";
-  probe_sweep_status?: "running" | "completed" | "failed" | "waiting_for_auth" | "stopped";
+  probe_sweep_status?:
+    "running" | "completed" | "failed" | "waiting_for_auth" | "stopped";
   probe_sweep_started_at?: string;
   anomaly_eligible: number;
   anomaly_count: number;
@@ -956,7 +1029,8 @@ export interface InspectionResult {
   health: InspectionHealth;
   reason_code: string;
   confidence: "high" | "medium" | "low";
-  recommendation: "keep" | "reauth" | "review" | "disable" | "enable" | "delete";
+  recommendation:
+    "keep" | "reauth" | "review" | "disable" | "enable" | "delete";
   disabled: boolean;
   editable: boolean;
   auto_disable_eligible: boolean;
@@ -1028,7 +1102,14 @@ export interface InspectionAction {
   account_id: string;
   name?: string;
   provider?: string;
-  action: "disable" | "enable" | "delete" | "delete_candidate" | "review_resolve" | "review_ignore" | "review_reopen";
+  action:
+    | "disable"
+    | "enable"
+    | "delete"
+    | "delete_candidate"
+    | "review_resolve"
+    | "review_ignore"
+    | "review_reopen";
   status: "pending" | "succeeded" | "failed" | "skipped";
   source?: OperationSource;
   reason_code: string;
@@ -1100,7 +1181,10 @@ export interface CPAServerVersionSnapshot {
   update_available: boolean;
   checked_at: string;
   release_url?: string;
-  error?: "current_version_unavailable" | "latest_version_unavailable" | "version_comparison_unavailable";
+  error?:
+    | "current_version_unavailable"
+    | "latest_version_unavailable"
+    | "version_comparison_unavailable";
 }
 
 export interface ExperimentalCodexIdentitySettings {
@@ -1121,6 +1205,37 @@ export interface ExperimentalSettings {
   auto_model_whitelist_enabled: boolean;
   sub2api_credit_usage_enabled: boolean;
   codex_identity: ExperimentalCodexIdentitySettings;
+}
+
+export type UsageLimitBasis = "account" | "credit";
+export type UsageLimitWindow = "five_hour" | "seven_day";
+
+export interface UsageLimitRule {
+  enabled: boolean;
+  basis: UsageLimitBasis;
+  window?: UsageLimitWindow;
+  percent?: number;
+  amount_usd?: number;
+}
+
+export interface UsageModelLimit {
+  model: string;
+  rule: UsageLimitRule;
+  within_total: boolean;
+}
+
+export interface UsageLimitsConfig {
+  enabled: boolean;
+  total?: UsageLimitRule;
+  models?: UsageModelLimit[];
+}
+
+export interface UsageLimitsSnapshot {
+  config: UsageLimitsConfig;
+  credit_used_usd: number;
+  credit_model_used_usd?: Record<string, number>;
+  updated_at: string;
+  storage_error?: string;
 }
 
 export interface ExperimentalSettingsSnapshot {

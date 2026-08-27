@@ -2,20 +2,26 @@ export const enUI = {
   "ui.select_proxy_profile": "Proxy profile",
   "ui.manual_proxy_url": "Manual proxy URL",
   "ui.proxy_profiles": "Proxy profiles",
-  "ui.proxy_profiles_description": "Create reusable, credential-safe proxy presets and assign them during batch edits.",
-  "ui.proxy_profiles_storage_error": "Proxy profile storage could not be read or saved; check the plugin data directory.",
+  "ui.proxy_profiles_description":
+    "Create reusable, credential-safe proxy presets and assign them during batch edits.",
+  "ui.proxy_profiles_storage_error":
+    "Proxy profile storage could not be read or saved; check the plugin data directory.",
   "ui.profile_name": "Profile name",
   "ui.provider_scope": "Provider scope",
-  "ui.provider_scope_placeholder": "Leave empty for all providers; separate with commas",
+  "ui.provider_scope_placeholder":
+    "Leave empty for all providers; separate with commas",
   "ui.add_proxy_profile": "Add profile",
   "ui.no_proxy_profiles": "No proxy profiles yet",
   "ui.assigned_accounts": "{count} assigned accounts",
   "ui.proxy_profile_saved": "Proxy profile saved",
   "ui.proxy_profile_deleted": "Proxy profile deleted",
-  "ui.proxy_profile_delete_confirm": "Delete proxy profile \"{name}\"?",
-  "ui.proxy_profile_delete_force_confirm": "\"{name}\" is assigned to accounts. Delete this profile? Account proxy URLs are not changed automatically.",
-  "ui.proxy_profile_edit_secret_notice": "For security, an existing proxy secret is not returned while editing. Enter the full proxy URL again to replace it.",
-  "ui.proxy_profile_keep_existing": "Leave blank to keep the existing proxy URL",
+  "ui.proxy_profile_delete_confirm": 'Delete proxy profile "{name}"?',
+  "ui.proxy_profile_delete_force_confirm":
+    '"{name}" is assigned to accounts. Delete this profile? Account proxy URLs are not changed automatically.',
+  "ui.proxy_profile_edit_secret_notice":
+    "For security, an existing proxy secret is not returned while editing. Enter the full proxy URL again to replace it.",
+  "ui.proxy_profile_keep_existing":
+    "Leave blank to keep the existing proxy URL",
   "ui.default_account_proxy": "Default account proxy",
   "ui.default_ai_provider_proxy": "Default AI provider proxy",
   "ui.account_proxy_profile": "Account proxy profile",
@@ -24,7 +30,8 @@ export const enUI = {
   "ui.account_management": "Account Management",
   "ui.accounts": "Accounts",
   "ui.dashboard": "Overview",
-  "ui.dashboard_description": "A compact view of account health, usage, cost, and runtime activity.",
+  "ui.dashboard_description":
+    "A compact view of account health, usage, cost, and runtime activity.",
   "ui.total_accounts": "Total accounts",
   "ui.healthy_accounts": "Healthy accounts",
   "ui.unhealthy_accounts": "Unhealthy accounts",
@@ -51,7 +58,8 @@ export const enUI = {
   "ui.plugin_configuration_and_version": "Plugin Configuration & Version",
   "ui.font_size": "Font size",
   "ui.plugin_appearance": "Appearance & theme",
-  "ui.plugin_appearance_description": "Applies only to this plugin and does not override CPA native pages.",
+  "ui.plugin_appearance_description":
+    "Applies only to this plugin and does not override CPA native pages.",
   "ui.plugin_theme_preset": "Theme preset",
   "ui.plugin_theme_neutral": "Neutral",
   "ui.plugin_theme_indigo": "Indigo",
@@ -62,65 +70,126 @@ export const enUI = {
   "ui.plugin_density_compact": "Compact",
   "ui.reset_plugin_appearance": "Reset appearance",
 
-  "ui.font_size_description": "Adjust every plugin label, table, form, dialog, and status message.",
+  "ui.font_size_description":
+    "Adjust every plugin label, table, form, dialog, and status message.",
   "ui.font_size_small": "Small",
   "ui.font_size_medium": "Medium",
   "ui.font_size_large": "Large",
   "ui.font_size_current": "Current: {size}",
   "ui.typography_distinction": "Typography distinction",
-  "ui.typography_distinction_description": "Keep title and description text at distinct sizes. Turn this off to make descriptions use their title size.",
+  "ui.typography_distinction_description":
+    "Keep title and description text at distinct sizes. Turn this off to make descriptions use their title size.",
+  "ui.usage_limits": "Usage limits",
+  "ui.usage_limits_description":
+    "Stop new requests when an account percentage or estimated credit ceiling is reached. Credit limits are useful for AI providers without upstream quota data.",
+  "ui.usage_limits_enabled": "Usage limits enabled",
+  "ui.usage_limits_disabled": "Usage limits disabled",
+  "ui.usage_limit_basis": "Limit basis",
+  "ui.usage_limit_account": "Account quota",
+  "ui.usage_limit_credit": "Credit amount",
+  "ui.usage_limit_window": "Quota window",
+  "ui.usage_limit_five_hour": "5-hour window",
+  "ui.usage_limit_seven_day": "7-day window",
+  "ui.usage_limit_percent": "Maximum used",
+  "ui.usage_limit_amount": "Maximum amount",
+  "ui.usage_limit_total": "Total limit",
+  "ui.usage_limit_total_description":
+    "The default ceiling. Model limits can either share this ceiling or run independently.",
+  "ui.usage_limit_models": "Model limits",
+  "ui.usage_limit_models_description":
+    "Add a separate account-quota or credit ceiling for each model.",
+  "ui.usage_limit_add_model": "Add model",
+  "ui.usage_limit_model_name": "Model name",
+  "ui.usage_limit_within_total": "Count within total limit",
+  "ui.usage_limit_no_models": "No model limits configured.",
+  "ui.usage_limit_credit_used": "Tracked credit since limits were enabled",
+  "ui.usage_limit_credit_note":
+    "Estimated cost is based on the configured model pricing table; requests without a rated price are not counted.",
+  "ui.usage_limits_saved": "Usage limits saved",
+  "ui.usage_limit_reached": "Limit reached",
+  "ui.usage_limit_not_configured": "Not configured",
+  "ui.usage_limit_uncollected": "Usage not collected",
+  "ui.usage_limit_remaining": "{percent} headroom remaining",
+  "ui.usage_limit_account_status": "{label} account limit",
+  "ui.usage_limit_credit_status": "Credit limit status",
+  "ui.usage_limit_model_status": "Model credit limit",
+  "ui.usage_limit_counted_with_total": "within total",
+  "ui.usage_limit_independent": "independent",
+  "ui.usage_limit_provider_note": "Use a credit ceiling when this provider has no upstream 5-day or 7-day quota data.",
+  "ui.usage_limit_provider_observed": "Observed provider runtime credit",
   "ui.experimental_features": "Experimental Features",
   "ui.experimental_features_warning": "Experimental behavior",
-  "ui.experimental_features_may_change_or_stop_working": "These features depend on upstream behavior and may change or stop working without notice.",
-  "ui.experimental_settings_storage_error": "Experimental settings could not be loaded from persistent storage. The feature remains off until it is saved again.",
+  "ui.experimental_features_may_change_or_stop_working":
+    "These features depend on upstream behavior and may change or stop working without notice.",
+  "ui.experimental_settings_storage_error":
+    "Experimental settings could not be loaded from persistent storage. The feature remains off until it is saved again.",
   "ui.sub2api_credit_usage": "Sub2API credit-based usage",
-  "ui.sub2api_credit_usage_description": "Convert newly observed successful requests into estimated USD cost with the model pricing data maintained for Sub2API. Original token usage remains available.",
+  "ui.sub2api_credit_usage_description":
+    "Convert newly observed successful requests into estimated USD cost with the model pricing data maintained for Sub2API. Original token usage remains available.",
   "ui.credit_pricing_source": "Pricing source",
-  "ui.credit_pricing_source_description": "Bundled from the Sub2API-compatible Wei-Shaw model price repository, with a last-known-good local copy.",
+  "ui.credit_pricing_source_description":
+    "Bundled from the Sub2API-compatible Wei-Shaw model price repository, with a last-known-good local copy.",
   "ui.credit_pricing_sync_behavior": "Sync behavior",
-  "ui.credit_pricing_sync_behavior_description": "When enabled, pricing updates are fetched asynchronously in the background and never block the usage observation path.",
+  "ui.credit_pricing_sync_behavior_description":
+    "When enabled, pricing updates are fetched asynchronously in the background and never block the usage observation path.",
   "ui.credit_usage_history_boundary": "History boundary",
-  "ui.credit_usage_history_boundary_description": "Only successful requests observed after this experiment is enabled are billed. Existing token totals and quota windows remain unchanged; when Codex quota continuation is also enabled, the cost after each frozen 5h/7d baseline is shown separately as part of the account total.",
+  "ui.credit_usage_history_boundary_description":
+    "Only successful requests observed after this experiment is enabled are billed. Existing token totals and quota windows remain unchanged; when Codex quota continuation is also enabled, the cost after each frozen 5h/7d baseline is shown separately as part of the account total.",
   "ui.estimated_credit_usage": "Estimated credit usage",
-  "ui.estimated_credit_usage_detail": "Estimated cost: {amount}; rated requests: {rated}; unrated requests: {unrated}; original tokens: {tokens}",
+  "ui.estimated_credit_usage_detail":
+    "Estimated cost: {amount}; rated requests: {rated}; unrated requests: {unrated}; original tokens: {tokens}",
   "ui.rated_requests": "Rated requests",
   "ui.unrated_requests": "Unrated requests",
   "ui.unrated_requests_count": "{count} unrated",
   "ui.credit_usage_started_at": "Credit accounting started",
   "ui.pricing_updated_at": "Pricing updated",
   "ui.awaiting_credit_usage_collection": "Awaiting credit usage collection",
-  "ui.some_requests_could_not_be_priced": "{count} successful requests used models that are not present in the current price table. They remain in token totals but are not included in the USD estimate.",
+  "ui.some_requests_could_not_be_priced":
+    "{count} successful requests used models that are not present in the current price table. They remain in token totals but are not included in the USD estimate.",
   "ui.codex_auto_model_whitelist": "Codex automatic model allow-list",
-  "ui.codex_auto_model_whitelist_description": "Detect restricted models during a manual test or the default policy's new-account probe, then apply an account allow-list.",
+  "ui.codex_auto_model_whitelist_description":
+    "Detect restricted models during a manual test or the default policy's new-account probe, then apply an account allow-list.",
   "ui.detection_evidence": "Detection evidence",
-  "ui.auto_model_whitelist_detection_behavior": "Runs only after the known gpt-5.6-sol incompatibility response, then requires successful gpt-5.5 and gpt-5.4-mini probes.",
+  "ui.auto_model_whitelist_detection_behavior":
+    "Runs only after the known gpt-5.6-sol incompatibility response, then requires successful gpt-5.5 and gpt-5.4-mini probes.",
   "ui.policy_write_behavior": "Policy write",
-  "ui.auto_model_whitelist_policy_behavior": "Applies only when no manual allow-list or deny-list exists. Existing user model policies are preserved.",
-  "ui.auto_model_whitelist_safety_notice": "Off by default. Automatic discovery also requires the default policy switch; a model-specific failure never disables the whole account.",
+  "ui.auto_model_whitelist_policy_behavior":
+    "Applies only when no manual allow-list or deny-list exists. Existing user model policies are preserved.",
+  "ui.auto_model_whitelist_safety_notice":
+    "Off by default. Automatic discovery also requires the default policy switch; a model-specific failure never disables the whole account.",
   "ui.auto_model_whitelist_applied": "Apply automatic model allow-list",
   "ui.existing_model_policy_preserved": "Existing model policy preserved",
-  "ui.model_blocked_by_account_policy": "This model is blocked by the account model policy",
+  "ui.model_blocked_by_account_policy":
+    "This model is blocked by the account model policy",
   "ui.model_catalog_unavailable": "Account model catalog unavailable",
   "ui.model_compatibility_detected": "Restricted model compatibility detected",
   "ui.model_allow_list_applied": "Model allow-list applied",
   "ui.model_allow_list_not_applied": "Model allow-list not applied",
   "ui.compatibility_attempt": "Compatibility attempt",
   "ui.codex_identity_convergence": "Codex identity convergence",
-  "ui.codex_identity_convergence_description": "Converge Codex OAuth requests and codex-api-key health checks to the official client fingerprint used by the Sub2API fork.",
+  "ui.codex_identity_convergence_description":
+    "Converge Codex OAuth requests and codex-api-key health checks to the official client fingerprint used by the Sub2API fork.",
   "ui.codex_outbound_convergence": "Outbound convergence",
-  "ui.codex_outbound_convergence_behavior": "Pairs User-Agent, Originator, and Version after all other header rewrites; unpairable identities fall back to the current official CLI.",
+  "ui.codex_outbound_convergence_behavior":
+    "Pairs User-Agent, Originator, and Version after all other header rewrites; unpairable identities fall back to the current official CLI.",
   "ui.codex_api_key_probe": "codex-api-key probes",
-  "ui.codex_api_key_probe_behavior": "AI Provider checks for the codex-api-key kind use the same converged identity.",
+  "ui.codex_api_key_probe_behavior":
+    "AI Provider checks for the codex-api-key kind use the same converged identity.",
   "ui.internal_probe_requests": "Internal probe requests",
-  "ui.codex_internal_probe_behavior": "Model, quota, token-refresh, PAT, and Agent Identity calls use a compatible official identity.",
+  "ui.codex_internal_probe_behavior":
+    "Model, quota, token-refresh, PAT, and Agent Identity calls use a compatible official identity.",
   "ui.codex_ingress_gate": "Official-client ingress gate",
-  "ui.codex_ingress_gate_description": "For accounts with codex_cli_only, deny before upstream using blacklist, whitelist, version bounds, and engine fingerprints.",
+  "ui.codex_ingress_gate_description":
+    "For accounts with codex_cli_only, deny before upstream using blacklist, whitelist, version bounds, and engine fingerprints.",
   "ui.codex_app_server_clients": "App Server clients",
-  "ui.codex_app_server_clients_behavior": "Global switch OR account extra codex_cli_only_allow_app_server opens unmatched clients; they still pass the fingerprint gate.",
+  "ui.codex_app_server_clients_behavior":
+    "Global switch OR account extra codex_cli_only_allow_app_server opens unmatched clients; they still pass the fingerprint gate.",
   "ui.codex_version_bounds": "Version bounds",
-  "ui.codex_version_bounds_behavior": "Official candidates require parseable X.Y.Z versions within min/max bounds when configured.",
+  "ui.codex_version_bounds_behavior":
+    "Official candidates require parseable X.Y.Z versions within min/max bounds when configured.",
   "ui.codex_fingerprint_signals": "Fingerprint gate",
-  "ui.codex_fingerprint_signals_behavior": "All required signals must match. Header variants use OR; default requires an x-codex-* header.",
+  "ui.codex_fingerprint_signals_behavior":
+    "All required signals must match. Header variants use OR; default requires an x-codex-* header.",
   "ui.codex_convergence_mode": "Convergence mode",
   "ui.codex_convergence_legacy_full": "Default off (unset mode)",
   "ui.codex_convergence_off": "Off (passthrough identity)",
@@ -133,55 +202,79 @@ export const enUI = {
   "ui.codex_allow_app_server": "Allow App Server clients globally",
   "ui.codex_whitelist_json": "Whitelist JSON (originator + every ua_contains)",
   "ui.codex_blacklist_json": "Blacklist JSON (OR match)",
-  "ui.codex_fingerprint_json": "Fingerprint signals JSON (required entries use AND)",
+  "ui.codex_fingerprint_json":
+    "Fingerprint signals JSON (required entries use AND)",
   "ui.codex_weekly_quota_overdraft": "Codex 5h / 7d quota continuation",
-  "ui.codex_weekly_quota_overdraft_description": "When the final Codex input is a user message, append one correlated no-op tool call and output before sending it upstream.",
+  "ui.codex_weekly_quota_overdraft_description":
+    "When the final Codex input is a user message, append one correlated no-op tool call and output before sending it upstream.",
   "ui.request_behavior": "Request behavior",
-  "ui.weekly_overdraft_request_behavior": "Only Codex request bodies are considered. Invalid, oversized, non-user, and already injected requests pass through unchanged. Enabling the 429 bypass modifies the Codex tool-call chain and adds processing overhead, which can increase time to first token on lower-performance servers.",
+  "ui.weekly_overdraft_request_behavior":
+    "Only Codex request bodies are considered. Invalid, oversized, non-user, and already injected requests pass through unchanged. Enabling the 429 bypass modifies the Codex tool-call chain and adds processing overhead, which can increase time to first token on lower-performance servers.",
   "ui.automation_behavior": "Automation behavior",
-  "ui.weekly_overdraft_automation_behavior": "After a five-hour or seven-day quota is exhausted, inspection runs up to five experimental probes. Any success keeps the account enabled; five failures allow auto-disable, followed by recovery at the matching window reset when auto-enable is on.",
+  "ui.weekly_overdraft_automation_behavior":
+    "After a five-hour or seven-day quota is exhausted, inspection runs up to five experimental probes. Any success keeps the account enabled; five failures allow auto-disable, followed by recovery at the matching window reset when auto-enable is on.",
   "ui.availability_notice": "Availability",
-  "ui.weekly_overdraft_availability_notice": "Continuation is not guaranteed, and the available overdraft may vary by subscription.",
+  "ui.weekly_overdraft_availability_notice":
+    "Continuation is not guaranteed, and the available overdraft may vary by subscription.",
   "ui.weekly_overdraft_probe_gate": "Quota overdraft probe",
-  "ui.weekly_overdraft_probe_running": "Verifying overdraft availability ({current}/{total})",
+  "ui.weekly_overdraft_probe_running":
+    "Verifying overdraft availability ({current}/{total})",
   "ui.weekly_overdraft_probe_running_short": "Verifying overdraft availability",
-  "ui.weekly_overdraft_probe_passed": "Overdraft probe passed; account remains enabled",
-  "ui.weekly_overdraft_probe_failed": "All five overdraft probes failed; waiting for auto-disable",
-  "ui.weekly_overdraft_probe_inconclusive": "Overdraft probe did not complete; waiting for the next inspection",
-  "ui.weekly_overdraft_probe_management_auth_unavailable": "Waiting for an authenticated inspection request",
-  "ui.weekly_overdraft_probe_experiment_unavailable": "The upstream request did not apply the experimental overdraft probe",
+  "ui.weekly_overdraft_probe_passed":
+    "Overdraft probe passed; account remains enabled",
+  "ui.weekly_overdraft_probe_failed":
+    "All five overdraft probes failed; waiting for auto-disable",
+  "ui.weekly_overdraft_probe_inconclusive":
+    "Overdraft probe did not complete; waiting for the next inspection",
+  "ui.weekly_overdraft_probe_management_auth_unavailable":
+    "Waiting for an authenticated inspection request",
+  "ui.weekly_overdraft_probe_experiment_unavailable":
+    "The upstream request did not apply the experimental overdraft probe",
   "ui.weekly_overdraft_probe_timeout": "The probe request timed out",
-  "ui.weekly_overdraft_probe_upstream_unavailable": "The upstream service is temporarily unavailable",
+  "ui.weekly_overdraft_probe_upstream_unavailable":
+    "The upstream service is temporarily unavailable",
   "ui.codex_agent_identity": "Codex Agent Identity / PAT",
-  "ui.codex_agent_identity_description": "Authenticate Codex with signed AgentAssertion identities or at-* personal access tokens imported from Sub2API.",
+  "ui.codex_agent_identity_description":
+    "Authenticate Codex with signed AgentAssertion identities or at-* personal access tokens imported from Sub2API.",
   "ui.authentication_path": "Authentication path",
-  "ui.agent_identity_authentication_behavior": "Agent Identity signs every request; Codex PAT uses plugin-managed Bearer authentication. Existing Codex OAuth accounts remain unchanged.",
+  "ui.agent_identity_authentication_behavior":
+    "Agent Identity signs every request; Codex PAT uses plugin-managed Bearer authentication. Existing Codex OAuth accounts remain unchanged.",
   "ui.supported_imports": "Supported imports",
-  "ui.agent_identity_import_formats": "Official JWT credentials, codex-agent-identity-web objects, and Sub2API JSON or ZIP exports containing Agent Identity or at-* PAT accounts.",
+  "ui.agent_identity_import_formats":
+    "Official JWT credentials, codex-agent-identity-web objects, and Sub2API JSON or ZIP exports containing Agent Identity or at-* PAT accounts.",
   "ui.security_notice": "Security notice",
-  "ui.agent_identity_security_notice": "Identity files contain signing keys or personal access tokens. Import only trusted files; previews and logs never expose these values.",
+  "ui.agent_identity_security_notice":
+    "Identity files contain signing keys or personal access tokens. Import only trusted files; previews and logs never expose these values.",
   "ui.agent_identity": "Agent Identity",
   "ui.codex_personal_access_token": "Codex PAT",
   "ui.agent_identity_session_login": "Agent Identity login",
-  "ui.agent_identity_session_login_description": "Paste the ChatGPT Session JSON to create this credential through the authenticated CPA plugin.",
+  "ui.agent_identity_session_login_description":
+    "Paste the ChatGPT Session JSON to create this credential through the authenticated CPA plugin.",
   "ui.open_chatgpt_session": "Open ChatGPT Session",
   "ui.chatgpt_session_json": "ChatGPT Session JSON",
-  "ui.chatgpt_session_json_placeholder": "Paste the complete JSON returned by /api/auth/session",
+  "ui.chatgpt_session_json_placeholder":
+    "Paste the complete JSON returned by /api/auth/session",
   "ui.show_session_json": "Show Session JSON",
   "ui.hide_session_json": "Hide Session JSON",
   "ui.convert_and_login": "Convert and log in",
   "ui.converting_agent_identity": "Creating Agent Identity",
   "ui.agent_identity_login_complete": "Agent Identity is ready",
-  "ui.cpa_is_saving_agent_identity": "CPA is finalizing and saving this credential. This window can now be closed.",
+  "ui.cpa_is_saving_agent_identity":
+    "CPA is finalizing and saving this credential. This window can now be closed.",
   "ui.close_login_window": "Close login window",
-  "ui.session_json_privacy_notice": "The Session JSON is submitted once over the authenticated CPA connection. It is cleared from this page immediately and is never written to plugin storage or logs.",
-  "ui.invalid_agent_identity_login_state": "This login request is invalid or incomplete.",
-  "ui.agent_identity_login_expired": "This Agent Identity login request has expired. Return to CPA and start a new login.",
-  "ui.agent_identity_experiment_disabled": "GPT login requires enabling Codex Agent Identity under Settings \u2192 Experimental features; OpenCode login is unaffected.",
+  "ui.session_json_privacy_notice":
+    "The Session JSON is submitted once over the authenticated CPA connection. It is cleared from this page immediately and is never written to plugin storage or logs.",
+  "ui.invalid_agent_identity_login_state":
+    "This login request is invalid or incomplete.",
+  "ui.agent_identity_login_expired":
+    "This Agent Identity login request has expired. Return to CPA and start a new login.",
+  "ui.agent_identity_experiment_disabled":
+    "GPT login requires enabling Codex Agent Identity under Settings \u2192 Experimental features; OpenCode login is unaffected.",
   "ui.choose_login_method": "Choose login method",
   "ui.gpt_login": "GPT login",
   "ui.opencode_login": "opencode",
-  "ui.opencode_login_description": "Sign in to opencode.ai, open your Go workspace page, and paste the Workspace ID plus the auth cookie (the value of auth) to bind this account.",
+  "ui.opencode_login_description":
+    "Sign in to opencode.ai, open your Go workspace page, and paste the Workspace ID plus the auth cookie (the value of auth) to bind this account.",
   "ui.opencode_workspace_id": "Workspace ID",
   "ui.opencode_auth_cookie": "Auth Cookie (value of auth)",
   "ui.opencode_workspace_placeholder": "wrk_xxxxxxxx",
@@ -189,14 +282,16 @@ export const enUI = {
   "ui.opencode_save_and_query": "Save & query",
   "ui.opencode_saving": "Saving OpenCode account",
   "ui.opencode_login_complete": "OpenCode account saved",
-  "ui.opencode_is_saved": "The OpenCode Go quota account is bound. You can close this window.",
+  "ui.opencode_is_saved":
+    "The OpenCode Go quota account is bound. You can close this window.",
   "ui.opencode_saved_account": "OpenCode Go quota account",
   "ui.opencode_rolling": "5-hour quota",
   "ui.opencode_weekly": "7-day quota",
   "ui.opencode_monthly": "30-day quota",
   "ui.opencode_reset_in": "resets in {time}",
   "ui.opencode_open_status": "Open OpenCode Go quota monitor",
-  "ui.opencode_privacy_notice": "The cookie is submitted once through the authenticated CPA connection and stored in the plugin private data directory; it is never returned to the browser or written to logs.",
+  "ui.opencode_privacy_notice":
+    "The cookie is submitted once through the authenticated CPA connection and stored in the plugin private data directory; it is never returned to the browser or written to logs.",
   "ui.opencode": "OpenCode Go",
   "ui.opencode_save_action": "Save OpenCode account",
   "ui.opencode_remove_action": "Remove OpenCode account",
@@ -204,13 +299,15 @@ export const enUI = {
   "ui.opencode_reason_account_saved": "Account saved",
   "ui.opencode_reason_account_removed": "Account removed",
   "ui.opencode_reason_all_refreshed": "All accounts refreshed",
-  "ui.opencode_reason_partial_refresh_failed": "Some accounts failed to refresh",
+  "ui.opencode_reason_partial_refresh_failed":
+    "Some accounts failed to refresh",
   "ui.opencode_reason_refresh_failed": "Refresh failed",
   "ui.opencode_reason_invalid_credential": "Invalid credential",
   "ui.opencode_reason_account_not_found": "Account not found",
   "ui.experimental_settings_saved": "Experimental settings saved",
   "ui.load_experimental_feature": "Load experimental feature",
-  "ui.experimental_model_test_description": "The experimental test sends a real Codex model probe with a fresh correlated tool-call ID and displays the sanitized upstream response.",
+  "ui.experimental_model_test_description":
+    "The experimental test sends a real Codex model probe with a fresh correlated tool-call ID and displays the sanitized upstream response.",
   "ui.experimental_feature_loaded": "Experimental request loaded",
   "ui.correlation_call_id": "Correlation call ID",
   "ui.refresh": "Refresh",
@@ -236,13 +333,17 @@ export const enUI = {
   "ui.add_accounts": "Add accounts",
   "ui.deduplicate_accounts": "Deduplicate accounts",
   "ui.account_deduplication": "Account deduplication",
-  "ui.account_deduplication_description": "Find credential files that resolve to the same upstream account.",
-  "ui.account_deduplication_safety_note": "Review the retained credential and selected duplicates. A separate deletion preview and confirmation are still required.",
+  "ui.account_deduplication_description":
+    "Find credential files that resolve to the same upstream account.",
+  "ui.account_deduplication_safety_note":
+    "Review the retained credential and selected duplicates. A separate deletion preview and confirmation are still required.",
   "ui.deduplication_rules": "Matching rules",
   "ui.ignore_account_ids": "Ignore account IDs",
-  "ui.ignore_account_ids_description": "Match only by normalized email when team members share an account ID.",
+  "ui.ignore_account_ids_description":
+    "Match only by normalized email when team members share an account ID.",
   "ui.exclude_team_accounts": "Exclude k12/team accounts",
-  "ui.exclude_team_accounts_description": "These accounts are omitted from duplicate groups and deletion suggestions.",
+  "ui.exclude_team_accounts_description":
+    "These accounts are omitted from duplicate groups and deletion suggestions.",
   "ui.refreshing_deduplication": "Rescanning accounts",
   "ui.scanned_credentials": "Scanned credentials",
   "ui.excluded_credentials": "Excluded credentials",
@@ -252,7 +353,8 @@ export const enUI = {
   "ui.read_only_skipped": "Read-only skipped",
   "ui.missing_identity": "No stable identity",
   "ui.no_duplicate_accounts": "No duplicate accounts found",
-  "ui.no_duplicate_accounts_description": "No credentials in the current CPA account set share a reliable upstream account ID or normalized email.",
+  "ui.no_duplicate_accounts_description":
+    "No credentials in the current CPA account set share a reliable upstream account ID or normalized email.",
   "ui.selected_duplicate_credentials": "{count} duplicates selected",
   "ui.review_duplicate_deletions": "Review deletion ({count})",
   "ui.unable_to_prepare_deletion_preview": "Unable to prepare deletion preview",
@@ -285,7 +387,8 @@ export const enUI = {
   "ui.ascending": "ascending",
   "ui.descending": "descending",
   "ui.sort_column_next": "Sort {column} {next}",
-  "ui.sort_column_current_next": "{column} is sorted {current}; activate to sort {next}",
+  "ui.sort_column_current_next":
+    "{column} is sorted {current}; activate to sort {next}",
   "ui.search": "Search",
   "ui.account_email_filename_or_type": "Account, email, filename, or type",
   "ui.search_accounts": "Search accounts",
@@ -333,7 +436,8 @@ export const enUI = {
   "ui.batch_edit": "Batch edit",
   "ui.batch_delete": "Batch delete",
   "ui.batch_delete_preview": "Batch delete preview",
-  "ui.batch_delete_warning": "Deleted Auth files cannot be restored by the plugin. Confirm the target scope before continuing.",
+  "ui.batch_delete_warning":
+    "Deleted Auth files cannot be restored by the plugin. Confirm the target scope before continuing.",
   "ui.delete_count_accounts": "Delete {count} accounts",
   "ui.batch_delete_job": "Batch delete job",
   "ui.deleted": "Deleted",
@@ -346,31 +450,44 @@ export const enUI = {
   "ui.account_index": "Account index",
   "ui.account_type": "Account type",
   "ui.plan_type": "Plan type",
-	"ui.active_reset_count": "Active resets",
-	"ui.refresh_plan_and_active_reset": "Refresh plan and active resets for {account}",
-	"ui.refresh_quota_metadata_action": "Refresh quota metadata",
-	"ui.refresh_token": "Refresh token",
-	"ui.more_actions_for_account": "More actions for {account}",
-	"ui.account_more_actions": "Account actions",
-	"ui.token_refreshed_for_account": "Refreshed the credential for {account}",
-	"ui.host_refresh_unsupported": "This CPA version does not support manual token refresh",
-	"ui.refresh_credential_missing": "This account has no refresh token",
-	"ui.refresh_rejected": "The refresh credential was rejected; sign in again",
-	"ui.refresh_already_running": "A credential refresh is already running for this account",
-	"ui.refresh_provider_unsupported": "This provider does not yet support plugin-side token refresh",
-	"ui.refresh_conflict": "The credential changed during refresh; no data was written. Retry with the latest credential",
-	"ui.refresh_verification_failed": "The credential was saved but could not be verified; reload the account before deciding whether to retry",
-	"ui.token_refreshed_native": "Account credential refreshed through CPA's native capability",
-	"ui.token_refreshed_plugin": "CPA has no native refresh API; the plugin safely refreshed the Codex credential",
-	"ui.quota_metadata_refreshed": "Refreshed plan and active resets for {account}",
-	"ui.quota_metadata_refreshed_with_warning": "Refreshed the plan for {account}, but the active reset count is currently unavailable",
-	"ui.not_collected": "Not collected",
-	"ui.quota_metadata_collected_at": "Fetched {time}",
-	"ui.use_active_reset": "Active reset",
-	"ui.confirm_active_reset": "Confirm active reset",
-	"ui.confirm_active_reset_description": "Consume one active reset credit for {account}? This immediately resets the applicable Codex quota and cannot be undone.",
-	"ui.active_reset_succeeded": "Active reset completed for {account}; plan, quota, and remaining resets were refreshed",
-	"ui.active_reset_succeeded_with_warning": "Active reset completed for {account}, but the refreshed quota metadata is temporarily unavailable",
+  "ui.active_reset_count": "Active resets",
+  "ui.refresh_plan_and_active_reset":
+    "Refresh plan and active resets for {account}",
+  "ui.refresh_quota_metadata_action": "Refresh quota metadata",
+  "ui.refresh_token": "Refresh token",
+  "ui.more_actions_for_account": "More actions for {account}",
+  "ui.account_more_actions": "Account actions",
+  "ui.token_refreshed_for_account": "Refreshed the credential for {account}",
+  "ui.host_refresh_unsupported":
+    "This CPA version does not support manual token refresh",
+  "ui.refresh_credential_missing": "This account has no refresh token",
+  "ui.refresh_rejected": "The refresh credential was rejected; sign in again",
+  "ui.refresh_already_running":
+    "A credential refresh is already running for this account",
+  "ui.refresh_provider_unsupported":
+    "This provider does not yet support plugin-side token refresh",
+  "ui.refresh_conflict":
+    "The credential changed during refresh; no data was written. Retry with the latest credential",
+  "ui.refresh_verification_failed":
+    "The credential was saved but could not be verified; reload the account before deciding whether to retry",
+  "ui.token_refreshed_native":
+    "Account credential refreshed through CPA's native capability",
+  "ui.token_refreshed_plugin":
+    "CPA has no native refresh API; the plugin safely refreshed the Codex credential",
+  "ui.quota_metadata_refreshed":
+    "Refreshed plan and active resets for {account}",
+  "ui.quota_metadata_refreshed_with_warning":
+    "Refreshed the plan for {account}, but the active reset count is currently unavailable",
+  "ui.not_collected": "Not collected",
+  "ui.quota_metadata_collected_at": "Fetched {time}",
+  "ui.use_active_reset": "Active reset",
+  "ui.confirm_active_reset": "Confirm active reset",
+  "ui.confirm_active_reset_description":
+    "Consume one active reset credit for {account}? This immediately resets the applicable Codex quota and cannot be undone.",
+  "ui.active_reset_succeeded":
+    "Active reset completed for {account}; plan, quota, and remaining resets were refreshed",
+  "ui.active_reset_succeeded_with_warning":
+    "Active reset completed for {account}, but the refreshed quota metadata is temporarily unavailable",
   "ui.source": "Source",
   "ui.status_detail": "Status detail",
   "ui.read_only_reason": "Read-only reason",
@@ -383,7 +500,8 @@ export const enUI = {
   "ui.auto_enable_status": "Auto-enable {status}",
   "ui.auto_enable": "Auto-enable",
   "ui.quota_recovery_priority": "Prioritize recovered Codex quota",
-  "ui.quota_recovery_priority_description": "When a fresh quota snapshot recovers an account disabled by inspection, enable it immediately and raise its CPA Priority to at least 100. Manual disables and credential failures are never changed.",
+  "ui.quota_recovery_priority_description":
+    "When a fresh quota snapshot recovers an account disabled by inspection, enable it immediately and raise its CPA Priority to at least 100. Manual disables and credential failures are never changed.",
   "ui.auto_delete": "Auto-delete",
   "ui.manual_inspection_delete": "Manual inspection delete",
   "ui.manual_inspection_bulk_delete": "Manual inspection bulk delete",
@@ -405,38 +523,46 @@ export const enUI = {
   "ui.on_2": "On",
   "ui.off_2": "Off",
   "ui.headers": "Headers",
-	"ui.model_policy": "Model policy",
-	"ui.model_policy_mode": "Model policy mode",
-	"ui.all_models": "All models",
-	"ui.model_allowlist": "Allowlist",
-	"ui.model_blocklist": "Blocklist",
-	"ui.loading_models": "Loading models",
-	"ui.models_could_not_be_loaded": "Models could not be loaded",
-	"ui.common_models_count": "{count} common models",
-	"ui.model_catalog_loaded_count": "Loaded {loaded}/{total} accounts",
-	"ui.model_catalog_failed_count": "{count} failed",
-	"ui.search_models": "Search models",
-	"ui.select_all": "Select all",
-	"ui.clear": "Clear",
-	"ui.available_models": "Available models",
-	"ui.no_matching_models": "No matching models",
-	"ui.all_models_policy_help": "Remove plugin-managed model restrictions while preserving exclusions configured outside this plugin.",
-	"ui.enable_model_policy_to_load": "Enable this field to load the effective model catalog.",
-	"ui.load_models_before_submitting": "Load the model catalog before generating a preview.",
-	"ui.select_at_least_one_model": "Select at least one model for this policy mode.",
-	"ui.current_account_configuration": "Current account configuration",
-	"ui.current_account_configuration_description": "Loaded from the current Auth file. Only checked fields are included in the change preview.",
-	"ui.loading_account_configuration": "Loading current account configuration",
-	"ui.account_configuration_load_failed": "The current account configuration could not be loaded.",
-	"ui.retry_loading_configuration": "Reload configuration",
-	"ui.plugin_configuration": "Plugin configuration",
-	"ui.plugin_configuration_state": "Plugin management state",
-	"ui.managed_by_plugin": "Managed by plugin",
-	"ui.not_managed_by_plugin": "Not managed by plugin",
-	"ui.managed_models": "Managed models",
-	"ui.managed_model_exclusions": "Managed exclusions",
-	"ui.proxy_credentials_hidden": "Proxy credentials are hidden. Checking Proxy replaces or clears the current address.",
-	"ui.header_values_hidden": "Header values are hidden. Checking Headers explicitly adds, replaces, or removes entries by name.",
+  "ui.model_policy": "Model policy",
+  "ui.model_policy_mode": "Model policy mode",
+  "ui.all_models": "All models",
+  "ui.model_allowlist": "Allowlist",
+  "ui.model_blocklist": "Blocklist",
+  "ui.loading_models": "Loading models",
+  "ui.models_could_not_be_loaded": "Models could not be loaded",
+  "ui.common_models_count": "{count} common models",
+  "ui.model_catalog_loaded_count": "Loaded {loaded}/{total} accounts",
+  "ui.model_catalog_failed_count": "{count} failed",
+  "ui.search_models": "Search models",
+  "ui.select_all": "Select all",
+  "ui.clear": "Clear",
+  "ui.available_models": "Available models",
+  "ui.no_matching_models": "No matching models",
+  "ui.all_models_policy_help":
+    "Remove plugin-managed model restrictions while preserving exclusions configured outside this plugin.",
+  "ui.enable_model_policy_to_load":
+    "Enable this field to load the effective model catalog.",
+  "ui.load_models_before_submitting":
+    "Load the model catalog before generating a preview.",
+  "ui.select_at_least_one_model":
+    "Select at least one model for this policy mode.",
+  "ui.current_account_configuration": "Current account configuration",
+  "ui.current_account_configuration_description":
+    "Loaded from the current Auth file. Only checked fields are included in the change preview.",
+  "ui.loading_account_configuration": "Loading current account configuration",
+  "ui.account_configuration_load_failed":
+    "The current account configuration could not be loaded.",
+  "ui.retry_loading_configuration": "Reload configuration",
+  "ui.plugin_configuration": "Plugin configuration",
+  "ui.plugin_configuration_state": "Plugin management state",
+  "ui.managed_by_plugin": "Managed by plugin",
+  "ui.not_managed_by_plugin": "Not managed by plugin",
+  "ui.managed_models": "Managed models",
+  "ui.managed_model_exclusions": "Managed exclusions",
+  "ui.proxy_credentials_hidden":
+    "Proxy credentials are hidden. Checking Proxy replaces or clears the current address.",
+  "ui.header_values_hidden":
+    "Header values are hidden. Checking Headers explicitly adds, replaces, or removes entries by name.",
   "ui.note": "Note",
   "ui.header_names": "Header names",
   "ui.usage_and_activity": "Usage & activity",
@@ -451,7 +577,8 @@ export const enUI = {
   "ui.last_refresh": "Last refresh",
   "ui.next_retry": "Next retry",
   "ui.model_availability_test": "Model availability test",
-  "ui.single_account_minimal_upstream_usage": "Single account · minimal upstream usage",
+  "ui.single_account_minimal_upstream_usage":
+    "Single account · minimal upstream usage",
   "ui.testing": "Testing",
   "ui.test_again": "Test again",
   "ui.start_test": "Start test",
@@ -465,7 +592,8 @@ export const enUI = {
   "ui.primary_model": "Primary model",
   "ui.fallback_model": "Fallback model",
   "ui.final_model": "Available model",
-  "ui.model_fallback_succeeded": "The primary model is unsupported; the account is available through {model}",
+  "ui.model_fallback_succeeded":
+    "The primary model is unsupported; the account is available through {model}",
   "ui.no_available_model": "No available model",
   "ui.model_probe_attempts": "Model probe attempts",
   "ui.primary_attempt": "Primary attempt",
@@ -473,16 +601,23 @@ export const enUI = {
   "ui.view_sanitized_response": "View sanitized upstream response",
   "ui.testing_unsupported": "Testing unsupported",
   "ui.manual_confirmation_required": "Manual confirmation required",
-  "ui.received_the_expected_model_response": "Received the expected model response",
-  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist": "This account cannot use the model, or the model does not exist",
+  "ui.received_the_expected_model_response":
+    "Received the expected model response",
+  "ui.this_account_cannot_use_the_model_or_the_model_does_not_exist":
+    "This account cannot use the model, or the model does not exist",
   "ui.account_is_currently_unavailable": "Account is currently unavailable",
-  "ui.authentication_failed_check_credential_status": "Authentication failed; check credential status",
+  "ui.authentication_failed_check_credential_status":
+    "Authentication failed; check credential status",
   "ui.upstream_quota_or_rate_limited": "Upstream quota or rate limited",
   "ui.test_request_timed_out": "Test request timed out",
-  "ui.upstream_service_is_temporarily_unavailable": "Upstream service is temporarily unavailable",
-  "ui.the_upstream_response_cannot_confirm_model_availability": "The upstream response cannot confirm model availability",
-  "ui.this_provider_does_not_support_safe_model_testing_yet": "This provider does not support safe model testing yet",
-  "ui.the_test_result_requires_manual_confirmation": "The test result requires manual confirmation",
+  "ui.upstream_service_is_temporarily_unavailable":
+    "Upstream service is temporarily unavailable",
+  "ui.the_upstream_response_cannot_confirm_model_availability":
+    "The upstream response cannot confirm model availability",
+  "ui.this_provider_does_not_support_safe_model_testing_yet":
+    "This provider does not support safe model testing yet",
+  "ui.the_test_result_requires_manual_confirmation":
+    "The test result requires manual confirmation",
   "ui.model": "Model",
   "ui.latency": "Latency",
   "ui.tested_at": "Tested at",
@@ -496,8 +631,10 @@ export const enUI = {
   "ui.empty_response_body": "Empty response body",
   "ui.truncated": "Truncated",
   "ui.delete_account": "Delete account",
-  "ui.this_permanently_deletes_the_cpa_auth_file": "This permanently deletes the CPA Auth file",
-  "ui.the_file_is_revalidated_before_deletion": "The file is revalidated before deletion.",
+  "ui.this_permanently_deletes_the_cpa_auth_file":
+    "This permanently deletes the CPA Auth file",
+  "ui.the_file_is_revalidated_before_deletion":
+    "The file is revalidated before deletion.",
   "ui.validating_deletion_target": "Validating deletion target",
   "ui.download_account_credentials": "Download account credentials",
   "ui.download_format": "Download {format}",
@@ -535,7 +672,8 @@ export const enUI = {
   "ui.force_sync_preview": "Force-sync preview",
   "ui.overwrite_count_files": "Overwrite {count} files",
   "ui.managed_fields": "Managed fields",
-  "ui.existing_field_values_will_be_overwritten": "Existing field values will be overwritten",
+  "ui.existing_field_values_will_be_overwritten":
+    "Existing field values will be overwritten",
   "ui.only_the_managed_fields_above": "Only the managed fields above",
   "ui.will_overwrite": "Will overwrite",
   "ui.mode_fill_missing_fields": "Mode: fill missing fields",
@@ -552,9 +690,11 @@ export const enUI = {
   "ui.failed": "Failed",
   "ui.enable_default_policy": "Enable default policy",
   "ui.new_account_model_probe": "New-account model probe",
-  "ui.new_account_model_probe_description": "Test the primary, fallback, and compatibility models when a new Codex account is discovered",
+  "ui.new_account_model_probe_description":
+    "Test the primary, fallback, and compatibility models when a new Codex account is discovered",
   "ui.enable_new_account_model_probe": "Enable new-account model probe",
-  "ui.new_account_model_probe_storage_error": "New-account model-probe state could not be persisted. Check that the plugin data_dir is writable and backed by persistent storage.",
+  "ui.new_account_model_probe_storage_error":
+    "New-account model-probe state could not be persisted. Check that the plugin data_dir is writable and backed by persistent storage.",
   "ui.default_priority": "Default priority",
   "ui.default_websockets": "Default WebSockets",
   "ui.scan_interval": "Scan interval",
@@ -578,14 +718,17 @@ export const enUI = {
   "ui.interrupted_2": "Interrupted",
   "ui.no_item_results_yet": "No item results yet",
   "ui.inspection_and_automation_settings": "Inspection & automation settings",
-  "ui.all_writes_require_management_authentication": "All writes require Management authentication",
+  "ui.all_writes_require_management_authentication":
+    "All writes require Management authentication",
   "ui.save_settings": "Save settings",
   "ui.inspection_schedule": "Inspection schedule",
-  "ui.cpa_native_status_and_usage_evidence": "Every run inspects all accounts connected to CPA using CPA-native status and usage evidence",
+  "ui.cpa_native_status_and_usage_evidence":
+    "Every run inspects all accounts connected to CPA using CPA-native status and usage evidence",
   "ui.scheduled_inspection": "Scheduled inspection",
   "ui.full_scheduled_active_inspection": "Full scheduled active inspection",
   "ui.anomaly_trigger": "Abnormal-ratio trigger",
-  "ui.anomaly_trigger_description": "Optionally start a full active inspection when reliable abnormal results reach the configured ratio",
+  "ui.anomaly_trigger_description":
+    "Optionally start a full active inspection when reliable abnormal results reach the configured ratio",
   "ui.enable_anomaly_trigger": "Enable abnormal-ratio trigger",
   "ui.anomaly_threshold": "Abnormal threshold",
   "ui.minimum_sample": "Minimum reliable sample",
@@ -593,19 +736,26 @@ export const enUI = {
   "ui.external_get_notification": "External GET notification",
   "ui.notification_only_mode": "Notification only (skip secondary inspection)",
   "ui.external_notifications": "External notifications",
-  "ui.external_notifications_description": "Evaluate account-pool conditions after inspection and send one aggregate GET notification when a threshold is met",
+  "ui.external_notifications_description":
+    "Evaluate account-pool conditions after inspection and send one aggregate GET notification when a threshold is met",
   "ui.notification_endpoints": "Notification endpoints",
   "ui.generic_notifications": "Generic notifications",
-  "ui.generic_notifications_description": "Global availability and anomaly triggers are delivered only to endpoints using generic notifications.",
+  "ui.generic_notifications_description":
+    "Global availability and anomaly triggers are delivered only to endpoints using generic notifications.",
   "ui.policy_notifications": "Policy notifications",
-  "ui.policy_notifications_description": "Filter accounts with nested provider, plan, and email-domain conditions, then notify when the selected cohort crosses an availability threshold.",
+  "ui.policy_notifications_description":
+    "Filter accounts with nested provider, plan, and email-domain conditions, then notify when the selected cohort crosses an availability threshold.",
   "ui.add_notification_policy": "Add policy notification",
   "ui.add_policy_notification_endpoint": "Add policy endpoint",
   "ui.policy_notification_endpoints": "Policy notification endpoints",
-  "ui.policy_notification_endpoints_for": "Policy notification endpoints for {name}",
-  "ui.policy_notification_endpoints_description": "These endpoints are triggered independently by this policy.",
-  "ui.no_generic_notification_endpoints": "No generic notification endpoints configured",
-  "ui.no_policy_notification_endpoints": "No policy notification endpoints configured",
+  "ui.policy_notification_endpoints_for":
+    "Policy notification endpoints for {name}",
+  "ui.policy_notification_endpoints_description":
+    "These endpoints are triggered independently by this policy.",
+  "ui.no_generic_notification_endpoints":
+    "No generic notification endpoints configured",
+  "ui.no_policy_notification_endpoints":
+    "No policy notification endpoints configured",
   "ui.move_notification_endpoint_up": "Move notification endpoint up",
   "ui.move_notification_endpoint_down": "Move notification endpoint down",
   "ui.no_notification_policies": "No notification policies configured",
@@ -616,39 +766,59 @@ export const enUI = {
   "ui.move_notification_policy_up": "Move notification policy up",
   "ui.move_notification_policy_down": "Move notification policy down",
   "ui.delete_notification_policy": "Delete notification policy",
-  "ui.confirm_remove_notification_policy": "Delete policy notification {name} and all of its endpoints?",
+  "ui.confirm_remove_notification_policy":
+    "Delete policy notification {name} and all of its endpoints?",
   "ui.notification_threshold_conditions": "Trigger conditions",
   "ui.notification_threshold_operator": "Trigger condition operator",
-  "ui.threshold_match_all_hint": "Send the notification only when every enabled threshold is reached",
-  "ui.threshold_match_any_hint": "Send the notification when any enabled threshold is reached",
-  "ui.notification_policy_name_required": "Each notification policy requires a name",
-  "ui.notification_policy_name_duplicate": "Policy name \"{name}\" already exists; use a unique name",
-  "ui.notification_policy_threshold_required": "Each notification policy requires at least one availability trigger",
-  "ui.notification_policy_binding_invalid": "A policy notification endpoint has an invalid owner; reload and configure it again",
-  "ui.generic_notification_endpoint_required": "Enable at least one generic endpoint for generic notification triggers",
-  "ui.policy_notification_endpoint_required": "Enable at least one endpoint inside an enabled policy notification",
-  "ui.policy_notification_endpoint_required_named": "Enable an endpoint inside policy notification {name}",
-  "ui.notification_policy_order_hint": "Policy order is for organization only; all matching policies evaluate independently.",
-  "ui.save_notification_policy_before_testing": "Save this policy notification before previewing or testing it",
+  "ui.threshold_match_all_hint":
+    "Send the notification only when every enabled threshold is reached",
+  "ui.threshold_match_any_hint":
+    "Send the notification when any enabled threshold is reached",
+  "ui.notification_policy_name_required":
+    "Each notification policy requires a name",
+  "ui.notification_policy_name_duplicate":
+    'Policy name "{name}" already exists; use a unique name',
+  "ui.notification_policy_threshold_required":
+    "Each notification policy requires at least one availability trigger",
+  "ui.notification_policy_binding_invalid":
+    "A policy notification endpoint has an invalid owner; reload and configure it again",
+  "ui.generic_notification_endpoint_required":
+    "Enable at least one generic endpoint for generic notification triggers",
+  "ui.policy_notification_endpoint_required":
+    "Enable at least one endpoint inside an enabled policy notification",
+  "ui.policy_notification_endpoint_required_named":
+    "Enable an endpoint inside policy notification {name}",
+  "ui.notification_policy_order_hint":
+    "Policy order is for organization only; all matching policies evaluate independently.",
+  "ui.save_notification_policy_before_testing":
+    "Save this policy notification before previewing or testing it",
   "ui.add_notification_endpoint": "Add endpoint",
   "ui.notification_endpoint_name": "Name",
   "ui.notification_endpoint_name_number": "Endpoint {number} name",
   "ui.notification_endpoint_number": "Notification endpoint {number}",
-  "ui.notification_endpoint_enabled_number": "Enable notification endpoint {number}",
+  "ui.notification_endpoint_enabled_number":
+    "Enable notification endpoint {number}",
   "ui.notification_endpoint_url_number": "Endpoint {number} URL template",
-  "ui.notification_endpoint_parameter_number": "Insert a parameter into endpoint {number}",
+  "ui.notification_endpoint_parameter_number":
+    "Insert a parameter into endpoint {number}",
   "ui.remove_notification_endpoint": "Remove endpoint",
-  "ui.remove_notification_endpoint_number": "Remove notification endpoint {number}",
-  "ui.confirm_remove_notification_endpoint": "Remove notification endpoint {name}?",
-  "ui.confirm_remove_notification_endpoint_number": "Remove notification endpoint {number}?",
+  "ui.remove_notification_endpoint_number":
+    "Remove notification endpoint {number}",
+  "ui.confirm_remove_notification_endpoint":
+    "Remove notification endpoint {name}?",
+  "ui.confirm_remove_notification_endpoint_number":
+    "Remove notification endpoint {number}?",
   "ui.no_notification_endpoints": "No notification endpoints configured",
   "ui.notification_endpoint_count": "{count} of {max} endpoints",
-  "ui.notification_endpoint_limit_reached": "At most {count} notification endpoints are allowed",
+  "ui.notification_endpoint_limit_reached":
+    "At most {count} notification endpoints are allowed",
   "ui.notification_duplicate_url": "Notification endpoint URLs must be unique",
-  "ui.notification_enabled_endpoint_required": "Enable at least one notification endpoint before enabling a notification trigger",
+  "ui.notification_enabled_endpoint_required":
+    "Enable at least one notification endpoint before enabling a notification trigger",
   "ui.notification_settings_saved": "External notification settings saved",
   "ui.notify_on_anomaly_ratio": "Notify when abnormal ratio reaches threshold",
-  "ui.notify_when_available_accounts_low": "Notify when available accounts are low",
+  "ui.notify_when_available_accounts_low":
+    "Notify when available accounts are low",
   "ui.available_accounts_threshold": "Available accounts below",
   "ui.notify_when_availability_low": "Notify when total availability is low",
   "ui.availability_percent_threshold": "Total availability below",
@@ -656,13 +826,18 @@ export const enUI = {
   "ui.notification_url_template": "Notification URL template",
   "ui.insert_notification_parameter": "Insert notification parameter",
   "ui.select_parameter": "Select parameter",
-  "ui.notification_url_is_required": "A notification URL template is required when external notifications are enabled",
+  "ui.notification_url_is_required":
+    "A notification URL template is required when external notifications are enabled",
   "ui.notification_url_must_use_https": "The notification URL must use HTTPS",
-  "ui.notification_available_accounts_must_be_between_1_and_10000": "The available-account notification threshold must be between 1 and 10000",
-  "ui.notification_availability_percent_must_be_between_1_and_100": "The total-availability notification threshold must be between 1% and 100%",
-  "ui.notification_cooldown_must_be_between_5_and_1440_minutes": "The notification cooldown must be between 5 and 1440 minutes",
+  "ui.notification_available_accounts_must_be_between_1_and_10000":
+    "The available-account notification threshold must be between 1 and 10000",
+  "ui.notification_availability_percent_must_be_between_1_and_100":
+    "The total-availability notification threshold must be between 1% and 100%",
+  "ui.notification_cooldown_must_be_between_5_and_1440_minutes":
+    "The notification cooldown must be between 5 and 1440 minutes",
   "ui.notification_parameter_full_details": "Insert complete detail parameters",
-  "ui.notification_full_message_template": "Event ${event}; available ${available_accounts}/${total_accounts}; availability ${available_percent}; abnormal ${abnormal_accounts} (${abnormal_percent}); quota limited ${quota_limited_accounts}; invalid credentials ${invalid_credential_accounts}; unavailable ${unavailable_accounts}; disabled ${disabled_accounts}; triggered at ${triggered_at}",
+  "ui.notification_full_message_template":
+    "Event ${event}; available ${available_accounts}/${total_accounts}; availability ${available_percent}; abnormal ${abnormal_accounts} (${abnormal_percent}); quota limited ${quota_limited_accounts}; invalid credentials ${invalid_credential_accounts}; unavailable ${unavailable_accounts}; disabled ${disabled_accounts}; triggered at ${triggered_at}",
   "ui.notification_preview_and_test": "Notification preview and test",
   "ui.preview_notification": "Preview",
   "ui.send_test_notification": "Send test",
@@ -681,13 +856,17 @@ export const enUI = {
   "ui.notification_parameter_abnormal_accounts": "Abnormal accounts",
   "ui.notification_parameter_abnormal_percent": "Abnormal percentage",
   "ui.notification_parameter_quota_limited_accounts": "Quota-limited accounts",
-  "ui.notification_parameter_invalid_credential_accounts": "Invalid-credential accounts",
+  "ui.notification_parameter_invalid_credential_accounts":
+    "Invalid-credential accounts",
   "ui.notification_parameter_deactivated_accounts": "Deactivated accounts",
-  "ui.notification_parameter_unavailable_accounts": "Temporarily unavailable accounts",
+  "ui.notification_parameter_unavailable_accounts":
+    "Temporarily unavailable accounts",
   "ui.notification_parameter_disabled_accounts": "Currently disabled accounts",
   "ui.notification_parameter_threshold_percent": "Trigger threshold",
-  "ui.notification_parameter_available_accounts_threshold": "Available-account threshold",
-  "ui.notification_parameter_availability_percent_threshold": "Availability threshold",
+  "ui.notification_parameter_available_accounts_threshold":
+    "Available-account threshold",
+  "ui.notification_parameter_availability_percent_threshold":
+    "Availability threshold",
   "ui.notification_parameter_triggered_at": "Trigger time",
   "ui.notification_parameter_policy_name": "Notification policy name",
   "ui.percent": "%",
@@ -699,42 +878,55 @@ export const enUI = {
   "ui.passive_failure_threshold": "Passive failure threshold",
   "ui.passive_failure_window": "Passive failure window",
   "ui.passive_circuit_duration": "Temporary disable duration",
-  "ui.passive_circuit_description": "Repeated ambiguous CPA request failures or active probe failures can temporarily disable an account. Manual disables are never claimed, and temporary circuits never qualify for deletion.",
+  "ui.passive_circuit_description":
+    "Repeated ambiguous CPA request failures or active probe failures can temporarily disable an account. Manual disables are never claimed, and temporary circuits never qualify for deletion.",
   "ui.account_disposition": "Account disposition",
-  "ui.only_accounts_disabled_by_inspection_can_be_restored": "Only accounts disabled by inspection can be restored",
+  "ui.only_accounts_disabled_by_inspection_can_be_restored":
+    "Only accounts disabled by inspection can be restored",
   "ui.deletion_grace": "Deletion grace",
   "ui.hours": "hours",
   "ui.deletes_per_run": "Deletes per run",
   "ui.accounts_2": "accounts",
   "ui.confirm_auto_delete": "Confirm auto-delete",
-  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period": "Confirm auto-delete only for explicitly deactivated accounts disabled by inspection after the grace period",
-  "ui.delete_persistent_invalid_credentials": "Delete persistent invalid credentials",
-  "ui.confirm_invalid_credential_deletion": "Confirm invalid-credential deletion",
-  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation": "Confirm deletion only after persistent high-confidence authentication failure, inspection-owned disable, the grace period, and deletion-time revalidation",
+  "ui.confirm_auto_delete_only_for_explicitly_deactivated_accounts_disabled_by_inspection_after_the_grace_period":
+    "Confirm auto-delete only for explicitly deactivated accounts disabled by inspection after the grace period",
+  "ui.delete_persistent_invalid_credentials":
+    "Delete persistent invalid credentials",
+  "ui.confirm_invalid_credential_deletion":
+    "Confirm invalid-credential deletion",
+  "ui.confirm_delete_only_after_persistent_high_confidence_auth_failure_inspection_disable_grace_and_revalidation":
+    "Confirm deletion only after persistent high-confidence authentication failure, inspection-owned disable, the grace period, and deletion-time revalidation",
   "ui.plugin_updates": "Plugin updates",
   "ui.cpa_plugin_store_updates": "CPA plugin store",
   "ui.check_for_updates": "Check for updates",
   "ui.check_interval": "Check interval",
   "ui.auto_update": "Auto-update",
   "ui.confirm_auto_update": "Confirm auto-update",
-  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active": "Confirm automatic installation of versions verified by the CPA plugin store while authenticated plugin management is active",
+  "ui.confirm_automatic_installation_of_versions_verified_by_the_cpa_plugin_store_while_authenticated_plugin_management_is_active":
+    "Confirm automatic installation of versions verified by the CPA plugin store while authenticated plugin management is active",
   "ui.authentication_failed": "Authentication failed",
   "ui.request_failed": "Request failed",
   "ui.request_timeout": "The request timed out. Please try again.",
   "ui.invalid_json_response": "The server returned an invalid JSON response",
-  "ui.invalid_api_response": "The server returned an invalid response structure; the current page was kept. Try again later.",
-  "ui.invalid_accounts_response": "CPA returned an invalid account list; the current page was kept. Try again later.",
+  "ui.invalid_api_response":
+    "The server returned an invalid response structure; the current page was kept. Try again later.",
+  "ui.invalid_accounts_response":
+    "CPA returned an invalid account list; the current page was kept. Try again later.",
   "ui.deleted_account_account": "Deleted account {account}",
   "ui.added_count_accounts": "Added {count} accounts",
-  "ui.added_count_accounts_failed_not_written": "Added {count} accounts; {failed} not written",
-  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped": "Downloaded {format} credentials for {count} accounts; skipped {skipped}",
+  "ui.added_count_accounts_failed_not_written":
+    "Added {count} accounts; {failed} not written",
+  "ui.downloaded_format_credentials_for_count_accounts_skipped_skipped":
+    "Downloaded {format} credentials for {count} accounts; skipped {skipped}",
   "ui.exported_results_as_format": "Exported results as {format}",
   "ui.count_selected_accounts": "{count} selected accounts",
   "ui.count_filtered_accounts": "{count} filtered accounts",
   "ui.selected_accounts": "Selected accounts",
   "ui.count_accounts": "{count} accounts",
-  "ui.count_records_page_page_slash_pages": "{count} records · Page {page}/{pages}",
-  "ui.select_editable_accounts_on_this_page": "Select editable accounts on this page",
+  "ui.count_records_page_page_slash_pages":
+    "{count} records · Page {page}/{pages}",
+  "ui.select_editable_accounts_on_this_page":
+    "Select editable accounts on this page",
   "ui.select_account": "Select {account}",
   "ui.view_account": "View {account}",
   "ui.test_model_for_account": "Test model for {account}",
@@ -751,17 +943,25 @@ export const enUI = {
   "ui.no_cpa_usage_data_received": "No CPA Usage data received",
   "ui.awaiting_usage_collection": "Awaiting usage collection",
   "ui.waiting_for_quota_recovery": "Waiting for quota recovery",
-  "ui.collecting_usage_for_count_imported_accounts": "Collecting usage for {count} imported accounts",
-  "ui.total_requests_success_succeeded_failed_failed": "Total requests: {success} succeeded, {failed} failed",
-  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time": "Recent CPA requests: {count} across {windows} windows; last request {time}",
-  "ui.recent_cpa_requests_count_across_windows_windows": "Recent CPA requests: {count} across {windows} windows",
+  "ui.collecting_usage_for_count_imported_accounts":
+    "Collecting usage for {count} imported accounts",
+  "ui.total_requests_success_succeeded_failed_failed":
+    "Total requests: {success} succeeded, {failed} failed",
+  "ui.recent_cpa_requests_count_across_windows_windows_last_request_time":
+    "Recent CPA requests: {count} across {windows} windows; last request {time}",
+  "ui.recent_cpa_requests_count_across_windows_windows":
+    "Recent CPA requests: {count} across {windows} windows",
   "ui.last_request_time": "Last request {time}",
   "ui.no_recent_cpa_request_windows": "No recent CPA request windows",
-  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers": "Codex quota appears after CPA captures the relevant upstream response headers",
-  "ui.cpa_does_not_currently_provide_agent_identity_quota": "CPA does not currently provide Agent Identity quota",
+  "ui.codex_quota_appears_after_cpa_captures_the_relevant_upstream_response_headers":
+    "Codex quota appears after CPA captures the relevant upstream response headers",
+  "ui.cpa_does_not_currently_provide_agent_identity_quota":
+    "CPA does not currently provide Agent Identity quota",
   "ui.quota": "Quota",
-  "ui.label_percent_percent_used_resets_reset_minutes_minute_window": "{label} {percent}% used, resets {reset}, {minutes}-minute window",
-  "ui.label_percent_percent_used_resets_reset": "{label} {percent}% used, resets {reset}",
+  "ui.label_percent_percent_used_resets_reset_minutes_minute_window":
+    "{label} {percent}% used, resets {reset}, {minutes}-minute window",
+  "ui.label_percent_percent_used_resets_reset":
+    "{label} {percent}% used, resets {reset}",
   "ui.label_usage_percent_percent": "{label} usage {percent}%",
   "ui.overdraft_usage": "Overdraft usage",
 
@@ -769,31 +969,46 @@ export const enUI = {
   "ui.overdraft_cycle_inconclusive": "Overdraft inconclusive",
   "ui.overdraft_cycle_failed": "Overdraft failed",
   "ui.overdraft_cycle_passed": "Overdraft confirmed",
-  "ui.overdraft_cycle_pending": "Overdraft pending",  "ui.overdraft_credit_usage_window": "{label} estimated overdraft cost: {amount}; rated requests: {rated}; unrated requests: {unrated}. This amount is already included in the account total.",
-  "ui.overdraft_credit_usage_detail": "{amount} · {rated} rated · {unrated} unrated · included in account total",
+  "ui.overdraft_cycle_pending": "Overdraft pending",
+  "ui.overdraft_credit_usage_window":
+    "{label} estimated overdraft cost: {amount}; rated requests: {rated}; unrated requests: {unrated}. This amount is already included in the account total.",
+  "ui.overdraft_credit_usage_detail":
+    "{amount} · {rated} rated · {unrated} unrated · included in account total",
   "ui.5_hour_overdraft_credit_usage": "5-hour overdraft cost",
   "ui.7_day_overdraft_credit_usage": "7-day overdraft cost",
-  "ui.overdraft_usage_window": "{label} overdraft {percent}% (total usage {total}%)",
-  "ui.overdraft_usage_window_observed": "{label} overdraft since the baseline frozen by a failed normal probe: {tokens} tokens across {requests} successful requests (official total {total}%)",
+  "ui.overdraft_usage_window":
+    "{label} overdraft {percent}% (total usage {total}%)",
+  "ui.overdraft_usage_window_observed":
+    "{label} overdraft since the baseline frozen by a failed normal probe: {tokens} tokens across {requests} successful requests (official total {total}%)",
   "ui.overdraft_tokens_value": "{count} tok",
   "ui.overdraft_requests_value": "{count} requests",
-  "ui.overdraft_usage_included_in_total": "Measurement starts only after a normal probe confirms failure at 100%; failed requests are excluded. Later overdraft traffic cannot move the frozen exhaustion or auto-enable time. The cycle ends when quota returns to 0% or automatic enable succeeds. The 5h and 7d windows are measured separately.",
-  "ui.count_read_only_targets_will_be_skipped": "{count} read-only targets will be skipped",
-  "ui.count_targets_are_read_only_and_will_be_skipped": "{count} targets are read-only and will be skipped",
-  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped": "{count} selected targets no longer exist and will be skipped",
-  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts": "Targets include multiple providers; confirm that the fields apply to all accounts",
-  "ui.select_at_least_one_default_field_before_enabling_the_policy": "Select at least one default field before enabling the policy",
+  "ui.overdraft_usage_included_in_total":
+    "Measurement starts only after a normal probe confirms failure at 100%; failed requests are excluded. Later overdraft traffic cannot move the frozen exhaustion or auto-enable time. The cycle ends when quota returns to 0% or automatic enable succeeds. The 5h and 7d windows are measured separately.",
+  "ui.count_read_only_targets_will_be_skipped":
+    "{count} read-only targets will be skipped",
+  "ui.count_targets_are_read_only_and_will_be_skipped":
+    "{count} targets are read-only and will be skipped",
+  "ui.count_selected_targets_no_longer_exist_and_will_be_skipped":
+    "{count} selected targets no longer exist and will be skipped",
+  "ui.targets_include_multiple_providers_confirm_that_the_fields_apply_to_all_accounts":
+    "Targets include multiple providers; confirm that the fields apply to all accounts",
+  "ui.select_at_least_one_default_field_before_enabling_the_policy":
+    "Select at least one default field before enabling the policy",
   "ui.priority_must_be_an_integer": "Priority must be an integer",
   "ui.account_concurrency": "Account concurrency",
   "ui.account_concurrency_value": "Account concurrency value",
-  "ui.account_concurrency_must_be_an_integer": "Account concurrency must be an integer",
-  "ui.account_concurrency_range": "Account concurrency must be between 0 and 1000",
+  "ui.account_concurrency_must_be_an_integer":
+    "Account concurrency must be an integer",
+  "ui.account_concurrency_range":
+    "Account concurrency must be between 0 and 1000",
   "ui.account_concurrency_zero_unlimited": "0 means unlimited",
-  "ui.account_concurrency_unavailable_old_cpa": "Account concurrency is unavailable on this CPA version. Upgrade to a version with request lifecycle schema v2.",
+  "ui.account_concurrency_unavailable_old_cpa":
+    "Account concurrency is unavailable on this CPA version. Upgrade to a version with request lifecycle schema v2.",
   "ui.account_concurrency_active_limit": "{active}/{limit}",
   "ui.unlimited": "Unlimited",
   "ui.scan_interval_must_be_an_integer": "Scan interval must be an integer",
-  "ui.scan_interval_must_be_between_5_and_300_seconds": "Scan interval must be between 5 and 300 seconds",
+  "ui.scan_interval_must_be_between_5_and_300_seconds":
+    "Scan interval must be between 5 and 300 seconds",
   "ui.auth_files": "Auth files",
   "ui.header_name_is_duplicated": "Header {name} is duplicated",
   "ui.header_name_has_no_value": "Header {name} has no value",
@@ -808,28 +1023,48 @@ export const enUI = {
   "ui.set": "Set",
   "ui.remove": "Remove",
   "ui.delete_header_row": "Delete Header row",
-  "ui.inspection_interval_must_be_between_5_and_1440_minutes": "Inspection interval must be between 5 and 1440 minutes",
-  "ui.failure_threshold_must_be_between_2_and_10_events": "Failure threshold must be between 2 and 10 events",
-  "ui.recovery_threshold_must_be_between_1_and_10_events": "Recovery threshold must be between 1 and 10 events",
-  "ui.passive_failure_threshold_must_be_between_2_and_100_events": "Passive failure threshold must be between 2 and 100 events",
-  "ui.passive_failure_window_must_be_between_1_and_1440_minutes": "Passive failure window must be between 1 and 1440 minutes",
-  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes": "Passive circuit duration must be between 1 and 1440 minutes",
-  "ui.passive_circuit_requires_auto_disable_and_auto_enable": "Passive circuit requires auto-disable and auto-enable",
-  "ui.deletion_grace_must_be_between_24_and_8760_hours": "Deletion grace must be between 24 and 8760 hours",
-  "ui.deletes_per_run_must_be_between_1_and_100": "Deletes per run must be between 1 and 100",
-  "ui.update_check_interval_must_be_between_1_and_168_hours": "Update check interval must be between 1 and 168 hours",
-  "ui.anomaly_threshold_must_be_between_1_and_100_percent": "Abnormal threshold must be between 1% and 100%",
-  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts": "Minimum reliable sample must be between 1 and 10,000 accounts",
-  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes": "Trigger cooldown must be between 5 and 1,440 minutes",
-  "ui.confirm_the_risk_before_deleting_invalid_credentials": "Confirm the risk before enabling invalid-credential deletion",
+  "ui.inspection_interval_must_be_between_5_and_1440_minutes":
+    "Inspection interval must be between 5 and 1440 minutes",
+  "ui.failure_threshold_must_be_between_2_and_10_events":
+    "Failure threshold must be between 2 and 10 events",
+  "ui.recovery_threshold_must_be_between_1_and_10_events":
+    "Recovery threshold must be between 1 and 10 events",
+  "ui.passive_failure_threshold_must_be_between_2_and_100_events":
+    "Passive failure threshold must be between 2 and 100 events",
+  "ui.passive_failure_window_must_be_between_1_and_1440_minutes":
+    "Passive failure window must be between 1 and 1440 minutes",
+  "ui.passive_circuit_duration_must_be_between_1_and_1440_minutes":
+    "Passive circuit duration must be between 1 and 1440 minutes",
+  "ui.passive_circuit_requires_auto_disable_and_auto_enable":
+    "Passive circuit requires auto-disable and auto-enable",
+  "ui.deletion_grace_must_be_between_24_and_8760_hours":
+    "Deletion grace must be between 24 and 8760 hours",
+  "ui.deletes_per_run_must_be_between_1_and_100":
+    "Deletes per run must be between 1 and 100",
+  "ui.update_check_interval_must_be_between_1_and_168_hours":
+    "Update check interval must be between 1 and 168 hours",
+  "ui.anomaly_threshold_must_be_between_1_and_100_percent":
+    "Abnormal threshold must be between 1% and 100%",
+  "ui.anomaly_minimum_must_be_between_1_and_10000_accounts":
+    "Minimum reliable sample must be between 1 and 10,000 accounts",
+  "ui.anomaly_cooldown_must_be_between_5_and_1440_minutes":
+    "Trigger cooldown must be between 5 and 1,440 minutes",
+  "ui.confirm_the_risk_before_deleting_invalid_credentials":
+    "Confirm the risk before enabling invalid-credential deletion",
   "ui.auto_delete_requires_auto_disable": "Auto-delete requires auto-disable",
-  "ui.confirm_the_risk_before_enabling_auto_delete": "Confirm the risk before enabling auto-delete",
+  "ui.confirm_the_risk_before_enabling_auto_delete":
+    "Confirm the risk before enabling auto-delete",
   "ui.auto_update_requires_update_checks": "Auto-update requires update checks",
-  "ui.confirm_the_risk_before_enabling_auto_update": "Confirm the risk before enabling auto-update",
-  "ui.file_is_not_a_json_text_json_or_zip_file": "{file} is not a JSON, text JSON, or ZIP file",
-  "ui.select_at_most_count_files_at_once": "Select at most {count} files at once",
-  "ui.selected_files_exceed_12_mib_in_total": "Selected files exceed 12 MiB in total",
-  "ui.select_json_text_json_or_zip_files": "Select JSON, text JSON, or ZIP files",
+  "ui.confirm_the_risk_before_enabling_auto_update":
+    "Confirm the risk before enabling auto-update",
+  "ui.file_is_not_a_json_text_json_or_zip_file":
+    "{file} is not a JSON, text JSON, or ZIP file",
+  "ui.select_at_most_count_files_at_once":
+    "Select at most {count} files at once",
+  "ui.selected_files_exceed_12_mib_in_total":
+    "Selected files exceed 12 MiB in total",
+  "ui.select_json_text_json_or_zip_files":
+    "Select JSON, text JSON, or ZIP files",
   "ui.enter_json_content": "Enter JSON content",
   "ui.json_content_exceeds_12_mib": "JSON content exceeds 12 MiB",
   "ui.add_more": "Add more",
@@ -839,7 +1074,8 @@ export const enUI = {
   "ui.multiple_files": "Multiple files",
   "ui.text_json": "Text JSON",
   "ui.select_json_slash_text_slash_zip": "Select JSON / text / ZIP",
-  "ui.select_json_text_json_or_zip_files_2": "Select JSON, text JSON, or ZIP files",
+  "ui.select_json_text_json_or_zip_files_2":
+    "Select JSON, text JSON, or ZIP files",
   "ui.selected_import_files": "Selected import files",
   "ui.remove_file": "Remove {file}",
   "ui.json_text": "JSON text",
@@ -852,37 +1088,55 @@ export const enUI = {
   "ui.import_complete": "Import complete",
   "ui.import_started_in_background": "Account import started in the background",
   "ui.import_running_in_background": "Importing accounts in the background",
-  "ui.import_can_continue_after_closing": "You can close this dialog; the task will continue and remain visible in the operation log.",
+  "ui.import_can_continue_after_closing":
+    "You can close this dialog; the task will continue and remain visible in the operation log.",
   "ui.import_partially_complete": "Import partially complete",
   "ui.import_failed": "Import failed",
   "ui.imported_slash_total_written_to_cpa": "{imported}/{total} written to CPA",
   "ui.total": "Total",
   "ui.imported": "Imported",
   "ui.skipped_2": "Skipped",
-  "ui.existing_auth_files_will_not_be_overwritten": "Existing Auth files will not be overwritten",
+  "ui.existing_auth_files_will_not_be_overwritten":
+    "Existing Auth files will not be overwritten",
   "ui.refresh_token_is_missing": "Refresh token is missing",
-  "ui.id_token_was_synthesized_from_account_metadata": "ID token was synthesized from account metadata",
+  "ui.id_token_was_synthesized_from_account_metadata":
+    "ID token was synthesized from account metadata",
   "ui.account_id_is_missing": "Account ID is missing",
-  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file": "Filename was adjusted to avoid an existing Auth file",
-  "ui.zip_entry_is_not_a_json_or_text_json_file": "ZIP entry is not a JSON or text JSON file",
-  "ui.zip_entry_does_not_contain_valid_json": "ZIP entry does not contain valid JSON",
-  "ui.uploaded_file_does_not_contain_valid_json": "Uploaded file does not contain valid JSON",
+  "ui.filename_was_adjusted_to_avoid_an_existing_auth_file":
+    "Filename was adjusted to avoid an existing Auth file",
+  "ui.zip_entry_is_not_a_json_or_text_json_file":
+    "ZIP entry is not a JSON or text JSON file",
+  "ui.zip_entry_does_not_contain_valid_json":
+    "ZIP entry does not contain valid JSON",
+  "ui.uploaded_file_does_not_contain_valid_json":
+    "Uploaded file does not contain valid JSON",
   "ui.uploaded_file_is_empty": "Uploaded file is empty",
   "ui.duplicate_credential_record": "Duplicate credential record",
   "ui.target_auth_file_already_exists": "Target Auth file already exists",
-  "ui.could_not_verify_the_target_auth_filename": "Could not verify the target Auth filename",
-  "ui.cpa_rejected_the_converted_auth_file": "CPA rejected the converted Auth file",
+  "ui.could_not_verify_the_target_auth_filename":
+    "Could not verify the target Auth filename",
+  "ui.cpa_rejected_the_converted_auth_file":
+    "CPA rejected the converted Auth file",
   "ui.import_was_cancelled": "Import was cancelled",
   "ui.cpa_auth_storage_is_unavailable": "CPA Auth storage is unavailable",
-  "ui.count_unsupported_or_duplicate_record_s_were_skipped": "{count} unsupported or duplicate record(s) were skipped",
-  "ui.inspection_auto_deleted_count_expired_accounts": "Inspection auto-deleted {count} expired accounts",
-  "ui.count_auto_delete_operations_failed_and_will_retry_later": "{count} auto-delete operations failed and will retry later",
-  "ui.plugin_version_installed_restart_cpa_to_activate_it": "Plugin {version} installed; restart CPA to activate it",
-  "ui.plugin_version_installed_refresh_to_use_the_new_version": "Plugin {version} installed; refresh to use the new version",
-	 "ui.runtime_ownership_storage_is_unavailable": "Single-instance runtime state is unavailable, so background automation is safely paused; check data_dir write access",
-  "ui.runtime_hot_reload_restart_recommended": "A previous plugin instance is still detected in this CPA process and takeover is waiting for it to stop. Refreshing the page is usually enough. If background automation does not resume soon, restart CPA to clear the stale instance",
-  "ui.auto_update_did_not_complete_retry_it_from_update_status": "Auto-update did not complete; retry it from update status",
-  "ui.inspection_and_update_settings_saved": "Inspection and update settings saved",
+  "ui.count_unsupported_or_duplicate_record_s_were_skipped":
+    "{count} unsupported or duplicate record(s) were skipped",
+  "ui.inspection_auto_deleted_count_expired_accounts":
+    "Inspection auto-deleted {count} expired accounts",
+  "ui.count_auto_delete_operations_failed_and_will_retry_later":
+    "{count} auto-delete operations failed and will retry later",
+  "ui.plugin_version_installed_restart_cpa_to_activate_it":
+    "Plugin {version} installed; restart CPA to activate it",
+  "ui.plugin_version_installed_refresh_to_use_the_new_version":
+    "Plugin {version} installed; refresh to use the new version",
+  "ui.runtime_ownership_storage_is_unavailable":
+    "Single-instance runtime state is unavailable, so background automation is safely paused; check data_dir write access",
+  "ui.runtime_hot_reload_restart_recommended":
+    "A previous plugin instance is still detected in this CPA process and takeover is waiting for it to stop. Refreshing the page is usually enough. If background automation does not resume soon, restart CPA to clear the stale instance",
+  "ui.auto_update_did_not_complete_retry_it_from_update_status":
+    "Auto-update did not complete; retry it from update status",
+  "ui.inspection_and_update_settings_saved":
+    "Inspection and update settings saved",
   "ui.manual": "Manual",
   "ui.account_health_inspection": "Account health inspection",
   "ui.reading_cpa_status": "Reading CPA status",
@@ -891,7 +1145,8 @@ export const enUI = {
   "ui.quick_native_inspection": "Quick inspection",
   "ui.full_server_inspection": "Full server inspection",
   "ui.full_server_inspection_progress": "Full inspection progress",
-  "ui.completed_count_of_total_remaining_remaining": "Completed {completed}/{total} · {remaining} remaining",
+  "ui.completed_count_of_total_remaining_remaining":
+    "Completed {completed}/{total} · {remaining} remaining",
   "ui.remaining_count": "{count} remaining",
   "ui.manual_full_inspection": "Manual full inspection",
   "ui.scheduled_full_inspection": "Scheduled full inspection",
@@ -902,7 +1157,8 @@ export const enUI = {
   "ui.inspection_waiting_for_auth": "Waiting for management authentication",
   "ui.refresh_inspection": "Refresh inspection",
   "ui.version_version_available": "Version {version} available",
-  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store": "Current {version} · verified and installed through the CPA plugin store",
+  "ui.current_version_verified_and_installed_through_the_cpa_plugin_store":
+    "Current {version} · verified and installed through the CPA plugin store",
   "ui.release_notes": "Release notes",
   "ui.dismiss_inspection_message": "Dismiss inspection message",
   "ui.inspection_metrics": "Inspection metrics",
@@ -949,16 +1205,19 @@ export const enUI = {
   "ui.update_available": "Update available",
   "ui.up_to_date": "Up to date",
   "ui.cpa_server_version": "CPA server version",
-  "ui.cpa_server_version_description": "Connected server and official release status",
+  "ui.cpa_server_version_description":
+    "Connected server and official release status",
   "ui.server_build_date": "Server build date",
   "ui.new_server_version_available": "New server version {version} available",
   "ui.check_server_version": "Check server version",
   "ui.current_server_version_unavailable": "Current server version unavailable",
   "ui.server_version_check_failed": "Latest server version unavailable",
-  "ui.server_version_comparison_unavailable": "Server version cannot be compared",
+  "ui.server_version_comparison_unavailable":
+    "Server version cannot be compared",
   "ui.update_settings_saved": "Update settings saved",
   "ui.inspection_settings_saved": "Inspection settings saved",
-  "ui.settings_persistence_failed": "Settings could not be saved to the persistent CPA plugin configuration",
+  "ui.settings_persistence_failed":
+    "Settings could not be saved to the persistent CPA plugin configuration",
   "ui.failures_count": "Failures {count}",
   "ui.recovery_count": "Recovery {count}",
   "ui.unavailable": "Unavailable",
@@ -988,18 +1247,26 @@ export const enUI = {
   "ui.record_only": "Record only",
   "ui.operation_log_request_failed": "Operation log request failed",
   "ui.operation_log_exported_as_file": "Operation log exported as {file}",
-  "ui.operation_log_cleared_this_cleanup_event_was_retained": "Operation log cleared; this cleanup event was retained",
+  "ui.operation_log_cleared_this_cleanup_event_was_retained":
+    "Operation log cleared; this cleanup event was retained",
   "ui.account_manager_operation_log": "Account manager operation log",
   "ui.storage_state_error": "Storage state error",
-  "ui.usage_storage_error": "Account usage could not be persisted; displayed usage may be stale. Check that the plugin data_dir is writable.",
-  "ui.account_concurrency_storage_error": "Account concurrency settings could not be loaded or persisted. Check that the plugin data_dir is writable, then reload the plugin configuration.",
-  "ui.job_storage_error": "Batch job results could not be persisted; task state may be lost after restart. Check that the plugin data_dir is writable.",
-  "ui.retaining_the_latest_count_audit_records": "Retaining the latest {count} audit records",
-  "ui.retaining_count_audit_records_in_count_files": "Retaining {count} audit records in {files} files",
+  "ui.usage_storage_error":
+    "Account usage could not be persisted; displayed usage may be stale. Check that the plugin data_dir is writable.",
+  "ui.account_concurrency_storage_error":
+    "Account concurrency settings could not be loaded or persisted. Check that the plugin data_dir is writable, then reload the plugin configuration.",
+  "ui.job_storage_error":
+    "Batch job results could not be persisted; task state may be lost after restart. Check that the plugin data_dir is writable.",
+  "ui.retaining_the_latest_count_audit_records":
+    "Retaining the latest {count} audit records",
+  "ui.retaining_count_audit_records_in_count_files":
+    "Retaining {count} audit records in {files} files",
   "ui.extended_operation_history": "Extended history",
-  "ui.retain_operation_logs_beyond_latest_count": "Retain operation logs beyond the latest {count} records",
+  "ui.retain_operation_logs_beyond_latest_count":
+    "Retain operation logs beyond the latest {count} records",
   "ui.extended_operation_history_enabled": "Extended operation history enabled",
-  "ui.extended_operation_history_disabled": "Extended operation history disabled; only the latest 500 records remain",
+  "ui.extended_operation_history_disabled":
+    "Extended operation history disabled; only the latest 500 records remain",
   "ui.export": "Export",
   "ui.refresh_operation_log": "Refresh operation log",
   "ui.clear_operation_log": "Clear operation log",
@@ -1019,18 +1286,23 @@ export const enUI = {
   "ui.related_object": "Related object",
   "ui.operation_details": "Operation details",
   "ui.operation_timeline": "Recent operation timeline",
-  "ui.operation_target_summary": "{targets} targets · {succeeded} succeeded · {failed} failed · {skipped} skipped",
+  "ui.operation_target_summary":
+    "{targets} targets · {succeeded} succeeded · {failed} failed · {skipped} skipped",
   "ui.open_related_job": "Open related job",
   "ui.view_operation_details": "View operation details",
   "ui.no_matching_operation_records": "No matching operation records",
   "ui.operation_logs_per_page": "Operation logs per page",
-  "ui.fixed_count_operation_logs_per_page": "Fixed at {count} operation logs per page",
-  "ui.page_page_slash_pages_count_records": "Page {page}/{pages} · {count} records",
+  "ui.fixed_count_operation_logs_per_page":
+    "Fixed at {count} operation logs per page",
+  "ui.page_page_slash_pages_count_records":
+    "Page {page}/{pages} · {count} records",
   "ui.previous_log_page": "Previous log page",
   "ui.next_log_page": "Next log page",
   "ui.confirm_clear": "Confirm clear",
-  "ui.clear_the_current_count_operation_records": "Clear the current {count} operation records",
-  "ui.only_this_cleanup_event_will_remain_afterward": "Only this cleanup event will remain afterward.",
+  "ui.clear_the_current_count_operation_records":
+    "Clear the current {count} operation records",
+  "ui.only_this_cleanup_event_will_remain_afterward":
+    "Only this cleanup event will remain afterward.",
   "ui.succeeded_slash_failed_slash_skipped": "Succeeded / Failed / Skipped",
   "ui.operation_id": "Operation ID",
   "ui.category": "Category",
@@ -1082,34 +1354,49 @@ export const enUI = {
   "ui.some_operations_failed": "Some operations failed",
   "ui.operation_failed": "Operation failed",
   "ui.failure_basis": "Failure basis",
-  "ui.policy_failure_sample_limit_note": "At most {count} redacted account IDs are shown per reason; the count remains authoritative.",
+  "ui.policy_failure_sample_limit_note":
+    "At most {count} redacted account IDs are shown per reason; the count remains authoritative.",
   "ui.policy_failure_account_count": "{count} account failures",
   "ui.account_id_samples": "Account ID samples",
-  "ui.additional_similar_failures": "{count} additional failures of this type are not listed individually",
+  "ui.additional_similar_failures":
+    "{count} additional failures of this type are not listed individually",
   "ui.policy_failure_summary": "{reason} ({count})",
-  "ui.policy_failure_summary_multiple": "{reason} ({count}) across {categories} failure categories",
+  "ui.policy_failure_summary_multiple":
+    "{reason} ({count}) across {categories} failure categories",
   "ui.policy_failure_unknown": "Unclassified policy operation failure",
   "ui.policy_failure_auth_scan": "CPA Auth file list could not be read",
   "ui.policy_failure_auth_read": "Account Auth file could not be read",
-  "ui.policy_failure_account_identity_changed": "Account identity changed during the scan",
-  "ui.policy_failure_auth_source_changed": "Account Auth source changed during the scan",
+  "ui.policy_failure_account_identity_changed":
+    "Account identity changed during the scan",
+  "ui.policy_failure_auth_source_changed":
+    "Account Auth source changed during the scan",
   "ui.policy_failure_auth_filename_invalid": "Account Auth filename is invalid",
-  "ui.policy_failure_auth_projection": "Account metadata could not be parsed safely",
+  "ui.policy_failure_auth_projection":
+    "Account metadata could not be parsed safely",
   "ui.policy_failure_auth_json_invalid": "Account Auth JSON is invalid",
   "ui.policy_failure_auth_update": "Policy fields could not be generated",
   "ui.policy_failure_auth_save": "Account Auth file could not be saved",
-  "ui.policy_failure_model_policy_unavailable": "Conditional model-policy service is not ready",
-  "ui.policy_failure_model_policy_apply": "Conditional model policy could not be applied",
-  "ui.policy_failure_quota_metadata": "Codex plan and reset metadata probe failed",
-  "ui.policy_failure_state_persist": "Default-policy scan state could not be persisted",
+  "ui.policy_failure_model_policy_unavailable":
+    "Conditional model-policy service is not ready",
+  "ui.policy_failure_model_policy_apply":
+    "Conditional model policy could not be applied",
+  "ui.policy_failure_quota_metadata":
+    "Codex plan and reset metadata probe failed",
+  "ui.policy_failure_state_persist":
+    "Default-policy scan state could not be persisted",
   "ui.inspection_failure_auth_host": "Inspection cannot access the Auth host",
-  "ui.inspection_failure_account_not_editable": "Account is not safely editable",
-  "ui.inspection_failure_ownership_changed": "Automatic-disable ownership changed",
+  "ui.inspection_failure_account_not_editable":
+    "Account is not safely editable",
+  "ui.inspection_failure_ownership_changed":
+    "Automatic-disable ownership changed",
   "ui.inspection_failure_auth_read": "Account Auth file could not be read",
-  "ui.inspection_failure_auth_identity_changed": "Account identity changed during the write",
-  "ui.inspection_failure_auth_source_changed": "Account Auth source changed during the write",
+  "ui.inspection_failure_auth_identity_changed":
+    "Account identity changed during the write",
+  "ui.inspection_failure_auth_source_changed":
+    "Account Auth source changed during the write",
   "ui.inspection_failure_auth_json_invalid": "Account Auth JSON is invalid",
-  "ui.inspection_failure_auth_field_invalid": "Account disabled or priority field is invalid",
+  "ui.inspection_failure_auth_field_invalid":
+    "Account disabled or priority field is invalid",
   "ui.inspection_failure_auth_update": "CPA could not update the account state",
   "ui.inspection_failure_auth_save": "Account Auth file could not be saved",
   "ui.inspection_failure_mutation": "Inspection account write failed",
@@ -1140,12 +1427,14 @@ export const enUI = {
   "ui.cpa_management_api_unavailable": "CPA Management API unavailable",
   "ui.account_deletion_failed": "Account deletion failed",
   "ui.model_response_is_healthy": "Model response is healthy",
-  "ui.credential_usage_response_is_healthy": "Credential usage response is healthy",
+  "ui.credential_usage_response_is_healthy":
+    "Credential usage response is healthy",
   "ui.model_unavailable_or_missing": "Model unavailable or missing",
   "ui.upstream_quota_or_rate_limited_2": "Upstream quota or rate limited",
   "ui.model_test_timed_out": "Model test timed out",
   "ui.upstream_service_unavailable": "Upstream service unavailable",
-  "ui.could_not_validate_upstream_response": "Could not validate upstream response",
+  "ui.could_not_validate_upstream_response":
+    "Could not validate upstream response",
   "ui.circuit_recovers_at_time": "Recovers at {time}",
   "ui.cpa_native_evidence": "CPA native",
   "ui.passive_request_evidence": "Passive requests",
@@ -1153,11 +1442,13 @@ export const enUI = {
   "ui.provider_unsupported": "Provider unsupported",
   "ui.other_reason": "Other reason",
   "ui.manual_2": "Manual",
-  "ui.a_single_import_supports_at_most_count_accounts": "A single import supports at most {count} accounts",
+  "ui.a_single_import_supports_at_most_count_accounts":
+    "A single import supports at most {count} accounts",
   "ui.request_failed_code": "Request failed ({code})",
   "ui.export_failed_code": "Export failed ({code})",
   "ui.management_key_is_not_set": "Management Key is not set",
-  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store": "The account manager plugin was not found in the plugin store",
+  "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store":
+    "The account manager plugin was not found in the plugin store",
   "ui.account_deactivated": "Account deactivated",
   "ui.priority_value": "Priority value",
   "ui.note_value": "Note value",
@@ -1173,9 +1464,11 @@ export const enUI = {
   "ui.inspection_interval": "Inspection interval",
   "ui.codex_auth": "Codex Auth",
   "ui.server_model_inspection": "Server model inspection",
-  "ui.server_model_inspection_description": "Actively test account availability through CPA's secure model request path",
+  "ui.server_model_inspection_description":
+    "Actively test account availability through CPA's secure model request path",
   "ui.scheduled_model_probes": "Scheduled model probes",
-  "ui.probe_manually_disabled_accounts": "Probe manually disabled accounts on schedules",
+  "ui.probe_manually_disabled_accounts":
+    "Probe manually disabled accounts on schedules",
   "ui.model_probe_interval": "Probe interval",
   "ui.accounts_per_probe_run": "Accounts per probe run",
   "ui.codex_model": "Codex model",
@@ -1183,12 +1476,17 @@ export const enUI = {
   "ui.claude_model": "Claude model",
   "ui.gemini_model": "Gemini model",
   "ui.grok_xai_model": "Grok / xAI model",
-  "ui.active_probe_key_memory_note": "The Management Key stays in process memory only. After CPA restarts, an authenticated visit rearms scheduled probes.",
-  "ui.model_probe_interval_must_be_between_5_and_1440_minutes": "Model probe interval must be between 5 and 1440 minutes",
-  "ui.model_probe_batch_must_be_between_1_and_200_accounts": "Model probe batch must be between 1 and 200 accounts",
-  "ui.model_probe_models_are_required": "A test model is required for every supported provider",
+  "ui.active_probe_key_memory_note":
+    "The Management Key stays in process memory only. After CPA restarts, an authenticated visit rearms scheduled probes.",
+  "ui.model_probe_interval_must_be_between_5_and_1440_minutes":
+    "Model probe interval must be between 5 and 1440 minutes",
+  "ui.model_probe_batch_must_be_between_1_and_200_accounts":
+    "Model probe batch must be between 1 and 200 accounts",
+  "ui.model_probe_models_are_required":
+    "A test model is required for every supported provider",
   "ui.active_probe_ready": "Active probes ready",
-  "ui.active_probe_waiting_for_auth": "Active probes waiting for authentication",
+  "ui.active_probe_waiting_for_auth":
+    "Active probes waiting for authentication",
   "ui.model_probe": "Model probe",
   "ui.no_probe_result": "Not tested",
   "ui.last_model_probe_time": "Last active probe: {time}",
@@ -1216,9 +1514,11 @@ export const enUI = {
   "ui.attempts": "Attempts",
   "ui.notification_delivered": "External notification delivered",
   "ui.notification_failed": "External notification failed",
-  "ui.notification_rejected": "Notification URL rejected by the security policy",
+  "ui.notification_rejected":
+    "Notification URL rejected by the security policy",
   "ui.notification_queue_full": "Notification queue is full",
-	 "ui.notification_superseded": "Notification cancelled because a newer plugin instance took ownership",
+  "ui.notification_superseded":
+    "Notification cancelled because a newer plugin instance took ownership",
   "ui.review_state": "Review state",
   "ui.pending_review": "Pending review",
   "ui.review_resolved": "Resolved",
@@ -1227,42 +1527,58 @@ export const enUI = {
   "ui.mark_resolved": "Mark resolved",
   "ui.ignore_result": "Ignore result",
   "ui.reopen_review": "Reopen review",
-  "ui.review_safety_note": "An HTTP status alone is not enough evidence for destructive action. Retest or choose an explicit operator action.",
+  "ui.review_safety_note":
+    "An HTTP status alone is not enough evidence for destructive action. Retest or choose an explicit operator action.",
   "ui.change_started": "Account change started",
   "ui.review_updated": "Review state updated",
-  "ui.select_health_filter_before_scoped_inspection": "Select a health filter before starting a scoped inspection",
-  "ui.select_accounts_before_scoped_inspection": "Select at least one account before starting a scoped inspection",
+  "ui.select_health_filter_before_scoped_inspection":
+    "Select a health filter before starting a scoped inspection",
+  "ui.select_accounts_before_scoped_inspection":
+    "Select at least one account before starting a scoped inspection",
   "ui.export_inspection_results": "Export inspection results",
-  "ui.inspection_results_exported_as_file": "Inspection results exported as {file}",
+  "ui.inspection_results_exported_as_file":
+    "Inspection results exported as {file}",
   "ui.inspection_run_history": "Inspection run history",
   "ui.enable_filtered_results": "Enable filtered results",
   "ui.disable_filtered_results": "Disable filtered results",
-  "ui.no_editable_inspection_results": "The current inspection filter contains no editable accounts",
+  "ui.no_editable_inspection_results":
+    "The current inspection filter contains no editable accounts",
   "ui.live_inspection": "Live inspection",
   "ui.live_results_count": "{count} live results",
   "ui.waiting_for_first_live_result": "Waiting for the first result",
   "ui.live_updated_at": "Live update {time}",
   "ui.quota_and_usage": "Quota / usage",
   "ui.quota_reset_at": "Resets {time}",
-  "ui.passive_circuit_open_reason": "Temporarily disabled after repeated upstream failures",
-  "ui.quota_reset_reason": "Enabled because the quota recovery time was reached",
-  "ui.passive_circuit_recovered_reason": "Enabled after the temporary circuit period ended",
-  "ui.health_recovered_reason": "Enabled after fresh healthy evidence met the recovery threshold",
-  "ui.credential_refreshed_reason": "Enabled after the account credential was refreshed",
+  "ui.passive_circuit_open_reason":
+    "Temporarily disabled after repeated upstream failures",
+  "ui.quota_reset_reason":
+    "Enabled because the quota recovery time was reached",
+  "ui.passive_circuit_recovered_reason":
+    "Enabled after the temporary circuit period ended",
+  "ui.health_recovered_reason":
+    "Enabled after fresh healthy evidence met the recovery threshold",
+  "ui.credential_refreshed_reason":
+    "Enabled after the account credential was refreshed",
   "ui.quota_window_five_hour": "5-hour window",
   "ui.quota_window_seven_day": "7-day window",
   "ui.quota_window_multiple": "Multiple windows",
   "ui.quota_window_five_hour_fallback": "5-hour safety window",
   "ui.inspecting_now": "Inspecting now",
   "ui.batch_job_was_replaced": "The account batch was replaced by another job",
-  "ui.batch_job_did_not_finish_in_time": "The account batch did not finish in time; check the operation log",
-  "ui.account_change_finished_with_failures": "Account change completed: {succeeded} succeeded, {failed} failed",
+  "ui.batch_job_did_not_finish_in_time":
+    "The account batch did not finish in time; check the operation log",
+  "ui.account_change_finished_with_failures":
+    "Account change completed: {succeeded} succeeded, {failed} failed",
   "ui.account_change_completed": "Updated {count} accounts",
-  "ui.no_recommended_actions_available": "No matching recommended actions are available",
-  "ui.remediation_finished_with_result": "Completed with {succeeded} succeeded, {failed} failed, and {skipped} skipped",
-  "ui.remediation_completed_count": "Completed recommended actions for {count} accounts",
+  "ui.no_recommended_actions_available":
+    "No matching recommended actions are available",
+  "ui.remediation_finished_with_result":
+    "Completed with {succeeded} succeeded, {failed} failed, and {skipped} skipped",
+  "ui.remediation_completed_count":
+    "Completed recommended actions for {count} accounts",
   "ui.inspection_remediation_queue": "Inspection remediation queue",
-  "ui.inspection_remediation_description": "Review recommendations and execute verified account actions",
+  "ui.inspection_remediation_description":
+    "Review recommendations and execute verified account actions",
   "ui.recommended_action_count": "{count} recommended actions",
   "ui.suggested_delete": "Suggested delete",
   "ui.suggested_disable": "Suggested disable",
@@ -1283,22 +1599,29 @@ export const enUI = {
   "ui.executing_remediation": "Executing",
   "ui.confirm_and_execute": "Confirm and execute",
   "ui.deletion_cannot_be_undone": "Deletion cannot be undone",
-  "ui.bulk_inspection_delete_revalidates_each_file": "Only high-confidence delete or relogin recommendations are accepted. Every CPA Auth file and physical revision is revalidated immediately before deletion.",
+  "ui.bulk_inspection_delete_revalidates_each_file":
+    "Only high-confidence delete or relogin recommendations are accepted. Every CPA Auth file and physical revision is revalidated immediately before deletion.",
   "ui.automation_policy": "Automation Policy",
   "ui.automation_policy_saved": "Automation policy saved",
-  "ui.automation_policy_scan_started": "Automation policy started in the background",
+  "ui.automation_policy_scan_started":
+    "Automation policy started in the background",
   "ui.run_automation_policy_after_save": "Run the saved policy?",
-  "ui.run_automation_policy_after_save_description": "Saving does not execute account changes. Start a background scan now, or leave the policy for its next scheduled run.",
+  "ui.run_automation_policy_after_save_description":
+    "Saving does not execute account changes. Start a background scan now, or leave the policy for its next scheduled run.",
   "ui.save_only": "Save only",
   "ui.run_asynchronously": "Run in background",
   "ui.global_default_policy": "Global default policy",
-  "ui.global_default_policy_description": "Fallback actions for newly discovered Auth files that are not overridden by a matching rule",
+  "ui.global_default_policy_description":
+    "Fallback actions for newly discovered Auth files that are not overridden by a matching rule",
   "ui.conditional_policies": "Conditional policies",
-  "ui.conditional_policies_description": "Match provider, account or plan type, and email suffix with nested conditions and priority-based action overrides",
+  "ui.conditional_policies_description":
+    "Match provider, account or plan type, and email suffix with nested conditions and priority-based action overrides",
   "ui.add_policy": "Add policy",
   "ui.no_conditional_policies": "No conditional policies",
-  "ui.no_conditional_policies_description": "Add a rule to automate different account groups independently.",
-  "ui.higher_priority_policy_overrides_actions": "Higher-priority matching policies override only the actions they manage.",
+  "ui.no_conditional_policies_description":
+    "Add a rule to automate different account groups independently.",
+  "ui.higher_priority_policy_overrides_actions":
+    "Higher-priority matching policies override only the actions they manage.",
   "ui.policy_name": "Policy name",
   "ui.policy_priority": "Policy priority",
   "ui.move_policy_up": "Move policy up",
@@ -1309,8 +1632,10 @@ export const enUI = {
   "ui.condition_operator": "Condition operator",
   "ui.match_all": "Match all",
   "ui.match_any": "Match any",
-  "ui.condition_match_all_hint": "An account must satisfy every condition in this group",
-  "ui.condition_match_any_hint": "An account matches when it satisfies any condition in this group",
+  "ui.condition_match_all_hint":
+    "An account must satisfy every condition in this group",
+  "ui.condition_match_any_hint":
+    "An account matches when it satisfies any condition in this group",
   "ui.add_condition": "Add condition",
   "ui.add_condition_group": "Add nested group",
   "ui.delete_condition_group": "Delete condition group",
@@ -1326,7 +1651,8 @@ export const enUI = {
   "ui.model_ids": "Model IDs",
   "ui.remediation_result": "Remediation result",
   "ui.ai_providers": "AI Providers",
-  "ui.ai_providers_description": "Manage the AI provider channels configured in CPA: OpenAI-compatible providers, Gemini, Interactions, Claude, Codex, xAI, Vertex, and generic API keys.",
+  "ui.ai_providers_description":
+    "Manage the AI provider channels configured in CPA: OpenAI-compatible providers, Gemini, Interactions, Claude, Codex, xAI, Vertex, and generic API keys.",
   "ui.add_ai_provider": "Add AI provider",
   "ui.choose_ai_provider_type": "Choose provider type",
   "ui.ai_provider_type": "Provider type",
@@ -1338,16 +1664,20 @@ export const enUI = {
   "ui.ai_provider_name": "Provider name",
   "ui.ai_provider_base_url": "Base URL",
   "ui.ai_provider_api_key": "API key",
-  "ui.ai_provider_edit_key_note": "Leave the API key empty to keep the existing key unchanged.",
-  "ui.ai_provider_key_placeholder": "sk-... (leave blank to keep the existing key)",
-  "ui.ai_provider_key_keep_placeholder": "Enter a new key to replace the current credential",
+  "ui.ai_provider_edit_key_note":
+    "Leave the API key empty to keep the existing key unchanged.",
+  "ui.ai_provider_key_placeholder":
+    "sk-... (leave blank to keep the existing key)",
+  "ui.ai_provider_key_keep_placeholder":
+    "Enter a new key to replace the current credential",
   "ui.ai_provider_current_key": "Current key",
   "ui.ai_provider_field_prefix": "Model prefix",
   "ui.ai_provider_field_priority": "Priority (higher preferred)",
   "ui.ai_provider_field_weight": "Weight (weighted round-robin)",
   "ui.ai_provider_field_proxy_url": "Proxy URL override",
   "ui.ai_provider_field_excluded_models": "Excluded models (one per line)",
-  "ui.ai_provider_field_excluded_models_placeholder": "e.g. gpt-4o-mini\nclaude-sonnet-4-*",
+  "ui.ai_provider_field_excluded_models_placeholder":
+    "e.g. gpt-4o-mini\nclaude-sonnet-4-*",
   "ui.ai_provider_field_headers": "Extra headers (Key: value, one per line)",
   "ui.ai_provider_field_models": "Models",
   "ui.ai_provider_field_model_name": "Upstream name",
@@ -1361,28 +1691,42 @@ export const enUI = {
   "ui.ai_provider_field_add_api_key": "Add API key",
   "ui.ai_provider_field_support_prompt_cache_key": "Support prompt cache key",
   "ui.ai_provider_field_disable_cooling": "Disable cooling",
-  "ui.ai_provider_field_request_retry": "Request retry override (blank uses global, 0 disables)",
-  "ui.ai_provider_field_request_scoped_errors": "Request scoped error rules (one JSON object per line)",
+  "ui.ai_provider_field_request_retry":
+    "Request retry override (blank uses global, 0 disables)",
+  "ui.ai_provider_field_request_scoped_errors":
+    "Request scoped error rules (one JSON object per line)",
   "ui.ai_provider_field_alpha_search": "Alpha search",
   "ui.ai_provider_field_websockets": "WebSockets",
-  "ui.ai_provider_field_rebuild_mid_system_message": "Rebuild mid-system message",
+  "ui.ai_provider_field_rebuild_mid_system_message":
+    "Rebuild mid-system message",
   "ui.ai_provider_field_fingerprint_profile": "Fingerprint profile",
   "ui.ai_provider_field_fingerprint_default": "Default",
   "ui.ai_provider_field_fingerprint_claude_code": "Claude Code CLI",
   "ui.ai_provider_disabled": "Disabled",
   "ui.ai_provider_channel_empty": "No channels configured",
-  "ui.ai_provider_channel_unavailable": "Channel temporarily unavailable; it was not treated as empty.",
-  "ui.ai_provider_response_invalid": "CPA returned an unrecognized channel response.",
-  "ui.ai_provider_storage_unavailable": "Persisted channel data is temporarily unavailable.",
+  "ui.ai_provider_channel_unavailable":
+    "Channel temporarily unavailable; it was not treated as empty.",
+  "ui.ai_provider_response_invalid":
+    "CPA returned an unrecognized channel response.",
+  "ui.ai_provider_storage_unavailable":
+    "Persisted channel data is temporarily unavailable.",
   "ui.ai_provider_channel_openai_compatibility": "OpenAI-compatible",
-  "ui.ai_provider_channel_openai_compatibility_description": "Connect any OpenAI-compatible upstream service with a name, Base URL, and API key.",
-  "ui.ai_provider_channel_gemini_description": "Add a Gemini API key with an optional custom Base URL.",
-  "ui.ai_provider_channel_interactions_description": "Add an Interactions API key with an optional custom Base URL.",
-  "ui.ai_provider_channel_claude_description": "Add a Claude API key with an optional custom Base URL.",
-  "ui.ai_provider_channel_codex_description": "Add a Codex API key with an optional custom Base URL.",
-  "ui.ai_provider_channel_xai_description": "Add an xAI API key with an optional custom Base URL.",
-  "ui.ai_provider_channel_vertex_description": "Add a Vertex-compatible API key with an optional custom Base URL.",
-  "ui.ai_provider_channel_api_keys_description": "Add one generic API key (OpenAI-compatible string list).",
+  "ui.ai_provider_channel_openai_compatibility_description":
+    "Connect any OpenAI-compatible upstream service with a name, Base URL, and API key.",
+  "ui.ai_provider_channel_gemini_description":
+    "Add a Gemini API key with an optional custom Base URL.",
+  "ui.ai_provider_channel_interactions_description":
+    "Add an Interactions API key with an optional custom Base URL.",
+  "ui.ai_provider_channel_claude_description":
+    "Add a Claude API key with an optional custom Base URL.",
+  "ui.ai_provider_channel_codex_description":
+    "Add a Codex API key with an optional custom Base URL.",
+  "ui.ai_provider_channel_xai_description":
+    "Add an xAI API key with an optional custom Base URL.",
+  "ui.ai_provider_channel_vertex_description":
+    "Add a Vertex-compatible API key with an optional custom Base URL.",
+  "ui.ai_provider_channel_api_keys_description":
+    "Add one generic API key (OpenAI-compatible string list).",
   "ui.ai_provider_channel_gemini": "Gemini",
   "ui.ai_provider_channel_interactions": "Interactions",
   "ui.ai_provider_channel_claude": "Claude",
@@ -1391,13 +1735,16 @@ export const enUI = {
   "ui.ai_provider_channel_vertex": "Vertex",
   "ui.ai_provider_channel_api_keys": "API keys",
   "ui.ai_provider_channel_opencode": "OpenCode Go",
-  "ui.opencode_edit_cookie_note": "Enter a new cookie to update this workspace credential; leave it empty to keep the current one.",
+  "ui.opencode_edit_cookie_note":
+    "Enter a new cookie to update this workspace credential; leave it empty to keep the current one.",
   "ui.ai_provider_channel_opencode_zen": "OpenCode Zen",
-  "ui.opencode_zen_login_description": "Manage an OpenCode Zen API key. Point the base URL at the Zen gateway (https://opencode.ai/zen) or at a self-hosted opencode-cc bridge (e.g. http://localhost:8787).",
+  "ui.opencode_zen_login_description":
+    "Manage an OpenCode Zen API key. Point the base URL at the Zen gateway (https://opencode.ai/zen) or at a self-hosted opencode-cc bridge (e.g. http://localhost:8787).",
   "ui.opencode_zen_base_url": "Base URL (Zen or opencode-cc)",
   "ui.opencode_zen_api_key": "Zen API Key",
   "ui.opencode_zen_key_set": "Key saved",
-  "ui.opencode_zen_edit_key_note": "Enter a new key to rotate it; leave empty to keep the stored key.",
+  "ui.opencode_zen_edit_key_note":
+    "Enter a new key to rotate it; leave empty to keep the stored key.",
   "ui.view_ai_provider": "View {name}",
   "ui.test_ai_provider": "Test {name}",
   "ui.test_ai_provider_title": "Test channel: {name}",
@@ -1420,9 +1767,12 @@ export const enUI = {
   "ui.total_accounts_and_providers": "Accounts and provider credentials",
   "ui.loading": "Loading",
   "ui.ai_provider_concurrency": "Concurrency",
-  "ui.ai_provider_concurrency_observable_only": "Current CPA can observe provider concurrency only; provider concurrency limits cannot be configured here",
-  "ui.ai_provider_model_catalog_unavailable": "Model catalog unavailable; continuing with configured models",
-  "ui.ai_provider_no_models_available": "No models available: the catalog is unavailable and this channel has no configured models",
+  "ui.ai_provider_concurrency_observable_only":
+    "Current CPA can observe provider concurrency only; provider concurrency limits cannot be configured here",
+  "ui.ai_provider_model_catalog_unavailable":
+    "Model catalog unavailable; continuing with configured models",
+  "ui.ai_provider_no_models_available":
+    "No models available: the catalog is unavailable and this channel has no configured models",
   "ui.ai_provider_usage": "Usage",
   "ui.ai_provider_runtime_details": "Runtime details",
   "ui.ai_provider_active": "Active",
@@ -1439,10 +1789,12 @@ export const enUI = {
   "ui.ai_provider_total": "Total",
   "ui.ai_provider_cost": "Cost",
   "ui.ai_provider_unlimited_concurrency": "Unlimited",
-  "ui.provider_credentials_enabled_disabled": "{enabled} enabled · {disabled} disabled",
+  "ui.provider_credentials_enabled_disabled":
+    "{enabled} enabled · {disabled} disabled",
   "ui.credential_runtime": "Credential runtime details",
   "ui.runtime_loaded": "CPA runtime credential loaded",
-  "ui.list_metadata_fallback": "Using list metadata (runtime details unsupported by CPA)",
+  "ui.list_metadata_fallback":
+    "Using list metadata (runtime details unsupported by CPA)",
   "ui.credential_account_id": "Credential account ID",
 
   "ui.observability_console": "Observability console",

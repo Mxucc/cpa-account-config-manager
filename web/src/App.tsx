@@ -103,6 +103,7 @@ import type {
   ModelTestResult,
   ResultExportFormat,
   TargetScope,
+  UsageLimitsSnapshot,
 } from "./types";
 import { accountConcurrencyLimitLabel } from "./accountConcurrency";
 
@@ -237,6 +238,7 @@ function AccountManagerApp() {
   const [modelTestExperimentalAvailable, setModelTestExperimentalAvailable] = useState(false);
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [sub2APICreditUsageEnabled, setSub2APICreditUsageEnabled] = useState(false);
+  const [usageLimits, setUsageLimits] = useState<UsageLimitsSnapshot | null>(null);
   const modelTestExperimentRequest = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
   const [deletePreview, setDeletePreview] = useState<AccountDeletePreview | null>(null);
@@ -367,6 +369,33 @@ function AccountManagerApp() {
       setSub2APICreditUsageEnabled(false);
     }
   }, [authState]);
+
+  useEffect(() => {
+    if (authState !== "ready") {
+      setUsageLimits(null);
+      return;
+    }
+    let cancelled = false;
+    let timer = 0;
+    const controller = new AbortController();
+    const poll = async () => {
+      try {
+        const snapshot = await api.getUsageLimits(controller.signal);
+        if (cancelled) return;
+        setUsageLimits(snapshot);
+      } catch (error) {
+        if (!cancelled && !controller.signal.aborted && error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      } finally {
+        if (!cancelled && !controller.signal.aborted) timer = window.setTimeout(() => void poll(), 10000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [authState, handleAPIError]);
 
   const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters, requestedSort: AccountSort = accountSort, signal?: AbortSignal) => {
     if (authState !== "ready") return;
@@ -1287,7 +1316,7 @@ function AccountManagerApp() {
                   </td>
                   <td><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
                   <td><AccountTypeCell account={account} /></td>
-                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled={sub2APICreditUsageEnabled} /></td>
+                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled={sub2APICreditUsageEnabled} usageLimits={usageLimits} /></td>
 									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
 									<td><AccountConcurrencyCell account={account} /></td>
 									<td><AccountLifecycleTime value={account.created_at} /></td>

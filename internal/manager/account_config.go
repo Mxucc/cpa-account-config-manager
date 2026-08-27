@@ -33,6 +33,7 @@ type AccountEditableConfig struct {
 	ModelPolicy             *AccountModelPolicySummary     `json:"model_policy"`
 	Concurrency             AccountConcurrencySummary      `json:"concurrency"`
 	ConcurrencyAvailability AccountConcurrencyAvailability `json:"account_concurrency"`
+	UsageLimits             UsageLimitsConfig              `json:"usage_limits"`
 	Credential              *CredentialSummary             `json:"credential,omitempty"`
 }
 
@@ -71,6 +72,7 @@ func (s *AccountService) EditableConfig(ctx context.Context, rawAccountID string
 		ModelPolicy:             cloneAccountModelPolicySummary(account.ModelPolicy),
 		Concurrency:             account.Concurrency,
 		ConcurrencyAvailability: s.accountConcurrencyAvailability(),
+		UsageLimits:             usageLimitsConfigForAccount(s.usageLimits, account.ID),
 		Credential:              &credential,
 	}, nil
 }
@@ -94,4 +96,11 @@ func (a *App) handleAccountConfig(ctx context.Context, req cpaapi.ManagementRequ
 	response := jsonResponse(http.StatusOK, config)
 	response.Headers.Set("Cache-Control", "no-store")
 	return response
+}
+
+func usageLimitsConfigForAccount(service *UsageLimitService, accountID string) UsageLimitsConfig {
+	if service == nil {
+		return UsageLimitsConfig{}
+	}
+	return service.Get(AccountUsageLimitsScope(accountID)).Config
 }

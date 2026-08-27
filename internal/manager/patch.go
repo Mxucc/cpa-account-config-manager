@@ -29,16 +29,17 @@ type HeaderPatch struct {
 }
 
 type BatchPatch struct {
-	Disabled         *bool             `json:"disabled,omitempty"`
-	Priority         *int              `json:"priority,omitempty"`
-	Note             *string           `json:"note,omitempty"`
-	Prefix           *string           `json:"prefix,omitempty"`
-	ProxyURL         *string           `json:"proxy_url,omitempty"`
-	ProxyProfileID   *string           `json:"proxy_profile_id,omitempty"`
-	Websockets       *bool             `json:"websockets,omitempty"`
-	Headers          *HeaderPatch      `json:"headers,omitempty"`
-	ModelPolicy      *ModelPolicyPatch `json:"model_policy,omitempty"`
-	ConcurrencyLimit *int              `json:"concurrency_limit,omitempty"`
+	Disabled         *bool              `json:"disabled,omitempty"`
+	Priority         *int               `json:"priority,omitempty"`
+	Note             *string            `json:"note,omitempty"`
+	Prefix           *string            `json:"prefix,omitempty"`
+	ProxyURL         *string            `json:"proxy_url,omitempty"`
+	ProxyProfileID   *string            `json:"proxy_profile_id,omitempty"`
+	Websockets       *bool              `json:"websockets,omitempty"`
+	Headers          *HeaderPatch       `json:"headers,omitempty"`
+	ModelPolicy      *ModelPolicyPatch  `json:"model_policy,omitempty"`
+	ConcurrencyLimit *int               `json:"concurrency_limit,omitempty"`
+	UsageLimits      *UsageLimitsConfig `json:"usage_limits,omitempty"`
 
 	resolvedModelFields map[string]any
 }
@@ -133,6 +134,13 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 		}
 		patch.ModelPolicy = &policy
 	}
+	if patch.UsageLimits != nil {
+		config := normalizeUsageLimitsConfig(*patch.UsageLimits)
+		if err := validateUsageLimitsConfig(config); err != nil {
+			return BatchPatch{}, err
+		}
+		patch.UsageLimits = &config
+	}
 	if patch.ConcurrencyLimit != nil && (*patch.ConcurrencyLimit < 0 || *patch.ConcurrencyLimit > MaxAccountConcurrencyLimit) {
 		return BatchPatch{}, fmt.Errorf("account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
 	}
@@ -144,7 +152,7 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 
 func (patch BatchPatch) Empty() bool {
 	return patch.Disabled == nil && patch.Priority == nil && patch.Note == nil &&
-		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil
+		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil && patch.UsageLimits == nil
 }
 
 func (patch BatchPatch) Summary() PatchSummary {
@@ -175,6 +183,9 @@ func (patch BatchPatch) Summary() PatchSummary {
 	}
 	if patch.ConcurrencyLimit != nil {
 		fields = append(fields, "concurrency_limit")
+	}
+	if patch.UsageLimits != nil {
+		fields = append(fields, "usage_limits")
 	}
 	summary := PatchSummary{Fields: fields, ProxyMutation: patch.ProxyURL != nil}
 	if patch.Headers != nil {
@@ -252,7 +263,7 @@ func (patch BatchPatch) HasFieldUpdates() bool {
 }
 
 func (patch BatchPatch) HasPluginUpdates() bool {
-	return patch.ConcurrencyLimit != nil
+	return patch.ConcurrencyLimit != nil || patch.UsageLimits != nil
 }
 
 func cloneBatchPatch(patch BatchPatch) BatchPatch {
@@ -299,6 +310,10 @@ func cloneBatchPatch(patch BatchPatch) BatchPatch {
 	if patch.ConcurrencyLimit != nil {
 		value := *patch.ConcurrencyLimit
 		clone.ConcurrencyLimit = &value
+	}
+	if patch.UsageLimits != nil {
+		value := normalizeUsageLimitsConfig(*patch.UsageLimits)
+		clone.UsageLimits = &value
 	}
 	if patch.resolvedModelFields != nil {
 		clone.resolvedModelFields = make(map[string]any, len(patch.resolvedModelFields))

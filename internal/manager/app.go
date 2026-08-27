@@ -76,6 +76,7 @@ type App struct {
 	requestHooks    *RequestHook
 	concurrency     *AccountConcurrencyService
 	providerRuntime *ProviderRuntimeTracker
+	usageLimits     *UsageLimitService
 	hostSchema      uint32
 	runtime         *RuntimeOwnership
 	experiments     *ExperimentalSettingsService
@@ -125,7 +126,10 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
 	providerRuntime.SetAccountConcurrency(concurrency)
-	requestHooks := NewRequestHook(providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
+	usageLimits := NewUsageLimitService(usage, creditUsage)
+	accounts.SetUsageLimits(usageLimits)
+	jobs.SetUsageLimits(usageLimits)
+	requestHooks := NewRequestHook(usageLimits, providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -162,6 +166,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		requestHooks:    requestHooks,
 		concurrency:     concurrency,
 		providerRuntime: providerRuntime,
+		usageLimits:     usageLimits,
 		hostSchema:      cpaapi.SchemaVersion,
 		runtime:         runtime,
 		experiments:     experiments,
@@ -238,6 +243,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.updates.Configure(config)
 	a.force.Configure(config)
 	a.usage.Configure(config)
+	a.usageLimits.Configure(config)
 	a.reconcileOperationSources()
 }
 
@@ -265,6 +271,7 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	}
 	a.usage.Observe(record)
 	a.providerRuntime.ObserveUsage(record)
+	a.usageLimits.ObserveUsage(record)
 	a.inspection.Observe(record)
 }
 
@@ -527,6 +534,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/usage-limits", Description: "Read usage limits for one AI provider."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/ai-providers/usage-limits", Description: "Save usage limits for one AI provider."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/proxy-profiles", Description: "List redacted reusable proxy profiles."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/proxy-profiles", Description: "Create a reusable proxy profile."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/proxy-profiles", Description: "Update a reusable proxy profile."},
@@ -731,6 +740,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":
 		return a.handleAIProviderProbe(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/usage-limits":
+		return a.handleProviderUsageLimits(req, false)
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/ai-providers/usage-limits":
+		return a.handleProviderUsageLimits(req, true)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/ai-providers/runtime":
 		if resolveManagementKey(req.Headers) == "" {
 			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})

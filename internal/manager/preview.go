@@ -188,6 +188,9 @@ func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPat
 	if errPatch != nil {
 		return previewSnapshot{}, errPatch
 	}
+	if patch.UsageLimits != nil && (scope.Mode != "selected" || len(scope.IDs) != 1) {
+		return previewSnapshot{}, fmt.Errorf("usage limits can only be edited for one selected account")
+	}
 	if patch.ConcurrencyLimit != nil && (s.concurrency == nil || !s.concurrency.Availability().Supported) {
 		return previewSnapshot{}, ErrAccountConcurrencyUnsupported
 	}

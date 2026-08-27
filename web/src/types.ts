@@ -94,6 +94,43 @@ export interface AccountModelPolicySummary {
 	excluded_count: number;
 }
 
+export type UsageLimitBasis = "account" | "credit";
+export type UsageLimitWindow = "five_hour" | "seven_day";
+
+export interface UsageLimitRule {
+  enabled: boolean;
+  basis: UsageLimitBasis;
+  window?: UsageLimitWindow;
+  percent?: number;
+  amount_usd?: number;
+}
+
+export interface UsageModelLimit {
+  model: string;
+  rule: UsageLimitRule;
+  within_total: boolean;
+}
+
+export interface UsageLimitsConfig {
+  enabled: boolean;
+  total?: UsageLimitRule;
+  models?: UsageModelLimit[];
+}
+
+export interface UsageLimitsScope {
+  kind: "account" | "provider";
+  id: string;
+}
+
+export interface UsageLimitsSnapshot {
+  scope: UsageLimitsScope;
+  config: UsageLimitsConfig;
+  credit_used_usd: number;
+  credit_model_used_usd?: Record<string, number>;
+  updated_at?: string;
+  storage_error?: string;
+}
+
 export interface AccountEditableConfig {
 	account_id: string;
 	disabled: boolean;
@@ -107,6 +144,7 @@ export interface AccountEditableConfig {
 	model_policy: AccountModelPolicySummary | null;
 	concurrency?: AccountConcurrencySummary;
 	account_concurrency?: AccountConcurrencyAvailability;
+	usage_limits: UsageLimitsConfig;
 	credential?: CredentialSummary;
 }
 
@@ -445,6 +483,7 @@ export interface BatchPatch {
   headers?: HeaderPatch;
 	model_policy?: ModelPolicyPatch;
 	concurrency_limit?: number;
+	usage_limits?: UsageLimitsConfig;
 }
 
 export interface TargetScope {

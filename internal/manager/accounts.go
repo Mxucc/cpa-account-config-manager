@@ -62,6 +62,7 @@ type AccountService struct {
 	host          AuthHost
 	usage         UsageSnapshotReader
 	concurrency   *AccountConcurrencyService
+	usageLimits   *UsageLimitService
 	observer      interface{ ObserveAccounts([]Account) }
 	detailCacheMu sync.Mutex
 	detailCache   map[string]accountDetailCacheEntry
@@ -77,6 +78,13 @@ func (s *AccountService) SetObserver(observer interface{ ObserveAccounts([]Accou
 		return
 	}
 	s.observer = observer
+}
+
+func (s *AccountService) SetUsageLimits(service *UsageLimitService) {
+	if s == nil {
+		return
+	}
+	s.usageLimits = service
 }
 
 func (s *AccountService) SetAccountConcurrency(concurrency *AccountConcurrencyService) {

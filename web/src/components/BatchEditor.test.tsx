@@ -6,6 +6,14 @@ import { BatchEditor } from "./BatchEditor";
 describe("BatchEditor", () => {
   beforeEach(() => cleanup());
 	const loadModels = async () => ({ models: [], total: 1, eligible: 1, loaded: 1, failed: 0, read_only: 0, missing: 0 });
+	const accountConfig = (overrides: Record<string, unknown> = {}) => ({
+		account_id: "auth-1", disabled: false, priority: 0, note: "", prefix: "", proxy: "", proxy_configured: false,
+		websockets: false, header_names: [], model_policy: null,
+		concurrency: { supported: true, active: 0, limit: 0 },
+		account_concurrency: { supported: true, host_schema_version: 2, required_schema_version: 2 },
+		usage_limits: { enabled: false, total: { enabled: false, basis: "account" as const, window: "five_hour" as const, percent: 80, amount_usd: 0 }, models: [] },
+		...overrides,
+	});
 
   it("submits only opted-in fields", async () => {
     const user = userEvent.setup();
@@ -20,12 +28,12 @@ describe("BatchEditor", () => {
     expect(submit).toHaveBeenCalledWith({ note: "batch-note" });
   });
 
-	it("submits an explicitly enabled account concurrency limit", async () => {
+	it("submits the account concurrency limit only from a single-account configuration", async () => {
 		const user = userEvent.setup();
 		const submit = vi.fn();
-		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} accountConcurrency={{ supported: true, host_schema_version: 2, required_schema_version: 2 }} onClose={() => undefined} onSubmit={submit} />);
+		render(<BatchEditor scopeLabel="operator@example.com" loadModels={loadModels} loadCurrentConfig={async () => accountConfig()} onClose={() => undefined} onSubmit={submit} />);
 
-		await user.click(screen.getByRole("checkbox", { name: "账号并发" }));
+		await user.click(await screen.findByRole("checkbox", { name: "账号并发" }));
 		await user.clear(screen.getByLabelText("账号并发值"));
 		await user.type(screen.getByLabelText("账号并发值"), "3");
 		await user.click(screen.getByRole("button", { name: "生成预览" }));
@@ -33,36 +41,38 @@ describe("BatchEditor", () => {
 		expect(submit).toHaveBeenCalledWith({ concurrency_limit: 3 });
 	});
 
-	it("explains and disables account concurrency on legacy CPA hosts", () => {
-		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} accountConcurrency={{ supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" }} onClose={() => undefined} onSubmit={() => undefined} />);
+	it("does not expose the account limit in batch scope", () => {
+		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} onClose={() => undefined} onSubmit={() => undefined} />);
 
-		expect(screen.getByRole("checkbox", { name: "账号并发" })).toBeDisabled();
-		expect(screen.getByText(/当前 CPA 版本不支持账号并发控制/)).toBeInTheDocument();
-		expect(screen.getByLabelText("账号并发值")).toBeDisabled();
+		expect(screen.queryByRole("checkbox", { name: "账号并发" })).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("账号并发值")).not.toBeInTheDocument();
+	});
+
+	it("explains and disables account concurrency on legacy CPA hosts", async () => {
+		render(<BatchEditor scopeLabel="operator@example.com" loadModels={loadModels} loadCurrentConfig={async () => accountConfig({
+		concurrency: { supported: false, active: 0, limit: 0 },
+		account_concurrency: { supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" },
+	})} onClose={() => undefined} onSubmit={() => undefined} />);
+
+	expect(await screen.findByRole("checkbox", { name: "账号并发" })).toBeDisabled();
+	expect(screen.getByText(/当前 CPA 版本不支持账号并发控制/)).toBeInTheDocument();
+	expect(screen.getByLabelText("账号并发值")).toBeDisabled();
 	});
 
 	it("loads current single-account values while keeping the patch explicitly opted in", async () => {
 		const user = userEvent.setup();
 		const submit = vi.fn();
-		let resolveConfig: ((value: {
-			account_id: string; disabled: boolean; priority: number; note: string; prefix: string; proxy: string;
-			proxy_configured: boolean; websockets: boolean; header_names: string[];
-			model_policy: { mode: "allow_only"; models: string[]; excluded_count: number };
-		}) => void) | undefined;
-		const loadCurrentConfig = vi.fn(() => new Promise<{
-			account_id: string; disabled: boolean; priority: number; note: string; prefix: string; proxy: string;
-			proxy_configured: boolean; websockets: boolean; header_names: string[];
-			model_policy: { mode: "allow_only"; models: string[]; excluded_count: number };
-		}>((resolve) => { resolveConfig = resolve; }));
+		let resolveConfig: ((value: ReturnType<typeof accountConfig>) => void) | undefined;
+		const loadCurrentConfig = vi.fn(() => new Promise<ReturnType<typeof accountConfig>>((resolve) => { resolveConfig = resolve; }));
 		render(<BatchEditor scopeLabel="operator@example.com" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
 
 		expect(screen.getByRole("status")).toHaveTextContent("正在加载当前账号配置");
-		resolveConfig?.({
-			account_id: "auth-1", disabled: true, priority: 8, note: "primary pool", prefix: "team-a",
+		resolveConfig?.(accountConfig({
+			disabled: true, priority: 8, note: "primary pool", prefix: "team-a",
 			proxy: "http://proxy.example", proxy_configured: true, websockets: false,
 			header_names: ["Authorization", "X-Team"],
 			model_policy: { mode: "allow_only", models: ["gpt-5.5"], excluded_count: 2 },
-		});
+		}));
 
 		expect(await screen.findByText("当前账号配置")).toBeInTheDocument();
 		expect(screen.getByText("0/∞")).toBeInTheDocument();

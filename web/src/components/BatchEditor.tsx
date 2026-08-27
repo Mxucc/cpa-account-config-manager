@@ -1,14 +1,15 @@
 import { Eye, EyeOff, LoaderCircle, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { listProxyProfiles } from "../api/client";
-import type { AccountConcurrencyAvailability, AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode, ProxyProfileView } from "../types";
+import type { AccountConcurrencyAvailability, AccountEditableConfig, AccountModelCatalogResponse, BatchPatch, ModelPolicyMode, ProxyProfileView, UsageLimitsConfig } from "../types";
 import { formatAccountConcurrency } from "../accountConcurrency";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
+import { UsageLimitsSettings } from "./UsageLimitsSettings";
 import type { UIMessageKey } from "../i18n/uiText";
 
-type FieldName = "disabled" | "priority" | "concurrency_limit" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
+type FieldName = "disabled" | "priority" | "concurrency_limit" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy" | "usage_limits";
 
 interface HeaderRow {
   id: number;
@@ -25,7 +26,6 @@ interface BatchEditorProps {
 	loadModels: () => Promise<AccountModelCatalogResponse>;
 	loadCurrentConfig?: () => Promise<AccountEditableConfig>;
 	onLoadError?: (error: unknown) => void;
-	accountConcurrency?: AccountConcurrencyAvailability;
 }
 
 const initialEnabled: Record<FieldName, boolean> = {
@@ -38,11 +38,12 @@ const initialEnabled: Record<FieldName, boolean> = {
   websockets: false,
   headers: false,
 	model_policy: false,
+	usage_limits: false,
 };
 
 const defaultConcurrencyAvailability: AccountConcurrencyAvailability = { supported: true, host_schema_version: 2, required_schema_version: 2 };
 
-export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError, accountConcurrency = defaultConcurrencyAvailability }: BatchEditorProps) {
+export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError }: BatchEditorProps) {
   const { locale, tx } = useI18n();
 	const currentConfigLoader = useRef(loadCurrentConfig);
 	const loadErrorHandler = useRef(onLoadError);
@@ -51,6 +52,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const [disabled, setDisabled] = useState(false);
   const [priority, setPriority] = useState("0");
 	const [concurrencyLimit, setConcurrencyLimit] = useState("0");
+	const [usageLimits, setUsageLimits] = useState<UsageLimitsConfig>({ enabled: false, models: [] });
   const [note, setNote] = useState("");
   const [prefix, setPrefix] = useState("");
   const [proxyURL, setProxyURL] = useState("");
@@ -69,7 +71,8 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 	const [currentConfig, setCurrentConfig] = useState<AccountEditableConfig | null>(null);
 	const [configLoading, setConfigLoading] = useState(Boolean(loadCurrentConfig));
 	const [configError, setConfigError] = useState(false);
-	const concurrencyAvailability = currentConfig?.account_concurrency ?? accountConcurrency;
+	const isSingleAccount = Boolean(loadCurrentConfig);
+	const concurrencyAvailability = currentConfig?.account_concurrency ?? defaultConcurrencyAvailability;
 
   const anyEnabled = useMemo(() => Object.values(enabled).some(Boolean), [enabled]);
   const toggle = (field: FieldName) => setEnabled((current) => ({ ...current, [field]: !current[field] }));
@@ -84,6 +87,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			setDisabled(config.disabled);
 			setPriority(config.priority === null ? "" : String(config.priority));
 			setConcurrencyLimit(String(config.concurrency?.limit ?? 0));
+			setUsageLimits(config.usage_limits ?? { enabled: false, models: [] });
 			setNote(config.note);
 			setPrefix(config.prefix);
 			setProxyURL(config.proxy_configured ? config.proxy : "");
@@ -228,6 +232,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			}
 			patch.model_policy = { mode: modelMode, ...(modelMode === "all" ? {} : { models }) };
 		}
+		if (enabled.usage_limits) patch.usage_limits = usageLimits;
     setError("");
     onSubmit(patch);
   };
@@ -260,12 +265,19 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         <EditRow checked={enabled.priority} label={tx("ui.priority")} onToggle={togglePriority}>
           <input value={priority} onChange={(event) => setPriority(event.target.value)} inputMode="numeric" disabled={!enabled.priority} aria-label={tx("ui.priority_value")} />
         </EditRow>
-				<EditRow checked={enabled.concurrency_limit} label={tx("ui.account_concurrency")} onToggle={() => toggle("concurrency_limit")} disabled={!concurrencyAvailability.supported}>
-					<div className="concurrency-editor-control">
-						<input type="number" min="0" max="1000" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} disabled={!enabled.concurrency_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_value")} />
-						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_zero_unlimited") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
-					</div>
+				{isSingleAccount ? (
+					<EditRow checked={enabled.concurrency_limit} label={tx("ui.account_concurrency")} onToggle={() => toggle("concurrency_limit")} disabled={!concurrencyAvailability.supported}>
+						<div className="concurrency-editor-control">
+							<input type="number" min="0" max="1000" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} disabled={!enabled.concurrency_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_value")} />
+							<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_single_account_note") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
+						</div>
+					</EditRow>
+				) : null}
+			{isSingleAccount ? (
+				<EditRow checked={enabled.usage_limits} label={tx("ui.usage_limits")} onToggle={() => toggle("usage_limits")}>
+					<UsageLimitsSettings scope={{ kind: "account", id: currentConfig?.account_id ?? scopeLabel }} value={usageLimits} onChange={setUsageLimits} compact onAPIError={onLoadError ?? (() => undefined)} onNotice={() => undefined} />
 				</EditRow>
+			) : null}
         <EditRow checked={enabled.note} label={tx("ui.note")} onToggle={() => toggle("note")}>
           <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} disabled={!enabled.note} aria-label={tx("ui.note_value")} />
         </EditRow>

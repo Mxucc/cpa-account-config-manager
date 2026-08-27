@@ -88,7 +88,7 @@ describe("AIProvidersSettings", () => {
     await user.click(within(row as HTMLElement).getByRole("button", { name: "用量限额" }));
 
     const dialog = await screen.findByRole("dialog", { name: "用量限额 · OpenRouter" });
-    expect(within(dialog).getByText("限额仅作用于供应商 OpenRouter。")).toBeInTheDocument();
+    expect(within(dialog).getByText("限额仅作用于 AI 供应商 OpenRouter。")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/ai-providers/usage-limits") && init.method === "PUT")).toBe(true));

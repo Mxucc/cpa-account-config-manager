@@ -397,6 +397,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const { locale, tx, formatDateTime } = useI18n();
   const [channels, setChannels] = useState<AIProviderChannelSnapshot[]>([]);
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
+  const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -451,6 +452,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       const runtime = await api.getAIProviderRuntime(signal);
       if (requestID !== runtimeRequest.current) return;
       setRuntimeSnapshots(runtime.snapshots ?? []);
+      setRuntimeUpdatedAt(runtime.updated_at ?? "");
       setRuntimeError("");
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;

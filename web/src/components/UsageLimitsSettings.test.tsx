@@ -57,9 +57,9 @@ describe("UsageLimitsSettings", () => {
       onNotice={() => undefined}
     />);
 
-    expect(screen.getAllByText("账号额度百分比")).toHaveLength(2);
-    expect(screen.getAllByText("额度窗口")).toHaveLength(2);
-    expect(screen.getAllByText("限额百分比")).toHaveLength(2);
+    expect(screen.getAllByText("限额依据")).toHaveLength(2);
+    expect(screen.getAllByText("配额窗口")).toHaveLength(2);
+    expect(screen.getAllByText("最大已用百分比")).toHaveLength(2);
     fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "credit" } });
     expect(onChange.mock.lastCall?.[0].total?.basis).toBe("credit");
   });
@@ -84,7 +84,7 @@ describe("UsageLimitsSettings", () => {
     expect(await screen.findByText("42.5000", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText("账号额度百分比")).not.toBeInTheDocument();
     expect(screen.queryByText("额度窗口")).not.toBeInTheDocument();
-    expect(screen.getAllByText("限额金额")).toHaveLength(2);
+    expect(screen.getAllByText("最大额度")).toHaveLength(2);
     expect(screen.getAllByDisplayValue("0")).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));

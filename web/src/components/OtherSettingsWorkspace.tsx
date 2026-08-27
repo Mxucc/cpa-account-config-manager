@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   BellRing,
+  CircleDollarSign,
   DoorClosed,
   ExternalLink,
   FlaskConical,
@@ -868,7 +869,6 @@ export function OtherSettingsWorkspace({
             </section>
           </div>
         </div>
-      ) : (
       ) : (
         <section
           className="experimental-settings-section"

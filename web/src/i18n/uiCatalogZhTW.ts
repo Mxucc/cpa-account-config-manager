@@ -1447,5 +1447,12 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.credential_runtime": "憑證執行時資訊",
   "ui.runtime_loaded": "已載入 CPA 執行時憑證",
   "ui.list_metadata_fallback": "使用清單中繼資料",
-  "ui.credential_account_id": "憑證帳號 ID"
+  "ui.credential_account_id": "憑證帳號 ID",
+  "ui.ai_provider_quota_settings": "供應商額度與並發策略",
+  "ui.ai_provider_quota_settings_description": "CPA 不提供 AI 供應商層級官方 5 小時/7 天總額度；這裡使用外掛觀察到的 Token 與手動預算計算百分比。並發上限同樣是外掛側設定，當前 CPA 版本可能只能觀測。",
+  "ui.ai_provider_budget_tokens": "預算 Token",
+  "ui.ai_provider_limit_percent": "限制百分比",
+  "ui.account_quota_limit": "帳號額度限制",
+  "ui.account_quota_limit_description": "依 CPA 回傳的 5 小時/7 天官方用量百分比限制帳號；留空表示不限制。",
+  "ui.account_quota_limit_percent": "限制 (%)"
 };

@@ -69,7 +69,32 @@ export interface Account {
   automation?: AccountAutomationSummary;
 	model_policy?: AccountModelPolicySummary;
 	concurrency?: AccountConcurrencySummary;
+	quota_policy?: AccountQuotaPolicy;
 	credential?: CredentialSummary;
+}
+
+export interface QuotaWindowPolicy {
+	total_tokens?: number;
+	limit_percent?: number;
+}
+
+export interface AccountQuotaPolicy {
+	five_hour: QuotaWindowPolicy;
+	seven_day: QuotaWindowPolicy;
+}
+
+export interface ProviderQuotaPolicy {
+	key: string;
+	label?: string;
+	concurrency_limit?: number;
+	five_hour: QuotaWindowPolicy;
+	seven_day: QuotaWindowPolicy;
+}
+
+export interface QuotaPolicySnapshot {
+	accounts: Record<string, AccountQuotaPolicy>;
+	providers: ProviderQuotaPolicy[];
+	storage_error?: string;
 }
 
 export interface AccountConcurrencyAvailability {
@@ -107,6 +132,7 @@ export interface AccountEditableConfig {
 	model_policy: AccountModelPolicySummary | null;
 	concurrency?: AccountConcurrencySummary;
 	account_concurrency?: AccountConcurrencyAvailability;
+	quota_policy?: AccountQuotaPolicy;
 	credential?: CredentialSummary;
 }
 
@@ -445,6 +471,7 @@ export interface BatchPatch {
   headers?: HeaderPatch;
 	model_policy?: ModelPolicyPatch;
 	concurrency_limit?: number;
+	quota_policy?: AccountQuotaPolicy;
 }
 
 export interface TargetScope {
@@ -1304,7 +1331,13 @@ export interface AIProviderRuntimeSnapshot {
   rated_requests: number;
   unrated_requests: number;
   models?: AIProviderRuntimeModelUsage[];
-  updated_at: string;
+	updated_at: string;
+	quota?: {
+		five_hour_used_tokens: number;
+		seven_day_used_tokens: number;
+		five_hour_percent?: number;
+		seven_day_percent?: number;
+	};
 }
 
 export interface AIProviderRuntimeResponse {

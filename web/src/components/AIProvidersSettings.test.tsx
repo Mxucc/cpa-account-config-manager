@@ -128,7 +128,7 @@ describe("AIProvidersSettings", () => {
     expect(onNotice).toHaveBeenCalledWith("AI 提供商已添加");
   });
 
-  it("hides provider concurrency controls while CPA supports observation only", async () => {
+  it("shows provider concurrency observation even when CPA exposes no configurable limit", async () => {
     providerFetchMock();
 
     render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
@@ -136,7 +136,7 @@ describe("AIProvidersSettings", () => {
     const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
     await waitFor(() => expect(section.querySelector(".ai-provider-table tbody tr")).not.toBeNull());
     const headers = Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent);
-    expect(headers).not.toContain("并发");
+    expect(headers).toContain("并发");
   });
 
   it("shows observable concurrency only when CPA reports it as configurable", async () => {

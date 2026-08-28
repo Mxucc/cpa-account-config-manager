@@ -33,6 +33,9 @@ import type {
 	AIProviderAPIKeyEntry,
 	AIProviderChannelModel,
 	AIProviderRuntimeResponse,
+	AccountQuotaPolicy,
+	ProviderQuotaPolicy,
+	QuotaPolicySnapshot,
 	ForceSyncJobSnapshot,
 	ProxyProfileInput,
 	ProxyProfileListResponse,
@@ -1733,6 +1736,23 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
 
 export async function getAIProviderRuntime(signal?: AbortSignal): Promise<AIProviderRuntimeResponse> {
   return normalizeAIProviderRuntimeResponse(await managementRequest<unknown>("/ai-providers/runtime", { signal }));
+}
+
+export async function getQuotaPolicies(signal?: AbortSignal): Promise<QuotaPolicySnapshot> {
+	const raw = await managementRequest<unknown>("/quota-policies", { signal });
+	if (!isRecord(raw)) throw new APIError(502, "ui.invalid_api_response");
+	const accounts = isRecord(raw.accounts) ? raw.accounts as QuotaPolicySnapshot["accounts"] : {};
+	const providers = Array.isArray(raw.providers) ? raw.providers.filter(isRecord).map((item) => item as unknown as ProviderQuotaPolicy) : [];
+	const storageError = typeof raw.storage_error === "string" ? raw.storage_error : undefined;
+	return { accounts, providers, ...(storageError ? { storage_error: storageError } : {}) };
+}
+
+export async function saveAccountQuotaPolicy(accountID: string, policy: AccountQuotaPolicy): Promise<void> {
+	await managementRequest("/quota-policies/account", { method: "PUT", body: JSON.stringify({ account_id: accountID, policy }) });
+}
+
+export async function saveAIProviderQuotaPolicy(policy: ProviderQuotaPolicy): Promise<void> {
+	await managementRequest("/quota-policies/provider", { method: "PUT", body: JSON.stringify({ policy }) });
 }
 
 /** Fetch one provider channel, degrading non-auth failures to a channel error. */

@@ -1447,5 +1447,12 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.credential_runtime": "Сведения о runtime-учётных данных",
   "ui.runtime_loaded": "Runtime-учётные данные CPA загружены",
   "ui.list_metadata_fallback": "Используются метаданные списка",
-  "ui.credential_account_id": "ID учётной записи"
+  "ui.credential_account_id": "ID учётной записи",
+  "ui.ai_provider_quota_settings": "Политика квоты и параллельности провайдера",
+  "ui.ai_provider_quota_settings_description": "CPA не предоставляет официальные общие квоты провайдера за 5 часов/7 дней. Проценты рассчитываются по наблюдаемым плагином токенам и ручному бюджету; параллельность также может быть только наблюдаемой.",
+  "ui.ai_provider_budget_tokens": "Бюджет токенов",
+  "ui.ai_provider_limit_percent": "Процентный лимит",
+  "ui.account_quota_limit": "Лимиты квоты аккаунта",
+  "ui.account_quota_limit_description": "Ограничить аккаунт по официальным процентам CPA за 5 часов/7 дней; пусто — без ограничения.",
+  "ui.account_quota_limit_percent": "Лимит (%)"
 };

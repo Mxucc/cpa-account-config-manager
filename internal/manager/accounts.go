@@ -62,6 +62,7 @@ type AccountService struct {
 	host          AuthHost
 	usage         UsageSnapshotReader
 	concurrency   *AccountConcurrencyService
+	quotaPolicies *QuotaPolicyService
 	observer      interface{ ObserveAccounts([]Account) }
 	detailCacheMu sync.Mutex
 	detailCache   map[string]accountDetailCacheEntry
@@ -84,6 +85,13 @@ func (s *AccountService) SetAccountConcurrency(concurrency *AccountConcurrencySe
 		return
 	}
 	s.concurrency = concurrency
+}
+
+func (s *AccountService) SetQuotaPolicies(policies *QuotaPolicyService) {
+	if s == nil {
+		return
+	}
+	s.quotaPolicies = policies
 }
 
 type ResolvedTargets struct {
@@ -306,6 +314,12 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 		account := projectHostEntry(entry, pathCounts, indexCounts, s.usage)
 		if s.concurrency != nil {
 			account.Concurrency = s.concurrency.Summary(account.AuthID)
+		}
+		if s.quotaPolicies != nil && account.ID != "" {
+			policy := s.quotaPolicies.AccountPolicy(account.ID)
+			if !quotaPolicyEmpty(policy) {
+				account.QuotaPolicy = &policy
+			}
 		}
 		accounts = append(accounts, account)
 	}

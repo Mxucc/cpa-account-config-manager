@@ -7,6 +7,7 @@ import {
   FlaskConical,
   KeyRound,
   LoaderCircle,
+  Network,
   PackageCheck,
   RefreshCw,
   RotateCcw,
@@ -41,7 +42,7 @@ interface OtherSettingsWorkspaceProps {
   forceLoading?: boolean;
   onForcePreview?: () => void;
   onExperimentalSettingsChange?: (settings: ExperimentalSettings) => void;
-  initialSection?: "automation" | "notifications" | "updates" | "experimental";
+  initialSection?: "automation" | "proxy_profiles" | "notifications" | "updates" | "experimental";
   standalone?: boolean;
 }
 
@@ -52,7 +53,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">(initialSection);
+  const [activeSection, setActiveSection] = useState<"automation" | "proxy_profiles" | "notifications" | "updates" | "experimental">(initialSection);
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [typographyDistinction, setTypographyDistinction] = useState(readTypographyDistinction);
   const [pluginTheme, setPluginThemeState] = useState<PluginThemePreset>(readPluginTheme);
@@ -60,6 +61,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [pluginThemeEnabled, setPluginThemeEnabledState] = useState(readPluginThemeEnabled);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
+  const [proxyProfilesRefreshRevision, setProxyProfilesRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -305,7 +307,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
         <div><strong>{tx("ui.other_settings")}</strong><span>{tx("ui.other_settings_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); void refreshAll(); }}>
+        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); setProxyProfilesRefreshRevision((current) => current + 1); void refreshAll(); }}>
           <RefreshCw className={loading ? "spin" : ""} size={16} />{tx("ui.refresh")}
         </button>
       </header>
@@ -313,6 +315,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
       {!standalone ? <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
         <button type="button" role="tab" aria-selected={activeSection === "automation"} className={activeSection === "automation" ? "active" : ""} onClick={() => setActiveSection("automation")}>
           <Workflow size={15} />{tx("ui.automation_policy")}
+        </button>
+        <button type="button" role="tab" aria-selected={activeSection === "proxy_profiles"} className={activeSection === "proxy_profiles" ? "active" : ""} onClick={() => setActiveSection("proxy_profiles")}>
+          <Network size={15} />{tx("ui.proxy_profiles")}
         </button>
         <button type="button" role="tab" aria-selected={activeSection === "notifications"} className={activeSection === "notifications" ? "active" : ""} onClick={() => setActiveSection("notifications")}>
           <BellRing size={15} />{tx("ui.external_notifications")}
@@ -328,10 +333,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
       {activeSection === "automation" ? (
-        <>
-          <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
-          <ProxyProfilesSettings onAPIError={onAPIError} onNotice={onNotice} />
-        </>
+        <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
+      ) : activeSection === "proxy_profiles" ? (
+        <ProxyProfilesSettings refreshRevision={proxyProfilesRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : activeSection === "updates" ? <div className="plugin-configuration-version-panel" role="tabpanel" aria-label={tx("ui.plugin_configuration_and_version")}>

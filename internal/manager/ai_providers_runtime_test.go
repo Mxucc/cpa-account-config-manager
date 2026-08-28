@@ -125,3 +125,34 @@ func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
 		t.Fatalf("runtime concurrency = active=%d limit=%d, want 1/7", snapshots[0].Active, snapshots[0].Limit)
 	}
 }
+
+func TestProviderRuntimeCalculatesRollingFiveHourAndSevenDayWindows(t *testing.T) {
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.now = func() time.Time { return now }
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 10}})
+	now = now.Add(4 * time.Hour)
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 20}})
+	now = now.Add(2 * time.Hour)
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 30}})
+
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots = %#v", snapshots)
+	}
+	quota := snapshots[0].Quota
+	if quota.FiveHourUsedTokens != 50 || quota.SevenDayUsedTokens != 60 {
+		t.Fatalf("rolling quota = %#v, want 50/60", quota)
+	}
+}
+
+func TestProviderRuntimeExcludesEventsOutsideSevenDayWindow(t *testing.T) {
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.now = func() time.Time { return now }
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 7}})
+	now = now.Add(7*24*time.Hour + time.Second)
+	if quota := tracker.Snapshot()[0].Quota; quota.FiveHourUsedTokens != 0 || quota.SevenDayUsedTokens != 0 {
+		t.Fatalf("expired quota events retained = %#v", quota)
+	}
+}

@@ -15,6 +15,8 @@ import type {
   AIProviderChannelSnapshot,
   AIProviderRuntimeModelUsage,
   AIProviderRuntimeSnapshot,
+  ProviderQuotaPolicy,
+  QuotaPolicySnapshot,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
@@ -94,6 +96,7 @@ const apiKeyChannelKinds: AddKind[] = [
 type EditingEntry = {
   kind: AIProviderChannelKind;
   index: number;
+  quotaPolicyKey: string;
   name: string;
   baseURL: string;
   apiKey: string;
@@ -117,6 +120,11 @@ type EditingEntry = {
   fingerprintProfile: string;
   accountID?: string;
   workspaceID?: string;
+  concurrencyLimit: string;
+  fiveHourTotalTokens: string;
+  fiveHourLimitPercent: string;
+  sevenDayTotalTokens: string;
+  sevenDayLimitPercent: string;
 };
 
 function maskSecret(value: string | undefined): string {
@@ -190,6 +198,93 @@ function listToArray(text: string): string[] {
 
 function arrayToList(items: string[] | undefined): string {
   return (items ?? []).join("\n");
+}
+
+type ProviderIdentitySource = Pick<AIProviderChannelEntry, "index" | "name" | "base_url" | "auth_index" | "account_id" | "workspace_id" | "api_key_entries">;
+
+function providerStableIdentity(entry: ProviderIdentitySource): string {
+  const candidates = [
+    entry.auth_index,
+    entry.account_id,
+    entry.workspace_id,
+    entry.api_key_entries?.find((item) => item.auth_index)?.auth_index,
+  ];
+  const stable = candidates.find((value) => value && value.trim());
+  if (stable) return stable.trim();
+  const name = (entry.name ?? "").trim();
+  const baseURL = (entry.base_url ?? "").trim();
+  if (name || baseURL) return `channel:${name}|${baseURL}`;
+  return `index:${entry.index}`;
+}
+
+function parseNonNegativeInteger(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function validateProviderQuotaInputs(editing: EditingEntry, message: (key: UIMessageKey) => string): void {
+  const integerFields: Array<[string, string, number | undefined]> = [
+    [editing.concurrencyLimit, message("ui.ai_provider_limit"), 1000],
+    [editing.fiveHourTotalTokens, `${message("ui.quota_window_five_hour")} · ${message("ui.ai_provider_budget_tokens")}`, undefined],
+    [editing.sevenDayTotalTokens, `${message("ui.quota_window_seven_day")} · ${message("ui.ai_provider_budget_tokens")}`, undefined],
+  ];
+  for (const [value, label, maximum] of integerFields) {
+    if (!value.trim()) continue;
+    const parsed = parseNonNegativeInteger(value);
+    if (parsed === undefined || (maximum !== undefined && parsed > maximum)) {
+      throw new Error(`${label}: ${maximum === undefined ? "0+" : `0-${maximum}`}`);
+    }
+  }
+  const percentFields: Array<[string, string]> = [
+    [editing.fiveHourLimitPercent, `${message("ui.quota_window_five_hour")} · ${message("ui.ai_provider_limit_percent")}`],
+    [editing.sevenDayLimitPercent, `${message("ui.quota_window_seven_day")} · ${message("ui.ai_provider_limit_percent")}`],
+  ];
+  for (const [value, label] of percentFields) {
+    if (!value.trim()) continue;
+    const parsed = parseNonNegativeInteger(value);
+    if (parsed === undefined || parsed > 100) throw new Error(`${label}: 0-100`);
+  }
+}
+
+function ProviderPolicyFields({
+  entry,
+  onEntry,
+}: {
+  entry: EditingEntry;
+  onEntry: (patch: Partial<EditingEntry>) => void;
+}) {
+  const { tx } = useI18n();
+  return (
+    <section className="ai-provider-quota-editor" aria-label={tx("ui.ai_provider_quota_settings")}>
+      <div className="ai-provider-models-title">{tx("ui.ai_provider_quota_settings")}</div>
+      <p className="ai-provider-field-note">{tx("ui.ai_provider_quota_settings_description")}</p>
+      <div className="ai-provider-form-grid">
+        <label className="field-block">
+          <span>{tx("ui.ai_provider_limit")}</span>
+          <input type="number" min="0" max="1000" step="1" value={entry.concurrencyLimit} onChange={(event) => onEntry({ concurrencyLimit: event.target.value })} placeholder="0" />
+          <small>{tx("ui.account_concurrency_zero_unlimited")}</small>
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.quota_window_five_hour")} · {tx("ui.ai_provider_budget_tokens")}</span>
+          <input type="number" min="0" step="1" value={entry.fiveHourTotalTokens} onChange={(event) => onEntry({ fiveHourTotalTokens: event.target.value })} placeholder={tx("ui.not_set")} />
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.quota_window_five_hour")} · {tx("ui.ai_provider_limit_percent")}</span>
+          <input type="number" min="0" max="100" step="1" value={entry.fiveHourLimitPercent} onChange={(event) => onEntry({ fiveHourLimitPercent: event.target.value })} placeholder={tx("ui.not_set")} />
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.quota_window_seven_day")} · {tx("ui.ai_provider_budget_tokens")}</span>
+          <input type="number" min="0" step="1" value={entry.sevenDayTotalTokens} onChange={(event) => onEntry({ sevenDayTotalTokens: event.target.value })} placeholder={tx("ui.not_set")} />
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.quota_window_seven_day")} · {tx("ui.ai_provider_limit_percent")}</span>
+          <input type="number" min="0" max="100" step="1" value={entry.sevenDayLimitPercent} onChange={(event) => onEntry({ sevenDayLimitPercent: event.target.value })} placeholder={tx("ui.not_set")} />
+        </label>
+      </div>
+    </section>
+  );
 }
 
 function RichChannelFields({
@@ -397,6 +492,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
   const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
+  const [quotaPolicies, setQuotaPolicies] = useState<QuotaPolicySnapshot>({ accounts: {}, providers: [] });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -431,9 +527,13 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     setLoading(true);
     setError("");
     try {
-      const nextChannels = await api.listAIProviderChannels(signal);
+      const [nextChannels, nextQuotaPolicies] = await Promise.all([
+        api.listAIProviderChannels(signal),
+        api.getQuotaPolicies(signal),
+      ]);
       if (requestID !== refreshRequest.current) return;
       setChannels(nextChannels);
+      setQuotaPolicies(nextQuotaPolicies);
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       if (requestID === refreshRequest.current) handleError(caught);
@@ -441,6 +541,23 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       if (requestID === refreshRequest.current) setLoading(false);
     }
   }, [handleError]);
+
+  const providerPolicyKey = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry) => `${kind}:${providerStableIdentity(entry)}`;
+  const providerPolicyFor = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry): ProviderQuotaPolicy | undefined => {
+    const stableKey = providerPolicyKey(kind, entry);
+    const legacyKey = `${kind}:${entry.index}`;
+    return quotaPolicies.providers.find((policy) => policy.key === stableKey || policy.key === legacyKey);
+  };
+  const parseOptionalInteger = (value: string): number | undefined => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+  };
+  const parseOptionalPercent = (value: string): number | undefined => {
+    const parsed = parseOptionalInteger(value);
+    return parsed !== undefined && parsed <= 100 ? parsed : undefined;
+  };
 
   const refreshRuntime = useCallback(async (signal?: AbortSignal) => {
     const requestID = runtimeRequest.current + 1;
@@ -524,6 +641,12 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     const limit = matches.some((snapshot) => !Number.isFinite(snapshot.limit) || snapshot.limit < 0)
       ? Number.POSITIVE_INFINITY
       : matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.limit), 0);
+    const quota = {
+      five_hour_used_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.quota?.five_hour_used_tokens ?? 0), 0),
+      seven_day_used_tokens: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.quota?.seven_day_used_tokens ?? 0), 0),
+      five_hour_percent: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.quota?.five_hour_percent ?? 0), 0),
+      seven_day_percent: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.quota?.seven_day_percent ?? 0), 0),
+    };
     const latest = matches.reduce((latestSnapshot, snapshot) =>
       snapshot.updated_at > latestSnapshot.updated_at ? snapshot : latestSnapshot,
     matches[0]);
@@ -543,6 +666,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       amount_usd: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.amount_usd), 0),
       rated_requests: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.rated_requests), 0),
       unrated_requests: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.unrated_requests), 0),
+      quota,
       models: Array.from(models.values()),
     };
   };
@@ -554,10 +678,6 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     if (amount < 0.000001) return "<$0.000001";
     return `$${amount.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
   };
-
-  const providerConcurrencyConfigurable = runtimeSnapshots.some(
-    (runtime) => runtime.supported && runtime.concurrency_configurable === true,
-  );
 
   const resetForm = () => {
     setAdding(false);
@@ -620,6 +740,33 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     setBusy(true);
     setError("");
     try {
+      const policy: ProviderQuotaPolicy = {
+        // Keep the original policy identity while editing. For channels that
+        // do not expose a stable CPA auth index, the fallback identity may be
+        // derived from name/base URL; both are editable fields and must not
+        // silently orphan the saved quota/concurrency policy.
+        key: editing.quotaPolicyKey || providerPolicyKey(editing.kind, {
+          index: editing.index,
+          name: editing.name,
+          base_url: editing.baseURL,
+          account_id: editing.accountID,
+          workspace_id: editing.workspaceID,
+        }),
+        // The channel name is display metadata, not a policy setting. Keeping
+        // it here would make an otherwise empty policy undeletable because
+        // the backend correctly treats non-empty labels as persisted state.
+        label: "",
+        concurrency_limit: parseOptionalInteger(editing.concurrencyLimit),
+        five_hour: {
+          total_tokens: parseOptionalInteger(editing.fiveHourTotalTokens),
+          limit_percent: parseOptionalPercent(editing.fiveHourLimitPercent),
+        },
+        seven_day: {
+          total_tokens: parseOptionalInteger(editing.sevenDayTotalTokens),
+          limit_percent: parseOptionalPercent(editing.sevenDayLimitPercent),
+        },
+      };
+      validateProviderQuotaInputs(editing, tx);
       if (editing.kind === "opencode-go") {
         if (editing.apiKey.trim()) {
           await api.saveOpenCodeAccount(editing.workspaceID ?? editing.name, editing.apiKey.trim());
@@ -708,6 +855,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         await api.saveAIProviderChannelEntry(editing.kind, editing.index, patch);
         onNotice(tx("ui.ai_provider_saved"));
       }
+      await api.saveAIProviderQuotaPolicy(policy);
       resetForm();
       await refresh();
     } catch (caught) {
@@ -1076,6 +1224,10 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                 onToggleSecret={() => setShowSecret((value) => !value)}
               />
             )}
+            <ProviderPolicyFields
+              entry={editing}
+              onEntry={(patch) => setEditing((current) => (current ? { ...current, ...patch } : current))}
+            />
           </div>
         </Modal>
       ) : null}
@@ -1104,15 +1256,27 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
             ) : null}
             {(() => {
               const runtime = runtimeForEntry(viewing.entry);
-              if (!runtime) return <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_usage")}</span><strong>{tx("ui.ai_provider_identity_unavailable")}</strong></div>;
+              const policy = providerPolicyFor(viewing.kind, viewing.entry);
+              const budget = (window: ProviderQuotaPolicy["five_hour"], usedTokens: number | undefined) => {
+                if (!window.total_tokens || window.total_tokens <= 0) return window.limit_percent === undefined ? "-" : `— / ${window.limit_percent}%`;
+                if (usedTokens === undefined) return `— / ${window.limit_percent ?? 100}%`;
+                return `${Math.min(999, usedTokens / window.total_tokens * 100).toFixed(1)}% / ${window.limit_percent ?? 100}%`;
+              };
+              if (!runtime && !policy) return <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_usage")}</span><strong>{tx("ui.ai_provider_identity_unavailable")}</strong></div>;
               return (
                 <div className="ai-provider-runtime-detail">
-                  {runtime.supported ? <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency")}</span><strong>{runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`}</strong></div> : null}
-                  <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_total_tokens")}</span><strong>{formatTokens(runtime.total_tokens)}</strong></div>
-                  <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_estimated_cost")}</span><strong>{formatAmount(runtime.amount_usd)}</strong></div>
-                  {runtime.models && runtime.models.length > 0 ? (
+                  {(runtime?.supported || policy) ? <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency")}</span><strong>{runtime ? `${runtime.active}/${policy?.concurrency_limit === undefined || policy.concurrency_limit === 0 ? (runtime.limit > 0 ? runtime.limit : "∞") : policy.concurrency_limit}` : policy?.concurrency_limit === undefined || policy.concurrency_limit === 0 ? "-" : `0/${policy.concurrency_limit}`}</strong></div> : null}
+                  {policy ? <>
+                    <div className="ai-provider-detail-row"><span>{tx("ui.quota_window_five_hour")}</span><strong>{budget(policy.five_hour, runtime?.quota?.five_hour_used_tokens)}</strong></div>
+                    <div className="ai-provider-detail-row"><span>{tx("ui.quota_window_seven_day")}</span><strong>{budget(policy.seven_day, runtime?.quota?.seven_day_used_tokens)}</strong></div>
+                  </> : null}
+                  {runtime ? <>
+                    <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_total_tokens")}</span><strong>{formatTokens(runtime.total_tokens)}</strong></div>
+                    <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_estimated_cost")}</span><strong>{formatAmount(runtime.amount_usd)}</strong></div>
+                  </> : null}
+                  {runtime?.models && runtime.models.length > 0 ? (
                     <table className="account-table ai-provider-runtime-models"><thead><tr><th>{tx("ui.ai_provider_model")}</th><th>{tx("ui.ai_provider_input_tokens")}</th><th>{tx("ui.ai_provider_output_tokens")}</th><th>{tx("ui.ai_provider_total")}</th><th>{tx("ui.ai_provider_cost")}</th></tr></thead><tbody>{runtime.models.map((model) => <tr key={model.model}><td>{model.model}</td><td>{formatTokens(model.input_tokens)}</td><td>{formatTokens(model.output_tokens)}</td><td>{formatTokens(model.total_tokens)}</td><td>{formatAmount(model.amount_usd)}</td></tr>)}</tbody></table>
-                  ) : <div className="ai-provider-field-note">{tx("ui.ai_provider_no_usage")}</div>}
+                  ) : runtime ? <div className="ai-provider-field-note">{tx("ui.ai_provider_no_usage")}</div> : null}
                 </div>
               );
             })()}
@@ -1197,7 +1361,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               <th>{tx("ui.ai_provider_api_key")}</th>
               <th>{tx("ui.status")}</th>
               <th>{tx("ui.ai_provider_model_count")}</th>
-              {providerConcurrencyConfigurable ? <th>{tx("ui.ai_provider_concurrency")}</th> : null}
+              <th>{tx("ui.ai_provider_concurrency")}</th>
               <th>{tx("ui.ai_provider_usage")}</th>
               <th>{tx("ui.actions")}</th>
             </tr></thead>
@@ -1205,7 +1369,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               {channels.flatMap((channel) => [
                 ...(channel.error || channel.storage_error ? [
                   <tr key={`${channel.kind}-issue`} className="ai-provider-channel-issue">
-                    <td colSpan={providerConcurrencyConfigurable ? 9 : 8}>
+                    <td colSpan={9}>
                       <strong>{tx(channelLabelKey(channel.kind))}</strong>{" "}
                       <span>{tx(channel.storage_error ? "ui.ai_provider_storage_unavailable" : channel.error === "provider_channel_response_invalid" ? "ui.ai_provider_response_invalid" : "ui.ai_provider_channel_unavailable")}</span>
                     </td>
@@ -1222,20 +1386,36 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   {(() => {
                     const runtime = runtimeForEntry(entry);
                     return <>
-                      {providerConcurrencyConfigurable ? (
-                        <td title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
-                          {runtime?.supported && runtime.concurrency_configurable === true
-                            ? (runtime.limit > 0 ? `${runtime.active}/${runtime.limit}` : `${runtime.active}/∞`)
-                            : "-"}
-                        </td>
-                      ) : null}
-                      <td>{runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><br /><small>{formatAmount(runtime.amount_usd)}</small></> : <span title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</span>}</td>
+                      {(() => {
+                        const policy = providerPolicyFor(channel.kind, entry);
+                        const configuredLimit = policy?.concurrency_limit;
+                        // Prefer an explicit plugin policy (including 0 for
+                        // unlimited); otherwise surface CPA's observed limit
+                        // when the runtime reports one.
+                        const effectiveLimit = configuredLimit !== undefined ? configuredLimit : runtime?.limit ?? 0;
+                        const concurrency = runtime?.supported
+                          ? `${runtime.active}/${effectiveLimit > 0 ? effectiveLimit : "∞"}`
+                          : configuredLimit === undefined || configuredLimit === 0 ? "-" : `0/${configuredLimit}`;
+                        const budget = (window: ProviderQuotaPolicy["five_hour"], usedTokens: number | undefined) => {
+                          if (!window.total_tokens || window.total_tokens <= 0) return window.limit_percent === undefined ? "-" : `— / ${window.limit_percent}%`;
+                          if (usedTokens === undefined) return `— / ${window.limit_percent ?? 100}%`;
+                          return `${Math.min(999, usedTokens / window.total_tokens * 100).toFixed(1)}% / ${window.limit_percent ?? 100}%`;
+                        };
+                        return <>
+                          <td title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
+                            <strong>{concurrency}</strong>{configuredLimit !== undefined ? <small> · {tx("ui.ai_provider_limit")}</small> : null}
+                          </td>
+                          <td title={tx("ui.ai_provider_quota_settings_description")}>
+                            {runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><br /><small>{formatAmount(runtime.amount_usd)} · {tx("ui.quota_window_five_hour")} {budget(policy?.five_hour ?? {}, runtime.quota?.five_hour_used_tokens)} · {tx("ui.quota_window_seven_day")} {budget(policy?.seven_day ?? {}, runtime.quota?.seven_day_used_tokens)}</small></> : <span title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</span>}
+                          </td>
+                        </>;
+                      })()}
                     </>;
                   })()}
                   <td className="ai-provider-table-actions">
                     <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                     <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
-                    <IconButton label={tx("ui.edit_ai_provider")} onClick={() => setEditing({ kind: channel.kind, index: entry.index, name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id })}><Save size={15} /></IconButton>
+                    <IconButton label={tx("ui.edit_ai_provider")} onClick={() => { const policy = providerPolicyFor(channel.kind, entry); setEditing({ kind: channel.kind, index: entry.index, quotaPolicyKey: policy?.key ?? providerPolicyKey(channel.kind, entry), name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id, concurrencyLimit: policy?.concurrency_limit === undefined ? "" : String(policy.concurrency_limit), fiveHourTotalTokens: policy?.five_hour.total_tokens === undefined ? "" : String(policy.five_hour.total_tokens), fiveHourLimitPercent: policy?.five_hour.limit_percent === undefined ? "" : String(policy.five_hour.limit_percent), sevenDayTotalTokens: policy?.seven_day.total_tokens === undefined ? "" : String(policy.seven_day.total_tokens), sevenDayLimitPercent: policy?.seven_day.limit_percent === undefined ? "" : String(policy.seven_day.limit_percent) }); }}><Save size={15} /></IconButton>
                     {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                       <>
                         <IconButton label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>

@@ -8,7 +8,7 @@ import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-type FieldName = "disabled" | "priority" | "concurrency_limit" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
+type FieldName = "disabled" | "priority" | "concurrency_limit" | "quota_policy" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
 
 interface HeaderRow {
   id: number;
@@ -32,6 +32,7 @@ const initialEnabled: Record<FieldName, boolean> = {
   disabled: false,
   priority: false,
 	concurrency_limit: false,
+	quota_policy: false,
   note: false,
   prefix: false,
   proxy_url: false,
@@ -51,6 +52,8 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const [disabled, setDisabled] = useState(false);
   const [priority, setPriority] = useState("0");
 	const [concurrencyLimit, setConcurrencyLimit] = useState("0");
+	const [fiveHourQuotaLimit, setFiveHourQuotaLimit] = useState("");
+	const [sevenDayQuotaLimit, setSevenDayQuotaLimit] = useState("");
   const [note, setNote] = useState("");
   const [prefix, setPrefix] = useState("");
   const [proxyURL, setProxyURL] = useState("");
@@ -84,6 +87,8 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			setDisabled(config.disabled);
 			setPriority(config.priority === null ? "" : String(config.priority));
 			setConcurrencyLimit(String(config.concurrency?.limit ?? 0));
+			setFiveHourQuotaLimit(config.quota_policy?.five_hour.limit_percent === undefined ? "" : String(config.quota_policy.five_hour.limit_percent));
+			setSevenDayQuotaLimit(config.quota_policy?.seven_day.limit_percent === undefined ? "" : String(config.quota_policy.seven_day.limit_percent));
 			setNote(config.note);
 			setPrefix(config.prefix);
 			setProxyURL(config.proxy_configured ? config.proxy : "");
@@ -184,6 +189,22 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			}
 			patch.concurrency_limit = parsed;
 		}
+		if (enabled.quota_policy) {
+			const parsePercent = (value: string) => {
+				const trimmed = value.trim();
+				if (!trimmed) return undefined;
+				if (!/^\d+$/.test(trimmed)) throw new Error(tx("ui.account_quota_limit_percent") + ": 0-100");
+				const parsed = Number(trimmed);
+				if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 100) throw new Error(tx("ui.account_quota_limit_percent") + ": 0-100");
+				return parsed;
+			};
+			try {
+				patch.quota_policy = { five_hour: { limit_percent: parsePercent(fiveHourQuotaLimit) }, seven_day: { limit_percent: parsePercent(sevenDayQuotaLimit) } };
+			} catch (caught) {
+				setError(caught instanceof Error ? caught.message : tx("ui.account_quota_limit_percent"));
+				return;
+			}
+		}
     if (enabled.note) patch.note = note;
     if (enabled.prefix) patch.prefix = prefix;
     if (enabled.proxy_url) patch.proxy_url = proxyURL;
@@ -265,6 +286,13 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 						<input type="number" min="0" max="1000" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} disabled={!enabled.concurrency_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_value")} />
 						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_zero_unlimited") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
 					</div>
+				</EditRow>
+				<EditRow checked={enabled.quota_policy} label={tx("ui.account_quota_limit")} onToggle={() => toggle("quota_policy")}>
+					<div className="ai-provider-form-grid">
+						<label className="field-block"><span>{tx("ui.quota_window_five_hour")} · {tx("ui.account_quota_limit_percent")}</span><input type="number" min="0" max="100" value={fiveHourQuotaLimit} onChange={(event) => setFiveHourQuotaLimit(event.target.value)} disabled={!enabled.quota_policy} placeholder={tx("ui.not_set")} /></label>
+						<label className="field-block"><span>{tx("ui.quota_window_seven_day")} · {tx("ui.account_quota_limit_percent")}</span><input type="number" min="0" max="100" value={sevenDayQuotaLimit} onChange={(event) => setSevenDayQuotaLimit(event.target.value)} disabled={!enabled.quota_policy} placeholder={tx("ui.not_set")} /></label>
+					</div>
+					<p className="model-policy-help">{tx("ui.account_quota_limit_description")}</p>
 				</EditRow>
         <EditRow checked={enabled.note} label={tx("ui.note")} onToggle={() => toggle("note")}>
           <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} disabled={!enabled.note} aria-label={tx("ui.note_value")} />
@@ -386,6 +414,7 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 				<CurrentConfigItem label={tx("ui.enabled_state")} value={tx(config.disabled ? "ui.disable" : "ui.enable")} />
 				<CurrentConfigItem label={tx("ui.priority")} value={config.priority === null ? tx("ui.not_set") : String(config.priority)} mono />
 				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!concurrencyAvailability.supported || !concurrency.supported ? tx("ui.unavailable") : formatAccountConcurrency(concurrency)} mono />
+				<CurrentConfigItem label={tx("ui.account_quota_limit")} value={formatQuotaPolicy(config.quota_policy, tx)} mono wide />
 				<CurrentConfigItem label={tx("ui.websockets")} value={config.websockets === null ? tx("ui.not_set") : tx(config.websockets ? "ui.on_2" : "ui.off_2")} />
 				<CurrentConfigItem label={tx("ui.prefix")} value={config.prefix || tx("ui.default")} mono />
 				<CurrentConfigItem label={tx("ui.note")} value={config.note || "-"} wide />
@@ -401,6 +430,13 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 			</div>
 		</section>
 	);
+}
+
+function formatQuotaPolicy(policy: AccountEditableConfig["quota_policy"], tx: (key: UIMessageKey, vars?: Record<string, string | number>) => string): string {
+	if (!policy) return tx("ui.not_set");
+	const five = policy.five_hour.limit_percent === undefined ? "-" : `${policy.five_hour.limit_percent}%`;
+	const seven = policy.seven_day.limit_percent === undefined ? "-" : `${policy.seven_day.limit_percent}%`;
+	return `${tx("ui.quota_window_five_hour")}: ${five} · ${tx("ui.quota_window_seven_day")}: ${seven}`;
 }
 
 function CurrentConfigItem({ label, value, mono = false, wide = false }: { label: string; value: string; mono?: boolean; wide?: boolean }) {

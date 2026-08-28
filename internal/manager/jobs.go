@@ -96,6 +96,7 @@ type JobEngine struct {
 	wait              sync.WaitGroup
 	accounts          *AccountService
 	concurrency       *AccountConcurrencyService
+	quotaPolicies     *QuotaPolicyService
 	proxyProfiles     ProxyProfileResolver
 	mutations         *MutationCoordinator
 	backgroundOwner   BackgroundWorkOwner
@@ -132,6 +133,15 @@ func (e *JobEngine) SetAccountConcurrency(concurrency *AccountConcurrencyService
 	}
 	e.mu.Lock()
 	e.concurrency = concurrency
+	e.mu.Unlock()
+}
+
+func (e *JobEngine) SetQuotaPolicies(policies *QuotaPolicyService) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.quotaPolicies = policies
 	e.mu.Unlock()
 }
 
@@ -551,6 +561,18 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 			return JobResult{Status: ResultFailed, Error: "account concurrency update failed", AppliedFields: applied, Retryable: true}
 		}
 		applied = append(applied, "concurrency_limit")
+	}
+	if patch.QuotaPolicy != nil {
+		e.mu.Lock()
+		quotaPolicies := e.quotaPolicies
+		e.mu.Unlock()
+		if quotaPolicies == nil {
+			return JobResult{Status: ResultFailed, Error: "quota policy service is unavailable", AppliedFields: applied, Retryable: true}
+		}
+		if errQuota := quotaPolicies.SetAccountPolicy(account.ID, *patch.QuotaPolicy); errQuota != nil {
+			return JobResult{Status: ResultFailed, Error: "account quota policy update failed: " + errQuota.Error(), AppliedFields: applied, Retryable: true}
+		}
+		applied = append(applied, "quota_policy")
 	}
 	return JobResult{Status: ResultSucceeded, AppliedFields: applied}
 }

@@ -989,7 +989,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .other-settings-toolbar > div { min-width: 0; display: grid; gap: 3px; }
 .other-settings-toolbar strong { font-size: calc(16px * var(--font-size-scale)); }
 .other-settings-toolbar span { color: var(--text-secondary); font-size: calc(10px * var(--font-size-scale)); }
-.other-settings-tabs { min-height: 44px; display: grid; grid-template-columns: repeat(4, minmax(0, 180px)); align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
+.other-settings-tabs { min-height: 44px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
 .other-settings-tabs button { min-width: 0; min-height: 43px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); font-weight: 700; cursor: pointer; }
 .other-settings-tabs button:hover { color: var(--text-primary); background: var(--bg-hover); }
 .other-settings-tabs button.active { border-bottom-color: var(--primary-color); color: var(--primary-active); background: var(--bg-primary); }
@@ -1603,7 +1603,7 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
   .app-shell, .app-shell.with-job-panel { padding-bottom: 176px; }
   .app-header, .with-job-panel .app-header { grid-template-columns: 1fr; }
   .workspace-controls { gap: 6px; }
-  .other-settings-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); padding-inline: 8px; }
+  .other-settings-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); padding-inline: 8px; }
   .other-settings-tabs button { padding-inline: 7px; font-size: calc(9px * var(--font-size-scale)); }
   .font-size-settings-body { align-items: stretch; flex-direction: column; gap: 10px; }
   .font-distinction-setting { grid-template-columns: minmax(0, 1fr) auto auto; }

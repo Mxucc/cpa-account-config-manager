@@ -83,6 +83,7 @@ type App struct {
 	opencode        *OpenCodeQuotaService
 	opencodeZen     *OpenCodeZenService
 	proxyProfiles   *ProxyProfileService
+	quotaPolicies   *QuotaPolicyService
 	indexHTML       []byte
 	quiesceOnce     sync.Once
 	quotaResetLocks [64]sync.Mutex
@@ -111,6 +112,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
 	proxyProfiles := NewProxyProfileService()
+	quotaPolicies := NewQuotaPolicyService()
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -125,7 +127,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
 	providerRuntime.SetAccountConcurrency(concurrency)
-	requestHooks := NewRequestHook(providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
+	quotaGuard := NewAccountQuotaGuard(usage, quotaPolicies)
+	requestHooks := NewRequestHook(quotaGuard, providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -169,11 +172,14 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		opencode:        opencode,
 		opencodeZen:     opencodeZen,
 		proxyProfiles:   proxyProfiles,
+		quotaPolicies:   quotaPolicies,
 		indexHTML:       append([]byte(nil), indexHTML...),
 	}
 	app.previews.SetAccountConcurrency(concurrency)
 	app.previews.SetProxyProfiles(proxyProfiles)
 	jobs.SetProxyProfiles(proxyProfiles)
+	jobs.SetQuotaPolicies(quotaPolicies)
+	accounts.SetQuotaPolicies(quotaPolicies)
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
@@ -227,6 +233,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
 	a.proxyProfiles.Configure(config)
+	a.quotaPolicies.Configure(config)
 	a.proxyProfiles.SetBindingApplier(a.applyProxyProfileBindings)
 	a.experiments.Configure(config)
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
@@ -460,6 +467,9 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 		Routes: []cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/config", Description: "Read one editable account's current allow-listed configuration."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/quota-policies", Description: "Read persisted account and AI provider quota/concurrency policies."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/quota-policies/account", Description: "Save one account's 5-hour and 7-day quota limits."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/quota-policies/provider", Description: "Save one AI provider's plugin-managed budget, percentage, and concurrency limits."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/refresh", Description: "Refresh one Codex account's CPA-native plan and active reset metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/reset", Description: "Consume one explicitly confirmed Codex active reset credit and refresh quota metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/models", Description: "Load the common effective model catalog for an editable account scope."},
@@ -580,6 +590,9 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleListAccounts(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/config":
 		return a.handleAccountConfig(ctx, req)
+	case (method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/quota-policies") ||
+		(method == http.MethodPut && (path == "/v0/management"+managementRoutePrefix+"/quota-policies/account" || path == "/v0/management"+managementRoutePrefix+"/quota-policies/provider")):
+		return a.handleQuotaPolicies(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/refresh":
 		return a.handleAccountQuotaMetadata(ctx, req, false)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/reset":

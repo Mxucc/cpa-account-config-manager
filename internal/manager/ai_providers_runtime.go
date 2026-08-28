@@ -15,6 +15,7 @@ import (
 const (
 	providerRuntimeMaxIdentities = 10000
 	providerRuntimeMaxModels     = 512
+	providerRuntimeMaxEvents     = 10000
 	// A missing completion callback must not leave the runtime dashboard's
 	// active count (or request map) growing forever. CPA requests can be long
 	// lived, so use a generous lease and prune at a lower cadence.
@@ -45,8 +46,16 @@ type ProviderRuntimeSnapshot struct {
 	AmountUSD               float64              `json:"amount_usd"`
 	RatedRequests           int64                `json:"rated_requests"`
 	UnratedRequests         int64                `json:"unrated_requests"`
+	Quota                   ProviderRuntimeQuota `json:"quota"`
 	Models                  []ProviderModelUsage `json:"models,omitempty"`
 	UpdatedAt               time.Time            `json:"updated_at"`
+}
+
+type ProviderRuntimeQuota struct {
+	FiveHourUsedTokens int64   `json:"five_hour_used_tokens"`
+	SevenDayUsedTokens int64   `json:"seven_day_used_tokens"`
+	FiveHourPercent    float64 `json:"five_hour_percent,omitempty"`
+	SevenDayPercent    float64 `json:"seven_day_percent,omitempty"`
 }
 
 type ProviderModelUsage struct {
@@ -71,6 +80,11 @@ type providerRuntimeModel struct {
 	ProviderModelUsage
 }
 
+type providerRuntimeEvent struct {
+	At     time.Time
+	Tokens int64
+}
+
 type providerRuntimeAggregate struct {
 	Provider        string
 	AuthIndex       string
@@ -85,6 +99,7 @@ type providerRuntimeAggregate struct {
 	RatedRequests   int64
 	UnratedRequests int64
 	Models          map[string]*providerRuntimeModel
+	Events          []providerRuntimeEvent
 	UpdatedAt       time.Time
 }
 
@@ -215,6 +230,12 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 	aggregate.ReasoningTokens = saturatingAdd(aggregate.ReasoningTokens, reasoning)
 	aggregate.CachedTokens = saturatingAdd(aggregate.CachedTokens, cached)
 	aggregate.TotalTokens = saturatingAdd(aggregate.TotalTokens, total)
+	if total > 0 {
+		aggregate.Events = append(aggregate.Events, providerRuntimeEvent{At: now, Tokens: total})
+		if len(aggregate.Events) > providerRuntimeMaxEvents {
+			aggregate.Events = aggregate.Events[len(aggregate.Events)-providerRuntimeMaxEvents:]
+		}
+	}
 	model := strings.TrimSpace(record.Model)
 	if model != "" {
 		if aggregate.Models == nil {
@@ -263,6 +284,7 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	defer t.mu.Unlock()
 	out := make([]ProviderRuntimeSnapshot, 0, len(t.aggregates))
 	for _, aggregate := range t.aggregates {
+		fiveHourTokens, sevenDayTokens := runtimeWindowTokens(aggregate.Events, t.now().UTC())
 		models := make([]ProviderModelUsage, 0, len(aggregate.Models))
 		for _, model := range aggregate.Models {
 			models = append(models, model.ProviderModelUsage)
@@ -294,8 +316,12 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 			AmountUSD:               float64(aggregate.AmountNanos) / creditNanosPerUSD,
 			RatedRequests:           aggregate.RatedRequests,
 			UnratedRequests:         aggregate.UnratedRequests,
-			Models:                  models,
-			UpdatedAt:               aggregate.UpdatedAt,
+			Quota: ProviderRuntimeQuota{
+				FiveHourUsedTokens: fiveHourTokens,
+				SevenDayUsedTokens: sevenDayTokens,
+			},
+			Models:    models,
+			UpdatedAt: aggregate.UpdatedAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -305,6 +331,27 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 		return out[i].Provider < out[j].Provider
 	})
 	return out
+}
+
+func runtimeWindowTokens(events []providerRuntimeEvent, now time.Time) (int64, int64) {
+	if len(events) == 0 {
+		return 0, 0
+	}
+	fiveHourCutoff := now.Add(-5 * time.Hour)
+	sevenDayCutoff := now.Add(-7 * 24 * time.Hour)
+	var fiveHour, sevenDay int64
+	for _, event := range events {
+		if event.At.After(now) {
+			continue
+		}
+		if event.At.After(sevenDayCutoff) {
+			sevenDay = saturatingAdd(sevenDay, event.Tokens)
+		}
+		if event.At.After(fiveHourCutoff) {
+			fiveHour = saturatingAdd(fiveHour, event.Tokens)
+		}
+	}
+	return fiveHour, sevenDay
 }
 
 func (t *ProviderRuntimeTracker) Shutdown() {

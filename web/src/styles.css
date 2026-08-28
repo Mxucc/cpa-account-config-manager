@@ -1953,6 +1953,43 @@ html[data-plugin-density="compact"] .app-shell .account-table td { height: 44px;
   white-space: nowrap;
 }
 
+/* Appearance & theme and Codex advanced sections reuse .filter-control for
+   their fields; give their inputs/selects the same treatment as the proxy
+   profiles form so they never fall back to native controls. */
+.plugin-appearance-settings .filter-control input,
+.plugin-appearance-settings .filter-control select,
+.codex-policy-grid .filter-control input,
+.codex-policy-grid .filter-control select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+.plugin-appearance-settings .filter-control input,
+.plugin-appearance-settings .filter-control select,
+.codex-policy-grid .filter-control input,
+.codex-policy-grid .filter-control select {
+  height: 42px;
+  padding: 0 12px;
+}
+.plugin-appearance-settings .filter-control input:hover,
+.plugin-appearance-settings .filter-control select:hover,
+.codex-policy-grid .filter-control input:hover,
+.codex-policy-grid .filter-control select:hover {
+  border-color: var(--border-hover);
+}
+.plugin-appearance-settings .filter-control input:focus,
+.plugin-appearance-settings .filter-control select:focus,
+.codex-policy-grid .filter-control input:focus,
+.codex-policy-grid .filter-control select:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-10);
+  outline: none;
+}
+
 .proxy-profile-list {
   display: grid;
   align-content: start;

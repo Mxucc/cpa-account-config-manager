@@ -41,16 +41,18 @@ interface OtherSettingsWorkspaceProps {
   forceLoading?: boolean;
   onForcePreview?: () => void;
   onExperimentalSettingsChange?: (settings: ExperimentalSettings) => void;
+  initialSection?: "automation" | "notifications" | "updates" | "experimental";
+  standalone?: boolean;
 }
 
 const ignoreExperimentalSettingsChange = (_settings: ExperimentalSettings) => undefined;
 
-export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined, onExperimentalSettingsChange = ignoreExperimentalSettingsChange }: OtherSettingsWorkspaceProps) {
+export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined, onExperimentalSettingsChange = ignoreExperimentalSettingsChange, initialSection = "automation", standalone = false }: OtherSettingsWorkspaceProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">("automation");
+  const [activeSection, setActiveSection] = useState<"automation" | "notifications" | "updates" | "experimental">(initialSection);
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [typographyDistinction, setTypographyDistinction] = useState(readTypographyDistinction);
   const [pluginTheme, setPluginThemeState] = useState<PluginThemePreset>(readPluginTheme);
@@ -58,7 +60,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [pluginThemeEnabled, setPluginThemeEnabledState] = useState(readPluginThemeEnabled);
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
-  const [proxyRefreshRevision, setProxyRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -304,12 +305,12 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
         <div><strong>{tx("ui.other_settings")}</strong><span>{tx("ui.other_settings_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); setProxyRefreshRevision((current) => current + 1); void refreshAll(); }}>
+        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); void refreshAll(); }}>
           <RefreshCw className={loading ? "spin" : ""} size={16} />{tx("ui.refresh")}
         </button>
       </header>
 
-      <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
+      {!standalone ? <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
         <button type="button" role="tab" aria-selected={activeSection === "automation"} className={activeSection === "automation" ? "active" : ""} onClick={() => setActiveSection("automation")}>
           <Workflow size={15} />{tx("ui.automation_policy")}
         </button>
@@ -322,14 +323,14 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
           <FlaskConical size={15} />{tx("ui.experimental_features")}
         </button>
-      </div>
+      </div> : null}
 
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 
       {activeSection === "automation" ? (
         <>
           <AutomationPolicySettings refreshRevision={automationRefreshRevision} forceLoading={forceLoading} onAPIError={onAPIError} onNotice={onNotice} onForcePreview={onForcePreview} />
-          <ProxyProfilesSettings refreshRevision={proxyRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
+          <ProxyProfilesSettings onAPIError={onAPIError} onNotice={onNotice} />
         </>
       ) : activeSection === "notifications" ? (
         <ExternalNotificationSettings refreshRevision={notificationRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />

@@ -192,8 +192,11 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
           </label>
           <OptionalNumberRow label="Priority" ariaLabel={tx("ui.default_priority")} value={draft.priority} disabled={controlsLocked} onChange={(priority) => updateDraft({ priority })} />
           <OptionalBooleanRow label="WebSockets" ariaLabel={tx("ui.default_websockets")} value={draft.websockets} disabled={controlsLocked} onChange={(websockets) => updateDraft({ websockets })} />
-          <ProxyProfileRow label={tx("ui.default_account_proxy")} value={draft.proxy_profile_id ?? null} profiles={proxyProfiles} disabled={controlsLocked} onChange={(proxy_profile_id) => updateDraft({ proxy_profile_id })} />
-          <ProxyProfileRow label={tx("ui.default_ai_provider_proxy")} value={draft.ai_provider_proxy_profile_id ?? null} profiles={proxyProfiles} disabled={controlsLocked} onChange={(ai_provider_proxy_profile_id) => updateDraft({ ai_provider_proxy_profile_id })} />
+          <div className="policy-proxy-group">
+            <div className="policy-subsection-heading"><strong>{tx("ui.proxy_profiles")}</strong><span>{tx("ui.global_proxy_profile_help")}</span></div>
+            <ProxyProfileRow label={tx("ui.default_account_proxy")} value={draft.proxy_profile_id ?? null} profiles={proxyProfiles} disabled={controlsLocked} onChange={(proxy_profile_id) => updateDraft({ proxy_profile_id })} />
+            <ProxyProfileRow label={tx("ui.default_ai_provider_proxy")} value={draft.ai_provider_proxy_profile_id ?? null} profiles={proxyProfiles} disabled={controlsLocked} onChange={(ai_provider_proxy_profile_id) => updateDraft({ ai_provider_proxy_profile_id })} />
+          </div>
           <label className="policy-row policy-interval"><span className="edit-optin">{tx("ui.scan_interval")}</span><span className="number-suffix"><input type="number" min="5" max="300" value={draft.scan_interval_seconds} disabled={controlsLocked} onChange={(event) => updateDraft({ scan_interval_seconds: Number(event.target.value) })} aria-label={tx("ui.scan_interval")} /><b>{tx("ui.seconds")}</b></span></label>
         </div>
       </section>
@@ -266,7 +269,7 @@ function ConditionalRuleEditor({ rule, index, total, disabled, profiles, onChang
       </header>
       <div className="conditional-rule-body">
         <section className="conditional-rule-conditions"><h4>{tx("ui.match_conditions")}</h4><PolicyConditionEditor group={rule.conditions} disabled={disabled} onChange={(conditions) => onChange({ ...rule, conditions })} /></section>
-        <section className="conditional-rule-actions"><h4>{tx("ui.automation_actions")}</h4>
+        <section className="conditional-rule-actions"><h4>{tx("ui.automation_actions")}</h4><p className="policy-action-help">{tx("ui.conditional_proxy_profile_help")}</p>
           <OptionalBooleanAction label={tx("ui.new_account_model_probe")} present={hasOwn(rule.actions, "new_account_model_probe")} value={rule.actions.new_account_model_probe ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "new_account_model_probe", present, value))} />
           <OptionalNumberAction label="Priority" present={hasOwn(rule.actions, "priority")} value={rule.actions.priority ?? 0} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "priority", present, value))} />
           <OptionalBooleanAction label="WebSockets" present={hasOwn(rule.actions, "websockets")} value={rule.actions.websockets ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "websockets", present, value))} />

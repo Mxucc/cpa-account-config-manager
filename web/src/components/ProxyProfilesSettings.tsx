@@ -94,13 +94,14 @@ export function ProxyProfilesSettings({ refreshRevision = 0, onAPIError, onNotic
 				<button className="button button-quiet" type="button" disabled={loading} onClick={() => void load()}><RefreshCw className={loading ? "spin" : ""} size={15} />{tx("ui.refresh")}</button>
 			</div>
 			{storageError ? <div className="experimental-storage-error" role="alert">{tx("ui.proxy_profiles_storage_error")}</div> : null}
+			<div className="proxy-profile-explainer">{tx("ui.proxy_profiles_usage_help")}</div>
 			{error ? <div className="automation-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}
 			<div className="settings-inline-grid proxy-profile-grid">
 				<form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-					<label><span>{tx("ui.profile_name")}</span><input required maxLength={128} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-					<label><span>{tx("ui.proxy_url_value")}</span><input required={!form.id} placeholder={form.id ? tx("ui.proxy_profile_keep_existing") : "socks5h://gateway.internal:1080"} value={form.proxy_url} onChange={(event) => setForm({ ...form, proxy_url: event.target.value })} autoComplete="off" /></label>
-					<label><span>{tx("ui.provider_scope")}</span><input placeholder={tx("ui.provider_scope_placeholder")} value={form.providers} onChange={(event) => setForm({ ...form, providers: event.target.value })} /></label>
-					<label><span>{tx("ui.note")}</span><textarea rows={2} maxLength={2000} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
+					<label className="filter-control"><span>{tx("ui.profile_name")}</span><input required maxLength={128} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+					<label className="filter-control"><span>{tx("ui.proxy_url_value")}</span><input required={!form.id} placeholder={form.id ? tx("ui.proxy_profile_keep_existing") : "socks5h://gateway.internal:1080"} value={form.proxy_url} onChange={(event) => setForm({ ...form, proxy_url: event.target.value })} autoComplete="off" /></label>
+					<label className="filter-control"><span>{tx("ui.provider_scope")}</span><input placeholder={tx("ui.provider_scope_placeholder")} value={form.providers} onChange={(event) => setForm({ ...form, providers: event.target.value })} /></label>
+					<label className="filter-control"><span>{tx("ui.note")}</span><textarea rows={2} maxLength={2000} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
 					<label className="switch-control"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /><b>{tx(form.enabled ? "ui.enabled" : "ui.disabled")}</b></label>
 					<div className="settings-section-actions">
 						<button className="button button-primary" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spin" size={15} /> : form.id ? <Save size={15} /> : <Plus size={15} />}{tx(form.id ? "ui.save_settings" : "ui.add_proxy_profile")}</button>
@@ -108,7 +109,7 @@ export function ProxyProfilesSettings({ refreshRevision = 0, onAPIError, onNotic
 					</div>
 				</form>
 
-				<div className="proxy-profile-list settings-list" role="list">
+				<div className="proxy-profile-list" role="list">
 					{loading && !profiles.length ? <div className="model-catalog-state"><LoaderCircle className="spin" size={16} />{tx("ui.loading")}</div> : null}
 					{!loading && profiles.length === 0 ? <div className="model-catalog-state">{tx("ui.no_proxy_profiles")}</div> : null}
 					{profiles.map((profile) => (
@@ -123,7 +124,7 @@ export function ProxyProfilesSettings({ refreshRevision = 0, onAPIError, onNotic
 								<time>{formatDateTime(profile.updated_at)}</time>
 							</footer>
 							{profile.note ? <p>{profile.note}</p> : null}
-							<div className="row-actions">
+							<div className="proxy-profile-actions">
 								<button className="button button-quiet" type="button" onClick={() => setForm({ id: profile.id, name: profile.name, proxy_url: "", note: profile.note ?? "", providers: (profile.providers ?? []).join(", "), enabled: profile.enabled })}>{tx("ui.edit")}</button>
 								<button className="button button-danger" type="button" disabled={deletingID === profile.id} onClick={() => void remove(profile)}><Trash2 size={14} />{tx("ui.delete")}</button>
 							</div>

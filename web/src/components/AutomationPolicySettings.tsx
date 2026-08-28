@@ -180,6 +180,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
 
       <section className="automation-policy-section" aria-label={tx("ui.global_default_policy")}>
         <header><div><strong>{tx("ui.global_default_policy")}</strong><span>{tx("ui.global_default_policy_description")}</span></div></header>
+        <p className="policy-section-help">{tx("ui.global_default_policy_help")}</p>
         <div className="policy-form automation-global-form">
           <label className={`policy-row policy-master ${draft.enabled ? "is-enabled" : ""}`}>
             <span><strong>{tx("ui.auto_apply")}</strong><small>{tx("ui.auth_files")}</small></span>

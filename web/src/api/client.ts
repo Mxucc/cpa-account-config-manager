@@ -1735,11 +1735,17 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
 }
 
 export async function getAIProviderRuntime(signal?: AbortSignal): Promise<AIProviderRuntimeResponse> {
-  return normalizeAIProviderRuntimeResponse(await managementRequest<unknown>("/ai-providers/runtime", { signal }));
+  // Runtime metrics are exposed by this plugin, not by CPA's native
+  // management API.  Use the plugin API root so requests include
+  // `/v0/management/plugins/cpa-account-config-manager`.
+  return normalizeAIProviderRuntimeResponse(await requestRecord<unknown>("/ai-providers/runtime", { signal }));
 }
 
 export async function getQuotaPolicies(signal?: AbortSignal): Promise<QuotaPolicySnapshot> {
-	const raw = await managementRequest<unknown>("/quota-policies", { signal });
+	// Quota policies are plugin-owned persisted settings.  Calling the host
+	// management root here produced a misleading 404 on CPA because that path
+	// is not a native CPA endpoint.
+	const raw = await requestRecord<unknown>("/quota-policies", { signal });
 	if (!isRecord(raw)) throw new APIError(502, "ui.invalid_api_response");
 	const accounts = isRecord(raw.accounts) ? raw.accounts as QuotaPolicySnapshot["accounts"] : {};
 	const providers = Array.isArray(raw.providers) ? raw.providers.filter(isRecord).map((item) => item as unknown as ProviderQuotaPolicy) : [];
@@ -1748,11 +1754,11 @@ export async function getQuotaPolicies(signal?: AbortSignal): Promise<QuotaPolic
 }
 
 export async function saveAccountQuotaPolicy(accountID: string, policy: AccountQuotaPolicy): Promise<void> {
-	await managementRequest("/quota-policies/account", { method: "PUT", body: JSON.stringify({ account_id: accountID, policy }) });
+	await request("/quota-policies/account", { method: "PUT", body: JSON.stringify({ account_id: accountID, policy }) });
 }
 
 export async function saveAIProviderQuotaPolicy(policy: ProviderQuotaPolicy): Promise<void> {
-	await managementRequest("/quota-policies/provider", { method: "PUT", body: JSON.stringify({ policy }) });
+	await request("/quota-policies/provider", { method: "PUT", body: JSON.stringify({ policy }) });
 }
 
 /** Fetch one provider channel, degrading non-auth failures to a channel error. */

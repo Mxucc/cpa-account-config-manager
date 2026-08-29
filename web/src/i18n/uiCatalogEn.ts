@@ -1422,6 +1422,7 @@ export const enUI = {
   "ui.total_accounts_and_providers": "Accounts and provider credentials",
   "ui.loading": "Loading",
   "ui.ai_provider_concurrency": "Concurrency",
+  "ui.ai_provider_concurrency_usage": "Concurrency / usage",
   "ui.ai_provider_concurrency_observable_only": "Current CPA can observe provider concurrency only; provider concurrency limits cannot be configured here",
   "ui.ai_provider_model_catalog_unavailable": "Model catalog unavailable; continuing with configured models",
   "ui.ai_provider_no_models_available": "No models available: the catalog is unavailable and this channel has no configured models",

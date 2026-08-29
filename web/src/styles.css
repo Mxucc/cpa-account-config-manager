@@ -1817,22 +1817,41 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-type-option-main strong { font-size: calc(12px * var(--font-size-scale)); color: var(--text-primary); }
 .ai-provider-type-option-main small { font-size: calc(10px * var(--font-size-scale)); color: var(--text-secondary); line-height: 1.45; }
 
-/* AI provider management table (account-style) */
-.ai-provider-table-wrap { min-width: 0; overflow-x: auto; }
-.ai-provider-table { min-width: 1080px; }
-.ai-provider-table th:nth-child(1) { width: 150px; }
-.ai-provider-table th:nth-child(2) { width: 170px; }
-.ai-provider-table th:nth-child(3) { width: 200px; }
-.ai-provider-table th:nth-child(4) { width: 130px; }
-.ai-provider-table th:nth-child(5) { width: 96px; }
-.ai-provider-table th:nth-child(6) { width: 84px; }
-.ai-provider-table th:nth-child(7) { width: 110px; }
-.ai-provider-table th:nth-child(8) { width: 120px; }
-.ai-provider-table td { height: 56px; font-size: calc(12px * var(--font-size-scale)); }
+/* AI provider management table: account-list parity with a fixed action rail. */
+.ai-provider-table-wrap { min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+.ai-provider-table { width: 100%; min-width: 1220px; }
+.ai-provider-table .col-provider-type { width: 150px; }
+.ai-provider-table .col-provider-name { width: 190px; }
+.ai-provider-table .col-provider-status { width: 110px; }
+.ai-provider-table .col-provider-models { width: 104px; }
+.ai-provider-table .col-provider-runtime { width: 320px; }
+.ai-provider-table .col-provider-base-url { width: 250px; }
+.ai-provider-table .col-provider-api-key { width: 170px; }
+.ai-provider-table .col-provider-actions { width: 232px; }
+.ai-provider-table td { height: 80px; font-size: calc(13px * var(--font-size-scale)); }
+.ai-provider-table .actions-header,
+.ai-provider-table .actions-cell {
+  position: sticky;
+  right: 0;
+  box-shadow: -1px 0 0 var(--border-color);
+}
+.ai-provider-table .actions-header { z-index: 8; background: var(--bg-tertiary); }
+.ai-provider-table .actions-cell { z-index: 3; background: var(--bg-primary); }
+.ai-provider-table tbody tr:hover > .actions-cell { background: color-mix(in srgb, var(--bg-hover) 72%, var(--bg-primary)); }
+.ai-provider-table .ai-provider-model-count { font-variant-numeric: tabular-nums; }
+.ai-provider-runtime-cell { min-width: 0; display: grid; grid-template-columns: minmax(120px, .8fr) minmax(160px, 1.2fr); gap: 14px; align-items: center; }
+.ai-provider-runtime-concurrency,
+.ai-provider-runtime-usage { min-width: 0; display: grid; gap: 3px; }
+.ai-provider-runtime-cell span,
+.ai-provider-runtime-cell small { color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); }
+.ai-provider-runtime-cell strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ai-provider-runtime-concurrency strong { font-family: var(--font-mono, ui-monospace, monospace); }
+.ai-provider-runtime-usage strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-provider-table-url { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); }
 .ai-provider-table-secret { color: var(--muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); }
-.ai-provider-table-actions { display: flex; align-items: center; gap: 6px; }
-.ai-provider-table-actions .button { min-width: 0; }
+.ai-provider-table-actions { min-width: 0; }
+.ai-provider-table-actions .row-actions { grid-template-columns: repeat(6, 32px); }
+.ai-provider-table-actions .icon-button { width: 32px; height: 32px; }
 
 /* AI provider local loading (no full-screen overlay) */
 .ai-provider-loading { min-height: 220px; display: grid; place-items: center; color: var(--primary-color); }
@@ -2500,6 +2519,19 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
   .account-table .usage-cell,
   .account-table .state-cell { font-size: calc(10px * var(--font-size-scale)); }
   .account-table .row-actions { display: grid; gap: 4px; }
+
+  /* Provider rows remain a horizontally scrollable data table on small screens;
+     undo the account list's card transformation for this scoped table. */
+  .ai-provider-table-wrap { overflow-x: auto; }
+  .ai-provider-table { display: table; min-width: 1220px; border-collapse: separate; border-spacing: 0; }
+  .ai-provider-table thead { display: table-header-group; }
+  .ai-provider-table tbody { display: table-row-group; }
+  .ai-provider-table tr { display: table-row; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+  .ai-provider-table th,
+  .ai-provider-table td { display: table-cell; min-width: 0; padding: 10px 14px; border-bottom: 1px solid var(--border-color); }
+  .ai-provider-table td:nth-child(n) { display: table-cell; }
+  .ai-provider-table .actions-cell { display: table-cell; grid-area: auto; align-self: auto; }
+  .ai-provider-table .row-actions { display: grid; grid-template-columns: repeat(6, 32px); }
 }
 
 @media (max-width: 560px) {

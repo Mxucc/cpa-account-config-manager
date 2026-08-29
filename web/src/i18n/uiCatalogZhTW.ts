@@ -1423,6 +1423,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_model_count": "模型數量",
   "ui.loading": "載入中",
   "ui.ai_provider_concurrency": "並發",
+  "ui.ai_provider_concurrency_usage": "並發用量",
   "ui.ai_provider_concurrency_observable_only": "目前 CPA 僅支援觀察 AI 供應商即時並發，不支援在此配置供應商並發上限",
   "ui.total_accounts_and_providers": "帳號與供應商總數",
   "ui.ai_provider_model_catalog_unavailable": "模型目錄不可用，已改用已配置模型繼續測試",

@@ -307,6 +307,32 @@ func TestAIProviderModelProbeUsesConfiguredModelAndClassifiesResponse(t *testing
 	}
 }
 
+func TestAIProviderCodexModelProbeUsesConfiguredBaseURL(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Body:       []byte(`{"id":"resp_test","object":"response","status":"completed","output":[]}`),
+	}}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderModel(context.Background(), "codex-api-key", "https://gptpro.live/v1", "sk-provider", "", "gpt-5.6-sol", nil, time.Second)
+	if !result.Reachable || result.Status != "available" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %#v", transport.requests)
+	}
+	request := transport.requests[0]
+	if request.Method != http.MethodPost || request.URL != "https://gptpro.live/v1/responses" {
+		t.Fatalf("request = %#v", request)
+	}
+	if request.Headers.Get("Authorization") != "Bearer sk-provider" {
+		t.Fatalf("authorization header missing: %#v", request.Headers)
+	}
+	if !bytes.Contains(request.Body, []byte(`"model":"gpt-5.6-sol"`)) {
+		t.Fatalf("request body = %s", request.Body)
+	}
+}
+
 func TestAIProviderModelProbeClassifiesExpectedFailures(t *testing.T) {
 	tests := []struct {
 		name       string

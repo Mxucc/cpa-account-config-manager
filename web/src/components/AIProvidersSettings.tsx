@@ -1354,22 +1354,31 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       ) : (
         <div className="ai-provider-table-wrap">
           <table className="account-table ai-provider-table">
+            <colgroup>
+              <col className="col-provider-type" />
+              <col className="col-provider-name" />
+              <col className="col-provider-status" />
+              <col className="col-provider-models" />
+              <col className="col-provider-runtime" />
+              <col className="col-provider-base-url" />
+              <col className="col-provider-api-key" />
+              <col className="col-provider-actions" />
+            </colgroup>
             <thead><tr>
               <th>{tx("ui.ai_provider_type")}</th>
               <th>{tx("ui.ai_provider_name")}</th>
-              <th>{tx("ui.ai_provider_base_url")}</th>
-              <th>{tx("ui.ai_provider_api_key")}</th>
               <th>{tx("ui.status")}</th>
               <th>{tx("ui.ai_provider_model_count")}</th>
-              <th>{tx("ui.ai_provider_concurrency")}</th>
-              <th>{tx("ui.ai_provider_usage")}</th>
-              <th>{tx("ui.actions")}</th>
+              <th>{tx("ui.ai_provider_concurrency_usage")}</th>
+              <th>{tx("ui.ai_provider_base_url")}</th>
+              <th>{tx("ui.ai_provider_api_key")}</th>
+              <th className="actions-header">{tx("ui.actions")}</th>
             </tr></thead>
             <tbody>
               {channels.flatMap((channel) => [
                 ...(channel.error || channel.storage_error ? [
                   <tr key={`${channel.kind}-issue`} className="ai-provider-channel-issue">
-                    <td colSpan={9}>
+                    <td colSpan={8}>
                       <strong>{tx(channelLabelKey(channel.kind))}</strong>{" "}
                       <span>{tx(channel.storage_error ? "ui.ai_provider_storage_unavailable" : channel.error === "provider_channel_response_invalid" ? "ui.ai_provider_response_invalid" : "ui.ai_provider_channel_unavailable")}</span>
                     </td>
@@ -1377,12 +1386,10 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                 ] : []),
                 ...channel.entries.map((entry) => (
                 <tr key={`${channel.kind}-${entry.index}`}>
-                  <td><strong>{tx(channelLabelKey(channel.kind))}</strong></td>
-                  <td>{entry.name || entry.workspace_id || maskSecret(entry.api_key) || `#${entry.index + 1}`}</td>
-                  <td className="ai-provider-table-url">{entry.base_url || entry.workspace_id || "-"}</td>
-                  <td className="ai-provider-table-secret">{maskSecret(entry.api_key) || (channel.kind === "opencode-go" ? tx("ui.opencode_auth_cookie") : channel.kind === "opencode-zen" ? (entry.key_set ? "••••" : "-") : "-")}</td>
+                  <td><span className="provider-tag">{tx(channelLabelKey(channel.kind))}</span></td>
+                  <td><div className="identity-cell"><strong>{entry.name || entry.workspace_id || maskSecret(entry.api_key) || `#${entry.index + 1}`}</strong></div></td>
                   <td>{entry.disabled ? <span className="ai-provider-entry-badge is-disabled">{tx("ui.disabled")}</span> : <span className="ai-provider-entry-badge">{tx("ui.enabled")}</span>}</td>
-                  <td>{entry.models?.length ?? 0}</td>
+                  <td><strong className="ai-provider-model-count">{entry.models?.length ?? 0}</strong></td>
                   {(() => {
                     const runtime = runtimeForEntry(entry);
                     return <>
@@ -1402,27 +1409,36 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                           return `${Math.min(999, usedTokens / window.total_tokens * 100).toFixed(1)}% / ${window.limit_percent ?? 100}%`;
                         };
                         return <>
-                          <td title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
-                            <strong>{concurrency}</strong>{configuredLimit !== undefined ? <small> · {tx("ui.ai_provider_limit")}</small> : null}
-                          </td>
-                          <td title={tx("ui.ai_provider_quota_settings_description")}>
-                            {runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><br /><small>{formatAmount(runtime.amount_usd)} · {tx("ui.quota_window_five_hour")} {budget(policy?.five_hour ?? {}, runtime.quota?.five_hour_used_tokens)} · {tx("ui.quota_window_seven_day")} {budget(policy?.seven_day ?? {}, runtime.quota?.seven_day_used_tokens)}</small></> : <span title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</span>}
+                          <td className="ai-provider-runtime-cell" title={tx("ui.ai_provider_quota_settings_description")}>
+                            <div className="ai-provider-runtime-concurrency" title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
+                              <span>{tx("ui.ai_provider_concurrency")}</span>
+                              <strong>{concurrency}</strong>
+                              {configuredLimit !== undefined ? <small>{tx("ui.ai_provider_limit")}</small> : null}
+                            </div>
+                            <div className="ai-provider-runtime-usage">
+                              <span>{tx("ui.ai_provider_usage")}</span>
+                              {runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><small>{formatAmount(runtime.amount_usd)} · {tx("ui.quota_window_five_hour")} {budget(policy?.five_hour ?? {}, runtime.quota?.five_hour_used_tokens)} · {tx("ui.quota_window_seven_day")} {budget(policy?.seven_day ?? {}, runtime.quota?.seven_day_used_tokens)}</small></> : <strong title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</strong>}
+                            </div>
                           </td>
                         </>;
                       })()}
                     </>;
                   })()}
-                  <td className="ai-provider-table-actions">
-                    <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
-                    <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
-                    <IconButton label={tx("ui.edit_ai_provider")} onClick={() => { const policy = providerPolicyFor(channel.kind, entry); setEditing({ kind: channel.kind, index: entry.index, quotaPolicyKey: policy?.key ?? providerPolicyKey(channel.kind, entry), name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id, concurrencyLimit: policy?.concurrency_limit === undefined ? "" : String(policy.concurrency_limit), fiveHourTotalTokens: policy?.five_hour.total_tokens === undefined ? "" : String(policy.five_hour.total_tokens), fiveHourLimitPercent: policy?.five_hour.limit_percent === undefined ? "" : String(policy.five_hour.limit_percent), sevenDayTotalTokens: policy?.seven_day.total_tokens === undefined ? "" : String(policy.seven_day.total_tokens), sevenDayLimitPercent: policy?.seven_day.limit_percent === undefined ? "" : String(policy.seven_day.limit_percent) }); }}><Save size={15} /></IconButton>
-                    {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
-                      <>
-                        <IconButton label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>
-                        <IconButton label={tx("ui.disable_ai_provider")} disabled={busy || entry.disabled === true} onClick={() => void toggleEnabled(entry, channel.kind, false)}><PowerOff size={15} /></IconButton>
-                      </>
-                    ) : null}
-                    <IconButton className="button-danger" label={tx("ui.delete_ai_provider")} onClick={() => void deleteEntry(entry, channel.kind)}><Trash2 size={15} /></IconButton>
+                  <td className="ai-provider-table-url">{entry.base_url || entry.workspace_id || "-"}</td>
+                  <td className="ai-provider-table-secret">{maskSecret(entry.api_key) || (channel.kind === "opencode-go" ? tx("ui.opencode_auth_cookie") : channel.kind === "opencode-zen" ? (entry.key_set ? "••••" : "-") : "-")}</td>
+                  <td className="actions-cell ai-provider-table-actions">
+                    <div className="row-actions">
+                      <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
+                      <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
+                      <IconButton label={tx("ui.edit_ai_provider")} onClick={() => { const policy = providerPolicyFor(channel.kind, entry); setEditing({ kind: channel.kind, index: entry.index, quotaPolicyKey: policy?.key ?? providerPolicyKey(channel.kind, entry), name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id, concurrencyLimit: policy?.concurrency_limit === undefined ? "" : String(policy.concurrency_limit), fiveHourTotalTokens: policy?.five_hour.total_tokens === undefined ? "" : String(policy.five_hour.total_tokens), fiveHourLimitPercent: policy?.five_hour.limit_percent === undefined ? "" : String(policy.five_hour.limit_percent), sevenDayTotalTokens: policy?.seven_day.total_tokens === undefined ? "" : String(policy.seven_day.total_tokens), sevenDayLimitPercent: policy?.seven_day.limit_percent === undefined ? "" : String(policy.seven_day.limit_percent) }); }}><Save size={15} /></IconButton>
+                      {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
+                        <>
+                          <IconButton className="row-enable-action" label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>
+                          <IconButton className="row-disable-action" label={tx("ui.disable_ai_provider")} disabled={busy || entry.disabled === true} onClick={() => void toggleEnabled(entry, channel.kind, false)}><PowerOff size={15} /></IconButton>
+                        </>
+                      ) : null}
+                      <IconButton className="button-danger" label={tx("ui.delete_ai_provider")} onClick={() => void deleteEntry(entry, channel.kind)}><Trash2 size={15} /></IconButton>
+                    </div>
                   </td>
                 </tr>
                 )),

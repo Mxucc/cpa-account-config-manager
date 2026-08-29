@@ -1423,6 +1423,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_model_count": "Model count",
   "ui.loading": "Загрузка",
   "ui.ai_provider_concurrency": "Параллельность",
+  "ui.ai_provider_concurrency_usage": "Параллельность / использование",
   "ui.ai_provider_concurrency_observable_only": "Текущая версия CPA позволяет только наблюдать параллелизм провайдера; настроить его лимит здесь нельзя",
   "ui.total_accounts_and_providers": "Всего аккаунтов и провайдеров",
   "ui.ai_provider_model_catalog_unavailable": "Каталог моделей недоступен; продолжаем с настроенными моделями",

@@ -276,6 +276,12 @@ func aiProviderModelProbeURL(kind, baseURL, model, fallback string) string {
 	switch normalizeAIProviderKind(kind) {
 	case "openai-compatibility", "openai-compatible":
 		return openAICompatibleChatURL(base)
+	case "codex-api-key":
+		// Codex API-key channels use the Responses request shape, but CPA also
+		// allows them to target compatible third-party gateways. Once a channel
+		// supplies a Base URL, keep the probe on that gateway instead of falling
+		// back to the official OpenAI endpoint produced by buildModelProbe.
+		return strings.TrimRight(base, "/") + "/responses"
 	case "claude-api-key":
 		return strings.TrimRight(base, "/") + "/messages"
 	case "xai-api-key":

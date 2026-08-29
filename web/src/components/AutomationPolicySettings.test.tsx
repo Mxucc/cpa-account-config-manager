@@ -6,6 +6,29 @@ import { _resetSessionForTest, setSession } from "../store/session";
 import type { PolicySnapshot } from "../types";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 
+const globalPolicy = {
+  policy: {
+    enabled: true,
+    disabled: null,
+    priority: null,
+    concurrency_limit: null,
+    quota_policy: null,
+    note: null,
+    prefix: null,
+    proxy_url: null,
+    proxy_profile_id: null,
+    ai_provider_proxy_profile_id: null,
+    websockets: null,
+    headers: null,
+    model_policy: null,
+    codex_identity: {
+      outbound_convergence_enabled: false,
+      ingress_gate_enabled: false,
+      allow_app_server_clients: false,
+    },
+  },
+};
+
 const snapshot: PolicySnapshot = {
   policy: {
     enabled: true,
@@ -38,6 +61,7 @@ describe("AutomationPolicySettings", () => {
     setSession("", "management-secret");
     vi.restoreAllMocks();
     vi.spyOn(api, "listProxyProfiles").mockResolvedValue({ profiles: [] });
+    vi.spyOn(api, "getGlobalPolicy").mockResolvedValue(globalPolicy);
   });
 
   it("ignores stale policy responses after a refresh revision changes", async () => {
@@ -151,12 +175,12 @@ describe("AutomationPolicySettings", () => {
         within(panel).getAllByRole("option", {
           name: "账号出口 · socks5://user:***@proxy.example:1080",
         }),
-      ).toHaveLength(2),
+      ).toHaveLength(4),
     );
     expect(within(panel).queryByText(/disabled\.example/)).not.toBeInTheDocument();
 
-    await user.selectOptions(within(panel).getByLabelText("默认账号代理"), "proxy-account");
-    await user.selectOptions(within(panel).getByLabelText("默认 AI 供应商代理"), "proxy-provider");
+    await user.selectOptions(within(panel).getAllByLabelText("默认账号代理")[1], "proxy-account");
+    await user.selectOptions(within(panel).getAllByLabelText("默认 AI 供应商代理")[1], "proxy-provider");
     await user.click(within(panel).getByRole("button", { name: "添加策略" }));
     const rule = within(panel).getByRole("article");
     await user.click(within(rule).getByRole("checkbox", { name: "账号代理档案" }));

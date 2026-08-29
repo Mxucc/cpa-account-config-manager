@@ -181,12 +181,12 @@ describe("OtherSettingsWorkspace", () => {
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));
     const configRequest = requests.find(({ url, init }) => url.endsWith("/config") && init.method === "PATCH");
     const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
-    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "", min_version: "", max_version: "", whitelist: "", blacklist: "", fingerprint_signals: "" } } });
-    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "", min_version: "", max_version: "", whitelist: "", blacklist: "", fingerprint_signals: "" } });
+    expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
+    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } });
     expect(onExperimentalSettingsChange).toHaveBeenLastCalledWith({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } });
     expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
   });
-  it("loads, changes, and persists the Codex convergence mode", async () => {
+  it("preserves the legacy Codex identity settings when saving experiments", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -194,7 +194,7 @@ describe("OtherSettingsWorkspace", () => {
       const url = String(input);
       requests.push({ url, init });
       if (url.endsWith("/experiments") && init.method === "PUT") {
-        return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: true, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "session" } } });
+        return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: true, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "device" } } });
       }
       if (url.endsWith("/experiments")) {
         return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: true, ingress_gate_enabled: false, allow_app_server_clients: false, convergence_mode: "device" } } });
@@ -207,17 +207,13 @@ describe("OtherSettingsWorkspace", () => {
     const workspace = await screen.findByRole("region", { name: "其他配置" });
     await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
     const panel = within(workspace).getByRole("tabpanel", { name: "实验性功能" });
-    await user.click(within(panel).getByText("高级策略 JSON"));
-
-    const mode = within(panel).getByLabelText("收敛模式");
-    expect(mode).toHaveValue("device");
-    await user.selectOptions(mode, "session");
+    expect(within(panel).queryByText("高级策略 JSON")).not.toBeInTheDocument();
     await user.click(within(panel).getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));
     const request = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
     const body = JSON.parse(String(request?.init.body));
-    expect(body.codex_identity.convergence_mode).toBe("session");
+    expect(body.codex_identity.convergence_mode).toBe("device");
     expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
   });
 });

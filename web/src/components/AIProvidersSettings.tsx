@@ -15,6 +15,7 @@ import type {
   AIProviderChannelSnapshot,
   AIProviderRuntimeModelUsage,
   AIProviderRuntimeSnapshot,
+  CodexIdentityOverrideSnapshot,
   ProviderQuotaPolicy,
   QuotaPolicySnapshot,
 } from "../types";
@@ -28,6 +29,8 @@ interface AIProvidersSettingsProps {
 }
 
 type AddKind = AIProviderChannelKind;
+type IdentityBooleanValue = "" | "true" | "false";
+type IdentityConvergenceValue = "" | "off" | "device" | "session" | "full";
 
 const providerTestStatusLabels: Record<api.AIProviderProbeResult["status"] & NonNullable<api.AIProviderProbeResult["status"]>, UIMessageKey> = {
   available: "ui.model_available",
@@ -97,6 +100,10 @@ type EditingEntry = {
   kind: AIProviderChannelKind;
   index: number;
   quotaPolicyKey: string;
+  codexIdentityPolicyKey: string;
+  codexConvergenceMode: IdentityConvergenceValue;
+  codexIngressGate: IdentityBooleanValue;
+  codexAllowAppServer: IdentityBooleanValue;
   name: string;
   baseURL: string;
   apiKey: string;
@@ -283,6 +290,52 @@ function ProviderPolicyFields({
           <input type="number" min="0" max="100" step="1" value={entry.sevenDayLimitPercent} onChange={(event) => onEntry({ sevenDayLimitPercent: event.target.value })} placeholder={tx("ui.not_set")} />
         </label>
       </div>
+    </section>
+  );
+}
+
+function ProviderCodexIdentityFields({
+  entry,
+  onEntry,
+}: {
+  entry: EditingEntry;
+  onEntry: (patch: Partial<EditingEntry>) => void;
+}) {
+  const { tx } = useI18n();
+  return (
+    <section className="ai-provider-quota-editor" aria-label={tx("ui.codex_identity_target_policy")}>
+      <div className="ai-provider-models-title">{tx("ui.codex_identity_target_policy")}</div>
+      <p className="ai-provider-field-note">{tx("ui.codex_identity_target_policy_description")}</p>
+      <div className="ai-provider-form-grid">
+        <label className="field-block">
+          <span>{tx("ui.codex_convergence_mode")}</span>
+          <select value={entry.codexConvergenceMode} onChange={(event) => onEntry({ codexConvergenceMode: event.target.value as IdentityConvergenceValue })}>
+            <option value="">{tx("ui.inherit_global_setting")}</option>
+            <option value="off">{tx("ui.codex_convergence_off")}</option>
+            <option value="device">{tx("ui.codex_convergence_device")}</option>
+            <option value="session">{tx("ui.codex_convergence_session")}</option>
+            <option value="full">{tx("ui.codex_convergence_full")}</option>
+          </select>
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.codex_ingress_gate")}</span>
+          <select value={entry.codexIngressGate} onChange={(event) => onEntry({ codexIngressGate: event.target.value as IdentityBooleanValue })}>
+            <option value="">{tx("ui.inherit_global_setting")}</option>
+            <option value="true">{tx("ui.explicitly_enabled")}</option>
+            <option value="false">{tx("ui.explicitly_disabled")}</option>
+          </select>
+        </label>
+        <label className="field-block">
+          <span>{tx("ui.codex_app_server_clients")}</span>
+          <select value={entry.codexAllowAppServer} onChange={(event) => onEntry({ codexAllowAppServer: event.target.value as IdentityBooleanValue })}>
+            <option value="">{tx("ui.inherit_global_setting")}</option>
+            <option value="true">{tx("ui.explicitly_enabled")}</option>
+            <option value="false">{tx("ui.explicitly_disabled")}</option>
+          </select>
+        </label>
+      </div>
+      <p className="ai-provider-field-note">{tx("ui.codex_identity_clear_override_help")}</p>
+      <p className="ai-provider-field-note">{tx("ui.codex_provider_identity_stable_key_help")}</p>
     </section>
   );
 }
@@ -493,6 +546,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const [runtimeUpdatedAt, setRuntimeUpdatedAt] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
   const [quotaPolicies, setQuotaPolicies] = useState<QuotaPolicySnapshot>({ accounts: {}, providers: [] });
+  const [codexIdentityOverrides, setCodexIdentityOverrides] = useState<CodexIdentityOverrideSnapshot>({ accounts: {}, providers: {} });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -527,13 +581,15 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     setLoading(true);
     setError("");
     try {
-      const [nextChannels, nextQuotaPolicies] = await Promise.all([
+      const [nextChannels, nextQuotaPolicies, nextCodexIdentityOverrides] = await Promise.all([
         api.listAIProviderChannels(signal),
         api.getQuotaPolicies(signal),
+        api.getCodexIdentityOverrides(signal),
       ]);
       if (requestID !== refreshRequest.current) return;
       setChannels(nextChannels);
       setQuotaPolicies(nextQuotaPolicies);
+      setCodexIdentityOverrides(nextCodexIdentityOverrides);
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       if (requestID === refreshRequest.current) handleError(caught);
@@ -547,6 +603,50 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     const stableKey = providerPolicyKey(kind, entry);
     const legacyKey = `${kind}:${entry.index}`;
     return quotaPolicies.providers.find((policy) => policy.key === stableKey || policy.key === legacyKey);
+  };
+  const openEditor = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry) => {
+    const policy = providerPolicyFor(kind, entry);
+    const stableIdentity = providerStableIdentity(entry);
+    const identityKey = providerPolicyKey(kind, entry);
+    const identityOverride = codexIdentityOverrides.providers[identityKey] ?? codexIdentityOverrides.providers[stableIdentity] ?? {};
+    setError("");
+    setEditing({
+      kind,
+      index: entry.index,
+      quotaPolicyKey: policy?.key ?? identityKey,
+      codexIdentityPolicyKey: identityKey,
+      codexConvergenceMode: identityOverride.convergence_mode ?? "",
+      codexIngressGate: identityOverride.ingress_gate_enabled === undefined ? "" : identityOverride.ingress_gate_enabled ? "true" : "false",
+      codexAllowAppServer: identityOverride.allow_app_server_clients === undefined ? "" : identityOverride.allow_app_server_clients ? "true" : "false",
+      name: entry.name ?? entry.workspace_id ?? "",
+      baseURL: entry.base_url ?? "",
+      apiKey: "",
+      disabled: entry.disabled === true,
+      prefix: entry.prefix ?? "",
+      priority: entry.priority !== undefined ? String(entry.priority) : "",
+      weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "",
+      proxyURL: entry.proxy_url ?? "",
+      headersText: mapToHeadersText(entry.headers),
+      excludedText: arrayToList(entry.excluded_models),
+      models: (entry.models ?? []).map((model) => ({ ...model })),
+      apiKeyEntries: apiKeyEntriesForEditing(entry),
+      apiKeyEntriesDirty: false,
+      supportPromptCacheKey: entry.support_prompt_cache_key === true,
+      disableCooling: entry.disable_cooling === true,
+      requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "",
+      requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors),
+      alphaSearch: entry.alpha_search === true,
+      websockets: entry.websockets === true,
+      rebuildMidSystemMessage: entry.rebuild_mid_system_message === true,
+      fingerprintProfile: entry.fingerprint_profile ?? "",
+      accountID: entry.account_id,
+      workspaceID: entry.workspace_id,
+      concurrencyLimit: policy?.concurrency_limit === undefined ? "" : String(policy.concurrency_limit),
+      fiveHourTotalTokens: policy?.five_hour.total_tokens === undefined ? "" : String(policy.five_hour.total_tokens),
+      fiveHourLimitPercent: policy?.five_hour.limit_percent === undefined ? "" : String(policy.five_hour.limit_percent),
+      sevenDayTotalTokens: policy?.seven_day.total_tokens === undefined ? "" : String(policy.seven_day.total_tokens),
+      sevenDayLimitPercent: policy?.seven_day.limit_percent === undefined ? "" : String(policy.seven_day.limit_percent),
+    });
   };
   const parseOptionalInteger = (value: string): number | undefined => {
     const trimmed = value.trim();
@@ -856,6 +956,13 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         onNotice(tx("ui.ai_provider_saved"));
       }
       await api.saveAIProviderQuotaPolicy(policy);
+      if (editing.kind === "codex-api-key") {
+        await api.saveProviderCodexIdentityOverride(editing.codexIdentityPolicyKey, {
+          ...(editing.codexConvergenceMode ? { convergence_mode: editing.codexConvergenceMode } : {}),
+          ...(editing.codexIngressGate !== "" ? { ingress_gate_enabled: editing.codexIngressGate === "true" } : {}),
+          ...(editing.codexAllowAppServer !== "" ? { allow_app_server_clients: editing.codexAllowAppServer === "true" } : {}),
+        });
+      }
       resetForm();
       await refresh();
     } catch (caught) {
@@ -927,7 +1034,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         const configured = (entry.models ?? []).map((model) => String(model.name ?? model.alias ?? "").trim()).filter(Boolean);
         let catalog: api.AIProviderProbeResult | null = null;
         try {
-          catalog = await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id);
+          catalog = await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, undefined, providerPolicyKey(kind, entry));
         } catch {
           // Some compatible gateways intentionally do not expose /models.
           // Configured models are still real routing targets, so continue.
@@ -938,7 +1045,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
         const selected = models[0] ?? "";
         setTestModel(selected);
         if (selected) {
-          const result = await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, selected);
+          const result = await api.testAIProviderChannelForKind(kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, selected, providerPolicyKey(kind, entry));
           if (!catalog?.reachable && configured.length > 0) {
             result.detail = result.detail ? `${result.detail} · model catalog unavailable` : "model catalog unavailable";
           }
@@ -970,7 +1077,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     if (!entry || testing.kind === "opencode-zen") return;
     setBusy(true);
     try {
-      setTestResult(await api.testAIProviderChannelForKind(testing.kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, testModel));
+      setTestResult(await api.testAIProviderChannelForKind(testing.kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, testModel, providerPolicyKey(testing.kind, entry)));
     } catch (caught) { handleError(caught); } finally { setBusy(false); }
   };
 
@@ -1228,6 +1335,12 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               entry={editing}
               onEntry={(patch) => setEditing((current) => (current ? { ...current, ...patch } : current))}
             />
+            {editing.kind === "codex-api-key" ? (
+              <ProviderCodexIdentityFields
+                entry={editing}
+                onEntry={(patch) => setEditing((current) => (current ? { ...current, ...patch } : current))}
+              />
+            ) : null}
           </div>
         </Modal>
       ) : null}
@@ -1430,7 +1543,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                     <div className="row-actions">
                       <IconButton label={tx("ui.view_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                       <IconButton label={tx("ui.test_ai_provider", { name: entry.name || entry.workspace_id || `#${entry.index + 1}` })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
-                      <IconButton label={tx("ui.edit_ai_provider")} onClick={() => { const policy = providerPolicyFor(channel.kind, entry); setEditing({ kind: channel.kind, index: entry.index, quotaPolicyKey: policy?.key ?? providerPolicyKey(channel.kind, entry), name: entry.name ?? entry.workspace_id ?? "", baseURL: entry.base_url ?? "", apiKey: "", disabled: entry.disabled === true, prefix: entry.prefix ?? "", priority: entry.priority !== undefined ? String(entry.priority) : "", weight: entry.weight !== undefined && entry.weight !== null ? String(entry.weight) : "", proxyURL: entry.proxy_url ?? "", headersText: mapToHeadersText(entry.headers), excludedText: arrayToList(entry.excluded_models), models: (entry.models ?? []).map((model) => ({ ...model })), apiKeyEntries: apiKeyEntriesForEditing(entry), apiKeyEntriesDirty: false, supportPromptCacheKey: entry.support_prompt_cache_key === true, disableCooling: entry.disable_cooling === true, requestRetry: entry.request_retry !== undefined && entry.request_retry !== null ? String(entry.request_retry) : "", requestScopedErrorsText: requestScopedErrorsToText(entry.request_scoped_errors), alphaSearch: entry.alpha_search === true, websockets: entry.websockets === true, rebuildMidSystemMessage: entry.rebuild_mid_system_message === true, fingerprintProfile: entry.fingerprint_profile ?? "", accountID: entry.account_id, workspaceID: entry.workspace_id, concurrencyLimit: policy?.concurrency_limit === undefined ? "" : String(policy.concurrency_limit), fiveHourTotalTokens: policy?.five_hour.total_tokens === undefined ? "" : String(policy.five_hour.total_tokens), fiveHourLimitPercent: policy?.five_hour.limit_percent === undefined ? "" : String(policy.five_hour.limit_percent), sevenDayTotalTokens: policy?.seven_day.total_tokens === undefined ? "" : String(policy.seven_day.total_tokens), sevenDayLimitPercent: policy?.seven_day.limit_percent === undefined ? "" : String(policy.seven_day.limit_percent) }); }}><Save size={15} /></IconButton>
+                      <IconButton label={tx("ui.edit_ai_provider")} onClick={() => openEditor(channel.kind, entry)}><Save size={15} /></IconButton>
                       {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                         <>
                           <IconButton className="row-enable-action" label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>

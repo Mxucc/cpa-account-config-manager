@@ -63,6 +63,7 @@ type AccountService struct {
 	usage         UsageSnapshotReader
 	concurrency   *AccountConcurrencyService
 	quotaPolicies *QuotaPolicyService
+	codexIdentity *CodexIdentityOverrideService
 	observer      interface{ ObserveAccounts([]Account) }
 	detailCacheMu sync.Mutex
 	detailCache   map[string]accountDetailCacheEntry
@@ -92,6 +93,13 @@ func (s *AccountService) SetQuotaPolicies(policies *QuotaPolicyService) {
 		return
 	}
 	s.quotaPolicies = policies
+}
+
+func (s *AccountService) SetCodexIdentityOverrides(overrides *CodexIdentityOverrideService) {
+	if s == nil {
+		return
+	}
+	s.codexIdentity = overrides
 }
 
 type ResolvedTargets struct {

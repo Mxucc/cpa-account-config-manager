@@ -17,13 +17,14 @@ import (
 // test connectivity. Secrets are accepted only from the authenticated
 // management request and are never persisted or logged.
 type AIProviderProbeRequest struct {
-	Kind    string            `json:"kind"`
-	BaseURL string            `json:"base_url"`
-	APIKey  string            `json:"api_key,omitempty"`
-	AuthID  string            `json:"auth_id,omitempty"`
-	Model   string            `json:"model,omitempty"`
-	Timeout int               `json:"timeout_seconds,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Kind        string            `json:"kind"`
+	ProviderKey string            `json:"provider_key,omitempty"`
+	BaseURL     string            `json:"base_url"`
+	APIKey      string            `json:"api_key,omitempty"`
+	AuthID      string            `json:"auth_id,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Timeout     int               `json:"timeout_seconds,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
 }
 
 // AIProviderProbeResult reports whether the channel endpoint is reachable and
@@ -75,9 +76,9 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	// Keep the original catalog reachability probe for old clients. New clients
 	// submit a model and receive the same structured result as account testing.
 	if strings.TrimSpace(request.Model) != "" {
-		result = a.probeAIProviderModel(ctx, kind, baseURL, apiKey, request.AuthID, request.Model, request.Headers, timeout)
+		result = a.probeAIProviderModelWithKey(ctx, kind, baseURL, apiKey, request.AuthID, request.ProviderKey, request.Model, request.Headers, timeout)
 	} else {
-		result = a.probeAIProviderEndpoint(ctx, kind, baseURL, apiKey, request.AuthID, request.Headers, timeout)
+		result = a.probeAIProviderEndpointWithKey(ctx, kind, baseURL, apiKey, request.AuthID, request.ProviderKey, request.Headers, timeout)
 	}
 	status := http.StatusOK
 	// Model tests return a structured result even for expected upstream
@@ -92,6 +93,15 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 func (a *App) probeAIProviderEndpoint(
 	ctx context.Context,
 	kind, baseURL, apiKey, authID string,
+	customHeaders map[string]string,
+	timeout time.Duration,
+) AIProviderProbeResult {
+	return a.probeAIProviderEndpointWithKey(ctx, kind, baseURL, apiKey, authID, "", customHeaders, timeout)
+}
+
+func (a *App) probeAIProviderEndpointWithKey(
+	ctx context.Context,
+	kind, baseURL, apiKey, authID, providerKey string,
 	customHeaders map[string]string,
 	timeout time.Duration,
 ) AIProviderProbeResult {
@@ -142,7 +152,7 @@ func (a *App) probeAIProviderEndpoint(
 			request.Headers.Set(key, value)
 		}
 		applyAIProviderProbeAuth(request.Headers, kind, apiKey)
-		a.applyAIProviderCodexFingerprint(request.Headers, kind, authID)
+		a.applyAIProviderCodexFingerprint(request.Headers, kind, authID, providerKey)
 		response, errDo := transport.AgentIdentityDo(probeCtx, "", request)
 		if errDo != nil {
 			lastDetail = sanitizeAIProviderProbeError(errDo)
@@ -165,6 +175,10 @@ func (a *App) probeAIProviderEndpoint(
 // and response classifier as account model tests, but sends directly through
 // the host transport because an AI-provider channel is not an auth file.
 func (a *App) probeAIProviderModel(ctx context.Context, kind, baseURL, apiKey, authID, model string, customHeaders map[string]string, timeout time.Duration) AIProviderProbeResult {
+	return a.probeAIProviderModelWithKey(ctx, kind, baseURL, apiKey, authID, "", model, customHeaders, timeout)
+}
+
+func (a *App) probeAIProviderModelWithKey(ctx context.Context, kind, baseURL, apiKey, authID, providerKey, model string, customHeaders map[string]string, timeout time.Duration) AIProviderProbeResult {
 	started := time.Now()
 	result := AIProviderProbeResult{Model: strings.TrimSpace(model), ProbeKind: InspectionProbeKindModel, TestedAt: started}
 	if safeModelIdentifier(model) == "" {
@@ -203,7 +217,7 @@ func (a *App) probeAIProviderModel(ctx context.Context, kind, baseURL, apiKey, a
 		probeHeaders.Set(key, value)
 	}
 	applyAIProviderProbeAuth(probeHeaders, kind, apiKey)
-	a.applyAIProviderCodexFingerprint(probeHeaders, kind, authID)
+	a.applyAIProviderCodexFingerprint(probeHeaders, kind, authID, providerKey)
 	probe.headers = map[string]string{}
 	for key, values := range probeHeaders {
 		if len(values) > 0 {

@@ -34,6 +34,7 @@ type AccountEditableConfig struct {
 	Concurrency             AccountConcurrencySummary      `json:"concurrency"`
 	ConcurrencyAvailability AccountConcurrencyAvailability `json:"account_concurrency"`
 	QuotaPolicy             *AccountQuotaPolicy            `json:"quota_policy,omitempty"`
+	CodexIdentity           *CodexIdentityOverride         `json:"codex_identity,omitempty"`
 	Credential              *CredentialSummary             `json:"credential,omitempty"`
 }
 
@@ -59,6 +60,13 @@ func (s *AccountService) EditableConfig(ctx context.Context, rawAccountID string
 	}
 	credential := credentialSummaryFromAccount(account)
 	s.enrichRuntimeCredential(ctx, &account, &credential)
+	var codexIdentity *CodexIdentityOverride
+	if s.codexIdentity != nil {
+		if override, ok := s.codexIdentity.Account(account.ID); ok {
+			cloned := cloneCodexIdentityOverride(override)
+			codexIdentity = &cloned
+		}
+	}
 	return AccountEditableConfig{
 		AccountID:               account.ID,
 		Disabled:                account.Disabled,
@@ -73,6 +81,7 @@ func (s *AccountService) EditableConfig(ctx context.Context, rawAccountID string
 		Concurrency:             account.Concurrency,
 		ConcurrencyAvailability: s.accountConcurrencyAvailability(),
 		QuotaPolicy:             quotaPolicyPointer(s.quotaPolicies, account.ID),
+		CodexIdentity:           codexIdentity,
 		Credential:              &credential,
 	}, nil
 }

@@ -7,6 +7,8 @@ import type {
   AccountDeduplicationPreview,
   AccountDeduplicationOptions,
 	AccountEditableConfig,
+	CodexIdentityOverride,
+	CodexIdentityOverrideSnapshot,
 	AccountConcurrencyAvailability,
   AccountFilters,
   AccountExportFormat,
@@ -473,6 +475,29 @@ export async function loadAccountConfig(accountID: string): Promise<AccountEdita
 		account_concurrency: availability,
 		concurrency,
 	} as AccountEditableConfig;
+}
+
+export async function getCodexIdentityOverrides(signal?: AbortSignal): Promise<CodexIdentityOverrideSnapshot> {
+	const response = await requestRecord<CodexIdentityOverrideSnapshot>("/codex-identity-overrides", { signal });
+	return {
+		accounts: isRecord(response.accounts) ? response.accounts as Record<string, CodexIdentityOverride> : {},
+		providers: isRecord(response.providers) ? response.providers as Record<string, CodexIdentityOverride> : {},
+		...(typeof response.storage_error === "string" && response.storage_error ? { storage_error: response.storage_error } : {}),
+	};
+}
+
+export async function saveAccountCodexIdentityOverride(accountID: string, override: CodexIdentityOverride): Promise<void> {
+	await request("/codex-identity-overrides/account", {
+		method: "PUT",
+		body: JSON.stringify({ account_id: accountID, override }),
+	});
+}
+
+export async function saveProviderCodexIdentityOverride(providerKey: string, override: CodexIdentityOverride): Promise<void> {
+	await request("/codex-identity-overrides/provider", {
+		method: "PUT",
+		body: JSON.stringify({ provider_key: providerKey, override }),
+	});
 }
 
 export async function refreshAccountQuotaMetadata(accountID: string): Promise<QuotaMetadataResponse> {
@@ -2141,6 +2166,7 @@ export async function testAIProviderChannelForKind(
   headers?: Record<string, string>,
   authID?: string,
   model?: string,
+  providerKey?: string,
 ): Promise<AIProviderProbeResult> {
   const response = await requestRecord<AIProviderProbeResult>("/ai-providers/test", {
     method: "POST",
@@ -2152,6 +2178,7 @@ export async function testAIProviderChannelForKind(
       ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
       ...(authID ? { auth_id: authID } : {}),
       ...(model ? { model: model.trim() } : {}),
+      ...(providerKey ? { provider_key: providerKey } : {}),
     }),
   });
   return response;

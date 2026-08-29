@@ -226,15 +226,16 @@ describe("management API client", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ reachable: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await testAIProviderChannelForKind("codex-api-key", "https://gptpro.live/v1", "sk-codex", 15, undefined, "provider-auth", "gpt-5.6-sol");
+		await testAIProviderChannelForKind("codex-api-key", "https://gptpro.live/v1", "sk-codex", 15, undefined, "provider-auth", "gpt-5.6-sol", "codex-api-key:provider-auth");
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({
       kind: "codex-api-key",
       base_url: "https://gptpro.live/v1",
       api_key: "sk-codex",
-      auth_id: "provider-auth",
-      model: "gpt-5.6-sol",
-    });
+			auth_id: "provider-auth",
+			model: "gpt-5.6-sol",
+			provider_key: "codex-api-key:provider-auth",
+		});
   });
 
   it("preserves weighted API-key channels when toggled back on", async () => {

@@ -551,7 +551,9 @@ type codexPolicyProvider interface {
 
 type codexAccountWithMetadata struct {
 	codexAccountGateState
-	account *Account
+	account     *Account
+	metadata    map[string]any
+	providerKey string
 }
 
 type codexAccountGateState struct {

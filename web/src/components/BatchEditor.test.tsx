@@ -80,6 +80,55 @@ describe("BatchEditor", () => {
 		expect(loadCurrentConfig).toHaveBeenCalledTimes(1);
 	});
 
+	it("loads, updates, and clears the single-account Codex identity override", async () => {
+		const user = userEvent.setup();
+		const submit = vi.fn();
+		const loadCurrentConfig = vi.fn(async () => ({
+			account_id: "auth-codex-1",
+			disabled: false,
+			priority: 0,
+			note: "",
+			prefix: "",
+			proxy: "",
+			proxy_configured: false,
+			websockets: true,
+			header_names: [],
+			model_policy: null,
+			codex_identity: {
+				convergence_mode: "session" as const,
+				ingress_gate_enabled: true,
+				allow_app_server_clients: false,
+			},
+		}));
+
+		render(<BatchEditor scopeLabel="codex@example.com" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
+
+		expect(await screen.findByLabelText("收敛模式")).toHaveValue("session");
+		expect(screen.getByLabelText("官方客户端入口门")).toHaveValue("true");
+		expect(screen.getByLabelText("App Server 客户端")).toHaveValue("false");
+
+		await user.click(screen.getByRole("checkbox", { name: "Codex 客户端身份策略" }));
+		await user.selectOptions(screen.getByLabelText("收敛模式"), "device");
+		await user.selectOptions(screen.getByLabelText("官方客户端入口门"), "false");
+		await user.selectOptions(screen.getByLabelText("App Server 客户端"), "true");
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+		expect(submit).toHaveBeenLastCalledWith({
+			codex_identity: {
+				convergence_mode: "device",
+				ingress_gate_enabled: false,
+				allow_app_server_clients: true,
+			},
+		});
+
+		await user.selectOptions(screen.getByLabelText("收敛模式"), "");
+		await user.selectOptions(screen.getByLabelText("官方客户端入口门"), "");
+		await user.selectOptions(screen.getByLabelText("App Server 客户端"), "");
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+		expect(submit).toHaveBeenLastCalledWith({ codex_identity: {} });
+	});
+
   it("keeps header values in password inputs and validates duplicate names", async () => {
     const user = userEvent.setup();
     render(<BatchEditor scopeLabel="当前筛选 3 个账号" loadModels={loadModels} onClose={() => undefined} onSubmit={() => undefined} />);

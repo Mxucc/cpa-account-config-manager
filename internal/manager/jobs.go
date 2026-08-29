@@ -97,6 +97,7 @@ type JobEngine struct {
 	accounts          *AccountService
 	concurrency       *AccountConcurrencyService
 	quotaPolicies     *QuotaPolicyService
+	codexIdentity     *CodexIdentityOverrideService
 	proxyProfiles     ProxyProfileResolver
 	mutations         *MutationCoordinator
 	backgroundOwner   BackgroundWorkOwner
@@ -142,6 +143,15 @@ func (e *JobEngine) SetQuotaPolicies(policies *QuotaPolicyService) {
 	}
 	e.mu.Lock()
 	e.quotaPolicies = policies
+	e.mu.Unlock()
+}
+
+func (e *JobEngine) SetCodexIdentityOverrides(overrides *CodexIdentityOverrideService) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.codexIdentity = overrides
 	e.mu.Unlock()
 }
 
@@ -573,6 +583,18 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 			return JobResult{Status: ResultFailed, Error: "account quota policy update failed: " + errQuota.Error(), AppliedFields: applied, Retryable: true}
 		}
 		applied = append(applied, "quota_policy")
+	}
+	if patch.CodexIdentity != nil {
+		e.mu.Lock()
+		overrides := e.codexIdentity
+		e.mu.Unlock()
+		if overrides == nil {
+			return JobResult{Status: ResultFailed, Error: "Codex identity override service is unavailable", AppliedFields: applied, Retryable: true}
+		}
+		if errOverride := overrides.SetAccount(account.ID, *patch.CodexIdentity); errOverride != nil {
+			return JobResult{Status: ResultFailed, Error: "Codex identity override update failed: " + errOverride.Error(), AppliedFields: applied, Retryable: true}
+		}
+		applied = append(applied, "codex_identity")
 	}
 	return JobResult{Status: ResultSucceeded, AppliedFields: applied}
 }

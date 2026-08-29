@@ -333,6 +333,36 @@ func TestAIProviderCodexModelProbeUsesConfiguredBaseURL(t *testing.T) {
 	}
 }
 
+func TestAIProviderCodexModelProbeAcceptsCompletedResponsesBodyWithNullError(t *testing.T) {
+	transport := &fakeProbeTransport{responses: []cpaapi.HostHTTPResponse{{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Body: []byte(`{
+  "_omitted_fields": 27,
+  "error": null,
+  "max_output_tokens": "[redacted]",
+  "model": "gpt-5.6-sol",
+  "object": "response",
+  "output": [{
+    "_omitted_fields": 5,
+    "content": [{
+      "_omitted_fields": 2,
+      "text": "OK",
+      "type": "output_text"
+    }],
+    "status": "completed",
+    "type": "message"
+  }],
+  "status": "completed"
+}`),
+	}}}
+	app := &App{agentIdentity: &AgentIdentityExperiment{transport: transport}}
+	result := app.probeAIProviderModel(context.Background(), "codex-api-key", "https://provider.example/v1", "sk-provider", "", "gpt-5.6-sol", nil, time.Second)
+	if !result.Reachable || result.Status != "available" || result.ReasonCode != "model_response_ok" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestAIProviderModelProbeClassifiesExpectedFailures(t *testing.T) {
 	tests := []struct {
 		name       string

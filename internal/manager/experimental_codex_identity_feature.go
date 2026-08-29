@@ -15,9 +15,10 @@ import (
 // official-client gate backed by blacklist, whitelist, version bounds, and
 // engine fingerprints.
 type CodexIdentityExperiment struct {
-	settings codexPolicyProvider
-	accounts codexAccountGateProvider
-	seeds    fingerprintSeedStore
+	settings  codexPolicyProvider
+	accounts  codexAccountGateProvider
+	seeds     fingerprintSeedStore
+	overrides *CodexIdentityOverrideService
 }
 
 type codexAccountGateProvider interface {
@@ -41,6 +42,12 @@ func NewCodexIdentityExperiment(settings codexPolicyProvider, accounts codexAcco
 	return experiment
 }
 
+func (e *CodexIdentityExperiment) SetOverrides(overrides *CodexIdentityOverrideService) {
+	if e != nil {
+		e.overrides = overrides
+	}
+}
+
 // RequestInterceptionActive keeps the CPA interceptor enabled only when one of
 // the two Codex identity modes is configured.
 func (e *CodexIdentityExperiment) RequestInterceptionActive() bool {
@@ -48,7 +55,7 @@ func (e *CodexIdentityExperiment) RequestInterceptionActive() bool {
 		return false
 	}
 	settings := e.settings.CodexIdentity()
-	return settings.OutboundConvergenceEnabled || settings.IngressGateEnabled
+	return settings.OutboundConvergenceEnabled || settings.IngressGateEnabled || e.overrides != nil && e.overrides.HasOverrides()
 }
 
 // RequestInterceptionAcceptsFormat intentionally covers every format. The
@@ -67,12 +74,40 @@ func (e *CodexIdentityExperiment) InterceptRequest(request cpaapi.RequestInterce
 	requestContext := context.Background()
 	authIndex := overdraftAuthIndexFromMetadata(request.Metadata)
 	gate := e.accountGate(requestContext, authIndex)
+	// CPA does not expose API-key providers as editable auth documents. Use the
+	// selected auth index as a stable provider target so provider-level
+	// overrides also affect normal routed traffic. This pseudo account is never
+	// written back to CPA credential storage.
+	providerKey := e.providerOverrideKey(providerOverrideKeyFromMetadata(request.Metadata, authIndex))
+	if gate.account != nil && strings.EqualFold(strings.TrimSpace(gate.account.Provider), "codex-api-key") {
+		if resolved := e.providerOverrideKey(firstNonEmpty(gate.account.AuthID, gate.account.ID)); resolved != "" {
+			providerKey = resolved
+		}
+	}
+	if gate.account == nil && providerKey != "" {
+		provider := Account{ID: authIndex, AuthID: authIndex, Provider: "codex-api-key", Type: "codex", AccountType: "api_key"}
+		gate.account = &provider
+		gate.providerKey = providerKey
+	}
 	policy := e.currentPolicy()
+	if gate.providerKey != "" {
+		policy.IngressGateEnabled = e.effectiveProviderIngressGate(gate.providerKey)
+		policy.AllowAppServerClients = e.effectiveProviderAllowAppServer(gate.providerKey)
+	} else {
+		policy.IngressGateEnabled = e.effectiveAccountIngressGate(gate)
+		policy.AllowAppServerClients = e.effectiveAccountAllowAppServer(gate)
+	}
+	gate.codexCLIOnly = policy.IngressGateEnabled
+	gate.codexCLIOnlyAppServer = policy.AllowAppServerClients
 
 	if policy.IngressGateEnabled {
 		if result := detectCodexClientRestriction(gate.codexAccountGateState, policy, headerValue(request.Headers, "User-Agent"), headerValue(request.Headers, "Originator"), request.Headers, request.Body); !result.Matched {
 			return e.reject(result), true
 		}
+	}
+	mode := e.effectiveAccountFingerprintMode(gate)
+	if gate.providerKey != "" {
+		mode = e.effectiveProviderFingerprintMode(gate.providerKey)
 	}
 
 	// The host can pass a nil header map when the original request had no
@@ -104,8 +139,6 @@ func (e *CodexIdentityExperiment) InterceptRequest(request cpaapi.RequestInterce
 
 	var fingerprint *codexFingerprintIDs
 	if e.seeds != nil && gate.account != nil {
-		settings := e.settings.codexIdentitySnapshot()
-		mode := effectiveCodexFingerprintMode(settings.ConvergenceMode)
 		if seed, ok := resolveCodexFingerprintSeed(requestContext, e.seeds, *gate.account); ok {
 			fingerprint = resolveCodexFingerprintIDs(
 				*gate.account, seed, extractClientSessionID(request.Headers), mode,
@@ -336,7 +369,8 @@ func (e *CodexIdentityExperiment) accountGate(ctx context.Context, authIndex str
 		}
 		selected := account
 		return codexAccountWithMetadata{
-			account: &selected,
+			account:  &selected,
+			metadata: metadata.Metadata,
 			codexAccountGateState: codexAccountGateState{
 				codexCLIOnly:          codexExtraBool(metadata.Metadata["codex_cli_only"]),
 				codexCLIOnlyAppServer: codexExtraBool(metadata.Metadata["codex_cli_only_allow_app_server"]),
@@ -344,6 +378,141 @@ func (e *CodexIdentityExperiment) accountGate(ctx context.Context, authIndex str
 		}
 	}
 	return codexAccountWithMetadata{}
+}
+
+func (e *CodexIdentityExperiment) accountOverride(account *Account) (CodexIdentityOverride, bool) {
+	if e == nil || e.overrides == nil || account == nil {
+		return CodexIdentityOverride{}, false
+	}
+	if value, ok := e.overrides.Account(account.ID); ok {
+		return value, true
+	}
+	if account.AuthID != account.ID {
+		return e.overrides.Account(account.AuthID)
+	}
+	return CodexIdentityOverride{}, false
+}
+
+func (e *CodexIdentityExperiment) providerOverrideKey(authIndex string) string {
+	if e == nil || e.overrides == nil {
+		return ""
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return ""
+	}
+	candidates := []string{authIndex}
+	if !strings.HasPrefix(strings.ToLower(authIndex), "codex-api-key:") {
+		candidates = append([]string{"codex-api-key:" + authIndex}, candidates...)
+	}
+	for _, key := range candidates {
+		if _, ok := e.overrides.Provider(key); ok {
+			return key
+		}
+	}
+	return ""
+}
+
+func providerOverrideKeyFromMetadata(_ map[string]any, authIndex string) string {
+	// overdraftAuthIndexFromMetadata already normalizes the supported CPA
+	// selected-auth fields. Keep this adapter explicit so a future host schema
+	// can add a provider identity without ever deriving it from credential data.
+	return strings.TrimSpace(authIndex)
+}
+
+func metadataCodexFingerprintMode(metadata map[string]any) (codexFingerprintMode, bool) {
+	value, ok := metadata["codex_fingerprint_mode"].(string)
+	if !ok {
+		return "", false
+	}
+	mode := normalizeCodexFingerprintMode(value)
+	return mode, mode != ""
+}
+
+func metadataCodexBool(metadata map[string]any, key string) (bool, bool) {
+	value, ok := metadata[key].(bool)
+	return value, ok
+}
+
+func (e *CodexIdentityExperiment) effectiveAccountFingerprintMode(gate codexAccountWithMetadata) codexFingerprintMode {
+	if override, ok := e.accountOverride(gate.account); ok && override.ConvergenceMode != nil {
+		return effectiveCodexFingerprintMode(*override.ConvergenceMode)
+	}
+	if mode, ok := metadataCodexFingerprintMode(gate.metadata); ok {
+		return mode
+	}
+	if e == nil || e.settings == nil {
+		return codexFingerprintOff
+	}
+	settings := e.settings.codexIdentitySnapshot()
+	if !settings.OutboundConvergenceEnabled {
+		return codexFingerprintOff
+	}
+	return effectiveCodexFingerprintMode(settings.ConvergenceMode)
+}
+
+func (e *CodexIdentityExperiment) effectiveFingerprintModeForAccount(ctx context.Context, account Account) codexFingerprintMode {
+	gate := codexAccountWithMetadata{account: &account}
+	if e != nil && e.accounts != nil {
+		if document, err := e.accounts.CurrentAuthDocument(ctx, account); err == nil {
+			gate.metadata = document.Metadata
+		}
+	}
+	return e.effectiveAccountFingerprintMode(gate)
+}
+
+func (e *CodexIdentityExperiment) effectiveAccountIngressGate(gate codexAccountWithMetadata) bool {
+	if override, ok := e.accountOverride(gate.account); ok && override.IngressGateEnabled != nil {
+		return *override.IngressGateEnabled
+	}
+	if enabled, ok := metadataCodexBool(gate.metadata, "codex_cli_only"); ok {
+		return enabled
+	}
+	return e != nil && e.settings != nil && e.settings.CodexIdentity().IngressGateEnabled
+}
+
+func (e *CodexIdentityExperiment) effectiveAccountAllowAppServer(gate codexAccountWithMetadata) bool {
+	if override, ok := e.accountOverride(gate.account); ok && override.AllowAppServerClients != nil {
+		return *override.AllowAppServerClients
+	}
+	if enabled, ok := metadataCodexBool(gate.metadata, "codex_cli_only_allow_app_server"); ok {
+		return enabled
+	}
+	return e != nil && e.settings != nil && e.settings.CodexIdentity().AllowAppServerClients
+}
+
+func (e *CodexIdentityExperiment) effectiveProviderFingerprintMode(providerKey string) codexFingerprintMode {
+	if e != nil && e.overrides != nil {
+		if override, ok := e.overrides.Provider(providerKey); ok && override.ConvergenceMode != nil {
+			return effectiveCodexFingerprintMode(*override.ConvergenceMode)
+		}
+	}
+	if e == nil || e.settings == nil {
+		return codexFingerprintOff
+	}
+	settings := e.settings.codexIdentitySnapshot()
+	if !settings.OutboundConvergenceEnabled {
+		return codexFingerprintOff
+	}
+	return effectiveCodexFingerprintMode(settings.ConvergenceMode)
+}
+
+func (e *CodexIdentityExperiment) effectiveProviderIngressGate(providerKey string) bool {
+	if e != nil && e.overrides != nil {
+		if override, ok := e.overrides.Provider(providerKey); ok && override.IngressGateEnabled != nil {
+			return *override.IngressGateEnabled
+		}
+	}
+	return e != nil && e.settings != nil && e.settings.CodexIdentity().IngressGateEnabled
+}
+
+func (e *CodexIdentityExperiment) effectiveProviderAllowAppServer(providerKey string) bool {
+	if e != nil && e.overrides != nil {
+		if override, ok := e.overrides.Provider(providerKey); ok && override.AllowAppServerClients != nil {
+			return *override.AllowAppServerClients
+		}
+	}
+	return e != nil && e.settings != nil && e.settings.CodexIdentity().AllowAppServerClients
 }
 
 func (e *CodexIdentityExperiment) accountRequiresIngressGate(ctx context.Context) bool {
@@ -391,7 +560,7 @@ func (e *CodexIdentityExperiment) reject(result codexRestrictionDetectionResult)
 // applyAIProviderProbeFingerprint converges the AI Providers page's Codex
 // endpoint test with the real forwarded request. Probe requests are GETs and
 // therefore have no client session/thread; only device identity applies.
-func (a *App) applyAIProviderCodexFingerprint(headers http.Header, kind, authID string) {
+func (a *App) applyAIProviderCodexFingerprint(headers http.Header, kind, authID string, providerKeys ...string) {
 	if a == nil || headers == nil || normalizeAIProviderKind(kind) != "codex-api-key" ||
 		a.requestHooks == nil || !a.requestHooks.Active() {
 		return
@@ -400,11 +569,11 @@ func (a *App) applyAIProviderCodexFingerprint(headers http.Header, kind, authID 
 	if codexIdentity == nil {
 		return
 	}
-	settings := codexIdentity.settings.codexIdentitySnapshot()
-	if !settings.OutboundConvergenceEnabled {
-		return
+	providerKey := ""
+	if len(providerKeys) > 0 {
+		providerKey = providerKeys[0]
 	}
-	mode := effectiveCodexFingerprintMode(settings.ConvergenceMode)
+	mode := codexIdentity.effectiveProviderFingerprintMode(firstNonEmpty(providerKey, authID))
 	if mode == codexFingerprintOff || strings.TrimSpace(authID) == "" {
 		return
 	}

@@ -37,6 +37,7 @@ describe("AIProvidersSettings", () => {
       const gemini = overrides["gemini-api-key"] ?? [
         { "api-key": "AIza-live-abcdef", "base-url": "https://generativelanguage.googleapis.com/v1beta" },
       ];
+			const codex = overrides["codex-api-key"] ?? [];
       const opencode = overrides["opencode-go"] ?? [
         { id: "wrk_1", workspace_id: "wrk_test" },
       ];
@@ -52,10 +53,13 @@ describe("AIProvidersSettings", () => {
       if (url.endsWith("/gemini-api-key")) return jsonResponse({ "gemini-api-key": gemini });
       if (url.endsWith("/interactions-api-key")) return jsonResponse({ "interactions-api-key": [] });
       if (url.endsWith("/claude-api-key")) return jsonResponse({ "claude-api-key": [] });
-      if (url.endsWith("/codex-api-key")) return jsonResponse({ "codex-api-key": [] });
+			if (url.endsWith("/codex-api-key")) return jsonResponse({ "codex-api-key": codex });
       if (url.endsWith("/xai-api-key")) return jsonResponse({ "xai-api-key": [] });
       if (url.endsWith("/vertex-api-key")) return jsonResponse({ "vertex-api-key": [] });
       if (url.endsWith("/api-keys")) return jsonResponse({ "api-keys": [] });
+			if (url.endsWith("/codex-identity-overrides")) {
+				return jsonResponse(overrides["codex-identity-overrides"] ?? { accounts: {}, providers: {} });
+			}
       if (url.includes("/ai-providers/runtime")) {
         const runtime = overrides["ai-providers-runtime"] ?? { snapshots: [], updated_at: new Date().toISOString() };
         return jsonResponse(runtime);
@@ -529,6 +533,87 @@ describe("AIProvidersSettings", () => {
     const body = JSON.parse(String(probeRequest?.init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({ base_url: "https://openrouter.ai/api/v1" });
   });
+
+	it("loads, saves, clears, and probes a stable Codex provider identity override", async () => {
+		const user = userEvent.setup();
+		const requests = providerFetchMock({
+			"codex-api-key": [
+				{
+					"api-key": "sk-codex-provider-secret",
+					"auth-index": "provider-auth",
+					"base-url": "https://gptpro.live/v1",
+					models: [{ name: "gpt-5.6-sol", alias: "gpt-5.6-sol" }],
+				},
+			],
+			"codex-identity-overrides": {
+				accounts: {},
+				providers: {
+					"codex-api-key:provider-auth": {
+						convergence_mode: "session",
+						ingress_gate_enabled: true,
+						allow_app_server_clients: false,
+					},
+				},
+			},
+		});
+
+		render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+		const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+		const codexRow = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((row) => row.textContent?.includes("gptpro.live"));
+		expect(codexRow).toBeDefined();
+		await user.click(within(codexRow as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+
+		let dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+		const policy = within(dialog).getByRole("region", { name: "Codex 客户端身份策略" });
+		expect(within(policy).getByLabelText("收敛模式")).toHaveValue("session");
+		expect(within(policy).getByLabelText("官方客户端入口门")).toHaveValue("true");
+		expect(within(policy).getByLabelText("App Server 客户端")).toHaveValue("false");
+		expect(within(policy).getByText(/不会把 API Key 内容作为标识/)).toBeInTheDocument();
+
+		await user.selectOptions(within(policy).getByLabelText("收敛模式"), "full");
+		await user.selectOptions(within(policy).getByLabelText("官方客户端入口门"), "false");
+		await user.selectOptions(within(policy).getByLabelText("App Server 客户端"), "true");
+		await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+		await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/codex-identity-overrides/provider") && init.method === "PUT")).toBe(true));
+		let identityRequest = requests.find(({ url, init }) => url.endsWith("/codex-identity-overrides/provider") && init.method === "PUT");
+		expect(JSON.parse(String(identityRequest?.init.body))).toEqual({
+			provider_key: "codex-api-key:provider-auth",
+			override: {
+				convergence_mode: "full",
+				ingress_gate_enabled: false,
+				allow_app_server_clients: true,
+			},
+		});
+
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "编辑渠道" })).not.toBeInTheDocument());
+		const refreshedCodexRow = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((row) => row.textContent?.includes("gptpro.live"));
+		expect(refreshedCodexRow).toBeDefined();
+		await user.click(within(refreshedCodexRow as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+		dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+		const clearedPolicy = within(dialog).getByRole("region", { name: "Codex 客户端身份策略" });
+		await user.selectOptions(within(clearedPolicy).getByLabelText("收敛模式"), "");
+		await user.selectOptions(within(clearedPolicy).getByLabelText("官方客户端入口门"), "");
+		await user.selectOptions(within(clearedPolicy).getByLabelText("App Server 客户端"), "");
+		await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+		await waitFor(() => expect(requests.filter(({ url, init }) => url.endsWith("/codex-identity-overrides/provider") && init.method === "PUT")).toHaveLength(2));
+		identityRequest = requests.filter(({ url, init }) => url.endsWith("/codex-identity-overrides/provider") && init.method === "PUT").at(-1);
+		expect(JSON.parse(String(identityRequest?.init.body))).toEqual({
+			provider_key: "codex-api-key:provider-auth",
+			override: {},
+		});
+
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "编辑渠道" })).not.toBeInTheDocument());
+		const probeCodexRow = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((row) => row.textContent?.includes("gptpro.live"));
+		expect(probeCodexRow).toBeDefined();
+		await user.click(within(probeCodexRow as HTMLElement).getByRole("button", { name: /测试/ }));
+		await waitFor(() => expect(requests.some(({ url, init }) => {
+			if (!url.endsWith("/ai-providers/test")) return false;
+			return JSON.parse(String(init.body ?? "{}"))?.provider_key === "codex-api-key:provider-auth";
+		})).toBe(true));
+	});
 
   it("disables an OpenAI-compatible channel through the host PATCH API", async () => {
     const user = userEvent.setup();

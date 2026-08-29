@@ -565,8 +565,10 @@ func (s *ModelTestService) applyCodexFingerprintToProbe(ctx context.Context, acc
 		strings.ToLower(strings.TrimSpace(firstNonEmpty(account.Provider, account.Type))) != "codex" {
 		return probe
 	}
-	settings := s.codexIdentity.settings.codexIdentitySnapshot()
-	mode := effectiveCodexFingerprintMode(settings.ConvergenceMode)
+	mode := s.codexIdentity.effectiveFingerprintModeForAccount(ctx, account)
+	if mode == codexFingerprintOff {
+		return probe
+	}
 	var seed string
 	var ok bool
 	if s.codexIdentity.seeds != nil {
@@ -1322,7 +1324,7 @@ func validModelProbeBody(kind string, body []byte) bool {
 	if errDecode := json.Unmarshal(trimmed, &decoded); errDecode != nil {
 		return false
 	}
-	if _, hasError := decoded["error"]; hasError {
+	if modelProbeHasError(decoded["error"]) {
 		return false
 	}
 	switch kind {
@@ -1335,10 +1337,65 @@ func validModelProbeBody(kind string, body []byte) bool {
 		candidates, ok := decoded["candidates"].([]any)
 		return ok && len(candidates) > 0
 	default:
+		if validCompletedResponsesBody(decoded) {
+			return true
+		}
 		id := strings.TrimSpace(modelTestStringValue(decoded, "id"))
 		object := strings.ToLower(strings.TrimSpace(modelTestStringValue(decoded, "object")))
 		return id != "" && (object == "response" || strings.Contains(object, "completion"))
 	}
+}
+
+func modelProbeHasError(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case map[string]any:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	case bool:
+		return typed
+	default:
+		return true
+	}
+}
+
+func validCompletedResponsesBody(decoded map[string]any) bool {
+	if !strings.EqualFold(strings.TrimSpace(modelTestStringValue(decoded, "object")), "response") ||
+		!strings.EqualFold(strings.TrimSpace(modelTestStringValue(decoded, "status")), "completed") {
+		return false
+	}
+	output, ok := decoded["output"].([]any)
+	if !ok || len(output) == 0 {
+		return false
+	}
+	for _, item := range output {
+		message, ok := item.(map[string]any)
+		if !ok || !strings.EqualFold(strings.TrimSpace(modelTestStringValue(message, "type")), "message") {
+			continue
+		}
+		status := strings.TrimSpace(modelTestStringValue(message, "status"))
+		if status != "" && !strings.EqualFold(status, "completed") {
+			continue
+		}
+		content, ok := message["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, part := range content {
+			text, ok := part.(map[string]any)
+			if !ok || !strings.EqualFold(strings.TrimSpace(modelTestStringValue(text, "type")), "output_text") {
+				continue
+			}
+			if strings.TrimSpace(modelTestStringValue(text, "text")) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func bodyIndicatesMissingModel(body []byte) bool {

@@ -113,6 +113,20 @@ export interface AccountConcurrencySummary {
 
 export type ModelPolicyMode = "all" | "allow_only" | "deny_only";
 
+export type CodexFingerprintMode = "off" | "device" | "session" | "full";
+
+export interface CodexIdentityOverride {
+	convergence_mode?: CodexFingerprintMode;
+	ingress_gate_enabled?: boolean;
+	allow_app_server_clients?: boolean;
+}
+
+export interface CodexIdentityOverrideSnapshot {
+	accounts: Record<string, CodexIdentityOverride>;
+	providers: Record<string, CodexIdentityOverride>;
+	storage_error?: string;
+}
+
 export interface AccountModelPolicySummary {
 	mode: ModelPolicyMode;
 	models?: string[];
@@ -133,6 +147,7 @@ export interface AccountEditableConfig {
 	concurrency?: AccountConcurrencySummary;
 	account_concurrency?: AccountConcurrencyAvailability;
 	quota_policy?: AccountQuotaPolicy;
+	codex_identity?: CodexIdentityOverride;
 	credential?: CredentialSummary;
 }
 
@@ -472,6 +487,7 @@ export interface BatchPatch {
 	model_policy?: ModelPolicyPatch;
 	concurrency_limit?: number;
 	quota_policy?: AccountQuotaPolicy;
+	codex_identity?: CodexIdentityOverride;
 }
 
 export interface TargetScope {

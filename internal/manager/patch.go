@@ -29,17 +29,18 @@ type HeaderPatch struct {
 }
 
 type BatchPatch struct {
-	Disabled         *bool               `json:"disabled,omitempty"`
-	Priority         *int                `json:"priority,omitempty"`
-	Note             *string             `json:"note,omitempty"`
-	Prefix           *string             `json:"prefix,omitempty"`
-	ProxyURL         *string             `json:"proxy_url,omitempty"`
-	ProxyProfileID   *string             `json:"proxy_profile_id,omitempty"`
-	Websockets       *bool               `json:"websockets,omitempty"`
-	Headers          *HeaderPatch        `json:"headers,omitempty"`
-	ModelPolicy      *ModelPolicyPatch   `json:"model_policy,omitempty"`
-	ConcurrencyLimit *int                `json:"concurrency_limit,omitempty"`
-	QuotaPolicy      *AccountQuotaPolicy `json:"quota_policy,omitempty"`
+	Disabled         *bool                  `json:"disabled,omitempty"`
+	Priority         *int                   `json:"priority,omitempty"`
+	Note             *string                `json:"note,omitempty"`
+	Prefix           *string                `json:"prefix,omitempty"`
+	ProxyURL         *string                `json:"proxy_url,omitempty"`
+	ProxyProfileID   *string                `json:"proxy_profile_id,omitempty"`
+	Websockets       *bool                  `json:"websockets,omitempty"`
+	Headers          *HeaderPatch           `json:"headers,omitempty"`
+	ModelPolicy      *ModelPolicyPatch      `json:"model_policy,omitempty"`
+	ConcurrencyLimit *int                   `json:"concurrency_limit,omitempty"`
+	QuotaPolicy      *AccountQuotaPolicy    `json:"quota_policy,omitempty"`
+	CodexIdentity    *CodexIdentityOverride `json:"codex_identity,omitempty"`
 
 	resolvedModelFields map[string]any
 }
@@ -145,6 +146,13 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 			return BatchPatch{}, err
 		}
 	}
+	if patch.CodexIdentity != nil {
+		override, errOverride := validateCodexIdentityOverride(*patch.CodexIdentity)
+		if errOverride != nil {
+			return BatchPatch{}, errOverride
+		}
+		patch.CodexIdentity = &override
+	}
 	if patch.Empty() {
 		return BatchPatch{}, fmt.Errorf("at least one patch field is required")
 	}
@@ -153,7 +161,7 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 
 func (patch BatchPatch) Empty() bool {
 	return patch.Disabled == nil && patch.Priority == nil && patch.Note == nil &&
-		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil && patch.QuotaPolicy == nil
+		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil && patch.QuotaPolicy == nil && patch.CodexIdentity == nil
 }
 
 func (patch BatchPatch) Summary() PatchSummary {
@@ -187,6 +195,9 @@ func (patch BatchPatch) Summary() PatchSummary {
 	}
 	if patch.QuotaPolicy != nil {
 		fields = append(fields, "quota_policy")
+	}
+	if patch.CodexIdentity != nil {
+		fields = append(fields, "codex_identity")
 	}
 	summary := PatchSummary{Fields: fields, ProxyMutation: patch.ProxyURL != nil}
 	if patch.Headers != nil {
@@ -264,7 +275,7 @@ func (patch BatchPatch) HasFieldUpdates() bool {
 }
 
 func (patch BatchPatch) HasPluginUpdates() bool {
-	return patch.ConcurrencyLimit != nil || patch.QuotaPolicy != nil
+	return patch.ConcurrencyLimit != nil || patch.QuotaPolicy != nil || patch.CodexIdentity != nil
 }
 
 func cloneBatchPatch(patch BatchPatch) BatchPatch {
@@ -315,6 +326,10 @@ func cloneBatchPatch(patch BatchPatch) BatchPatch {
 	if patch.QuotaPolicy != nil {
 		policy := *patch.QuotaPolicy
 		clone.QuotaPolicy = &policy
+	}
+	if patch.CodexIdentity != nil {
+		override := cloneCodexIdentityOverride(*patch.CodexIdentity)
+		clone.CodexIdentity = &override
 	}
 	if patch.resolvedModelFields != nil {
 		clone.resolvedModelFields = make(map[string]any, len(patch.resolvedModelFields))

@@ -8,7 +8,9 @@ import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-type FieldName = "disabled" | "priority" | "concurrency_limit" | "quota_policy" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy";
+type FieldName = "disabled" | "priority" | "concurrency_limit" | "quota_policy" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy" | "codex_identity";
+type IdentityBooleanValue = "" | "true" | "false";
+type IdentityConvergenceValue = "" | "off" | "device" | "session" | "full";
 
 interface HeaderRow {
   id: number;
@@ -39,6 +41,7 @@ const initialEnabled: Record<FieldName, boolean> = {
   websockets: false,
   headers: false,
 	model_policy: false,
+	codex_identity: false,
 };
 
 const defaultConcurrencyAvailability: AccountConcurrencyAvailability = { supported: true, host_schema_version: 2, required_schema_version: 2 };
@@ -61,6 +64,9 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 	const [proxyProfiles, setProxyProfiles] = useState<ProxyProfileView[]>([]);
 	const [proxyProfileID, setProxyProfileID] = useState("");
   const [websockets, setWebsockets] = useState(false);
+  const [codexConvergenceMode, setCodexConvergenceMode] = useState<IdentityConvergenceValue>("");
+  const [codexIngressGate, setCodexIngressGate] = useState<IdentityBooleanValue>("");
+  const [codexAllowAppServer, setCodexAllowAppServer] = useState<IdentityBooleanValue>("");
   const [headers, setHeaders] = useState<HeaderRow[]>([{ id: 1, action: "set", name: "", value: "" }]);
   const [error, setError] = useState("");
 	const [modelCatalog, setModelCatalog] = useState<AccountModelCatalogResponse | null>(null);
@@ -93,6 +99,9 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			setPrefix(config.prefix);
 			setProxyURL(config.proxy_configured ? config.proxy : "");
 			setWebsockets(config.websockets ?? false);
+			setCodexConvergenceMode(config.codex_identity?.convergence_mode ?? "");
+			setCodexIngressGate(config.codex_identity?.ingress_gate_enabled === undefined ? "" : config.codex_identity.ingress_gate_enabled ? "true" : "false");
+			setCodexAllowAppServer(config.codex_identity?.allow_app_server_clients === undefined ? "" : config.codex_identity.allow_app_server_clients ? "true" : "false");
 			setModelMode(config.model_policy?.mode ?? "all");
 			setSelectedModels(new Set(config.model_policy?.models ?? []));
 		} catch (caught) {
@@ -209,6 +218,13 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
     if (enabled.prefix) patch.prefix = prefix;
     if (enabled.proxy_url) patch.proxy_url = proxyURL;
     if (enabled.websockets) patch.websockets = websockets;
+		if (enabled.codex_identity) {
+			patch.codex_identity = {
+				...(codexConvergenceMode ? { convergence_mode: codexConvergenceMode } : {}),
+				...(codexIngressGate !== "" ? { ingress_gate_enabled: codexIngressGate === "true" } : {}),
+				...(codexAllowAppServer !== "" ? { allow_app_server_clients: codexAllowAppServer === "true" } : {}),
+			};
+		}
     if (enabled.headers) {
       const set: Record<string, string> = {};
       const remove: string[] = [];
@@ -320,6 +336,25 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
             <span>{tx(websockets ? "ui.on_2" : "ui.off_2")}</span>
           </label>
         </EditRow>
+				<EditRow checked={enabled.codex_identity} label={tx("ui.codex_identity_target_policy")} onToggle={() => toggle("codex_identity")}>
+					<div>
+						<div className="ai-provider-form-grid">
+							<label className="field-block">
+								<span>{tx("ui.codex_convergence_mode")}</span>
+								<select value={codexConvergenceMode} onChange={(event) => setCodexConvergenceMode(event.target.value as typeof codexConvergenceMode)} disabled={!enabled.codex_identity} aria-label={tx("ui.codex_convergence_mode")}>
+									<option value="">{tx("ui.inherit_global_setting")}</option>
+									<option value="off">{tx("ui.codex_convergence_off")}</option>
+									<option value="device">{tx("ui.codex_convergence_device")}</option>
+									<option value="session">{tx("ui.codex_convergence_session")}</option>
+									<option value="full">{tx("ui.codex_convergence_full")}</option>
+								</select>
+							</label>
+							<IdentityBooleanSelect label={tx("ui.codex_ingress_gate")} value={codexIngressGate} onChange={setCodexIngressGate} disabled={!enabled.codex_identity} />
+							<IdentityBooleanSelect label={tx("ui.codex_app_server_clients")} value={codexAllowAppServer} onChange={setCodexAllowAppServer} disabled={!enabled.codex_identity} />
+						</div>
+						<p className="model-policy-help">{tx("ui.codex_identity_clear_override_help")}</p>
+					</div>
+				</EditRow>
         <div className={`edit-row edit-row-headers ${enabled.headers ? "is-enabled" : ""}`}>
           <label className="edit-optin">
             <input type="checkbox" checked={enabled.headers} onChange={() => toggle("headers")} />
@@ -416,6 +451,9 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!concurrencyAvailability.supported || !concurrency.supported ? tx("ui.unavailable") : formatAccountConcurrency(concurrency)} mono />
 				<CurrentConfigItem label={tx("ui.account_quota_limit")} value={formatQuotaPolicy(config.quota_policy, tx)} mono wide />
 				<CurrentConfigItem label={tx("ui.websockets")} value={config.websockets === null ? tx("ui.not_set") : tx(config.websockets ? "ui.on_2" : "ui.off_2")} />
+				<CurrentConfigItem label={tx("ui.codex_convergence_mode")} value={formatCodexConvergence(config.codex_identity?.convergence_mode, tx)} />
+				<CurrentConfigItem label={tx("ui.codex_ingress_gate")} value={formatIdentityBoolean(config.codex_identity?.ingress_gate_enabled, tx)} />
+				<CurrentConfigItem label={tx("ui.codex_app_server_clients")} value={formatIdentityBoolean(config.codex_identity?.allow_app_server_clients, tx)} />
 				<CurrentConfigItem label={tx("ui.prefix")} value={config.prefix || tx("ui.default")} mono />
 				<CurrentConfigItem label={tx("ui.note")} value={config.note || "-"} wide />
 				<CurrentConfigItem label={tx("ui.proxy")} value={config.proxy || tx(config.proxy_configured ? "ui.configured_address_hidden" : "ui.not_configured")} mono wide />
@@ -441,6 +479,29 @@ function formatQuotaPolicy(policy: AccountEditableConfig["quota_policy"], tx: (k
 
 function CurrentConfigItem({ label, value, mono = false, wide = false }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
 	return <div className={wide ? "is-wide" : ""}><dt>{label}</dt><dd className={mono ? "is-mono" : ""} title={value}>{value}</dd></div>;
+}
+
+function formatCodexConvergence(value: Exclude<IdentityConvergenceValue, ""> | undefined, tx: (key: UIMessageKey) => string): string {
+	if (!value) return tx("ui.inherit_global_setting");
+	return tx(value === "off" ? "ui.codex_convergence_off" : value === "device" ? "ui.codex_convergence_device" : value === "session" ? "ui.codex_convergence_session" : "ui.codex_convergence_full");
+}
+
+function formatIdentityBoolean(value: boolean | undefined, tx: (key: UIMessageKey) => string): string {
+	return value === undefined ? tx("ui.inherit_global_setting") : tx(value ? "ui.explicitly_enabled" : "ui.explicitly_disabled");
+}
+
+function IdentityBooleanSelect({ label, value, onChange, disabled }: { label: string; value: IdentityBooleanValue; onChange: (value: IdentityBooleanValue) => void; disabled: boolean }) {
+	const { tx } = useI18n();
+	return (
+		<label className="field-block">
+			<span>{label}</span>
+			<select value={value} onChange={(event) => onChange(event.target.value as IdentityBooleanValue)} disabled={disabled} aria-label={label}>
+				<option value="">{tx("ui.inherit_global_setting")}</option>
+				<option value="true">{tx("ui.explicitly_enabled")}</option>
+				<option value="false">{tx("ui.explicitly_disabled")}</option>
+			</select>
+		</label>
+	);
 }
 
 function EditRow({ checked, label, onToggle, children, disabled = false }: { checked: boolean; label: string; onToggle: () => void; children: React.ReactNode; disabled?: boolean }) {

@@ -52,41 +52,42 @@ type RegistrationCapabilities struct {
 }
 
 type App struct {
-	mu              sync.RWMutex
-	config          Config
-	configErr       string
-	accounts        *AccountService
-	deduplication   *AccountDeduplicationService
-	deletions       *AccountDeleteService
-	tokenRefresh    *AccountTokenRefreshService
-	previews        *PreviewService
-	jobs            *JobEngine
-	policies        *PolicyEngine
-	inspection      *InspectionEngine
-	updates         *UpdateChecker
-	force           *ForceSyncEngine
-	imports         *ImportService
-	usage           *UsageTracker
-	creditUsage     *Sub2APICreditUsage
-	operations      *OperationJournal
-	modelTests      *ModelTestService
-	newAccountProbe *newAccountModelProbeEngine
-	quotaBootstrap  *accountQuotaMetadataBootstrap
-	managementDoer  HTTPDoer
-	requestHooks    *RequestHook
-	concurrency     *AccountConcurrencyService
-	providerRuntime *ProviderRuntimeTracker
-	hostSchema      uint32
-	runtime         *RuntimeOwnership
-	experiments     *ExperimentalSettingsService
-	agentIdentity   *AgentIdentityExperiment
-	opencode        *OpenCodeQuotaService
-	opencodeZen     *OpenCodeZenService
-	proxyProfiles   *ProxyProfileService
-	quotaPolicies   *QuotaPolicyService
-	indexHTML       []byte
-	quiesceOnce     sync.Once
-	quotaResetLocks [64]sync.Mutex
+	mu                     sync.RWMutex
+	config                 Config
+	configErr              string
+	accounts               *AccountService
+	deduplication          *AccountDeduplicationService
+	deletions              *AccountDeleteService
+	tokenRefresh           *AccountTokenRefreshService
+	previews               *PreviewService
+	jobs                   *JobEngine
+	policies               *PolicyEngine
+	inspection             *InspectionEngine
+	updates                *UpdateChecker
+	force                  *ForceSyncEngine
+	imports                *ImportService
+	usage                  *UsageTracker
+	creditUsage            *Sub2APICreditUsage
+	operations             *OperationJournal
+	modelTests             *ModelTestService
+	newAccountProbe        *newAccountModelProbeEngine
+	quotaBootstrap         *accountQuotaMetadataBootstrap
+	managementDoer         HTTPDoer
+	requestHooks           *RequestHook
+	concurrency            *AccountConcurrencyService
+	providerRuntime        *ProviderRuntimeTracker
+	hostSchema             uint32
+	runtime                *RuntimeOwnership
+	experiments            *ExperimentalSettingsService
+	agentIdentity          *AgentIdentityExperiment
+	opencode               *OpenCodeQuotaService
+	opencodeZen            *OpenCodeZenService
+	proxyProfiles          *ProxyProfileService
+	quotaPolicies          *QuotaPolicyService
+	codexIdentityOverrides *CodexIdentityOverrideService
+	indexHTML              []byte
+	quiesceOnce            sync.Once
+	quotaResetLocks        [64]sync.Mutex
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -113,6 +114,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	opencodeZen := NewOpenCodeZenService()
 	proxyProfiles := NewProxyProfileService()
 	quotaPolicies := NewQuotaPolicyService()
+	codexIdentityOverrides := NewCodexIdentityOverrideService()
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -123,6 +125,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	imports.SetAgentIdentityExperiment(agentIdentity)
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled).WithOverdraftGate(usage)
 	codexIdentity := NewCodexIdentityExperiment(experiments, accounts)
+	codexIdentity.SetOverrides(codexIdentityOverrides)
 	setCodexIdentitySettingsProvider(experiments.codexIdentitySnapshot)
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
@@ -144,42 +147,45 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	inspection.SetDeleteService(deletions)
 	inspection.SetOperationJournal(operations)
 	app := &App{
-		config:          normalizeConfig(Config{}),
-		accounts:        accounts,
-		deduplication:   NewAccountDeduplicationService(accounts),
-		deletions:       deletions,
-		tokenRefresh:    NewAccountTokenRefreshService(accounts, host),
-		previews:        NewPreviewService(accounts),
-		jobs:            jobs,
-		policies:        policies,
-		inspection:      inspection,
-		updates:         updates,
-		force:           force,
-		imports:         imports,
-		usage:           usage,
-		creditUsage:     creditUsage,
-		operations:      operations,
-		modelTests:      modelTests,
-		newAccountProbe: newAccountProbe,
-		quotaBootstrap:  quotaBootstrap,
-		requestHooks:    requestHooks,
-		concurrency:     concurrency,
-		providerRuntime: providerRuntime,
-		hostSchema:      cpaapi.SchemaVersion,
-		runtime:         runtime,
-		experiments:     experiments,
-		agentIdentity:   agentIdentity,
-		opencode:        opencode,
-		opencodeZen:     opencodeZen,
-		proxyProfiles:   proxyProfiles,
-		quotaPolicies:   quotaPolicies,
-		indexHTML:       append([]byte(nil), indexHTML...),
+		config:                 normalizeConfig(Config{}),
+		accounts:               accounts,
+		deduplication:          NewAccountDeduplicationService(accounts),
+		deletions:              deletions,
+		tokenRefresh:           NewAccountTokenRefreshService(accounts, host),
+		previews:               NewPreviewService(accounts),
+		jobs:                   jobs,
+		policies:               policies,
+		inspection:             inspection,
+		updates:                updates,
+		force:                  force,
+		imports:                imports,
+		usage:                  usage,
+		creditUsage:            creditUsage,
+		operations:             operations,
+		modelTests:             modelTests,
+		newAccountProbe:        newAccountProbe,
+		quotaBootstrap:         quotaBootstrap,
+		requestHooks:           requestHooks,
+		concurrency:            concurrency,
+		providerRuntime:        providerRuntime,
+		hostSchema:             cpaapi.SchemaVersion,
+		runtime:                runtime,
+		experiments:            experiments,
+		agentIdentity:          agentIdentity,
+		opencode:               opencode,
+		opencodeZen:            opencodeZen,
+		proxyProfiles:          proxyProfiles,
+		quotaPolicies:          quotaPolicies,
+		codexIdentityOverrides: codexIdentityOverrides,
+		indexHTML:              append([]byte(nil), indexHTML...),
 	}
 	app.previews.SetAccountConcurrency(concurrency)
 	app.previews.SetProxyProfiles(proxyProfiles)
 	jobs.SetProxyProfiles(proxyProfiles)
 	jobs.SetQuotaPolicies(quotaPolicies)
+	jobs.SetCodexIdentityOverrides(codexIdentityOverrides)
 	accounts.SetQuotaPolicies(quotaPolicies)
+	accounts.SetCodexIdentityOverrides(codexIdentityOverrides)
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
@@ -234,6 +240,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.opencodeZen.Configure(config)
 	a.proxyProfiles.Configure(config)
 	a.quotaPolicies.Configure(config)
+	a.codexIdentityOverrides.Configure(config)
 	a.proxyProfiles.SetBindingApplier(a.applyProxyProfileBindings)
 	a.experiments.Configure(config)
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
@@ -470,6 +477,9 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/quota-policies", Description: "Read persisted account and AI provider quota/concurrency policies."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/quota-policies/account", Description: "Save one account's 5-hour and 7-day quota limits."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/quota-policies/provider", Description: "Save one AI provider's plugin-managed budget, percentage, and concurrency limits."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex-identity-overrides", Description: "Read plugin-managed account and AI-provider Codex identity overrides."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex-identity-overrides/account", Description: "Save or clear one account's Codex identity override."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex-identity-overrides/provider", Description: "Save or clear one AI provider's Codex identity override."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/refresh", Description: "Refresh one Codex account's CPA-native plan and active reset metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/quota-metadata/reset", Description: "Consume one explicitly confirmed Codex active reset credit and refresh quota metadata."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/models", Description: "Load the common effective model catalog for an editable account scope."},
@@ -593,6 +603,9 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case (method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/quota-policies") ||
 		(method == http.MethodPut && (path == "/v0/management"+managementRoutePrefix+"/quota-policies/account" || path == "/v0/management"+managementRoutePrefix+"/quota-policies/provider")):
 		return a.handleQuotaPolicies(req)
+	case (method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex-identity-overrides") ||
+		(method == http.MethodPut && (path == "/v0/management"+managementRoutePrefix+"/codex-identity-overrides/account" || path == "/v0/management"+managementRoutePrefix+"/codex-identity-overrides/provider")):
+		return a.handleCodexIdentityOverrides(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/refresh":
 		return a.handleAccountQuotaMetadata(ctx, req, false)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/quota-metadata/reset":

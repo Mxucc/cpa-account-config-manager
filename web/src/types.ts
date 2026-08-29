@@ -572,7 +572,16 @@ export interface DefaultPolicy {
   apply_mode: "missing";
   scan_interval_seconds: number;
   priority: number | null;
+  disabled?: boolean | null;
+  concurrency_limit?: number | null;
+  quota_policy?: AccountQuotaPolicy | null;
+  note?: string | null;
+  prefix?: string | null;
+  proxy_url?: string | null;
   websockets: boolean | null;
+  headers?: HeaderPatch | null;
+  model_policy?: ModelPolicyPatch | null;
+  codex_identity?: CodexIdentityOverride | null;
   proxy_profile_id?: string | null;
   ai_provider_proxy_profile_id?: string | null;
   conditional_rules?: ConditionalPolicyRule[];
@@ -594,9 +603,17 @@ export interface PolicyConditionGroup {
 
 export interface ConditionalPolicyActions {
   new_account_model_probe?: boolean;
+  disabled?: boolean;
   priority?: number;
+  concurrency_limit?: number;
+  quota_policy?: AccountQuotaPolicy;
+  note?: string;
+  prefix?: string;
+  proxy_url?: string;
+  headers?: HeaderPatch;
   websockets?: boolean;
   model_policy?: ModelPolicyPatch;
+  codex_identity?: CodexIdentityOverride;
   proxy_profile_id?: string;
   ai_provider_proxy_profile_id?: string;
 }
@@ -1156,6 +1173,28 @@ export interface ExperimentalCodexIdentitySettings {
   whitelist?: string;
   blacklist?: string;
   fingerprint_signals?: string;
+}
+
+export interface GlobalPolicy {
+  enabled: boolean;
+  disabled?: boolean | null;
+  priority?: number | null;
+  concurrency_limit?: number | null;
+  quota_policy?: AccountQuotaPolicy | null;
+  note?: string | null;
+  prefix?: string | null;
+  proxy_url?: string | null;
+  proxy_profile_id?: string | null;
+  ai_provider_proxy_profile_id?: string | null;
+  websockets?: boolean | null;
+  headers?: HeaderPatch | null;
+  model_policy?: ModelPolicyPatch | null;
+  codex_identity: ExperimentalCodexIdentitySettings;
+}
+
+export interface GlobalPolicySnapshot {
+  policy: GlobalPolicy;
+  storage_error?: string;
 }
 
 export interface ExperimentalSettings {

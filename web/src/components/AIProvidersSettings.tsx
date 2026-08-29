@@ -1117,7 +1117,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       {error ? <div className="agent-login-error" role="alert">{error}</div> : null}
 
       {adding ? (
-        <Modal title={tx("ui.add_ai_provider")} onClose={() => { if (!busy) resetForm(); }} footer={(
+        <Modal wide title={tx("ui.add_ai_provider")} onClose={() => { if (!busy) resetForm(); }} footer={(
           <>
             <button className="button" type="button" disabled={busy} onClick={resetForm}>{tx("ui.cancel")}</button>
             <button className="button button-primary" type="button" disabled={busy || !addFormValid} onClick={() => void submitNewProvider()}>
@@ -1253,7 +1253,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       ) : null}
 
       {editing ? (
-        <Modal title={tx("ui.edit_ai_provider")} onClose={() => { if (!busy) resetForm(); }} footer={(
+        <Modal wide title={tx("ui.edit_ai_provider")} onClose={() => { if (!busy) resetForm(); }} footer={(
           <>
             <button className="button" type="button" disabled={busy} onClick={resetForm}>{tx("ui.cancel")}</button>
             <button className="button button-primary" type="button" disabled={busy} onClick={() => void submitEdit()}>

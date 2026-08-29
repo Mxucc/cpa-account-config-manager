@@ -19,6 +19,8 @@ import type {
   BatchPreview,
 	CPAServerVersionSnapshot,
 	DefaultPolicy,
+	GlobalPolicy,
+	GlobalPolicySnapshot,
 	ExperimentalSettings,
 	ExperimentalSettingsSnapshot,
 	AgentIdentitySessionLoginResponse,
@@ -628,6 +630,17 @@ export async function retryBatch(): Promise<JobSnapshot> {
 
 export async function getDefaultPolicy(signal?: AbortSignal): Promise<PolicySnapshot> {
 	return requestRecord<PolicySnapshot>("/defaults", { signal });
+}
+
+export async function getGlobalPolicy(signal?: AbortSignal): Promise<GlobalPolicySnapshot> {
+	return requestRecord<GlobalPolicySnapshot>("/global-policy", { signal });
+}
+
+export async function saveGlobalPolicy(policy: GlobalPolicy): Promise<GlobalPolicySnapshot> {
+	return requestRecord<GlobalPolicySnapshot>("/global-policy", {
+		method: "PUT",
+		body: JSON.stringify(policy),
+	});
 }
 
 interface PersistentPluginSettings {

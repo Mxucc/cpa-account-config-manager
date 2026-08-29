@@ -85,6 +85,7 @@ type App struct {
 	proxyProfiles          *ProxyProfileService
 	quotaPolicies          *QuotaPolicyService
 	codexIdentityOverrides *CodexIdentityOverrideService
+	globalPolicy           *GlobalPolicyService
 	indexHTML              []byte
 	quiesceOnce            sync.Once
 	quotaResetLocks        [64]sync.Mutex
@@ -115,6 +116,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	proxyProfiles := NewProxyProfileService()
 	quotaPolicies := NewQuotaPolicyService()
 	codexIdentityOverrides := NewCodexIdentityOverrideService()
+	globalPolicy := NewGlobalPolicyService()
 	var identityTransport AgentIdentityTransport
 	if transport, ok := host.(AgentIdentityTransport); ok {
 		identityTransport = transport
@@ -126,7 +128,15 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	weeklyOverdraft := NewWeeklyOverdraftExperiment(experiments.WeeklyOverdraftEnabled).WithOverdraftGate(usage)
 	codexIdentity := NewCodexIdentityExperiment(experiments, accounts)
 	codexIdentity.SetOverrides(codexIdentityOverrides)
-	setCodexIdentitySettingsProvider(experiments.codexIdentitySnapshot)
+	setCodexIdentitySettingsProvider(func() ExperimentalCodexIdentitySettings {
+		if snapshot := globalPolicy.Snapshot(); snapshot.Policy.Enabled {
+			// The permanent global policy is authoritative, including an
+			// explicitly cleared identity policy. Falling back based on whether
+			// the value is empty would resurrect legacy experimental settings.
+			return snapshot.Policy.CodexIdentity
+		}
+		return experiments.codexIdentitySnapshot()
+	})
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
 	providerRuntime.SetAccountConcurrency(concurrency)
@@ -177,6 +187,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		proxyProfiles:          proxyProfiles,
 		quotaPolicies:          quotaPolicies,
 		codexIdentityOverrides: codexIdentityOverrides,
+		globalPolicy:           globalPolicy,
 		indexHTML:              append([]byte(nil), indexHTML...),
 	}
 	app.previews.SetAccountConcurrency(concurrency)
@@ -189,6 +200,10 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
+	policies.SetGlobalPolicy(globalPolicy)
+	policies.SetAccountConcurrency(concurrency)
+	policies.SetQuotaPolicies(quotaPolicies)
+	policies.SetCodexIdentityOverrides(codexIdentityOverrides)
 	policies.SetProxyProfiles(proxyProfiles)
 	policies.SetAIProviderProxyApplier(app.applyAIProviderProxyPolicy)
 	policies.SetQuotaMetadataProbe(app.runPolicyQuotaMetadataProbe)
@@ -243,6 +258,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.codexIdentityOverrides.Configure(config)
 	a.proxyProfiles.SetBindingApplier(a.applyProxyProfileBindings)
 	a.experiments.Configure(config)
+	a.globalPolicy.Configure(config, a.experiments.CodexIdentity())
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
 	a.newAccountProbe.Configure(config)
 	a.quotaBootstrap.Start()
@@ -502,6 +518,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/import/status", Description: "Read current or last background import progress."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/defaults", Description: "Read the default Auth-file policy and safe scan status."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/defaults", Description: "Validate and save the default Auth-file policy."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/global-policy", Description: "Read the permanent plugin-wide baseline policy."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/global-policy", Description: "Validate and save the permanent plugin-wide baseline policy."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/scan", Description: "Request an immediate missing-only Auth-file scan."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/preview", Description: "Preview force-syncing managed policy fields."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/defaults/force/start", Description: "Start an approved default-policy force sync."},
@@ -600,6 +618,13 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleListAccounts(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/accounts/config":
 		return a.handleAccountConfig(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/global-policy":
+		if a.globalPolicy == nil {
+			return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "global policy service is unavailable"})
+		}
+		return jsonResponse(http.StatusOK, a.globalPolicy.Snapshot())
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/global-policy":
+		return a.handlePutGlobalPolicy(req)
 	case (method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/quota-policies") ||
 		(method == http.MethodPut && (path == "/v0/management"+managementRoutePrefix+"/quota-policies/account" || path == "/v0/management"+managementRoutePrefix+"/quota-policies/provider")):
 		return a.handleQuotaPolicies(req)
@@ -1040,6 +1065,21 @@ func (a *App) handlePutDefaultPolicy(req cpaapi.ManagementRequest) cpaapi.Manage
 		managementKey := resolveManagementKey(req.Headers)
 		a.newAccountProbe.Arm(managementKey, req.HostCallbackID)
 		managementKey = ""
+	}
+	return jsonResponse(http.StatusOK, snapshot)
+}
+
+func (a *App) handlePutGlobalPolicy(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if a == nil || a.globalPolicy == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "global policy service is unavailable"})
+	}
+	var policy GlobalPolicy
+	if errDecode := decodeJSONRequest(req.Body, &policy); errDecode != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errDecode.Error()})
+	}
+	snapshot, errSave := a.globalPolicy.Set(policy)
+	if errSave != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
 	}
 	return jsonResponse(http.StatusOK, snapshot)
 }

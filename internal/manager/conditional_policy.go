@@ -36,12 +36,20 @@ type PolicyConditionGroup struct {
 }
 
 type ConditionalPolicyActions struct {
-	NewAccountModelProbe     *bool             `json:"new_account_model_probe,omitempty" yaml:"new_account_model_probe,omitempty"`
-	Priority                 *int              `json:"priority,omitempty" yaml:"priority,omitempty"`
-	Websockets               *bool             `json:"websockets,omitempty" yaml:"websockets,omitempty"`
-	ModelPolicy              *ModelPolicyPatch `json:"model_policy,omitempty" yaml:"model_policy,omitempty"`
-	ProxyProfileID           *string           `json:"proxy_profile_id,omitempty" yaml:"proxy_profile_id,omitempty"`
-	AIProviderProxyProfileID *string           `json:"ai_provider_proxy_profile_id,omitempty" yaml:"ai_provider_proxy_profile_id,omitempty"`
+	NewAccountModelProbe     *bool                  `json:"new_account_model_probe,omitempty" yaml:"new_account_model_probe,omitempty"`
+	Priority                 *int                   `json:"priority,omitempty" yaml:"priority,omitempty"`
+	Disabled                 *bool                  `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+	ConcurrencyLimit         *int                   `json:"concurrency_limit,omitempty" yaml:"concurrency_limit,omitempty"`
+	QuotaPolicy              *AccountQuotaPolicy    `json:"quota_policy,omitempty" yaml:"quota_policy,omitempty"`
+	Note                     *string                `json:"note,omitempty" yaml:"note,omitempty"`
+	Prefix                   *string                `json:"prefix,omitempty" yaml:"prefix,omitempty"`
+	ProxyURL                 *string                `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
+	Websockets               *bool                  `json:"websockets,omitempty" yaml:"websockets,omitempty"`
+	Headers                  *HeaderPatch           `json:"headers,omitempty" yaml:"headers,omitempty"`
+	ModelPolicy              *ModelPolicyPatch      `json:"model_policy,omitempty" yaml:"model_policy,omitempty"`
+	CodexIdentity            *CodexIdentityOverride `json:"codex_identity,omitempty" yaml:"codex_identity,omitempty"`
+	ProxyProfileID           *string                `json:"proxy_profile_id,omitempty" yaml:"proxy_profile_id,omitempty"`
+	AIProviderProxyProfileID *string                `json:"ai_provider_proxy_profile_id,omitempty" yaml:"ai_provider_proxy_profile_id,omitempty"`
 }
 
 type ConditionalPolicyRule struct {
@@ -56,12 +64,28 @@ type ConditionalPolicyRule struct {
 type ResolvedConditionalPolicy struct {
 	NewAccountModelProbe     *bool
 	Priority                 *int
+	Disabled                 *bool
+	ConcurrencyLimit         *int
+	QuotaPolicy              *AccountQuotaPolicy
+	Note                     *string
+	Prefix                   *string
+	ProxyURL                 *string
 	Websockets               *bool
+	Headers                  *HeaderPatch
 	ModelPolicy              *ModelPolicyPatch
+	CodexIdentity            *CodexIdentityOverride
 	MatchedRuleIDs           []string
 	PriorityFromRule         bool
 	WebsocketsFromRule       bool
 	ModelPolicyFromRule      bool
+	DisabledFromRule         bool
+	ConcurrencyFromRule      bool
+	QuotaPolicyFromRule      bool
+	NoteFromRule             bool
+	PrefixFromRule           bool
+	ProxyURLFromRule         bool
+	HeadersFromRule          bool
+	CodexIdentityFromRule    bool
 	ProxyProfileID           *string
 	AIProviderProxyProfileID *string
 	ProxyProfileFromRule     bool
@@ -226,14 +250,17 @@ func validPolicyEmailSuffix(value string) bool {
 }
 
 func validateConditionalPolicyActions(actions ConditionalPolicyActions) (ConditionalPolicyActions, error) {
-	if actions.ModelPolicy != nil {
-		validated, errValidate := actions.ModelPolicy.Validate()
+	patch := BatchPatch{Disabled: actions.Disabled, Priority: actions.Priority, Note: actions.Note, Prefix: actions.Prefix, ProxyURL: actions.ProxyURL, ProxyProfileID: actions.ProxyProfileID, Websockets: actions.Websockets, Headers: actions.Headers, ModelPolicy: actions.ModelPolicy, ConcurrencyLimit: actions.ConcurrencyLimit, QuotaPolicy: actions.QuotaPolicy, CodexIdentity: actions.CodexIdentity}
+	if !patch.Empty() {
+		validated, errValidate := patch.Validate()
 		if errValidate != nil {
 			return ConditionalPolicyActions{}, errValidate
 		}
-		actions.ModelPolicy = &validated
+		actions.Disabled, actions.Priority, actions.Note, actions.Prefix, actions.ProxyURL = validated.Disabled, validated.Priority, validated.Note, validated.Prefix, validated.ProxyURL
+		actions.ProxyProfileID, actions.Websockets, actions.Headers, actions.ModelPolicy = validated.ProxyProfileID, validated.Websockets, validated.Headers, validated.ModelPolicy
+		actions.ConcurrencyLimit, actions.QuotaPolicy, actions.CodexIdentity = validated.ConcurrencyLimit, validated.QuotaPolicy, validated.CodexIdentity
 	}
-	if actions.NewAccountModelProbe == nil && actions.Priority == nil && actions.Websockets == nil && actions.ModelPolicy == nil && actions.ProxyProfileID == nil && actions.AIProviderProxyProfileID == nil {
+	if actions.NewAccountModelProbe == nil && patch.Empty() {
 		return ConditionalPolicyActions{}, fmt.Errorf("conditional policy requires at least one action")
 	}
 	for _, id := range []*string{actions.ProxyProfileID, actions.AIProviderProxyProfileID} {
@@ -305,7 +332,28 @@ func resolveConditionalPolicy(policy DefaultPolicy, account Account) ResolvedCon
 	resolved := ResolvedConditionalPolicy{NewAccountModelProbe: conditionalBoolPointer(policy.NewAccountModelProbeEnabled)}
 	if policy.Enabled {
 		resolved.Priority = cloneIntPointer(policy.Priority)
+		resolved.Disabled = cloneBoolPointer(policy.Disabled)
+		resolved.ConcurrencyLimit = cloneIntPointer(policy.ConcurrencyLimit)
+		if policy.QuotaPolicy != nil {
+			value := *policy.QuotaPolicy
+			resolved.QuotaPolicy = &value
+		}
+		resolved.Note = cloneStringPointer(policy.Note)
+		resolved.Prefix = cloneStringPointer(policy.Prefix)
+		resolved.ProxyURL = cloneStringPointer(policy.ProxyURL)
 		resolved.Websockets = cloneBoolPointer(policy.Websockets)
+		if policy.Headers != nil {
+			value := cloneHeaderPatch(*policy.Headers)
+			resolved.Headers = &value
+		}
+		if policy.CodexIdentity != nil {
+			value := cloneCodexIdentityOverride(*policy.CodexIdentity)
+			resolved.CodexIdentity = &value
+		}
+		if policy.ModelPolicy != nil {
+			value := cloneModelPolicyPatch(*policy.ModelPolicy)
+			resolved.ModelPolicy = &value
+		}
 	}
 	type indexedRule struct {
 		index int
@@ -332,14 +380,49 @@ func resolveConditionalPolicy(policy DefaultPolicy, account Account) ResolvedCon
 			resolved.Priority = cloneIntPointer(actions.Priority)
 			resolved.PriorityFromRule = true
 		}
+		if actions.Disabled != nil {
+			resolved.Disabled = cloneBoolPointer(actions.Disabled)
+			resolved.DisabledFromRule = true
+		}
+		if actions.ConcurrencyLimit != nil {
+			resolved.ConcurrencyLimit = cloneIntPointer(actions.ConcurrencyLimit)
+			resolved.ConcurrencyFromRule = true
+		}
+		if actions.QuotaPolicy != nil {
+			value := *actions.QuotaPolicy
+			resolved.QuotaPolicy = &value
+			resolved.QuotaPolicyFromRule = true
+		}
+		if actions.Note != nil {
+			resolved.Note = cloneStringPointer(actions.Note)
+			resolved.NoteFromRule = true
+		}
+		if actions.Prefix != nil {
+			resolved.Prefix = cloneStringPointer(actions.Prefix)
+			resolved.PrefixFromRule = true
+		}
+		if actions.ProxyURL != nil {
+			resolved.ProxyURL = cloneStringPointer(actions.ProxyURL)
+			resolved.ProxyURLFromRule = true
+		}
 		if actions.Websockets != nil {
 			resolved.Websockets = cloneBoolPointer(actions.Websockets)
 			resolved.WebsocketsFromRule = true
+		}
+		if actions.Headers != nil {
+			value := cloneHeaderPatch(*actions.Headers)
+			resolved.Headers = &value
+			resolved.HeadersFromRule = true
 		}
 		if actions.ModelPolicy != nil {
 			modelPolicy := cloneModelPolicyPatch(*actions.ModelPolicy)
 			resolved.ModelPolicy = &modelPolicy
 			resolved.ModelPolicyFromRule = true
+		}
+		if actions.CodexIdentity != nil {
+			value := cloneCodexIdentityOverride(*actions.CodexIdentity)
+			resolved.CodexIdentity = &value
+			resolved.CodexIdentityFromRule = true
 		}
 		if actions.ProxyProfileID != nil {
 			id := strings.ToLower(strings.TrimSpace(*actions.ProxyProfileID))
@@ -380,7 +463,27 @@ func cloneConditionalPolicyActions(actions ConditionalPolicyActions) Conditional
 	clone := actions
 	clone.NewAccountModelProbe = cloneBoolPointer(actions.NewAccountModelProbe)
 	clone.Priority = cloneIntPointer(actions.Priority)
+	clone.Disabled = cloneBoolPointer(actions.Disabled)
+	clone.ConcurrencyLimit = cloneIntPointer(actions.ConcurrencyLimit)
+	clone.Note = cloneStringPointer(actions.Note)
+	clone.Prefix = cloneStringPointer(actions.Prefix)
+	clone.ProxyURL = cloneStringPointer(actions.ProxyURL)
 	clone.Websockets = cloneBoolPointer(actions.Websockets)
+	if actions.Headers != nil {
+		headers := HeaderPatch{Set: map[string]string{}, Remove: append([]string(nil), actions.Headers.Remove...)}
+		for key, value := range actions.Headers.Set {
+			headers.Set[key] = value
+		}
+		clone.Headers = &headers
+	}
+	if actions.QuotaPolicy != nil {
+		value := *actions.QuotaPolicy
+		clone.QuotaPolicy = &value
+	}
+	if actions.CodexIdentity != nil {
+		value := cloneCodexIdentityOverride(*actions.CodexIdentity)
+		clone.CodexIdentity = &value
+	}
 	if actions.ProxyProfileID != nil {
 		id := *actions.ProxyProfileID
 		clone.ProxyProfileID = &id
@@ -392,6 +495,14 @@ func cloneConditionalPolicyActions(actions ConditionalPolicyActions) Conditional
 	if actions.ModelPolicy != nil {
 		modelPolicy := cloneModelPolicyPatch(*actions.ModelPolicy)
 		clone.ModelPolicy = &modelPolicy
+	}
+	return clone
+}
+
+func cloneHeaderPatch(patch HeaderPatch) HeaderPatch {
+	clone := HeaderPatch{Set: map[string]string{}, Remove: append([]string(nil), patch.Remove...)}
+	for key, value := range patch.Set {
+		clone.Set[key] = value
 	}
 	return clone
 }

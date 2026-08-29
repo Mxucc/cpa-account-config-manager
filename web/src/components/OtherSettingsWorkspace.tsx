@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   BellRing,
   CircleDollarSign,
-  DoorClosed,
   ExternalLink,
   FlaskConical,
   KeyRound,
@@ -75,15 +74,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
   const [sub2APICreditUsageEnabled, setSub2APICreditUsageEnabled] = useState(false);
-  const [codexOutboundConvergenceEnabled, setCodexOutboundConvergenceEnabled] = useState(false);
-  const [codexIngressGateEnabled, setCodexIngressGateEnabled] = useState(false);
-  const [codexAllowAppServerClients, setCodexAllowAppServerClients] = useState(false);
-  const [codexConvergenceMode, setCodexConvergenceMode] = useState("");
-  const [codexMinVersion, setCodexMinVersion] = useState("");
-  const [codexMaxVersion, setCodexMaxVersion] = useState("");
-  const [codexWhitelist, setCodexWhitelist] = useState("");
-  const [codexBlacklist, setCodexBlacklist] = useState("");
-  const [codexFingerprintSignals, setCodexFingerprintSignals] = useState("");
   const [error, setError] = useState("");
   const refreshSequence = useRef(0);
   const handleError = useCallback((caught: unknown) => {
@@ -153,20 +143,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
     setSub2APICreditUsageEnabled(experiments.settings.sub2api_credit_usage_enabled === true);
-    const codexIdentity = experiments.settings.codex_identity ?? {
-      outbound_convergence_enabled: false,
-      ingress_gate_enabled: false,
-      allow_app_server_clients: false,
-    };
-    setCodexOutboundConvergenceEnabled(codexIdentity.outbound_convergence_enabled === true);
-    setCodexIngressGateEnabled(codexIdentity.ingress_gate_enabled === true);
-    setCodexAllowAppServerClients(codexIdentity.allow_app_server_clients === true);
-    setCodexConvergenceMode(codexIdentity.convergence_mode || "");
-    setCodexMinVersion(codexIdentity.min_version || "");
-    setCodexMaxVersion(codexIdentity.max_version || "");
-    setCodexWhitelist(codexIdentity.whitelist || "");
-    setCodexBlacklist(codexIdentity.blacklist || "");
-    setCodexFingerprintSignals(codexIdentity.fingerprint_signals || "");
   }, [experiments]);
 
   const installUpdate = useCallback(async () => {
@@ -254,16 +230,12 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         agent_identity_enabled: agentIdentityEnabled,
         auto_model_whitelist_enabled: true,
         sub2api_credit_usage_enabled: sub2APICreditUsageEnabled,
-        codex_identity: {
-          outbound_convergence_enabled: codexOutboundConvergenceEnabled,
-          ingress_gate_enabled: codexIngressGateEnabled,
-          allow_app_server_clients: codexAllowAppServerClients,
-          convergence_mode: codexConvergenceMode,
-          min_version: codexMinVersion,
-          max_version: codexMaxVersion,
-          whitelist: codexWhitelist,
-          blacklist: codexBlacklist,
-          fingerprint_signals: codexFingerprintSignals,
+        // Keep the legacy field intact for older CPA plugin runtimes. The
+        // editable source of truth now lives in the permanent global policy.
+        codex_identity: experiments?.settings.codex_identity ?? {
+          outbound_convergence_enabled: false,
+          ingress_gate_enabled: false,
+          allow_app_server_clients: false,
         },
       });
       setExperiments(next);
@@ -450,65 +422,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
               <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
               <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
             </div>
-          </div>
-          <div className="experimental-feature-block">
-            <div className="experimental-feature-row">
-              <div className="experimental-feature-copy">
-                <span className="experimental-feature-icon"><ShieldCheck size={18} /></span>
-                <div>
-                  <strong>{tx("ui.codex_identity_convergence")}</strong>
-                  <span>{tx("ui.codex_identity_convergence_description")}</span>
-                </div>
-              </div>
-              <label className="switch-control experimental-feature-switch">
-                <input type="checkbox" checked={codexOutboundConvergenceEnabled} disabled={loading || savingExperiment || !experiments}
-                  onChange={(event) => setCodexOutboundConvergenceEnabled(event.target.checked)} aria-label={tx("ui.codex_outbound_convergence")} />
-                <b>{tx(codexOutboundConvergenceEnabled ? "ui.on_2" : "ui.off_2")}</b>
-              </label>
-            </div>
-            <div className="experimental-behavior-list">
-              <div><strong>{tx("ui.codex_outbound_convergence")}</strong><span>{tx("ui.codex_outbound_convergence_behavior")}</span></div>
-              <div><strong>{tx("ui.codex_api_key_probe")}</strong><span>{tx("ui.codex_api_key_probe_behavior")}</span></div>
-              <div><strong>{tx("ui.internal_probe_requests")}</strong><span>{tx("ui.codex_internal_probe_behavior")}</span></div>
-            </div>
-            <div className="experimental-feature-row">
-              <div className="experimental-feature-copy">
-                <span className="experimental-feature-icon"><DoorClosed size={18} /></span>
-                <div>
-                  <strong>{tx("ui.codex_ingress_gate")}</strong>
-                  <span>{tx("ui.codex_ingress_gate_description")}</span>
-                </div>
-              </div>
-              <label className="switch-control experimental-feature-switch">
-                <input type="checkbox" checked={codexIngressGateEnabled} disabled={loading || savingExperiment || !experiments}
-                  onChange={(event) => setCodexIngressGateEnabled(event.target.checked)} aria-label={tx("ui.codex_ingress_gate")} />
-                <b>{tx(codexIngressGateEnabled ? "ui.on_2" : "ui.off_2")}</b>
-              </label>
-            </div>
-            <div className="experimental-behavior-list">
-              <div><strong>{tx("ui.codex_app_server_clients")}</strong><span>{tx("ui.codex_app_server_clients_behavior")}</span></div>
-              <div><strong>{tx("ui.codex_version_bounds")}</strong><span>{tx("ui.codex_version_bounds_behavior")}</span></div>
-              <div><strong>{tx("ui.codex_fingerprint_signals")}</strong><span>{tx("ui.codex_fingerprint_signals_behavior")}</span></div>
-            </div>
-            <details className="codex-identity-advanced">
-              <summary>{tx("ui.codex_advanced_policy_json")}</summary>
-              <div className="settings-inline-grid codex-policy-grid">
-                <label className="filter-control"><span>{tx("ui.codex_min_version")}</span><input value={codexMinVersion} placeholder="0.144.0" onChange={(event) => setCodexMinVersion(event.target.value)} /></label>
-                <label className="filter-control"><span>{tx("ui.codex_max_version")}</span><input value={codexMaxVersion} placeholder="0.144.9" onChange={(event) => setCodexMaxVersion(event.target.value)} /></label>
-                <label className="filter-control"><span>{tx("ui.codex_convergence_mode")}</span>
-                <select value={codexConvergenceMode} onChange={(event) => setCodexConvergenceMode(event.target.value)}>
-                  <option value="">{tx("ui.codex_convergence_legacy_full")}</option>
-                  <option value="off">{tx("ui.codex_convergence_off")}</option>
-                  <option value="device">{tx("ui.codex_convergence_device")}</option>
-                  <option value="session">{tx("ui.codex_convergence_session")}</option>
-                  <option value="full">{tx("ui.codex_convergence_full")}</option>
-                </select></label>
-                <label className="switch-control"><input type="checkbox" checked={codexAllowAppServerClients} onChange={(event) => setCodexAllowAppServerClients(event.target.checked)} /><b>{tx(codexAllowAppServerClients ? "ui.on_2" : "ui.off_2")} · {tx("ui.codex_allow_app_server")}</b></label>
-              </div>
-              <label className="codex-policy-field"><span>{tx("ui.codex_whitelist_json")}</span><textarea rows={3} spellCheck={false} value={codexWhitelist} onChange={(event) => setCodexWhitelist(event.target.value)} /></label>
-              <label className="codex-policy-field"><span>{tx("ui.codex_blacklist_json")}</span><textarea rows={3} spellCheck={false} value={codexBlacklist} onChange={(event) => setCodexBlacklist(event.target.value)} /></label>
-              <label className="codex-policy-field"><span>{tx("ui.codex_fingerprint_json")}</span><textarea rows={4} spellCheck={false} value={codexFingerprintSignals} onChange={(event) => setCodexFingerprintSignals(event.target.value)} /></label>
-            </details>
           </div>
           <div className="experimental-feature-block">
             <div className="experimental-feature-row">

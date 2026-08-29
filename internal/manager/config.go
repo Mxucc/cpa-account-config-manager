@@ -21,6 +21,7 @@ type Config struct {
 	InspectionPolicy     *InspectionPolicy        `yaml:"inspection_policy,omitempty"`
 	UpdatePolicy         *UpdatePolicy            `yaml:"update_policy,omitempty"`
 	OperationSettings    *OperationSettingsConfig `yaml:"operation_settings,omitempty"`
+	GlobalPolicy         *GlobalPolicy            `yaml:"global_policy,omitempty"`
 	ExperimentalSettings *ExperimentalSettings    `yaml:"experimental_settings,omitempty"`
 	implicitDataDir      bool
 }
@@ -80,6 +81,10 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.OperationSettings != nil {
 		settings := *cfg.OperationSettings
 		cfg.OperationSettings = &settings
+	}
+	if cfg.GlobalPolicy != nil {
+		policy := cloneGlobalPolicy(*cfg.GlobalPolicy)
+		cfg.GlobalPolicy = &policy
 	}
 	if cfg.ExperimentalSettings != nil {
 		settings := *cfg.ExperimentalSettings

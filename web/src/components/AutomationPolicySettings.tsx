@@ -18,7 +18,12 @@ import type { UIMessageKey } from "../i18n/uiText";
 import type {
   ConditionalPolicyActions,
   ConditionalPolicyRule,
+  AccountQuotaPolicy,
   DefaultPolicy,
+  ExperimentalCodexIdentitySettings,
+  GlobalPolicy,
+  HeaderPatch,
+  ModelPolicyPatch,
   ModelPolicyMode,
   PolicySnapshot,
   OperationFailureDetail,
@@ -40,6 +45,8 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   const { locale, tx, formatDateTime } = useI18n();
   const [snapshot, setSnapshot] = useState<PolicySnapshot | null>(null);
   const [draft, setDraft] = useState<DefaultPolicy | null>(null);
+  const [globalSnapshot, setGlobalSnapshot] = useState<{ policy: GlobalPolicy; storage_error?: string } | null>(null);
+  const [globalDraft, setGlobalDraft] = useState<GlobalPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -55,11 +62,19 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const requestID = ++refreshRequest.current;
     try {
-      const next = await api.getDefaultPolicy(signal);
+      const [next, global] = await Promise.all([
+        api.getDefaultPolicy(signal),
+        api.getGlobalPolicy(signal).catch((caught) => {
+          if (caught instanceof api.APIError && [404, 405, 501].includes(caught.status)) return { policy: emptyGlobalPolicy() };
+          throw caught;
+        }),
+      ]);
       if (requestID !== refreshRequest.current) return;
       if (!next?.policy || !next.last_scan) throw new Error("ui.policy_unavailable");
       setSnapshot(next);
       setDraft((current) => current ?? clonePolicy(next.policy));
+      setGlobalSnapshot(global);
+      setGlobalDraft((current) => current ?? cloneGlobalPolicy(global.policy));
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       if (requestID !== refreshRequest.current) return;
@@ -74,6 +89,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
     const controller = new AbortController();
     setLoading(true);
     setDraft(null);
+    setGlobalDraft(null);
     void refresh(controller.signal);
     return () => {
       controller.abort();
@@ -106,8 +122,10 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   }, [refresh, snapshot?.running]);
 
   const dirty = useMemo(() => Boolean(snapshot && draft && JSON.stringify(draft) !== JSON.stringify(clonePolicy(snapshot.policy))), [draft, snapshot]);
+  const globalDirty = useMemo(() => Boolean(globalSnapshot && globalDraft && JSON.stringify(globalDraft) !== JSON.stringify(cloneGlobalPolicy(globalSnapshot.policy))), [globalDraft, globalSnapshot]);
   const rules = draft?.conditional_rules ?? [];
   const updateDraft = (patch: Partial<DefaultPolicy>) => setDraft((current) => current ? { ...current, ...patch } : current);
+  const updateGlobalDraft = (patch: Partial<GlobalPolicy>) => setGlobalDraft((current) => current ? { ...current, ...patch } : current);
   const updateRules = (next: ConditionalPolicyRule[]) => updateDraft({ conditional_rules: next });
 
   const save = async () => {
@@ -137,6 +155,23 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
     }
   };
 
+  const saveGlobal = async () => {
+    if (!globalDraft) return;
+    setError("");
+    setSaving(true);
+    try {
+      const next = await api.saveGlobalPolicy(globalDraft);
+      setGlobalSnapshot(next);
+      setGlobalDraft(cloneGlobalPolicy(next.policy));
+      onNotice(tx("ui.automation_policy_saved"));
+    } catch (caught) {
+      if (caught instanceof api.APIError && caught.status === 401) onAPIError(caught);
+      else setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const scan = async () => {
     invalidateRefresh();
     setScanning(true);
@@ -153,7 +188,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
     }
   };
 
-  if (loading || !snapshot || !draft) {
+  if (loading || !snapshot || !draft || !globalDraft) {
     return <div className="automation-policy-loading" role="tabpanel" aria-label={tx("ui.automation_policy")}><LoaderCircle className="spin" size={22} /><span>{tx("ui.loading_policy")}</span></div>;
   }
 
@@ -178,8 +213,10 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
         {lastScan.failure_details?.length ? <PolicyFailureDetails details={lastScan.failure_details} /> : null}
       </div>
 
-      <section className="automation-policy-section" aria-label={tx("ui.global_default_policy")}>
-        <header><div><strong>{tx("ui.global_default_policy")}</strong><span>{tx("ui.global_default_policy_description")}</span></div></header>
+      <GlobalPolicyEditor policy={globalDraft} profiles={proxyProfiles} disabled={controlsLocked} storageError={globalSnapshot?.storage_error} onChange={updateGlobalDraft} onSave={() => void saveGlobal()} />
+
+      <section className="automation-policy-section" aria-label={tx("ui.default_policy")}>
+        <header><div><strong>{tx("ui.default_policy")}</strong><span>{tx("ui.global_default_policy_description")}</span></div><button className="button button-primary" type="button" disabled={controlsLocked || !dirty} onClick={() => void save()}><Save size={15} />{tx("ui.save_default_policy")}</button></header>
         <p className="policy-section-help">{tx("ui.global_default_policy_help")}</p>
         <div className="policy-form automation-global-form">
           <label className={`policy-row policy-master ${draft.enabled ? "is-enabled" : ""}`}>
@@ -250,6 +287,87 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
       ) : null}
     </section>
   );
+}
+
+function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange, onSave }: { policy: GlobalPolicy; profiles: ProxyProfileView[]; disabled: boolean; storageError?: string; onChange: (patch: Partial<GlobalPolicy>) => void; onSave: () => void }) {
+  const { tx } = useI18n();
+  const identity = policy.codex_identity ?? emptyGlobalIdentity();
+  const updateIdentity = (patch: Partial<ExperimentalCodexIdentitySettings>) => onChange({ codex_identity: { ...identity, ...patch } });
+  const updateQuota = (window: "five_hour" | "seven_day", field: "total_tokens" | "limit_percent", value: string) => {
+    const current = policy.quota_policy ?? { five_hour: {}, seven_day: {} };
+    const nextWindow = { ...current[window] };
+    if (value.trim() === "") delete nextWindow[field];
+    else nextWindow[field] = Number(value);
+    const next = { ...current, [window]: nextWindow };
+    const empty = !next.five_hour.total_tokens && next.five_hour.limit_percent === undefined && !next.seven_day.total_tokens && next.seven_day.limit_percent === undefined;
+    onChange({ quota_policy: empty ? null : next });
+  };
+  return <section className="automation-policy-section global-policy-section" aria-label={tx("ui.global_default_policy")}>
+    <header><div><strong>{tx("ui.global_default_policy")}</strong><span>{tx("ui.global_default_policy_description")}</span></div><button className="button button-primary" type="button" disabled={disabled} onClick={onSave}><Save size={15} />{tx("ui.save_default_policy")}</button></header>
+    <p className="policy-section-help">{tx("ui.global_default_policy_help")}</p>
+    {storageError ? <div className="automation-error" role="alert"><AlertCircle size={16} /><span>{storageError}</span></div> : null}
+    <div className="policy-form automation-global-form">
+      <label className={`policy-row policy-master ${policy.enabled ? "is-enabled" : ""}`}><span><strong>{tx("ui.enabled")}</strong><small>{tx("ui.global_default_policy")}</small></span><span className="switch-control"><input type="checkbox" checked={policy.enabled} disabled={disabled} onChange={(event) => onChange({ enabled: event.target.checked })} /><b>{tx(policy.enabled ? "ui.on_2" : "ui.off_2")}</b></span></label>
+      <OptionalBooleanRow label={tx("ui.disabled")} ariaLabel={tx("ui.disabled")} value={policy.disabled ?? null} disabled={disabled} onChange={(value) => onChange({ disabled: value })} />
+      <OptionalNumberRow label={tx("ui.policy_priority")} ariaLabel={tx("ui.policy_priority")} value={policy.priority ?? null} disabled={disabled} onChange={(value) => onChange({ priority: value })} />
+      <OptionalNumberRow label={tx("ui.account_concurrency")} ariaLabel={tx("ui.account_concurrency")} value={policy.concurrency_limit ?? null} disabled={disabled} onChange={(value) => onChange({ concurrency_limit: value })} />
+      <label className="policy-row"><span className="edit-optin">{tx("ui.note")}</span><input value={policy.note ?? ""} disabled={disabled} placeholder={tx("ui.not_set")} onChange={(event) => onChange({ note: event.target.value || null })} /></label>
+      <label className="policy-row"><span className="edit-optin">{tx("ui.route_prefix")}</span><input value={policy.prefix ?? ""} disabled={disabled} placeholder={tx("ui.not_set")} onChange={(event) => onChange({ prefix: event.target.value || null })} /></label>
+      <label className="policy-row"><span className="edit-optin">{tx("ui.proxy_url")}</span><input value={policy.proxy_url ?? ""} disabled={disabled} placeholder={tx("ui.manual_proxy_url")} onChange={(event) => onChange({ proxy_url: event.target.value || null })} /></label>
+      <div className="policy-proxy-group"><div className="policy-subsection-heading"><strong>{tx("ui.proxy_profiles")}</strong><span>{tx("ui.global_proxy_profile_help")}</span></div><ProxyProfileRow label={tx("ui.default_account_proxy")} value={policy.proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => onChange({ proxy_profile_id: value })} /><ProxyProfileRow label={tx("ui.default_ai_provider_proxy")} value={policy.ai_provider_proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => onChange({ ai_provider_proxy_profile_id: value })} /></div>
+      <OptionalBooleanRow label="WebSockets" ariaLabel="WebSockets" value={policy.websockets ?? null} disabled={disabled} onChange={(value) => onChange({ websockets: value })} />
+      <GlobalQuotaEditor policy={policy.quota_policy ?? null} disabled={disabled} onChange={updateQuota} />
+      <GlobalHeadersEditor value={policy.headers ?? null} disabled={disabled} onChange={(headers) => onChange({ headers })} />
+      <GlobalModelPolicyEditor value={policy.model_policy ?? null} disabled={disabled} onChange={(model_policy) => onChange({ model_policy })} />
+      <GlobalCodexIdentityEditor value={identity} disabled={disabled} onChange={updateIdentity} />
+    </div>
+  </section>;
+}
+
+function GlobalQuotaEditor({ policy, disabled, onChange }: { policy: AccountQuotaPolicy | null; disabled: boolean; onChange: (window: "five_hour" | "seven_day", field: "total_tokens" | "limit_percent", value: string) => void }) {
+  const { tx } = useI18n();
+  const value = policy ?? { five_hour: {}, seven_day: {} };
+  return <div className="policy-subsection global-quota-editor"><div className="policy-subsection-heading"><strong>{tx("ui.account_quota_limit")}</strong><span>{tx("ui.account_quota_limit_description")}</span></div><div className="settings-inline-grid"><QuotaInput label={tx("ui.quota_window_five_hour")} value={value.five_hour.limit_percent} disabled={disabled} suffix="%" onChange={(next) => onChange("five_hour", "limit_percent", next)} /><QuotaInput label={tx("ui.quota_window_seven_day")} value={value.seven_day.limit_percent} disabled={disabled} suffix="%" onChange={(next) => onChange("seven_day", "limit_percent", next)} /></div></div>;
+}
+
+function QuotaInput({ label, value, disabled, suffix, onChange }: { label: string; value?: number; disabled: boolean; suffix: string; onChange: (value: string) => void }) {
+  return <label className="filter-control"><span>{label} · {suffix}</span><input type="number" min="0" max="100" value={value ?? ""} disabled={disabled} placeholder="-" onChange={(event) => onChange(event.target.value)} /></label>;
+}
+
+function GlobalHeadersEditor({ value, disabled, onChange }: { value: HeaderPatch | null; disabled: boolean; onChange: (value: HeaderPatch | null) => void }) {
+  const { tx } = useI18n();
+  const [rows, setRows] = useState<Array<{ id: number; action: "set" | "remove"; name: string; value: string }>>(() => headersToRows(value));
+  useEffect(() => setRows(headersToRows(value)), [value]);
+  const update = (nextRows: typeof rows) => {
+    setRows(nextRows);
+    const set: Record<string, string> = {};
+    const remove: string[] = [];
+    nextRows.forEach((row) => { if (!row.name.trim()) return; if (row.action === "remove") remove.push(row.name.trim()); else if (row.value) set[row.name.trim()] = row.value; });
+    onChange(Object.keys(set).length || remove.length ? { set, remove } : null);
+  };
+  return <div className="policy-subsection"><div className="policy-subsection-heading"><strong>{tx("ui.headers")}</strong><span>{tx("ui.set")}/{tx("ui.remove")}</span></div><div className="header-editor">{rows.map((row) => <div className="header-row" key={row.id}><select value={row.action} disabled={disabled} onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, action: event.target.value as "set" | "remove" } : item))}><option value="set">{tx("ui.set")}</option><option value="remove">{tx("ui.remove")}</option></select><input value={row.name} disabled={disabled} placeholder={tx("ui.header_name")} onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, name: event.target.value } : item))} /><input value={row.value} disabled={disabled || row.action === "remove"} placeholder={tx("ui.header_value")} onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item))} /><IconButton label={tx("ui.delete_header_row")} disabled={disabled || rows.length === 1} onClick={() => update(rows.filter((item) => item.id !== row.id))}><Trash2 size={15} /></IconButton></div>)}<button className="button button-quiet header-add" type="button" disabled={disabled} onClick={() => setRows((current) => [...current, { id: Date.now(), action: "set", name: "", value: "" }])}><Plus size={15} />{tx("ui.header")}</button></div></div>;
+}
+
+function GlobalModelPolicyEditor({ value, disabled, onChange }: { value: ModelPolicyPatch | null; disabled: boolean; onChange: (value: ModelPolicyPatch | null) => void }) {
+  const { tx } = useI18n();
+  const mode = value?.mode ?? "all";
+  return <div className="policy-subsection"><div className="policy-subsection-heading"><strong>{tx("ui.model_policy")}</strong><span>{tx("ui.model_policy_mode")}</span></div><div className="model-policy-modes">{(["all", "allow_only", "deny_only"] as ModelPolicyMode[]).map((item) => <button key={item} type="button" className={mode === item ? "active" : ""} disabled={disabled} onClick={() => onChange(item === "all" ? null : { mode: item, models: value?.models ?? [] })}>{tx(item === "all" ? "ui.all_models" : item === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist")}</button>)}</div>{mode !== "all" ? <textarea rows={2} disabled={disabled} value={value?.models?.join("\n") ?? ""} placeholder="gpt-5.5" onChange={(event) => onChange({ mode, models: parseModels(event.target.value) })} aria-label={tx("ui.model_ids")} /> : null}</div>;
+}
+
+function GlobalCodexIdentityEditor({ value, disabled, onChange }: { value: ExperimentalCodexIdentitySettings; disabled: boolean; onChange: (patch: Partial<ExperimentalCodexIdentitySettings>) => void }) {
+  const { tx } = useI18n();
+  return <div className="policy-subsection codex-identity-global-editor"><div className="policy-subsection-heading"><strong>{tx("ui.codex_identity_target_policy")}</strong><span>{tx("ui.codex_identity_convergence_description")}</span></div><div className="settings-inline-grid codex-policy-grid"><label className="switch-control"><input type="checkbox" checked={value.outbound_convergence_enabled} disabled={disabled} onChange={(event) => onChange({ outbound_convergence_enabled: event.target.checked })} /><b>{tx(value.outbound_convergence_enabled ? "ui.on_2" : "ui.off_2")} · {tx("ui.codex_outbound_convergence")}</b></label><label className="switch-control"><input type="checkbox" checked={value.ingress_gate_enabled} disabled={disabled} onChange={(event) => onChange({ ingress_gate_enabled: event.target.checked })} /><b>{tx(value.ingress_gate_enabled ? "ui.on_2" : "ui.off_2")} · {tx("ui.codex_ingress_gate")}</b></label><label className="switch-control"><input type="checkbox" checked={value.allow_app_server_clients} disabled={disabled} onChange={(event) => onChange({ allow_app_server_clients: event.target.checked })} /><b>{tx(value.allow_app_server_clients ? "ui.on_2" : "ui.off_2")} · {tx("ui.codex_allow_app_server")}</b></label><label className="filter-control"><span>{tx("ui.codex_convergence_mode")}</span><select value={value.convergence_mode ?? ""} disabled={disabled} onChange={(event) => onChange({ convergence_mode: event.target.value })}><option value="">{tx("ui.codex_convergence_legacy_full")}</option><option value="off">{tx("ui.codex_convergence_off")}</option><option value="device">{tx("ui.codex_convergence_device")}</option><option value="session">{tx("ui.codex_convergence_session")}</option><option value="full">{tx("ui.codex_convergence_full")}</option></select></label><label className="filter-control"><span>{tx("ui.codex_min_version")}</span><input value={value.min_version ?? ""} disabled={disabled} onChange={(event) => onChange({ min_version: event.target.value })} /></label><label className="filter-control"><span>{tx("ui.codex_max_version")}</span><input value={value.max_version ?? ""} disabled={disabled} onChange={(event) => onChange({ max_version: event.target.value })} /></label></div><label className="codex-policy-field"><span>{tx("ui.codex_whitelist_json")}</span><textarea rows={2} disabled={disabled} value={value.whitelist ?? ""} onChange={(event) => onChange({ whitelist: event.target.value })} /></label><label className="codex-policy-field"><span>{tx("ui.codex_blacklist_json")}</span><textarea rows={2} disabled={disabled} value={value.blacklist ?? ""} onChange={(event) => onChange({ blacklist: event.target.value })} /></label><label className="codex-policy-field"><span>{tx("ui.codex_fingerprint_json")}</span><textarea rows={2} disabled={disabled} value={value.fingerprint_signals ?? ""} onChange={(event) => onChange({ fingerprint_signals: event.target.value })} /></label></div>;
+}
+
+function headersToRows(value: HeaderPatch | null): Array<{ id: number; action: "set" | "remove"; name: string; value: string }> {
+  const rows: Array<{ id: number; action: "set" | "remove"; name: string; value: string }> = [];
+  Object.entries(value?.set ?? {}).forEach(([name, headerValue], index) => rows.push({ id: index + 1, action: "set", name, value: headerValue }));
+  (value?.remove ?? []).forEach((name, index) => rows.push({ id: rows.length + index + 1, action: "remove", name, value: "" }));
+  return rows.length ? rows : [{ id: 1, action: "set", name: "", value: "" }];
+}
+
+function emptyGlobalIdentity(): ExperimentalCodexIdentitySettings {
+  return { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false };
 }
 
 function ConditionalRuleEditor({ rule, index, total, disabled, profiles, onChange, onMove, onDelete }: { rule: ConditionalPolicyRule; index: number; total: number; disabled: boolean; profiles: ProxyProfileView[]; onChange: (rule: ConditionalPolicyRule) => void; onMove: (offset: number) => void; onDelete: () => void }) {
@@ -354,6 +472,14 @@ function PolicyMetric({ label, value, tone = "" }: { label: string; value: numbe
 
 function clonePolicy(policy: DefaultPolicy): DefaultPolicy {
   return JSON.parse(JSON.stringify({ ...policy, codex_quota_metadata_probe_enabled: true, conditional_rules: policy.conditional_rules ?? [] })) as DefaultPolicy;
+}
+
+function emptyGlobalPolicy(): GlobalPolicy {
+  return { enabled: false, disabled: null, priority: null, concurrency_limit: null, quota_policy: null, note: null, prefix: null, proxy_url: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null, websockets: null, headers: null, model_policy: null, codex_identity: emptyGlobalIdentity() };
+}
+
+function cloneGlobalPolicy(policy: GlobalPolicy): GlobalPolicy {
+  return JSON.parse(JSON.stringify({ ...emptyGlobalPolicy(), ...(policy ?? {}), codex_identity: { ...emptyGlobalIdentity(), ...(policy?.codex_identity ?? {}) } })) as GlobalPolicy;
 }
 
 function newConditionalRule(index: number): ConditionalPolicyRule {

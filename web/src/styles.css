@@ -142,8 +142,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .filter-grid { min-width: 0; display: grid; grid-template-columns: minmax(270px, 1.7fr) repeat(5, minmax(126px, 0.8fr)); gap: 10px; align-items: end; }
 .filter-control { min-width: 0; display: grid; gap: 6px; }
 .filter-control > span { color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); font-weight: 700; white-space: nowrap; }
-.filter-bar select, .filter-bar input, .edit-control input, .edit-control select, .header-row input, .header-row select, .field-block input, .field-block select { height: 42px; width: 100%; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); padding: 0 12px; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); }
-.filter-bar textarea, .edit-control textarea, .header-row textarea, .field-block textarea { min-height: 58px; width: 100%; padding: 9px 12px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); resize: vertical; font-family: inherit; line-height: 1.5; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); }
+.filter-bar select, .filter-bar input, .edit-control input, .edit-control select, .header-row input, .header-row select, .field-block input, .field-block select { min-width: 0; max-width: 100%; height: 42px; width: 100%; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); padding: 0 12px; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); }
+.filter-bar textarea, .edit-control textarea, .header-row textarea, .field-block textarea { min-width: 0; max-width: 100%; min-height: 58px; width: 100%; padding: 9px 12px; border: 1px solid var(--border-primary); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); resize: vertical; font-family: inherit; line-height: 1.5; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); }
 .filter-bar select:hover, .filter-bar input:hover { border-color: var(--border-hover); }
 .filter-bar select, .filter-bar input { min-width: 0; font-size: calc(13px * var(--font-size-scale)); }
 .filter-bar select:hover, .filter-bar input:hover { border-color: var(--border-hover); }
@@ -400,7 +400,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .modal-wide { width: min(860px, 100%); }
 .modal-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px 0 24px; border-bottom: 1px solid var(--border-color); }
 .modal-header h2, .job-header h2, .auth-dialog h2 { margin: 0; color: var(--text-primary); font-size: calc(18px * var(--font-size-scale)); font-weight: 700; letter-spacing: 0; }
-.modal-body { min-height: 0; padding: 24px; overflow: auto; }
+.modal-body { min-width: 0; min-height: 0; padding: 24px; overflow: auto; }
 .modal-footer { min-height: 68px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--border-color); background: var(--bg-primary); }
 .modal-scope { margin-right: auto; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); }
 .confirmation-copy { margin: 0; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); line-height: 1.6; }
@@ -461,7 +461,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .edit-optin { display: flex; align-items: center; gap: 8px; font-size: calc(12px * var(--font-size-scale)); font-weight: 700; }
 .edit-control { min-width: 0; }
 .edit-control input, .edit-control select { background: var(--surface); }
-.secret-input { height: 36px; display: grid; grid-template-columns: 1fr 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); overflow: hidden; }
+.secret-input { min-width: 0; max-width: 100%; height: 36px; display: grid; grid-template-columns: minmax(0, 1fr) 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); overflow: hidden; }
 .secret-input input { height: 34px; border: none; border-radius: 0; }
 .secret-input button { border: none; border-left: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
 .editor-secret { height: 34px; }
@@ -1368,7 +1368,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .auth-dialog { width: min(420px, 100%); display: grid; grid-template-columns: 48px 1fr; gap: 18px 14px; padding: 28px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-primary); box-shadow: var(--shadow-lg); animation: modalIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1); }
 .auth-mark { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--primary-30); border-radius: 12px; color: var(--primary-active); background: var(--primary-10); }
 .auth-product { display: block; margin-top: 5px; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); }
-.field-block { grid-column: 1 / -1; display: grid; gap: 7px; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); font-weight: 700; }
+.field-block { grid-column: 1 / -1; min-width: 0; display: grid; gap: 7px; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); font-weight: 700; }
 .auth-error, .auth-submit { grid-column: 1 / -1; }
 .auth-submit { min-height: 42px; margin-top: 2px; }
 
@@ -1779,23 +1779,25 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-entry-badge.is-disabled { background: var(--danger-soft); color: var(--danger); }
 .ai-provider-entry-actions { display: flex; align-items: center; gap: 6px; }
 .button-small { min-height: 26px; padding: 0 9px; font-size: calc(10px * var(--font-size-scale)); }
-.ai-provider-form { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); }
+.ai-provider-form { width: 100%; max-width: 100%; min-width: 0; display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); }
 .ai-provider-form-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ai-provider-form-title strong { font-size: calc(12px * var(--font-size-scale)); color: var(--text-primary); }
 .ai-provider-form-actions { justify-content: flex-end; margin-top: 0; }
-.ai-provider-field-note { font-size: calc(10px * var(--font-size-scale)); color: var(--muted); }
+.ai-provider-field-note { min-width: 0; font-size: calc(10px * var(--font-size-scale)); color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
 .ai-provider-switch { justify-self: start; }
-.ai-provider-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ai-provider-form-grid { width: 100%; max-width: 100%; min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .ai-provider-form-grid .field-block { grid-column: auto; }
-.ai-provider-models-editor, .ai-provider-keys-editor { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); }
+.ai-provider-quota-editor { width: 100%; max-width: 100%; min-width: 0; }
+.ai-provider-models-editor, .ai-provider-keys-editor { min-width: 0; display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); overflow-x: hidden; }
 .ai-provider-models-title { color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); font-weight: 700; text-transform: uppercase; }
-.ai-provider-model-row { display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(100px, 1fr) minmax(100px, 1fr) repeat(3, auto); align-items: center; gap: 8px; }
-.ai-provider-keys-editor .ai-provider-model-row { grid-template-columns: minmax(160px, 2fr) 84px minmax(140px, 1.4fr) auto; }
+.ai-provider-model-row { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: center; gap: 8px; }
+.ai-provider-keys-editor .ai-provider-model-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; }
 .ai-provider-model-row input { height: 34px; width: 100%; min-width: 0; padding: 0 9px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-size: calc(10px * var(--font-size-scale)); transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); }
 .ai-provider-model-row input:hover { border-color: var(--border-hover); }
-.ai-provider-model-flag { display: inline-flex; align-items: center; gap: 5px; justify-self: start; white-space: nowrap; color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); cursor: pointer; }
+.ai-provider-model-flag { min-width: 0; display: inline-flex; align-items: center; gap: 5px; justify-self: start; white-space: normal; color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); cursor: pointer; overflow-wrap: anywhere; }
 .ai-provider-model-flag input { width: 14px; height: 14px; margin: 0; accent-color: var(--primary-color); }
-.ai-provider-switches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding-top: 2px; }
+.ai-provider-switches { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding-top: 2px; }
+.ai-provider-switches > .field-block { flex: 1 1 100%; }
 .ai-provider-switches .switch-control { margin: 0; }
 .ai-provider-channel-issue td { height: 42px; color: var(--warning); background: var(--warning-soft); font-size: calc(11px * var(--font-size-scale)); }
 .ai-provider-channel-issue strong { color: var(--text-primary); }

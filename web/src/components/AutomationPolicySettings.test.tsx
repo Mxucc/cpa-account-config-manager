@@ -84,6 +84,22 @@ describe("AutomationPolicySettings", () => {
     expect(within(scannedMetric).queryByText("1")).not.toBeInTheDocument();
   });
 
+  it("keeps global configuration and automation defaults in separate, labeled sections", async () => {
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+
+    expect(await screen.findByRole("region", { name: "全局配置覆盖" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("账号基础配置");
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("路由与传输");
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("额度限制");
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("请求与模型策略");
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("Codex 身份兼容");
+    expect(screen.getByRole("region", { name: "自动策略默认设置" })).toHaveTextContent("自动化运行");
+    expect(screen.getByRole("button", { name: "保存全局配置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存默认策略" })).toBeInTheDocument();
+  });
+
   it("builds multiple prioritized policies with nested conditions and model routing", async () => {
     const user = userEvent.setup();
     const save = vi.spyOn(api, "saveDefaultPolicy").mockImplementation(async (policy) => ({ ...snapshot, policy }));

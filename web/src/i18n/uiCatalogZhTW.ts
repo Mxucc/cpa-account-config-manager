@@ -24,6 +24,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.account_proxy_profile": "帳號代理設定檔",
   "ui.ai_provider_proxy_profile": "AI 供應商代理設定檔",
   "ui.proxy_profile_unset": "不設定 / 不修改",
+  "ui.proxy_profile_select_hint": "啟用後選擇代理設定檔",
+  "ui.proxy_profile_create_hint": "請先建立並啟用代理設定檔",
   "ui.account_management": "帳號管理",
   "ui.observability_console": "觀測控制台",
   "ui.system_status": "系統狀態",

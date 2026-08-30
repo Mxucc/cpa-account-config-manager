@@ -24,6 +24,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.account_proxy_profile": "Прокси-профиль аккаунта",
   "ui.ai_provider_proxy_profile": "Прокси-профиль AI-провайдера",
   "ui.proxy_profile_unset": "Не задавать / оставить без изменений",
+  "ui.proxy_profile_select_hint": "После включения выберите профиль прокси",
+  "ui.proxy_profile_create_hint": "Сначала создайте и включите профиль прокси",
   "ui.account_management": "Управление учётными записями",
   "ui.observability_console": "Консоль наблюдаемости",
   "ui.system_status": "Состояние системы",

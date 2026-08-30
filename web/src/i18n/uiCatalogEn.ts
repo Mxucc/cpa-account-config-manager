@@ -22,6 +22,8 @@ export const enUI = {
   "ui.account_proxy_profile": "Account proxy profile",
   "ui.ai_provider_proxy_profile": "AI provider proxy profile",
   "ui.proxy_profile_unset": "Do not set / leave unchanged",
+  "ui.proxy_profile_select_hint": "Select a proxy profile after enabling this action",
+  "ui.proxy_profile_create_hint": "Create and enable a proxy profile first",
   "ui.account_management": "Account Management",
   "ui.observability_console": "Observability Console",
   "ui.system_status": "System status",

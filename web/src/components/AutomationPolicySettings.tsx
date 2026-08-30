@@ -100,7 +100,7 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
   useEffect(() => {
     const controller = new AbortController();
     void api.listProxyProfiles(controller.signal).then((response) => {
-      if (!controller.signal.aborted) setProxyProfiles(response.profiles.filter((profile) => profile.enabled));
+      if (!controller.signal.aborted) setProxyProfiles(response.profiles.filter((profile) => profile.enabled !== false));
     }).catch(() => undefined);
     return () => controller.abort();
   }, [refreshRevision]);
@@ -327,7 +327,6 @@ function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange
       <div className="global-policy-group">
         <div className="global-policy-group-heading"><strong>{tx("ui.routing_group")}</strong><span>{tx("ui.routing_group_help")}</span></div>
         <div className="global-policy-fields">
-          <label className="policy-row"><span className="edit-optin">{tx("ui.proxy_url")}</span><input value={policy.proxy_url ?? ""} disabled={disabled} placeholder={tx("ui.manual_proxy_url")} onChange={(event) => onChange({ proxy_url: event.target.value || null })} /></label>
           <div className="policy-proxy-group"><div className="policy-subsection-heading"><strong>{tx("ui.proxy_profiles")}</strong><span>{tx("ui.global_proxy_profile_help")}</span></div><ProxyProfileRow label={tx("ui.default_account_proxy")} value={policy.proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => onChange({ proxy_profile_id: value })} /><ProxyProfileRow label={tx("ui.default_ai_provider_proxy")} value={policy.ai_provider_proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => onChange({ ai_provider_proxy_profile_id: value })} /></div>
           <OptionalBooleanRow label="WebSockets" ariaLabel="WebSockets" value={policy.websockets ?? null} disabled={disabled} onChange={(value) => onChange({ websockets: value })} />
         </div>
@@ -448,8 +447,22 @@ function ProxyProfileRow({ label, value, profiles, disabled, onChange }: { label
 }
 
 function OptionalProxyProfileAction({ label, value, profiles, disabled, onChange }: { label: string; value: string | null; profiles: ProxyProfileView[]; disabled: boolean; onChange: (value: string | null) => void }) {
+  const { tx } = useI18n();
   const present = value !== null;
-  return <div className={`conditional-action ${present ? "is-managed" : ""}`}><label><input type="checkbox" checked={present} disabled={disabled} onChange={(event) => onChange(event.target.checked ? (profiles[0]?.id ?? null) : null)} /><span>{label}</span></label>{present ? <select value={value ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value || null)}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.proxy_url_masked}</option>)}</select> : null}</div>;
+  const hasProfiles = profiles.length > 0;
+  return <div className={`conditional-action conditional-proxy-action ${present ? "is-managed" : ""} ${!hasProfiles ? "is-unavailable" : ""}`}>
+    <label title={!hasProfiles ? tx("ui.proxy_profile_create_hint") : undefined}>
+      <input type="checkbox" checked={present} disabled={disabled || (!hasProfiles && !present)} onChange={(event) => {
+        if (!event.target.checked) onChange(null);
+        else if (profiles[0]) onChange(profiles[0].id);
+      }} />
+      <span>{label}</span>
+    </label>
+    {present ? <select value={value ?? ""} disabled={disabled || !hasProfiles} onChange={(event) => onChange(event.target.value || null)}>
+      <option value="">{tx("ui.select_proxy_profile")}</option>
+      {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.proxy_url_masked}</option>)}
+    </select> : <small className="conditional-action-hint">{tx(hasProfiles ? "ui.proxy_profile_select_hint" : "ui.proxy_profile_create_hint")}</small>}
+  </div>;
 }
 
 function ModelPolicyAction({ actions, disabled, onChange }: { actions: ConditionalPolicyActions; disabled: boolean; onChange: (actions: ConditionalPolicyActions) => void }) {

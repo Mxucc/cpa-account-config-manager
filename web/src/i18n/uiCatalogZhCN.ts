@@ -24,6 +24,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.account_proxy_profile": "账号代理档案",
   "ui.ai_provider_proxy_profile": "AI 供应商代理档案",
   "ui.proxy_profile_unset": "不设置 / 不修改",
+  "ui.proxy_profile_select_hint": "启用后选择代理档案",
+  "ui.proxy_profile_create_hint": "请先创建并启用代理档案",
   "ui.account_management": "账号管理",
   "ui.observability_console": "观测控制台",
   "ui.system_status": "系统状态",

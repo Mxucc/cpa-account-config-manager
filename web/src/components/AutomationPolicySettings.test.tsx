@@ -95,6 +95,8 @@ describe("AutomationPolicySettings", () => {
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("额度限制");
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("请求与模型策略");
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("Codex 身份兼容");
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).not.toHaveTextContent("代理 URL");
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).not.toHaveTextContent("手动代理地址");
     expect(screen.getByRole("region", { name: "自动策略默认设置" })).toHaveTextContent("自动化运行");
     expect(screen.getByRole("button", { name: "保存全局配置" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存默认策略" })).toBeInTheDocument();
@@ -212,6 +214,23 @@ describe("AutomationPolicySettings", () => {
       ai_provider_proxy_profile_id: "proxy-provider",
       conditional_rules: [{ actions: { proxy_profile_id: "proxy-provider", ai_provider_proxy_profile_id: "proxy-account" } }],
     });
+  });
+
+  it("explains when conditional proxy actions cannot be enabled without a profile", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+    await screen.findByRole("checkbox", { name: "启用新账号模型探测" });
+    const panel = screen.getByRole("tabpanel", { name: "自动策略" });
+    await user.click(within(panel).getByRole("button", { name: "添加策略" }));
+    const rule = within(panel).getByRole("article");
+    const accountProxy = within(rule).getByRole("checkbox", { name: "账号代理档案" });
+    const providerProxy = within(rule).getByRole("checkbox", { name: "AI 供应商代理档案" });
+
+    expect(accountProxy).toBeDisabled();
+    expect(providerProxy).toBeDisabled();
+    expect(within(rule).getAllByText("请先创建并启用代理档案")).toHaveLength(2);
   });
 
   it("saves without running until the user explicitly starts the asynchronous scan", async () => {

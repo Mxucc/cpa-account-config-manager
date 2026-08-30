@@ -3,7 +3,11 @@ package manager
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +17,9 @@ import (
 )
 
 const (
+	providerRuntimeStoreVersion  = 1
+	providerRuntimeStoreFileName = "ai-provider-runtime.json"
+	providerRuntimePersistDelay  = 500 * time.Millisecond
 	providerRuntimeMaxIdentities = 10000
 	providerRuntimeMaxModels     = 512
 	providerRuntimeMaxEvents     = 10000
@@ -103,17 +110,27 @@ type providerRuntimeAggregate struct {
 	UpdatedAt       time.Time
 }
 
+type persistedProviderRuntimeState struct {
+	Version    int                                 `json:"version"`
+	Aggregates map[string]providerRuntimeAggregate `json:"aggregates"`
+}
+
 // ProviderRuntimeTracker observes request lifecycle and usage callbacks without
 // participating in routing or admission. Missing CPA identities are exposed as
 // unsupported rather than being guessed into a configured channel.
 type ProviderRuntimeTracker struct {
-	mu          sync.RWMutex
-	requests    map[string]providerRuntimeRequest
-	aggregates  map[string]*providerRuntimeAggregate
-	calculator  UsageCreditCalculator
-	concurrency *AccountConcurrencyService
-	now         func() time.Time
-	nextPrune   time.Time
+	mu           sync.RWMutex
+	storeMu      sync.Mutex
+	requests     map[string]providerRuntimeRequest
+	aggregates   map[string]*providerRuntimeAggregate
+	calculator   UsageCreditCalculator
+	concurrency  *AccountConcurrencyService
+	now          func() time.Time
+	nextPrune    time.Time
+	store        string
+	loaded       bool
+	dirty        bool
+	persistTimer *time.Timer
 }
 
 func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntimeTracker {
@@ -123,6 +140,194 @@ func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntim
 		calculator: calculator,
 		now:        time.Now,
 	}
+}
+
+// Configure restores redacted provider runtime aggregates from the configured
+// plugin data directory. In-flight request state is intentionally reset because
+// requests cannot safely be resumed across a process restart.
+func (t *ProviderRuntimeTracker) Configure(config Config) {
+	if t == nil {
+		return
+	}
+	config = normalizeConfig(config)
+	path := providerRuntimeStorePath(config.DataDir)
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
+	if t.loaded && t.store == path {
+		return
+	}
+	if t.persistTimer != nil {
+		t.persistTimer.Stop()
+		t.persistTimer = nil
+	}
+	if t.loaded && t.dirty && t.store != "" {
+		_ = t.persistLocked()
+	}
+	aggregates, errLoad := loadProviderRuntimeState(path)
+	if errLoad != nil {
+		// Runtime metrics are best-effort. A corrupt or older state file should
+		// not prevent the plugin from loading; the next usage event will replace
+		// it with a valid current-version file.
+		aggregates = make(map[string]*providerRuntimeAggregate)
+	}
+	t.mu.Lock()
+	t.requests = make(map[string]providerRuntimeRequest)
+	t.aggregates = aggregates
+	t.nextPrune = time.Time{}
+	t.mu.Unlock()
+	t.store = path
+	t.loaded = true
+	t.dirty = false
+}
+
+func (t *ProviderRuntimeTracker) markDirty() {
+	if t == nil {
+		return
+	}
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
+	if !t.loaded || t.store == "" {
+		return
+	}
+	t.mu.Lock()
+	t.dirty = true
+	t.mu.Unlock()
+	if t.persistTimer == nil {
+		t.persistTimer = time.AfterFunc(providerRuntimePersistDelay, func() {
+			t.persistNow()
+		})
+	}
+}
+
+func (t *ProviderRuntimeTracker) persistNow() {
+	if t == nil {
+		return
+	}
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
+	t.persistTimer = nil
+	_ = t.persistLocked()
+}
+
+func (t *ProviderRuntimeTracker) persistLocked() error {
+	if t == nil || !t.loaded || t.store == "" {
+		return nil
+	}
+	t.mu.RLock()
+	aggregates := make(map[string]*providerRuntimeAggregate, len(t.aggregates))
+	for key, aggregate := range t.aggregates {
+		if aggregate == nil {
+			continue
+		}
+		clone := *aggregate
+		clone.Active = 0
+		clone.Models = make(map[string]*providerRuntimeModel, len(aggregate.Models))
+		for model, value := range aggregate.Models {
+			if value == nil {
+				continue
+			}
+			modelClone := *value
+			clone.Models[model] = &modelClone
+		}
+		clone.Events = append([]providerRuntimeEvent(nil), aggregate.Events...)
+		aggregates[key] = &clone
+	}
+	t.mu.RUnlock()
+	if errSave := saveProviderRuntimeState(t.store, aggregates); errSave != nil {
+		return errSave
+	}
+	t.mu.Lock()
+	t.dirty = false
+	t.mu.Unlock()
+	return nil
+}
+
+func providerRuntimeStorePath(dataDir string) string {
+	return filepath.Join(dataDir, providerRuntimeStoreFileName)
+}
+
+func loadProviderRuntimeState(path string) (map[string]*providerRuntimeAggregate, error) {
+	raw, errRead := os.ReadFile(path)
+	if errRead != nil {
+		return nil, errRead
+	}
+	var persisted persistedProviderRuntimeState
+	if errDecode := json.Unmarshal(raw, &persisted); errDecode != nil {
+		return nil, fmt.Errorf("decode provider runtime state: %w", errDecode)
+	}
+	if persisted.Version != providerRuntimeStoreVersion {
+		return nil, fmt.Errorf("unsupported provider runtime store version %d", persisted.Version)
+	}
+	aggregates := make(map[string]*providerRuntimeAggregate, len(persisted.Aggregates))
+	for key, value := range persisted.Aggregates {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value.Provider) == "" || strings.TrimSpace(value.Identity) == "" {
+			continue
+		}
+		value.Provider = normalizeRuntimeProvider(value.Provider)
+		value.Models = normalizeProviderRuntimeModels(value.Models)
+		if len(value.Events) > providerRuntimeMaxEvents {
+			value.Events = value.Events[len(value.Events)-providerRuntimeMaxEvents:]
+		}
+		value.Active = 0
+		aggregate := value
+		aggregates[key] = &aggregate
+	}
+	return aggregates, nil
+}
+
+func normalizeProviderRuntimeModels(models map[string]*providerRuntimeModel) map[string]*providerRuntimeModel {
+	if len(models) == 0 {
+		return make(map[string]*providerRuntimeModel)
+	}
+	capacity := len(models)
+	if capacity > providerRuntimeMaxModels {
+		capacity = providerRuntimeMaxModels
+	}
+	result := make(map[string]*providerRuntimeModel, capacity)
+	keys := make([]string, 0, len(models))
+	for key := range models {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > providerRuntimeMaxModels {
+		keys = keys[:providerRuntimeMaxModels]
+	}
+	for _, key := range keys {
+		value := models[key]
+		if value == nil {
+			continue
+		}
+		clone := *value
+		clone.Model = strings.TrimSpace(clone.Model)
+		if clone.Model != "" {
+			result[key] = &clone
+		}
+	}
+	return result
+}
+
+func saveProviderRuntimeState(path string, aggregates map[string]*providerRuntimeAggregate) error {
+	values := make(map[string]providerRuntimeAggregate, len(aggregates))
+	for key, aggregate := range aggregates {
+		if aggregate == nil {
+			continue
+		}
+		clone := *aggregate
+		clone.Active = 0
+		clone.Models = make(map[string]*providerRuntimeModel, len(aggregate.Models))
+		for model, value := range aggregate.Models {
+			if value == nil {
+				continue
+			}
+			modelClone := *value
+			clone.Models[model] = &modelClone
+		}
+		clone.Events = append([]providerRuntimeEvent(nil), aggregate.Events...)
+		values[key] = clone
+	}
+	return savePrivateJSON(path, persistedProviderRuntimeState{Version: providerRuntimeStoreVersion, Aggregates: values})
 }
 
 // SetAccountConcurrency attaches the configured per-account limits to runtime
@@ -169,6 +374,7 @@ func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptR
 	aggregateKey := runtimeAggregateKey(provider, identity)
 	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
 	if aggregate == nil {
+		t.mu.Unlock()
 		return
 	}
 	t.requests[request.RequestID] = providerRuntimeRequest{AggregateKey: aggregateKey, AdmittedAt: now}
@@ -210,7 +416,6 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 		charge = t.calculator.Calculate(record)
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	provider := normalizeRuntimeProvider(record.Provider)
 	aggregateKey := runtimeAggregateKey(provider, identity)
 	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
@@ -273,6 +478,8 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 		}
 	}
 	aggregate.UpdatedAt = now
+	t.mu.Unlock()
+	t.markDirty()
 }
 
 func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
@@ -358,6 +565,20 @@ func (t *ProviderRuntimeTracker) Shutdown() {
 	if t == nil {
 		return
 	}
+	t.storeMu.Lock()
+	if t.persistTimer != nil {
+		t.persistTimer.Stop()
+		t.persistTimer = nil
+	}
+	_ = t.persistLocked()
+	// Mark the tracker unloaded after the final flush. App instances are
+	// normally discarded on shutdown, but keeping this explicit also makes a
+	// later Configure call on the same tracker reload the persisted aggregates
+	// instead of returning early for the same data directory.
+	t.loaded = false
+	t.store = ""
+	t.dirty = false
+	t.storeMu.Unlock()
 	t.mu.Lock()
 	t.requests = make(map[string]providerRuntimeRequest)
 	t.aggregates = make(map[string]*providerRuntimeAggregate)

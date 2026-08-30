@@ -1,12 +1,88 @@
 package manager
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
+
+func TestProviderRuntimePersistsAggregatesAcrossRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	first := NewProviderRuntimeTracker(nil)
+	first.Configure(Config{DataDir: dataDir})
+	first.ObserveUsage(cpaapi.UsageRecord{
+		Provider:  "openai",
+		AuthIndex: "auth-a",
+		Model:     "gpt-5.5",
+		Detail:    cpaapi.UsageDetail{InputTokens: 12, OutputTokens: 8, TotalTokens: 20},
+	})
+	first.ObserveRequest(cpaapi.RequestInterceptRequest{
+		RequestID: "in-flight",
+		ToFormat:  "openai",
+		Metadata:  map[string]any{"selected_auth_index": "auth-a"},
+	})
+	first.Shutdown()
+
+	if _, errStat := os.Stat(filepath.Join(dataDir, providerRuntimeStoreFileName)); errStat != nil {
+		t.Fatalf("provider runtime state was not written: %v", errStat)
+	}
+
+	second := NewProviderRuntimeTracker(nil)
+	second.Configure(Config{DataDir: dataDir})
+	snapshots := second.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("restored snapshots = %#v", snapshots)
+	}
+	snapshot := snapshots[0]
+	if snapshot.TotalTokens != 20 || snapshot.InputTokens != 12 || snapshot.OutputTokens != 8 {
+		t.Fatalf("restored token totals = %+v", snapshot)
+	}
+	if len(snapshot.Models) != 1 || snapshot.Models[0].TotalTokens != 20 {
+		t.Fatalf("restored model usage = %+v", snapshot.Models)
+	}
+	if snapshot.Active != 0 {
+		t.Fatalf("in-flight request was restored as active: %+v", snapshot)
+	}
+	second.Shutdown()
+}
+
+func TestProviderRuntimeIgnoresCorruptState(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, providerRuntimeStoreFileName)
+	if errWrite := os.WriteFile(path, []byte("not-json"), 0o600); errWrite != nil {
+		t.Fatalf("write corrupt state: %v", errWrite)
+	}
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.Configure(Config{DataDir: dataDir})
+	if snapshots := tracker.Snapshot(); len(snapshots) != 0 {
+		t.Fatalf("corrupt state produced snapshots: %+v", snapshots)
+	}
+	tracker.Shutdown()
+}
+
+func TestProviderRuntimeReloadsAfterShutdownOnSameTracker(t *testing.T) {
+	dataDir := t.TempDir()
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider:  "openai",
+		AuthIndex: "auth-a",
+		Model:     "gpt-5.5",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 9},
+	})
+	tracker.Shutdown()
+
+	tracker.Configure(Config{DataDir: dataDir})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].TotalTokens != 9 {
+		t.Fatalf("reloaded snapshots = %+v", snapshots)
+	}
+	tracker.Shutdown()
+}
 
 func TestProviderRuntimeAggregatesByProviderAndModel(t *testing.T) {
 	tracker := NewProviderRuntimeTracker(nil)

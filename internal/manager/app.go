@@ -260,6 +260,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.experiments.Configure(config)
 	a.globalPolicy.Configure(config, a.experiments.CodexIdentity())
 	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
+	a.providerRuntime.Configure(config)
 	a.newAccountProbe.Configure(config)
 	a.quotaBootstrap.Start()
 	a.jobs.Configure(config)

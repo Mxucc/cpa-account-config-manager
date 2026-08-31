@@ -136,7 +136,7 @@ describe("OtherSettingsWorkspace", () => {
     expect(onNotice).not.toHaveBeenCalled();
   });
 
-  it("persists independent weekly-overdraft and Agent Identity experiments while model discovery stays built in", async () => {
+  it("persists independent experiments while model discovery and credit usage stay built in", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
     const onExperimentalSettingsChange = vi.fn();
@@ -169,12 +169,11 @@ describe("OtherSettingsWorkspace", () => {
     const panel = within(workspace).getByRole("tabpanel", { name: "实验性功能" });
     expect(within(panel).getByText("实验性行为")).toBeInTheDocument();
     expect(within(panel).getByText("Codex 5h / 7d 额度透支续用")).toBeInTheDocument();
-    expect(within(panel).getByText("Sub2API 额度计费用量")).toBeInTheDocument();
+    expect(within(panel).queryByText("Sub2API 额度计费用量")).not.toBeInTheDocument();
     expect(within(panel).getByText("Codex Agent Identity / PAT")).toBeInTheDocument();
     expect(within(panel).queryByText("Codex 自动模型白名单")).not.toBeInTheDocument();
 
     await user.click(within(panel).getByRole("checkbox", { name: "Codex 5h / 7d 额度透支续用" }));
-    await user.click(within(panel).getByRole("checkbox", { name: "Sub2API 额度计费用量" }));
     await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity / PAT" }));
     await user.click(within(panel).getByRole("button", { name: "保存设置" }));
 

@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   BellRing,
-  CircleDollarSign,
   ExternalLink,
   FlaskConical,
   KeyRound,
@@ -73,7 +72,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [confirmAutoUpdate, setConfirmAutoUpdate] = useState(false);
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
-  const [sub2APICreditUsageEnabled, setSub2APICreditUsageEnabled] = useState(false);
   const [error, setError] = useState("");
   const refreshSequence = useRef(0);
   const handleError = useCallback((caught: unknown) => {
@@ -142,7 +140,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     if (!experiments?.settings) return;
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
-    setSub2APICreditUsageEnabled(experiments.settings.sub2api_credit_usage_enabled === true);
   }, [experiments]);
 
   const installUpdate = useCallback(async () => {
@@ -229,7 +226,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         weekly_overdraft_enabled: weeklyOverdraftEnabled,
         agent_identity_enabled: agentIdentityEnabled,
         auto_model_whitelist_enabled: true,
-        sub2api_credit_usage_enabled: sub2APICreditUsageEnabled,
+        // Kept in the request for older runtimes; credit pricing is now a
+        // permanent built-in behavior and is always normalized to true.
+        sub2api_credit_usage_enabled: true,
         // Keep the legacy field intact for older CPA plugin runtimes. The
         // editable source of truth now lives in the permanent global policy.
         codex_identity: experiments?.settings.codex_identity ?? {
@@ -421,32 +420,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
               <div><strong>{tx("ui.request_behavior")}</strong><span>{tx("ui.weekly_overdraft_request_behavior")}</span></div>
               <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
               <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
-            </div>
-          </div>
-          <div className="experimental-feature-block">
-            <div className="experimental-feature-row">
-              <div className="experimental-feature-copy">
-                <span className="experimental-feature-icon"><CircleDollarSign size={18} /></span>
-                <div>
-                  <strong>{tx("ui.sub2api_credit_usage")}</strong>
-                  <span>{tx("ui.sub2api_credit_usage_description")}</span>
-                </div>
-              </div>
-              <label className="switch-control experimental-feature-switch">
-                <input
-                  type="checkbox"
-                  checked={sub2APICreditUsageEnabled}
-                  disabled={loading || savingExperiment || !experiments}
-                  onChange={(event) => setSub2APICreditUsageEnabled(event.target.checked)}
-                  aria-label={tx("ui.sub2api_credit_usage")}
-                />
-                <b>{tx(sub2APICreditUsageEnabled ? "ui.on_2" : "ui.off_2")}</b>
-              </label>
-            </div>
-            <div className="experimental-behavior-list">
-              <div><strong>{tx("ui.credit_pricing_source")}</strong><span>{tx("ui.credit_pricing_source_description")}</span></div>
-              <div><strong>{tx("ui.credit_pricing_sync_behavior")}</strong><span>{tx("ui.credit_pricing_sync_behavior_description")}</span></div>
-              <div><strong>{tx("ui.credit_usage_history_boundary")}</strong><span>{tx("ui.credit_usage_history_boundary_description")}</span></div>
             </div>
           </div>
           <div className="experimental-feature-block">

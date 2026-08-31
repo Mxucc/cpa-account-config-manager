@@ -49,6 +49,10 @@ func (s *ExperimentalSettingsService) AutoModelWhitelistEnabled() bool {
 
 func normalizeExperimentalSettings(settings ExperimentalSettings) ExperimentalSettings {
 	settings.AutoModelWhitelistEnabled = true
+	// Sub2API-compatible credit pricing is a permanent built-in behavior. Keep
+	// the legacy field in the persisted/API shape for older clients, but ignore
+	// its historical value so upgrades cannot silently disable billing data.
+	settings.Sub2APICreditUsageEnabled = true
 	settings.CodexIdentity = NormalizeExperimentalCodexIdentitySettings(settings.CodexIdentity)
 	return settings
 }

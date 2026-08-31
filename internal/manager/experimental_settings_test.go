@@ -18,7 +18,7 @@ func TestExperimentalSettingsDefaultDisabledAndPersistAcrossRestart(t *testing.T
 	first := NewExperimentalSettingsService()
 	first.Configure(Config{DataDir: dataDir})
 	if snapshot := first.Snapshot(); snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled ||
-		!snapshot.Settings.AutoModelWhitelistEnabled || snapshot.Settings.Sub2APICreditUsageEnabled || snapshot.StorageError != "" {
+		!snapshot.Settings.AutoModelWhitelistEnabled || !snapshot.Settings.Sub2APICreditUsageEnabled || snapshot.StorageError != "" {
 		t.Fatalf("default snapshot = %#v", snapshot)
 	}
 	if _, errSet := first.Set(ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true, AutoModelWhitelistEnabled: true, Sub2APICreditUsageEnabled: true}); errSet != nil {
@@ -35,7 +35,7 @@ func TestExperimentalSettingsDefaultDisabledAndPersistAcrossRestart(t *testing.T
 
 func TestExperimentalSettingsConfigOverridePersists(t *testing.T) {
 	dataDir := t.TempDir()
-	settings := ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true, AutoModelWhitelistEnabled: true, Sub2APICreditUsageEnabled: true}
+	settings := ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true, AutoModelWhitelistEnabled: true, Sub2APICreditUsageEnabled: false}
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir, ExperimentalSettings: &settings})
 	if !service.WeeklyOverdraftEnabled() {
@@ -72,7 +72,7 @@ func TestExperimentalSettingsCorruptStateFailsClosed(t *testing.T) {
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir})
 	snapshot := service.Snapshot()
-	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || !snapshot.Settings.AutoModelWhitelistEnabled || snapshot.Settings.Sub2APICreditUsageEnabled {
+	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || !snapshot.Settings.AutoModelWhitelistEnabled || !snapshot.Settings.Sub2APICreditUsageEnabled {
 		t.Fatal("corrupt state changed built-in model discovery or enabled an experiment")
 	}
 	if snapshot.StorageError != "experimental settings could not be loaded" {
@@ -95,14 +95,14 @@ func TestExperimentalSettingsManagementRoutesPersistAndValidate(t *testing.T) {
 	if errDecode := json.Unmarshal(response.Body, &initial); errDecode != nil {
 		t.Fatalf("decode GET response: %v", errDecode)
 	}
-	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled || !initial.Settings.AutoModelWhitelistEnabled || initial.Settings.Sub2APICreditUsageEnabled {
+	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled || !initial.Settings.AutoModelWhitelistEnabled || !initial.Settings.Sub2APICreditUsageEnabled {
 		t.Fatal("GET returned invalid default settings")
 	}
 
 	response = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPut,
 		Path:   path,
-		Body:   []byte(`{"weekly_overdraft_enabled":true,"agent_identity_enabled":true,"auto_model_whitelist_enabled":true,"sub2api_credit_usage_enabled":true}`),
+		Body:   []byte(`{"weekly_overdraft_enabled":true,"agent_identity_enabled":true,"auto_model_whitelist_enabled":true,"sub2api_credit_usage_enabled":false}`),
 	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("PUT status = %d body=%s", response.StatusCode, response.Body)

@@ -106,6 +106,8 @@ html[data-theme="dark"] {
 
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; margin: 0; }
+html { --cpa-host-toolbar-clearance: 0px; }
+html[data-plugin-host="cpa"] { --cpa-host-toolbar-clearance: 68px; }
 body { min-width: 320px; background: linear-gradient(180deg, var(--bg-secondary), var(--bg-quinary)); }
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 button { color: inherit; }
@@ -113,7 +115,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .app-shell { width: 100%; min-width: 0; min-height: 100vh; padding-bottom: 104px; background: linear-gradient(180deg, var(--bg-secondary), var(--bg-quinary)); }
 .app-shell.with-job-panel { padding-right: 450px; }
-.page-frame { width: 100%; min-width: 0; padding: 38px clamp(18px, 3vw, 48px) 112px; }
+.page-frame { width: 100%; min-width: 0; padding: calc(38px + var(--cpa-host-toolbar-clearance)) clamp(18px, 3vw, 48px) 112px; }
 .app-header { min-width: 0; min-height: 58px; display: flex; align-items: center; margin-bottom: 14px; }
 .brand-block { display: flex; align-items: center; min-width: 0; gap: 12px; }
 .brand-block > div { min-width: 0; }
@@ -2396,7 +2398,7 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
   .sidebar-nav button, .sidebar-nav button:hover, .sidebar-nav button.active { width: auto; min-width: max-content; min-height: 38px; justify-content: center; padding: 0 12px; border: 1px solid transparent; box-shadow: none; }
   .sidebar-nav button span { position: static; width: auto; height: auto; overflow: visible; clip: auto; font-size: calc(10px * var(--font-size-scale)); white-space: nowrap; }
   .sidebar-nav button.active { border-color: color-mix(in srgb, var(--obs-cyan) 28%, var(--border-color)); box-shadow: inset 0 -2px 0 var(--obs-cyan); }
-  .page-frame, .with-job-panel .page-frame { padding: 22px 12px 110px; }
+  .page-frame, .with-job-panel .page-frame { padding: calc(22px + var(--cpa-host-toolbar-clearance)) 12px 110px; }
   .app-content .app-header { align-items: flex-start; flex-direction: column; gap: 12px; margin-bottom: 14px; }
   .app-content .workspace-controls { width: 100%; justify-content: space-between; flex-wrap: wrap; }
   .header-status { min-width: 0; overflow-x: auto; }

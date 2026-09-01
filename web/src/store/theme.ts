@@ -24,8 +24,10 @@ function applyTheme(theme: Theme): void {
 }
 
 export function initThemeSync(): () => void {
-  applyTheme(parentTheme());
-  if (!embedded()) return () => undefined;
+  const isEmbedded = embedded();
+  document.documentElement.setAttribute("data-plugin-host", isEmbedded ? "cpa" : "standalone");
+  applyTheme(isEmbedded ? parentTheme() : "light");
+  if (!isEmbedded) return () => undefined;
   try {
     const element = window.parent.document.documentElement;
     const observer = new MutationObserver(() => applyTheme(parentTheme()));

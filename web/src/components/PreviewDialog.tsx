@@ -24,6 +24,7 @@ const fieldLabels: Record<string, UIMessageKey> = {
   headers: "ui.headers",
 	model_policy: "ui.model_policy",
 	concurrency_limit: "ui.account_concurrency",
+	concurrency_15s_limit: "ui.account_concurrency_15s_limit",
 };
 
 export function PreviewDialog({ preview, starting, error = "", onClose, onConfirm }: PreviewDialogProps) {

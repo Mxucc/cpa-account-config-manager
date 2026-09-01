@@ -38,15 +38,19 @@ type AccountConcurrencyAvailability struct {
 }
 
 type AccountConcurrencySummary struct {
-	Supported bool `json:"supported"`
-	Limit     int  `json:"limit"`
-	Active    int  `json:"active"`
+	FifteenSecLimit int  `json:"limit_15s"`
+	Used60s         int  `json:"used_60s"`
+	Used15s         int  `json:"used_15s"`
+	Supported       bool `json:"supported"`
+	Limit           int  `json:"limit"`
+	Active          int  `json:"active"`
 }
 
 type accountConcurrencyRecord struct {
 	AuthID    string `json:"auth_id"`
 	AccountID string `json:"account_id,omitempty"`
 	Limit     int    `json:"limit"`
+	Limit15s  int    `json:"limit_15s,omitempty"`
 }
 
 type persistedAccountConcurrency struct {
@@ -69,6 +73,7 @@ type AccountConcurrencyService struct {
 	limits     map[string]accountConcurrencyRecord
 	active     map[string]int
 	requests   map[string]accountConcurrencyAdmission
+	events     map[string][]time.Time
 	now        func() time.Time
 	nextPrune  time.Time
 	activeGate atomic.Bool
@@ -80,6 +85,7 @@ func NewAccountConcurrencyService() *AccountConcurrencyService {
 		limits:     make(map[string]accountConcurrencyRecord),
 		active:     make(map[string]int),
 		requests:   make(map[string]accountConcurrencyAdmission),
+		events:     make(map[string][]time.Time),
 		now:        time.Now,
 	}
 }
@@ -107,6 +113,7 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 	if (s.loaded && !sameStore) || previousSchema != hostSchema {
 		s.active = make(map[string]int)
 		s.requests = make(map[string]accountConcurrencyAdmission)
+		s.events = make(map[string][]time.Time)
 		s.nextPrune = time.Time{}
 	}
 	if sameStore && !s.loadFailed {
@@ -169,15 +176,26 @@ func (s *AccountConcurrencyService) Summary(authID string) AccountConcurrencySum
 	defer s.mu.Unlock()
 	s.pruneExpiredLocked(s.now().UTC())
 	record := s.limits[authID]
-	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, Active: s.active[authID]}
+	now := s.now().UTC()
+	used60, used15 := s.windowUsageLocked(authID, now)
+	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, FifteenSecLimit: record.Limit15s, Active: s.active[authID], Used60s: used60, Used15s: used15}
 }
 
 func (s *AccountConcurrencyService) SetLimit(account Account, limit int) error {
+	return s.SetLimits(account, &limit, nil)
+}
+
+// SetLimits updates either or both rolling request-window limits. A nil value
+// preserves that window's current setting; zero clears it.
+func (s *AccountConcurrencyService) SetLimits(account Account, minuteLimit, fifteenSecondLimit *int) error {
 	if s == nil {
 		return ErrAccountConcurrencyUnsupported
 	}
-	if limit < 0 || limit > MaxAccountConcurrencyLimit {
+	if minuteLimit != nil && (*minuteLimit < 0 || *minuteLimit > MaxAccountConcurrencyLimit) {
 		return fmt.Errorf("account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
+	}
+	if fifteenSecondLimit != nil && (*fifteenSecondLimit < 0 || *fifteenSecondLimit > MaxAccountConcurrencyLimit) {
+		return fmt.Errorf("15-second account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
 	}
 	authID := strings.TrimSpace(account.AuthID)
 	if authID == "" || len(authID) > 4096 {
@@ -193,10 +211,18 @@ func (s *AccountConcurrencyService) SetLimit(account Account, limit int) error {
 		return ErrAccountConcurrencyUnsupported
 	}
 	next := cloneAccountConcurrencyRecords(s.limits)
-	if limit == 0 {
+	current := next[authID]
+	current.AuthID, current.AccountID = authID, accountID
+	if minuteLimit != nil {
+		current.Limit = *minuteLimit
+	}
+	if fifteenSecondLimit != nil {
+		current.Limit15s = *fifteenSecondLimit
+	}
+	if current.Limit == 0 && current.Limit15s == 0 {
 		delete(next, authID)
 	} else {
-		next[authID] = accountConcurrencyRecord{AuthID: authID, AccountID: accountID, Limit: limit}
+		next[authID] = current
 	}
 	if errSave := saveAccountConcurrency(s.store, next); errSave != nil {
 		return fmt.Errorf("persist account concurrency: %w", errSave)
@@ -246,20 +272,27 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 			s.active[current.AuthID]--
 		}
 	}
-	limit := s.limits[authID].Limit
-	if limit > 0 && s.active[authID] >= limit {
-		return accountConcurrencyRejectedResponse(limit), true
+	record := s.limits[authID]
+	used60, used15 := s.windowUsageLocked(authID, now)
+	if record.Limit15s > 0 && used15 >= record.Limit15s {
+		return accountConcurrencyRejectedResponse(record.Limit15s, 15, used15), true
+	}
+	if record.Limit > 0 && used60 >= record.Limit {
+		return accountConcurrencyRejectedResponse(record.Limit, 60, used60), true
 	}
 	s.active[authID]++
+	s.events[authID] = append(s.events[authID], now)
 	s.requests[request.RequestID] = accountConcurrencyAdmission{AuthID: authID, AdmittedAt: now}
 	return cpaapi.RequestInterceptResponse{}, false
 }
 
-func accountConcurrencyRejectedResponse(limit int) cpaapi.RequestInterceptResponse {
+func accountConcurrencyRejectedResponse(limit, window, used int) cpaapi.RequestInterceptResponse {
 	body, _ := json.Marshal(map[string]any{"error": map[string]any{
-		"type":    "account_concurrency_limit_reached",
-		"message": "the selected account has reached its configured concurrency limit",
-		"limit":   limit,
+		"type":           "account_concurrency_limit_reached",
+		"message":        "the selected account has reached its configured request limit",
+		"limit":          limit,
+		"used":           used,
+		"window_seconds": window,
 	}})
 	return cpaapi.RequestInterceptResponse{
 		Terminate:       true,
@@ -294,6 +327,7 @@ func (s *AccountConcurrencyService) Shutdown() {
 	s.mu.Lock()
 	s.active = make(map[string]int)
 	s.requests = make(map[string]accountConcurrencyAdmission)
+	s.events = make(map[string][]time.Time)
 	s.activeGate.Store(false)
 	s.mu.Unlock()
 }
@@ -319,6 +353,33 @@ func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {
 			s.active[admission.AuthID]--
 		}
 	}
+	for authID, events := range s.events {
+		kept := events[:0]
+		for _, event := range events {
+			if event.After(now.Add(-time.Minute)) && !event.After(now) {
+				kept = append(kept, event)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.events, authID)
+		} else {
+			s.events[authID] = kept
+		}
+	}
+}
+
+func (s *AccountConcurrencyService) windowUsageLocked(authID string, now time.Time) (int, int) {
+	cutoff60, cutoff15 := now.Add(-time.Minute), now.Add(-15*time.Second)
+	used60, used15 := 0, 0
+	for _, event := range s.events[authID] {
+		if event.After(cutoff60) && !event.After(now) {
+			used60++
+		}
+		if event.After(cutoff15) && !event.After(now) {
+			used15++
+		}
+	}
+	return used60, used15
 }
 
 func loadAccountConcurrency(path string) (map[string]accountConcurrencyRecord, error) {
@@ -337,7 +398,7 @@ func loadAccountConcurrency(path string) (map[string]accountConcurrencyRecord, e
 	for _, record := range persisted.Limits {
 		record.AuthID = strings.TrimSpace(record.AuthID)
 		record.AccountID = strings.TrimSpace(record.AccountID)
-		if record.AuthID == "" || len(record.AuthID) > 4096 || record.Limit < 1 || record.Limit > MaxAccountConcurrencyLimit {
+		if record.AuthID == "" || len(record.AuthID) > 4096 || (record.Limit < 1 && record.Limit15s < 1) || record.Limit > MaxAccountConcurrencyLimit || record.Limit15s > MaxAccountConcurrencyLimit {
 			continue
 		}
 		if len(record.AccountID) > maxAccountConfigIDLength {

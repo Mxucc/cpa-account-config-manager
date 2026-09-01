@@ -542,7 +542,7 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 			return JobResult{Status: ResultFailed, Error: "account field update failed", Retryable: true}
 		}
 		for _, field := range patch.Summary().Fields {
-			if field != "disabled" && field != "concurrency_limit" {
+			if field != "disabled" && field != "concurrency_limit" && field != "concurrency_15s_limit" {
 				applied = append(applied, field)
 			}
 		}
@@ -560,17 +560,22 @@ func (e *JobEngine) applyAccount(ctx context.Context, account Account, operation
 		}
 		applied = append(applied, "disabled")
 	}
-	if patch.ConcurrencyLimit != nil {
+	if patch.ConcurrencyLimit != nil || patch.Concurrency15sLimit != nil {
 		e.mu.Lock()
 		concurrency := e.concurrency
 		e.mu.Unlock()
 		if concurrency == nil {
 			return JobResult{Status: ResultFailed, Error: "account concurrency service is unavailable", AppliedFields: applied, Retryable: true}
 		}
-		if errConcurrency := concurrency.SetLimit(account, *patch.ConcurrencyLimit); errConcurrency != nil {
+		if errConcurrency := concurrency.SetLimits(account, patch.ConcurrencyLimit, patch.Concurrency15sLimit); errConcurrency != nil {
 			return JobResult{Status: ResultFailed, Error: "account concurrency update failed", AppliedFields: applied, Retryable: true}
 		}
-		applied = append(applied, "concurrency_limit")
+		if patch.ConcurrencyLimit != nil {
+			applied = append(applied, "concurrency_limit")
+		}
+		if patch.Concurrency15sLimit != nil {
+			applied = append(applied, "concurrency_15s_limit")
+		}
 	}
 	if patch.QuotaPolicy != nil {
 		e.mu.Lock()

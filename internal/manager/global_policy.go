@@ -19,6 +19,7 @@ type GlobalPolicy struct {
 	Disabled                 *bool                             `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 	Priority                 *int                              `json:"priority,omitempty" yaml:"priority,omitempty"`
 	ConcurrencyLimit         *int                              `json:"concurrency_limit,omitempty" yaml:"concurrency_limit,omitempty"`
+	Concurrency15sLimit      *int                              `json:"concurrency_15s_limit,omitempty" yaml:"concurrency_15s_limit,omitempty"`
 	QuotaPolicy              *AccountQuotaPolicy               `json:"quota_policy,omitempty" yaml:"quota_policy,omitempty"`
 	Note                     *string                           `json:"note,omitempty" yaml:"note,omitempty"`
 	Prefix                   *string                           `json:"prefix,omitempty" yaml:"prefix,omitempty"`
@@ -176,6 +177,9 @@ func validateGlobalPolicy(policy GlobalPolicy) error {
 	if policy.ConcurrencyLimit != nil && (*policy.ConcurrencyLimit < 0 || *policy.ConcurrencyLimit > MaxAccountConcurrencyLimit) {
 		return fmt.Errorf("account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
 	}
+	if policy.Concurrency15sLimit != nil && (*policy.Concurrency15sLimit < 0 || *policy.Concurrency15sLimit > MaxAccountConcurrencyLimit) {
+		return fmt.Errorf("15-second account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
+	}
 	if policy.QuotaPolicy != nil {
 		if err := validateQuotaPolicy(policy.QuotaPolicy.FiveHour); err != nil {
 			return err
@@ -197,6 +201,7 @@ func cloneGlobalPolicy(policy GlobalPolicy) GlobalPolicy {
 	clone.Disabled = cloneBoolPointer(policy.Disabled)
 	clone.Priority = cloneIntPointer(policy.Priority)
 	clone.ConcurrencyLimit = cloneIntPointer(policy.ConcurrencyLimit)
+	clone.Concurrency15sLimit = cloneIntPointer(policy.Concurrency15sLimit)
 	clone.Note = cloneStringPointer(policy.Note)
 	clone.Prefix = cloneStringPointer(policy.Prefix)
 	clone.ProxyURL = cloneStringPointer(policy.ProxyURL)

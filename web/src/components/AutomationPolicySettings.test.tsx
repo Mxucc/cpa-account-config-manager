@@ -12,6 +12,7 @@ const globalPolicy = {
     disabled: null,
     priority: null,
     concurrency_limit: null,
+    concurrency_15s_limit: null,
     quota_policy: null,
     note: null,
     prefix: null,
@@ -101,6 +102,56 @@ describe("AutomationPolicySettings", () => {
     expect(screen.getByRole("button", { name: "保存全局配置" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存默认策略" })).toBeInTheDocument();
   });
+
+  it("saves independent 15-second and per-minute limits in global, default, and conditional policies", async () => {
+    const user = userEvent.setup();
+    const saveGlobal = vi.spyOn(api, "saveGlobalPolicy").mockImplementation(async (policy) => ({ ...globalPolicy, policy }));
+    const saveDefault = vi.spyOn(api, "saveDefaultPolicy").mockImplementation(async (policy) => ({ ...snapshot, policy }));
+    vi.spyOn(api, "getDefaultPolicy").mockResolvedValue(snapshot);
+
+    render(<AutomationPolicySettings refreshRevision={0} forceLoading={false} onAPIError={vi.fn()} onNotice={vi.fn()} onForcePreview={vi.fn()} />);
+
+    const globalRegion = await screen.findByRole("region", { name: "全局配置覆盖" });
+    await user.click(within(globalRegion).getByRole("checkbox", { name: "15 秒请求限制" }));
+    await user.clear(within(globalRegion).getByRole("spinbutton", { name: "15 秒请求限制" }));
+    await user.type(within(globalRegion).getByRole("spinbutton", { name: "15 秒请求限制" }), "3");
+    await user.click(within(globalRegion).getByRole("checkbox", { name: "每分钟请求限制" }));
+    await user.clear(within(globalRegion).getByRole("spinbutton", { name: "每分钟请求限制" }));
+    await user.type(within(globalRegion).getByRole("spinbutton", { name: "每分钟请求限制" }), "10");
+    await user.click(within(globalRegion).getByRole("button", { name: "保存全局配置" }));
+    await waitFor(() => expect(saveGlobal).toHaveBeenCalledTimes(1));
+    expect(saveGlobal.mock.calls[0][0]).toMatchObject({ concurrency_15s_limit: 3, concurrency_limit: 10 });
+
+    const defaults = screen.getByRole("region", { name: "自动策略默认设置" });
+    await user.click(within(defaults).getByRole("checkbox", { name: "15 秒请求限制" }));
+    await user.clear(within(defaults).getByRole("spinbutton", { name: "默认 15 秒请求限制" }));
+    await user.type(within(defaults).getByRole("spinbutton", { name: "默认 15 秒请求限制" }), "4");
+    await user.click(within(defaults).getByRole("checkbox", { name: "每分钟请求限制" }));
+    await user.clear(within(defaults).getByRole("spinbutton", { name: "默认每分钟请求限制" }));
+    await user.type(within(defaults).getByRole("spinbutton", { name: "默认每分钟请求限制" }), "12");
+
+    const panel = screen.getByRole("tabpanel", { name: "自动策略" });
+    await user.click(within(panel).getByRole("button", { name: "添加策略" }));
+    const rule = within(panel).getByRole("article");
+    await user.click(within(rule).getByRole("checkbox", { name: "15 秒请求限制" }));
+    await user.click(within(rule).getByRole("checkbox", { name: "每分钟请求限制" }));
+    const shortWindowInput = within(rule).getByText("15 秒请求限制").closest(".conditional-action")?.querySelector<HTMLInputElement>('input[type="number"]');
+    const minuteWindowInput = within(rule).getByText("每分钟请求限制").closest(".conditional-action")?.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(shortWindowInput).not.toBeNull();
+    expect(minuteWindowInput).not.toBeNull();
+    await user.clear(shortWindowInput!);
+    await user.type(shortWindowInput!, "2");
+    await user.clear(minuteWindowInput!);
+    await user.type(minuteWindowInput!, "8");
+
+    await user.click(within(panel).getByRole("button", { name: "保存策略" }));
+    await waitFor(() => expect(saveDefault).toHaveBeenCalledTimes(1));
+    expect(saveDefault.mock.calls[0][0]).toMatchObject({
+      concurrency_15s_limit: 4,
+      concurrency_limit: 12,
+      conditional_rules: [{ actions: { concurrency_15s_limit: 2, concurrency_limit: 8 } }],
+    });
+  }, 15_000);
 
   it("builds multiple prioritized policies with nested conditions and model routing", async () => {
     const user = userEvent.setup();

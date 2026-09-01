@@ -1544,6 +1544,52 @@ describe("management API client", () => {
     await expect(loadAccountConfig("a")).rejects.toMatchObject({ message: "ui.invalid_api_response" });
   });
 
+  it("defaults newly introduced rolling-window counters for legacy account payloads", async () => {
+    setSession("https://cpa.example", "management-secret");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      total: 1, page: 1, page_size: 50, pages: 1,
+      accounts: [{ id: "a", concurrency: { supported: true, active: 2, limit: 10 } }],
+    })));
+
+    const response = await listAccounts(1, 50, {});
+    expect(response.accounts[0].concurrency).toEqual({
+      supported: true,
+      active: 2,
+      limit: 10,
+      limit_15s: 0,
+      used_60s: 0,
+      used_15s: 0,
+    });
+  });
+
+  it("defaults legacy provider windows and rejects malformed new provider counters", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const runtime = {
+      provider: "openai",
+      identity: "provider-key",
+      supported: true,
+      active: 2,
+      limit: 10,
+      input_tokens: 100,
+      output_tokens: 20,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
+      total_tokens: 120,
+      amount_usd: 0.01,
+      rated_requests: 1,
+      unrated_requests: 0,
+      updated_at: "2026-09-01T00:00:00Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ snapshots: [runtime], updated_at: "2026-09-01T00:00:00Z" }))
+      .mockResolvedValueOnce(jsonResponse({ snapshots: [{ ...runtime, used_15s: "bad" }], updated_at: "2026-09-01T00:00:00Z" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await getAIProviderRuntime();
+    expect(response.snapshots[0]).toMatchObject({ limit_15s: 0, used_60s: 0, used_15s: 0 });
+    await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
+  });
+
   it("rejects fractional model catalog counters and model rows without ids", async () => {
     setSession("https://cpa.example", "management-secret");
     const fetchMock = vi.fn()

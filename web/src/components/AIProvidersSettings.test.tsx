@@ -158,6 +158,9 @@ describe("AIProvidersSettings", () => {
           concurrency_configurable: true,
           active: 2,
           limit: 100,
+          limit_15s: 3,
+          used_60s: 7,
+          used_15s: 2,
           input_tokens: 1000,
           output_tokens: 200,
           reasoning_tokens: 20,
@@ -182,7 +185,9 @@ describe("AIProvidersSettings", () => {
       return found as HTMLElement;
     });
     await waitFor(() => expect(Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent)).toContain("并发用量"));
-    expect(row.textContent).toContain("2/100");
+    expect(row.textContent).toContain("传输 2");
+    expect(row.textContent).toContain("15 秒 2/3");
+    expect(row.textContent).toContain("每分钟 7/100");
     expect(row.textContent).toContain("1,234");
     expect(row.textContent).toContain("$0.0123");
   });

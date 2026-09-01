@@ -139,7 +139,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	})
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
-	providerRuntime.SetAccountConcurrency(concurrency)
+	providerRuntime.SetQuotaPolicies(quotaPolicies)
 	quotaGuard := NewAccountQuotaGuard(usage, quotaPolicies)
 	requestHooks := NewRequestHook(quotaGuard, providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
 	runtimeMarker := ""

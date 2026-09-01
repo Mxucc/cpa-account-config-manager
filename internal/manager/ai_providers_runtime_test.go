@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +48,9 @@ func TestProviderRuntimePersistsAggregatesAcrossRestart(t *testing.T) {
 	}
 	if snapshot.Active != 0 {
 		t.Fatalf("in-flight request was restored as active: %+v", snapshot)
+	}
+	if snapshot.Used60s != 0 || snapshot.Used15s != 0 {
+		t.Fatalf("rolling request events were restored across restart: %+v", snapshot)
 	}
 	second.Shutdown()
 }
@@ -181,13 +186,13 @@ func TestProviderRuntimeEvictsOldestIdleAggregate(t *testing.T) {
 }
 
 func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
-	concurrency := NewAccountConcurrencyService()
-	concurrency.Configure(Config{DataDir: t.TempDir()}, cpaapi.SchemaVersion)
-	if errSet := concurrency.SetLimit(Account{AuthID: "auth-a", ID: "account-a"}, 7); errSet != nil {
-		t.Fatalf("SetLimit() error = %v", errSet)
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	if errSet := policies.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:auth-a", Concurrency: intPointer(7), Concurrency15s: intPointer(3)}); errSet != nil {
+		t.Fatalf("SetProviderPolicy() error = %v", errSet)
 	}
 	tracker := NewProviderRuntimeTracker(nil)
-	tracker.SetAccountConcurrency(concurrency)
+	tracker.SetQuotaPolicies(policies)
 	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{
 		RequestID: "request-a",
 		ToFormat:  "openai",
@@ -197,8 +202,75 @@ func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
 	if len(snapshots) != 1 {
 		t.Fatalf("snapshots = %#v", snapshots)
 	}
-	if snapshots[0].Active != 1 || snapshots[0].Limit != 7 {
-		t.Fatalf("runtime concurrency = active=%d limit=%d, want 1/7", snapshots[0].Active, snapshots[0].Limit)
+	if snapshots[0].Active != 1 || snapshots[0].Limit != 7 || snapshots[0].Limit15s != 3 || snapshots[0].Used60s != 1 || snapshots[0].Used15s != 1 || !snapshots[0].ConcurrencyConfigurable {
+		t.Fatalf("runtime concurrency = %+v", snapshots[0])
+	}
+}
+
+func TestProviderRuntimeEnforcesBothRollingRequestWindows(t *testing.T) {
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	if errSet := policies.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:auth-a", Concurrency: intPointer(3), Concurrency15s: intPointer(2)}); errSet != nil {
+		t.Fatal(errSet)
+	}
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.SetQuotaPolicies(policies)
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	tracker.now = func() time.Time { return now }
+	request := func(id string) cpaapi.RequestInterceptRequest {
+		return cpaapi.RequestInterceptRequest{RequestID: id, ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}}
+	}
+	for _, id := range []string{"request-1", "request-2"} {
+		if response, changed := tracker.InterceptRequest(request(id)); changed || response.Terminate {
+			t.Fatalf("%s rejected: %#v changed=%v", id, response, changed)
+		}
+		tracker.Complete(cpaapi.RequestCompletion{RequestID: id})
+	}
+	response, changed := tracker.InterceptRequest(request("request-3"))
+	if !changed || !response.Terminate || response.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("15-second request was not rejected: %#v changed=%v", response, changed)
+	}
+	var payload struct {
+		Error struct {
+			WindowSeconds int `json:"window_seconds"`
+			Used          int `json:"used"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.ResponseBody, &payload); err != nil || payload.Error.WindowSeconds != 15 || payload.Error.Used != 2 {
+		t.Fatalf("15-second rejection payload = %s, err=%v", response.ResponseBody, err)
+	}
+	now = now.Add(16 * time.Second)
+	if response, changed = tracker.InterceptRequest(request("request-3")); changed || response.Terminate {
+		t.Fatalf("request after 15-second expiry rejected: %#v changed=%v", response, changed)
+	}
+	tracker.Complete(cpaapi.RequestCompletion{RequestID: "request-3"})
+	response, changed = tracker.InterceptRequest(request("request-4"))
+	if !changed || !response.Terminate {
+		t.Fatalf("60-second request was not rejected: %#v changed=%v", response, changed)
+	}
+	if err := json.Unmarshal(response.ResponseBody, &payload); err != nil || payload.Error.WindowSeconds != 60 || payload.Error.Used != 3 {
+		t.Fatalf("60-second rejection payload = %s, err=%v", response.ResponseBody, err)
+	}
+	now = now.Add(45 * time.Second)
+	if response, changed = tracker.InterceptRequest(request("request-4")); changed || response.Terminate {
+		t.Fatalf("request after minute expiry rejected: %#v changed=%v", response, changed)
+	}
+}
+
+func TestProviderRuntimeDuplicateRequestDoesNotConsumeWindowTwice(t *testing.T) {
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	if errSet := policies.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:auth-a", Concurrency15s: intPointer(2)}); errSet != nil {
+		t.Fatal(errSet)
+	}
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.SetQuotaPolicies(policies)
+	request := cpaapi.RequestInterceptRequest{RequestID: "same", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}}
+	tracker.InterceptRequest(request)
+	tracker.InterceptRequest(request)
+	snapshot := tracker.Snapshot()[0]
+	if snapshot.Active != 1 || snapshot.Used60s != 1 || snapshot.Used15s != 1 {
+		t.Fatalf("duplicate request consumed the window twice: %+v", snapshot)
 	}
 }
 

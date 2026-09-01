@@ -50,6 +50,7 @@ type DefaultPolicy struct {
 	Priority                       *int                    `json:"priority" yaml:"priority"`
 	Disabled                       *bool                   `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 	ConcurrencyLimit               *int                    `json:"concurrency_limit,omitempty" yaml:"concurrency_limit,omitempty"`
+	Concurrency15sLimit            *int                    `json:"concurrency_15s_limit,omitempty" yaml:"concurrency_15s_limit,omitempty"`
 	QuotaPolicy                    *AccountQuotaPolicy     `json:"quota_policy,omitempty" yaml:"quota_policy,omitempty"`
 	Note                           *string                 `json:"note,omitempty" yaml:"note,omitempty"`
 	Prefix                         *string                 `json:"prefix,omitempty" yaml:"prefix,omitempty"`
@@ -789,6 +790,9 @@ func mergeGlobalPolicyIntoDefault(policy DefaultPolicy, service *GlobalPolicySer
 	if policy.ConcurrencyLimit == nil {
 		policy.ConcurrencyLimit = cloneIntPointer(global.ConcurrencyLimit)
 	}
+	if policy.Concurrency15sLimit == nil {
+		policy.Concurrency15sLimit = cloneIntPointer(global.Concurrency15sLimit)
+	}
 	if policy.QuotaPolicy == nil && global.QuotaPolicy != nil {
 		value := *global.QuotaPolicy
 		policy.QuotaPolicy = &value
@@ -1373,6 +1377,7 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 		}
 		if resolved.ConcurrencyFromRule {
 			override.ConcurrencyLimit = resolved.ConcurrencyLimit
+			override.Concurrency15sLimit = resolved.Concurrency15sLimit
 		}
 		if resolved.QuotaPolicyFromRule {
 			override.QuotaPolicy = resolved.QuotaPolicy
@@ -1424,6 +1429,7 @@ func (e *PolicyEngine) reconcileEntry(ctx context.Context, entry cpaapi.HostAuth
 		override := DefaultPolicy{}
 		override.Disabled = resolved.Disabled
 		override.ConcurrencyLimit = resolved.ConcurrencyLimit
+		override.Concurrency15sLimit = resolved.Concurrency15sLimit
 		override.QuotaPolicy = resolved.QuotaPolicy
 		override.CodexIdentity = resolved.CodexIdentity
 		conditionalPluginChanged, errConditionalPlugin := e.applyPluginPolicy(ctx, account, name, override, applyForce)
@@ -1469,15 +1475,25 @@ func (e *PolicyEngine) applyPluginPolicy(ctx context.Context, account Account, n
 	managementKey := e.managementKey
 	config := e.config
 	e.mu.RUnlock()
-	if policy.ConcurrencyLimit != nil && concurrency != nil {
+	if (policy.ConcurrencyLimit != nil || policy.Concurrency15sLimit != nil) && concurrency != nil {
 		current := concurrency.Summary(account.AuthID)
-		if mode == applyForce || current.Limit == 0 {
-			if current.Limit != *policy.ConcurrencyLimit {
-				if err := concurrency.SetLimit(account, *policy.ConcurrencyLimit); err != nil {
-					return changed, fmt.Errorf("apply account concurrency policy: %w", err)
-				}
-				changed = true
+		minuteLimit := policy.ConcurrencyLimit
+		fifteenSecondLimit := policy.Concurrency15sLimit
+		if mode != applyForce {
+			if current.Limit != 0 {
+				minuteLimit = nil
 			}
+			if current.FifteenSecLimit != 0 {
+				fifteenSecondLimit = nil
+			}
+		}
+		minuteChanged := minuteLimit != nil && current.Limit != *minuteLimit
+		fifteenSecondChanged := fifteenSecondLimit != nil && current.FifteenSecLimit != *fifteenSecondLimit
+		if minuteChanged || fifteenSecondChanged {
+			if err := concurrency.SetLimits(account, minuteLimit, fifteenSecondLimit); err != nil {
+				return changed, fmt.Errorf("apply account concurrency policy: %w", err)
+			}
+			changed = true
 		}
 	}
 	if policy.QuotaPolicy != nil && quotaPolicies != nil {
@@ -1556,7 +1572,7 @@ func validateDefaultPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 		return DefaultPolicy{}, errRules
 	}
 	policy.ConditionalRules = rules
-	patch := BatchPatch{Disabled: policy.Disabled, Priority: policy.Priority, Note: policy.Note, Prefix: policy.Prefix, ProxyURL: policy.ProxyURL, ProxyProfileID: policy.ProxyProfileID, Websockets: policy.Websockets, Headers: policy.Headers, ModelPolicy: policy.ModelPolicy, ConcurrencyLimit: policy.ConcurrencyLimit, QuotaPolicy: policy.QuotaPolicy, CodexIdentity: policy.CodexIdentity}
+	patch := BatchPatch{Disabled: policy.Disabled, Priority: policy.Priority, Note: policy.Note, Prefix: policy.Prefix, ProxyURL: policy.ProxyURL, ProxyProfileID: policy.ProxyProfileID, Websockets: policy.Websockets, Headers: policy.Headers, ModelPolicy: policy.ModelPolicy, ConcurrencyLimit: policy.ConcurrencyLimit, Concurrency15sLimit: policy.Concurrency15sLimit, QuotaPolicy: policy.QuotaPolicy, CodexIdentity: policy.CodexIdentity}
 	if !patch.Empty() {
 		validated, errValidate := patch.Validate()
 		if errValidate != nil {
@@ -1564,7 +1580,7 @@ func validateDefaultPolicy(policy DefaultPolicy) (DefaultPolicy, error) {
 		}
 		policy.Disabled, policy.Priority, policy.Note, policy.Prefix, policy.ProxyURL = validated.Disabled, validated.Priority, validated.Note, validated.Prefix, validated.ProxyURL
 		policy.ProxyProfileID, policy.Websockets, policy.Headers, policy.ModelPolicy = validated.ProxyProfileID, validated.Websockets, validated.Headers, validated.ModelPolicy
-		policy.ConcurrencyLimit, policy.QuotaPolicy, policy.CodexIdentity = validated.ConcurrencyLimit, validated.QuotaPolicy, validated.CodexIdentity
+		policy.ConcurrencyLimit, policy.Concurrency15sLimit, policy.QuotaPolicy, policy.CodexIdentity = validated.ConcurrencyLimit, validated.Concurrency15sLimit, validated.QuotaPolicy, validated.CodexIdentity
 	}
 	if policy.Enabled && !policy.ManagesFields() && !policy.ManagesNewAccountProbe() {
 		return DefaultPolicy{}, fmt.Errorf("enabled policy requires at least one automation action")
@@ -1590,11 +1606,11 @@ func (policy DefaultPolicy) ManagesAccountFields() bool {
 }
 
 func (policy DefaultPolicy) hasAccountActions() bool {
-	return policy.Disabled != nil || policy.Priority != nil || policy.Note != nil || policy.Prefix != nil || policy.ProxyURL != nil || policy.ProxyProfileID != nil || policy.Websockets != nil || policy.Headers != nil || policy.ModelPolicy != nil || policy.ConcurrencyLimit != nil || policy.QuotaPolicy != nil || policy.CodexIdentity != nil
+	return policy.Disabled != nil || policy.Priority != nil || policy.Note != nil || policy.Prefix != nil || policy.ProxyURL != nil || policy.ProxyProfileID != nil || policy.Websockets != nil || policy.Headers != nil || policy.ModelPolicy != nil || policy.ConcurrencyLimit != nil || policy.Concurrency15sLimit != nil || policy.QuotaPolicy != nil || policy.CodexIdentity != nil
 }
 
 func conditionalActionsManageAccount(actions ConditionalPolicyActions) bool {
-	return actions.Disabled != nil || actions.Priority != nil || actions.Note != nil || actions.Prefix != nil || actions.ProxyURL != nil || actions.ProxyProfileID != nil || actions.Websockets != nil || actions.Headers != nil || actions.ModelPolicy != nil || actions.ConcurrencyLimit != nil || actions.QuotaPolicy != nil || actions.CodexIdentity != nil
+	return actions.Disabled != nil || actions.Priority != nil || actions.Note != nil || actions.Prefix != nil || actions.ProxyURL != nil || actions.ProxyProfileID != nil || actions.Websockets != nil || actions.Headers != nil || actions.ModelPolicy != nil || actions.ConcurrencyLimit != nil || actions.Concurrency15sLimit != nil || actions.QuotaPolicy != nil || actions.CodexIdentity != nil
 }
 
 func (policy DefaultPolicy) ManagesAIProviderProxy() bool {
@@ -1653,6 +1669,9 @@ func (policy DefaultPolicy) Fields() []string {
 	if policy.ConcurrencyLimit != nil {
 		fields = append(fields, "concurrency_limit")
 	}
+	if policy.Concurrency15sLimit != nil {
+		fields = append(fields, "concurrency_15s_limit")
+	}
 	if policy.QuotaPolicy != nil {
 		fields = append(fields, "quota_policy")
 	}
@@ -1667,6 +1686,7 @@ func cloneDefaultPolicy(policy DefaultPolicy) DefaultPolicy {
 	clone.Priority = cloneIntPointer(policy.Priority)
 	clone.Disabled = cloneBoolPointer(policy.Disabled)
 	clone.ConcurrencyLimit = cloneIntPointer(policy.ConcurrencyLimit)
+	clone.Concurrency15sLimit = cloneIntPointer(policy.Concurrency15sLimit)
 	clone.Note = cloneStringPointer(policy.Note)
 	clone.Prefix = cloneStringPointer(policy.Prefix)
 	clone.ProxyURL = cloneStringPointer(policy.ProxyURL)
@@ -1699,7 +1719,7 @@ func defaultPolicyEqual(left, right DefaultPolicy) bool {
 	return left.Enabled == right.Enabled && left.ApplyMode == right.ApplyMode &&
 		left.NewAccountModelProbeEnabled == right.NewAccountModelProbeEnabled &&
 		left.CodexQuotaMetadataProbeEnabled == right.CodexQuotaMetadataProbeEnabled &&
-		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right) && optionalBoolEqual(left.Disabled, right.Disabled) && optionalIntEqual(left.ConcurrencyLimit, right.ConcurrencyLimit) && optionalStringEqual(left.Note, right.Note) && optionalStringEqual(left.Prefix, right.Prefix) && optionalStringEqual(left.ProxyURL, right.ProxyURL) && reflect.DeepEqual(left.Headers, right.Headers) && reflect.DeepEqual(left.ModelPolicy, right.ModelPolicy) && reflect.DeepEqual(left.QuotaPolicy, right.QuotaPolicy) && reflect.DeepEqual(left.CodexIdentity, right.CodexIdentity) && optionalStringEqual(left.ProxyProfileID, right.ProxyProfileID) && optionalStringEqual(left.AIProviderProxyProfileID, right.AIProviderProxyProfileID) &&
+		left.ScanIntervalSeconds == right.ScanIntervalSeconds && managedPolicyEqual(left, right) && optionalBoolEqual(left.Disabled, right.Disabled) && optionalIntEqual(left.ConcurrencyLimit, right.ConcurrencyLimit) && optionalIntEqual(left.Concurrency15sLimit, right.Concurrency15sLimit) && optionalStringEqual(left.Note, right.Note) && optionalStringEqual(left.Prefix, right.Prefix) && optionalStringEqual(left.ProxyURL, right.ProxyURL) && reflect.DeepEqual(left.Headers, right.Headers) && reflect.DeepEqual(left.ModelPolicy, right.ModelPolicy) && reflect.DeepEqual(left.QuotaPolicy, right.QuotaPolicy) && reflect.DeepEqual(left.CodexIdentity, right.CodexIdentity) && optionalStringEqual(left.ProxyProfileID, right.ProxyProfileID) && optionalStringEqual(left.AIProviderProxyProfileID, right.AIProviderProxyProfileID) &&
 		reflect.DeepEqual(left.ConditionalRules, right.ConditionalRules)
 }
 

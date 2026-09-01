@@ -33,18 +33,17 @@ const (
 // ProviderRuntimeSnapshot is intentionally redacted. It contains no API key,
 // token, cookie, header, or provider credential material.
 type ProviderRuntimeSnapshot struct {
-	Provider  string `json:"provider"`
-	AuthIndex string `json:"auth_index,omitempty"`
-	Identity  string `json:"identity"`
-	Supported bool   `json:"supported"`
-	Reason    string `json:"reason,omitempty"`
-	// ConcurrencyConfigurable reports whether the plugin can enforce a
-	// provider/API-key concurrency limit. Current CPA request interception is
-	// account-scoped, so this remains false for API-key channels even when
-	// their active requests can be observed.
+	Provider                string               `json:"provider"`
+	AuthIndex               string               `json:"auth_index,omitempty"`
+	Identity                string               `json:"identity"`
+	Supported               bool                 `json:"supported"`
+	Reason                  string               `json:"reason,omitempty"`
 	ConcurrencyConfigurable bool                 `json:"concurrency_configurable"`
 	Active                  int                  `json:"active"`
 	Limit                   int                  `json:"limit"`
+	Limit15s                int                  `json:"limit_15s"`
+	Used60s                 int                  `json:"used_60s"`
+	Used15s                 int                  `json:"used_15s"`
 	InputTokens             int64                `json:"input_tokens"`
 	OutputTokens            int64                `json:"output_tokens"`
 	ReasoningTokens         int64                `json:"reasoning_tokens"`
@@ -107,6 +106,7 @@ type providerRuntimeAggregate struct {
 	UnratedRequests int64
 	Models          map[string]*providerRuntimeModel
 	Events          []providerRuntimeEvent
+	RequestEvents   []time.Time `json:"-"`
 	UpdatedAt       time.Time
 }
 
@@ -119,18 +119,18 @@ type persistedProviderRuntimeState struct {
 // participating in routing or admission. Missing CPA identities are exposed as
 // unsupported rather than being guessed into a configured channel.
 type ProviderRuntimeTracker struct {
-	mu           sync.RWMutex
-	storeMu      sync.Mutex
-	requests     map[string]providerRuntimeRequest
-	aggregates   map[string]*providerRuntimeAggregate
-	calculator   UsageCreditCalculator
-	concurrency  *AccountConcurrencyService
-	now          func() time.Time
-	nextPrune    time.Time
-	store        string
-	loaded       bool
-	dirty        bool
-	persistTimer *time.Timer
+	mu            sync.RWMutex
+	storeMu       sync.Mutex
+	requests      map[string]providerRuntimeRequest
+	aggregates    map[string]*providerRuntimeAggregate
+	calculator    UsageCreditCalculator
+	quotaPolicies *QuotaPolicyService
+	now           func() time.Time
+	nextPrune     time.Time
+	store         string
+	loaded        bool
+	dirty         bool
+	persistTimer  *time.Timer
 }
 
 func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntimeTracker {
@@ -330,16 +330,14 @@ func saveProviderRuntimeState(path string, aggregates map[string]*providerRuntim
 	return savePrivateJSON(path, persistedProviderRuntimeState{Version: providerRuntimeStoreVersion, Aggregates: values})
 }
 
-// SetAccountConcurrency attaches the configured per-account limits to runtime
-// snapshots. Runtime tracking remains observational and does not participate
-// in admission, so a missing/unsupported service simply reports an unlimited
-// display (Limit=0) rather than fabricating a limit.
-func (t *ProviderRuntimeTracker) SetAccountConcurrency(service *AccountConcurrencyService) {
+// SetQuotaPolicies attaches the provider policy store used for request-window
+// admission and runtime summaries.
+func (t *ProviderRuntimeTracker) SetQuotaPolicies(service *QuotaPolicyService) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
-	t.concurrency = service
+	t.quotaPolicies = service
 	t.mu.Unlock()
 }
 
@@ -348,38 +346,76 @@ func (t *ProviderRuntimeTracker) SetAccountConcurrency(service *AccountConcurren
 func (t *ProviderRuntimeTracker) RequestInterceptionActive() bool              { return t != nil }
 func (t *ProviderRuntimeTracker) RequestInterceptionAcceptsFormat(string) bool { return t != nil }
 func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
-	t.ObserveRequest(request)
-	return cpaapi.RequestInterceptResponse{}, false
-}
-
-func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptRequest) {
 	if t == nil || strings.TrimSpace(request.RequestID) == "" {
-		return
+		return cpaapi.RequestInterceptResponse{}, false
 	}
 	identity, authIndex := runtimeIdentityFromMetadata(request.Metadata)
 	if identity == "" {
-		return
+		return cpaapi.RequestInterceptResponse{}, false
 	}
 	provider := runtimeProviderFromMetadata(request.Metadata)
 	if provider == "" {
 		provider = normalizeRuntimeProvider(request.ToFormat)
 	}
+	now := t.now().UTC()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := t.now().UTC()
 	t.pruneExpiredLocked(now)
-	if _, exists := t.requests[request.RequestID]; exists {
-		return
-	}
 	aggregateKey := runtimeAggregateKey(provider, identity)
+	if current, exists := t.requests[request.RequestID]; exists {
+		if current.AggregateKey == aggregateKey {
+			return cpaapi.RequestInterceptResponse{}, false
+		}
+		delete(t.requests, request.RequestID)
+		if previous := t.aggregates[current.AggregateKey]; previous != nil {
+			if previous.Active > 0 {
+				previous.Active--
+			}
+			previous.UpdatedAt = now
+		}
+	}
 	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
 	if aggregate == nil {
-		t.mu.Unlock()
-		return
+		return cpaapi.RequestInterceptResponse{}, false
+	}
+	policy, configurable := ProviderQuotaPolicy{}, false
+	if t.quotaPolicies != nil {
+		policy, configurable = t.quotaPolicies.ResolveProviderPolicy(provider, authIndex, identity)
+	}
+	aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
+	used60 := len(aggregate.RequestEvents)
+	used15 := countProviderRequestEvents(aggregate.RequestEvents, now.Add(-15*time.Second), now)
+	if configurable && policy.Concurrency15s != nil && *policy.Concurrency15s > 0 && used15 >= *policy.Concurrency15s {
+		return providerConcurrencyRejectedResponse(*policy.Concurrency15s, 15, used15), true
+	}
+	if configurable && policy.Concurrency != nil && *policy.Concurrency > 0 && used60 >= *policy.Concurrency {
+		return providerConcurrencyRejectedResponse(*policy.Concurrency, 60, used60), true
 	}
 	t.requests[request.RequestID] = providerRuntimeRequest{AggregateKey: aggregateKey, AdmittedAt: now}
 	aggregate.Active++
+	aggregate.RequestEvents = append(aggregate.RequestEvents, now)
 	aggregate.UpdatedAt = now
+	return cpaapi.RequestInterceptResponse{}, false
+}
+
+func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptRequest) {
+	_, _ = t.InterceptRequest(request)
+}
+
+func providerConcurrencyRejectedResponse(limit, window, used int) cpaapi.RequestInterceptResponse {
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{
+		"type":           "provider_concurrency_limit_reached",
+		"message":        "the selected AI provider has reached its configured request limit",
+		"limit":          limit,
+		"used":           used,
+		"window_seconds": window,
+	}})
+	return cpaapi.RequestInterceptResponse{
+		Terminate:       true,
+		StatusCode:      http.StatusTooManyRequests,
+		ResponseHeaders: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"1"}},
+		ResponseBody:    body,
+	}
 }
 
 func (t *ProviderRuntimeTracker) Complete(completion cpaapi.RequestCompletion) {
@@ -490,8 +526,9 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	t.pruneExpiredLocked(t.now().UTC())
 	defer t.mu.Unlock()
 	out := make([]ProviderRuntimeSnapshot, 0, len(t.aggregates))
+	now := t.now().UTC()
 	for _, aggregate := range t.aggregates {
-		fiveHourTokens, sevenDayTokens := runtimeWindowTokens(aggregate.Events, t.now().UTC())
+		fiveHourTokens, sevenDayTokens := runtimeWindowTokens(aggregate.Events, now)
 		models := make([]ProviderModelUsage, 0, len(aggregate.Models))
 		for _, model := range aggregate.Models {
 			models = append(models, model.ProviderModelUsage)
@@ -502,9 +539,19 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 		if !supported {
 			reason = "provider_runtime_identity_unavailable"
 		}
-		limit := 0
-		if t.concurrency != nil && aggregate.AuthIndex != "" {
-			limit = t.concurrency.Summary(aggregate.AuthIndex).Limit
+		policy, configurable := ProviderQuotaPolicy{}, false
+		if t.quotaPolicies != nil {
+			policy, configurable = t.quotaPolicies.ResolveProviderPolicy(aggregate.Provider, aggregate.AuthIndex, aggregate.Identity)
+		}
+		aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
+		used60 := len(aggregate.RequestEvents)
+		used15 := countProviderRequestEvents(aggregate.RequestEvents, now.Add(-15*time.Second), now)
+		limit, limit15s := 0, 0
+		if configurable && policy.Concurrency != nil {
+			limit = *policy.Concurrency
+		}
+		if configurable && policy.Concurrency15s != nil {
+			limit15s = *policy.Concurrency15s
 		}
 		out = append(out, ProviderRuntimeSnapshot{
 			Provider:                aggregate.Provider,
@@ -512,9 +559,12 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 			Identity:                aggregate.Identity,
 			Supported:               supported,
 			Reason:                  reason,
-			ConcurrencyConfigurable: false,
+			ConcurrencyConfigurable: configurable,
 			Active:                  aggregate.Active,
 			Limit:                   limit,
+			Limit15s:                limit15s,
+			Used60s:                 used60,
+			Used15s:                 used15,
 			InputTokens:             aggregate.InputTokens,
 			OutputTokens:            aggregate.OutputTokens,
 			ReasoningTokens:         aggregate.ReasoningTokens,
@@ -603,6 +653,35 @@ func (t *ProviderRuntimeTracker) pruneExpiredLocked(now time.Time) {
 			aggregate.UpdatedAt = now
 		}
 	}
+	for _, aggregate := range t.aggregates {
+		if aggregate != nil {
+			aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
+		}
+	}
+}
+
+func pruneProviderRequestEvents(events []time.Time, now time.Time) []time.Time {
+	if len(events) == 0 {
+		return nil
+	}
+	cutoff := now.Add(-time.Minute)
+	kept := events[:0]
+	for _, event := range events {
+		if event.After(cutoff) && !event.After(now) {
+			kept = append(kept, event)
+		}
+	}
+	return kept
+}
+
+func countProviderRequestEvents(events []time.Time, cutoff, now time.Time) int {
+	count := 0
+	for _, event := range events {
+		if event.After(cutoff) && !event.After(now) {
+			count++
+		}
+	}
+	return count
 }
 
 func normalizeRuntimeProvider(value string) string {

@@ -57,6 +57,61 @@ func TestAccountConcurrencyRejectsOnlyTheSaturatedAccount(t *testing.T) {
 	}
 }
 
+func TestAccountConcurrencyEnforcesFifteenSecondAndMinuteWindows(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	minuteLimit, fifteenSecondLimit := 3, 2
+	if errSet := service.SetLimits(Account{ID: "index-a", AuthID: "auth-a"}, &minuteLimit, &fifteenSecondLimit); errSet != nil {
+		t.Fatalf("SetLimits() error = %v", errSet)
+	}
+	for _, requestID := range []string{"request-1", "request-2"} {
+		if response, changed := service.InterceptRequest(concurrencyRequest(requestID, "auth-a")); changed || response.Terminate {
+			t.Fatalf("%s rejected: %#v changed=%v", requestID, response, changed)
+		}
+		service.Complete(cpaapi.RequestCompletion{RequestID: requestID})
+	}
+	if got := service.Summary("auth-a"); got.Active != 0 || got.Used15s != 2 || got.Used60s != 2 || got.FifteenSecLimit != 2 || got.Limit != 3 {
+		t.Fatalf("summary after first window = %#v", got)
+	}
+	response, changed := service.InterceptRequest(concurrencyRequest("request-3", "auth-a"))
+	if !changed || !response.Terminate || !strings.Contains(string(response.ResponseBody), `"window_seconds":15`) {
+		t.Fatalf("15-second request was not rejected: %#v changed=%v", response, changed)
+	}
+	now = now.Add(16 * time.Second)
+	if response, changed = service.InterceptRequest(concurrencyRequest("request-3", "auth-a")); changed || response.Terminate {
+		t.Fatalf("request after 15-second expiry rejected: %#v changed=%v", response, changed)
+	}
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-3"})
+	response, changed = service.InterceptRequest(concurrencyRequest("request-4", "auth-a"))
+	if !changed || !response.Terminate || !strings.Contains(string(response.ResponseBody), `"window_seconds":60`) {
+		t.Fatalf("minute request was not rejected: %#v changed=%v", response, changed)
+	}
+}
+
+func TestAccountConcurrencyUpdatingOneWindowPreservesTheOther(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	account := Account{ID: "index-a", AuthID: "auth-a"}
+	minuteLimit, fifteenSecondLimit := 10, 3
+	if errSet := service.SetLimits(account, &minuteLimit, &fifteenSecondLimit); errSet != nil {
+		t.Fatal(errSet)
+	}
+	updatedMinute := 8
+	if errSet := service.SetLimits(account, &updatedMinute, nil); errSet != nil {
+		t.Fatal(errSet)
+	}
+	if got := service.Summary("auth-a"); got.Limit != 8 || got.FifteenSecLimit != 3 {
+		t.Fatalf("minute update changed 15-second limit: %#v", got)
+	}
+	clear15s := 0
+	if errSet := service.SetLimits(account, nil, &clear15s); errSet != nil {
+		t.Fatal(errSet)
+	}
+	if got := service.Summary("auth-a"); got.Limit != 8 || got.FifteenSecLimit != 0 {
+		t.Fatalf("15-second clear changed minute limit: %#v", got)
+	}
+}
+
 func TestAccountConcurrencyCompletionIsIdempotentForEveryOutcome(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
 	if errSet := service.SetLimit(Account{ID: "index-a", AuthID: "auth-a"}, 1); errSet != nil {

@@ -29,11 +29,12 @@ type AccountQuotaPolicy struct {
 }
 
 type ProviderQuotaPolicy struct {
-	Key         string            `json:"key"`
-	Label       string            `json:"label,omitempty"`
-	Concurrency *int              `json:"concurrency_limit,omitempty"`
-	FiveHour    QuotaWindowPolicy `json:"five_hour"`
-	SevenDay    QuotaWindowPolicy `json:"seven_day"`
+	Key            string            `json:"key"`
+	Label          string            `json:"label,omitempty"`
+	Concurrency    *int              `json:"concurrency_limit,omitempty"`
+	Concurrency15s *int              `json:"concurrency_15s_limit,omitempty"`
+	FiveHour       QuotaWindowPolicy `json:"five_hour"`
+	SevenDay       QuotaWindowPolicy `json:"seven_day"`
 }
 
 type QuotaPolicySnapshot struct {
@@ -129,6 +130,47 @@ func (s *QuotaPolicyService) ProviderPolicy(key string) ProviderQuotaPolicy {
 	return s.providers[strings.TrimSpace(key)]
 }
 
+// ResolveProviderPolicy returns a provider policy only when the supplied key
+// can be matched unambiguously. Exact keys are preferred; auth-index suffixes
+// are supported for CPA identities such as "codex-api-key:auth-index".
+func (s *QuotaPolicyService) ResolveProviderPolicy(provider, authIndex, identity string) (ProviderQuotaPolicy, bool) {
+	if s == nil {
+		return ProviderQuotaPolicy{}, false
+	}
+	provider = strings.TrimSpace(provider)
+	authIndex = strings.TrimSpace(authIndex)
+	identity = strings.TrimSpace(identity)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := []string{}
+	if provider != "" && authIndex != "" {
+		keys = append(keys, provider+":"+authIndex)
+	}
+	if identity != "" {
+		keys = append(keys, identity)
+	}
+	for _, key := range keys {
+		if policy, ok := s.providers[key]; ok {
+			return policy, true
+		}
+	}
+	var matched ProviderQuotaPolicy
+	found := false
+	for key, policy := range s.providers {
+		if provider != "" && strings.HasPrefix(strings.ToLower(key), strings.ToLower(provider)+":") {
+			if authIndex != "" && strings.HasSuffix(key, ":"+authIndex) {
+				return policy, true
+			}
+			if !found {
+				matched, found = policy, true
+			} else {
+				return ProviderQuotaPolicy{}, false
+			}
+		}
+	}
+	return matched, found
+}
+
 func (s *QuotaPolicyService) HasAccountPolicies() bool {
 	if s == nil {
 		return false
@@ -178,6 +220,9 @@ func (s *QuotaPolicyService) SetProviderPolicy(policy ProviderQuotaPolicy) error
 	if policy.Concurrency != nil && (*policy.Concurrency < 0 || *policy.Concurrency > 1000) {
 		return fmt.Errorf("provider concurrency must be between 0 and 1000")
 	}
+	if policy.Concurrency15s != nil && (*policy.Concurrency15s < 0 || *policy.Concurrency15s > 1000) {
+		return fmt.Errorf("provider 15-second concurrency must be between 0 and 1000")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneProviderPolicyMap(s.providers)
@@ -207,7 +252,7 @@ func quotaPolicyEmpty(policy AccountQuotaPolicy) bool {
 	return quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
 }
 func providerPolicyEmpty(policy ProviderQuotaPolicy) bool {
-	return policy.Label == "" && policy.Concurrency == nil && quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
+	return policy.Label == "" && policy.Concurrency == nil && policy.Concurrency15s == nil && quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
 }
 func quotaWindowEmpty(policy QuotaWindowPolicy) bool {
 	return policy.TotalTokens == nil && policy.LimitPercent == nil

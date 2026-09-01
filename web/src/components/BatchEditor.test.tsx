@@ -20,25 +20,30 @@ describe("BatchEditor", () => {
     expect(submit).toHaveBeenCalledWith({ note: "batch-note" });
   });
 
-	it("submits an explicitly enabled account concurrency limit", async () => {
+	it("submits both account request-window limits independently", async () => {
 		const user = userEvent.setup();
 		const submit = vi.fn();
 		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} accountConcurrency={{ supported: true, host_schema_version: 2, required_schema_version: 2 }} onClose={() => undefined} onSubmit={submit} />);
 
-		await user.click(screen.getByRole("checkbox", { name: "账号并发" }));
-		await user.clear(screen.getByLabelText("账号并发值"));
-		await user.type(screen.getByLabelText("账号并发值"), "3");
+		await user.click(screen.getByRole("checkbox", { name: "15 秒请求限制" }));
+		await user.clear(screen.getByLabelText("15 秒请求限制值"));
+		await user.type(screen.getByLabelText("15 秒请求限制值"), "3");
+		await user.click(screen.getByRole("checkbox", { name: "每分钟请求限制" }));
+		await user.clear(screen.getByLabelText("每分钟请求限制值"));
+		await user.type(screen.getByLabelText("每分钟请求限制值"), "10");
 		await user.click(screen.getByRole("button", { name: "生成预览" }));
 
-		expect(submit).toHaveBeenCalledWith({ concurrency_limit: 3 });
+		expect(submit).toHaveBeenCalledWith({ concurrency_15s_limit: 3, concurrency_limit: 10 });
 	});
 
 	it("explains and disables account concurrency on legacy CPA hosts", () => {
 		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} accountConcurrency={{ supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" }} onClose={() => undefined} onSubmit={() => undefined} />);
 
-		expect(screen.getByRole("checkbox", { name: "账号并发" })).toBeDisabled();
-		expect(screen.getByText(/当前 CPA 版本不支持账号并发控制/)).toBeInTheDocument();
-		expect(screen.getByLabelText("账号并发值")).toBeDisabled();
+		expect(screen.getByRole("checkbox", { name: "15 秒请求限制" })).toBeDisabled();
+		expect(screen.getByRole("checkbox", { name: "每分钟请求限制" })).toBeDisabled();
+		expect(screen.getAllByText(/当前 CPA 版本不支持账号并发控制/)).toHaveLength(2);
+		expect(screen.getByLabelText("15 秒请求限制值")).toBeDisabled();
+		expect(screen.getByLabelText("每分钟请求限制值")).toBeDisabled();
 	});
 
 	it("loads current single-account values while keeping the patch explicitly opted in", async () => {
@@ -47,11 +52,13 @@ describe("BatchEditor", () => {
 		let resolveConfig: ((value: {
 			account_id: string; disabled: boolean; priority: number; note: string; prefix: string; proxy: string;
 			proxy_configured: boolean; websockets: boolean; header_names: string[];
+			concurrency: { supported: true; active: number; limit: number; limit_15s: number; used_60s: number; used_15s: number };
 			model_policy: { mode: "allow_only"; models: string[]; excluded_count: number };
 		}) => void) | undefined;
 		const loadCurrentConfig = vi.fn(() => new Promise<{
 			account_id: string; disabled: boolean; priority: number; note: string; prefix: string; proxy: string;
 			proxy_configured: boolean; websockets: boolean; header_names: string[];
+			concurrency: { supported: true; active: number; limit: number; limit_15s: number; used_60s: number; used_15s: number };
 			model_policy: { mode: "allow_only"; models: string[]; excluded_count: number };
 		}>((resolve) => { resolveConfig = resolve; }));
 		render(<BatchEditor scopeLabel="operator@example.com" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
@@ -61,11 +68,14 @@ describe("BatchEditor", () => {
 			account_id: "auth-1", disabled: true, priority: 8, note: "primary pool", prefix: "team-a",
 			proxy: "http://proxy.example", proxy_configured: true, websockets: false,
 			header_names: ["Authorization", "X-Team"],
+			concurrency: { supported: true, active: 4, limit: 10, limit_15s: 3, used_60s: 7, used_15s: 2 },
 			model_policy: { mode: "allow_only", models: ["gpt-5.5"], excluded_count: 2 },
 		});
 
 		expect(await screen.findByText("当前账号配置")).toBeInTheDocument();
-		expect(screen.getByText("0/∞")).toBeInTheDocument();
+		expect(screen.getByText("当前传输数 4 · 15 秒窗口 2/3 · 每分钟窗口 7/10")).toBeInTheDocument();
+		expect(screen.getByLabelText("15 秒请求限制值")).toHaveValue(3);
+		expect(screen.getByLabelText("每分钟请求限制值")).toHaveValue(10);
 		expect(screen.getByText("http://proxy.example")).toBeInTheDocument();
 		expect(screen.getByText("Authorization, X-Team")).toBeInTheDocument();
 		expect(screen.getByLabelText("Priority 值")).toHaveValue("8");

@@ -231,6 +231,8 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
                 <span className="switch-control"><input type="checkbox" checked={draft.new_account_model_probe_enabled} disabled={controlsLocked} onChange={(event) => updateDraft({ new_account_model_probe_enabled: event.target.checked })} aria-label={tx("ui.enable_new_account_model_probe")} /><b>{tx(draft.new_account_model_probe_enabled ? "ui.on_2" : "ui.off_2")}</b></span>
               </label>
               <OptionalNumberRow label="Priority" ariaLabel={tx("ui.default_priority")} value={draft.priority} disabled={controlsLocked} onChange={(priority) => updateDraft({ priority })} />
+              <OptionalNumberRow label={tx("ui.account_concurrency_15s_limit")} ariaLabel={tx("ui.default_account_concurrency_15s")} value={draft.concurrency_15s_limit ?? null} disabled={controlsLocked} onChange={(concurrency_15s_limit) => updateDraft({ concurrency_15s_limit })} />
+              <OptionalNumberRow label={tx("ui.account_concurrency_60s_limit")} ariaLabel={tx("ui.default_account_concurrency_60s")} value={draft.concurrency_limit ?? null} disabled={controlsLocked} onChange={(concurrency_limit) => updateDraft({ concurrency_limit })} />
               <label className="policy-row policy-interval"><span className="edit-optin">{tx("ui.scan_interval")}</span><span className="number-suffix"><input type="number" min="5" max="300" value={draft.scan_interval_seconds} disabled={controlsLocked} onChange={(event) => updateDraft({ scan_interval_seconds: Number(event.target.value) })} aria-label={tx("ui.scan_interval")} /><b>{tx("ui.seconds")}</b></span></label>
             </div>
           </div>
@@ -319,7 +321,8 @@ function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange
           <label className={`policy-row policy-master ${policy.enabled ? "is-enabled" : ""}`}><span><strong>{tx("ui.enabled")}</strong><small>{tx("ui.global_policy_override_status")}</small></span><span className="switch-control"><input type="checkbox" checked={policy.enabled} disabled={disabled} onChange={(event) => onChange({ enabled: event.target.checked })} /><b>{tx(policy.enabled ? "ui.on_2" : "ui.off_2")}</b></span></label>
           <OptionalBooleanRow label={tx("ui.disabled")} ariaLabel={tx("ui.disabled")} value={policy.disabled ?? null} disabled={disabled} onChange={(value) => onChange({ disabled: value })} />
           <OptionalNumberRow label={tx("ui.policy_priority")} ariaLabel={tx("ui.policy_priority")} value={policy.priority ?? null} disabled={disabled} onChange={(value) => onChange({ priority: value })} />
-          <OptionalNumberRow label={tx("ui.account_concurrency")} ariaLabel={tx("ui.account_concurrency")} value={policy.concurrency_limit ?? null} disabled={disabled} onChange={(value) => onChange({ concurrency_limit: value })} />
+          <OptionalNumberRow label={tx("ui.account_concurrency_15s_limit")} ariaLabel={tx("ui.account_concurrency_15s_limit")} value={policy.concurrency_15s_limit ?? null} disabled={disabled} onChange={(value) => onChange({ concurrency_15s_limit: value })} />
+          <OptionalNumberRow label={tx("ui.account_concurrency_60s_limit")} ariaLabel={tx("ui.account_concurrency_60s_limit")} value={policy.concurrency_limit ?? null} disabled={disabled} onChange={(value) => onChange({ concurrency_limit: value })} />
           <label className="policy-row"><span className="edit-optin">{tx("ui.note")}</span><input value={policy.note ?? ""} disabled={disabled} placeholder={tx("ui.not_set")} onChange={(event) => onChange({ note: event.target.value || null })} /></label>
           <label className="policy-row"><span className="edit-optin">{tx("ui.route_prefix")}</span><input value={policy.prefix ?? ""} disabled={disabled} placeholder={tx("ui.not_set")} onChange={(event) => onChange({ prefix: event.target.value || null })} /></label>
         </div>
@@ -431,6 +434,8 @@ function ConditionalRuleEditor({ rule, index, total, disabled, profiles, onChang
         <section className="conditional-rule-actions"><h4>{tx("ui.automation_actions")}</h4><p className="policy-action-help">{tx("ui.conditional_proxy_profile_help")}</p>
           <OptionalBooleanAction label={tx("ui.new_account_model_probe")} present={hasOwn(rule.actions, "new_account_model_probe")} value={rule.actions.new_account_model_probe ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "new_account_model_probe", present, value))} />
           <OptionalNumberAction label="Priority" present={hasOwn(rule.actions, "priority")} value={rule.actions.priority ?? 0} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "priority", present, value))} />
+          <OptionalNumberAction label={tx("ui.account_concurrency_15s_limit")} present={hasOwn(rule.actions, "concurrency_15s_limit")} value={rule.actions.concurrency_15s_limit ?? 0} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "concurrency_15s_limit", present, value))} />
+          <OptionalNumberAction label={tx("ui.account_concurrency_60s_limit")} present={hasOwn(rule.actions, "concurrency_limit")} value={rule.actions.concurrency_limit ?? 0} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "concurrency_limit", present, value))} />
           <OptionalBooleanAction label="WebSockets" present={hasOwn(rule.actions, "websockets")} value={rule.actions.websockets ?? false} disabled={disabled} onChange={(present, value) => updateActions(updateOptionalAction(rule.actions, "websockets", present, value))} />
           <OptionalProxyProfileAction label={tx("ui.account_proxy_profile")} value={rule.actions.proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => updateActions(updateOptionalAction(rule.actions, "proxy_profile_id", value !== null, value ?? undefined))} />
           <OptionalProxyProfileAction label={tx("ui.ai_provider_proxy_profile")} value={rule.actions.ai_provider_proxy_profile_id ?? null} profiles={profiles} disabled={disabled} onChange={(value) => updateActions(updateOptionalAction(rule.actions, "ai_provider_proxy_profile_id", value !== null, value ?? undefined))} />
@@ -530,7 +535,7 @@ function clonePolicy(policy: DefaultPolicy): DefaultPolicy {
 }
 
 function emptyGlobalPolicy(): GlobalPolicy {
-  return { enabled: false, disabled: null, priority: null, concurrency_limit: null, quota_policy: null, note: null, prefix: null, proxy_url: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null, websockets: null, headers: null, model_policy: null, codex_identity: emptyGlobalIdentity() };
+  return { enabled: false, disabled: null, priority: null, concurrency_limit: null, concurrency_15s_limit: null, quota_policy: null, note: null, prefix: null, proxy_url: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null, websockets: null, headers: null, model_policy: null, codex_identity: emptyGlobalIdentity() };
 }
 
 function cloneGlobalPolicy(policy: GlobalPolicy): GlobalPolicy {

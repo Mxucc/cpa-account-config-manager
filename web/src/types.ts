@@ -87,6 +87,7 @@ export interface ProviderQuotaPolicy {
 	key: string;
 	label?: string;
 	concurrency_limit?: number;
+	concurrency_15s_limit?: number;
 	five_hour: QuotaWindowPolicy;
 	seven_day: QuotaWindowPolicy;
 }
@@ -108,7 +109,10 @@ export interface AccountConcurrencyAvailability {
 export interface AccountConcurrencySummary {
 	supported: boolean;
 	limit: number;
+	limit_15s: number;
 	active: number;
+	used_60s: number;
+	used_15s: number;
 }
 
 export type ModelPolicyMode = "all" | "allow_only" | "deny_only";
@@ -486,6 +490,7 @@ export interface BatchPatch {
   headers?: HeaderPatch;
 	model_policy?: ModelPolicyPatch;
 	concurrency_limit?: number;
+	concurrency_15s_limit?: number;
 	quota_policy?: AccountQuotaPolicy;
 	codex_identity?: CodexIdentityOverride;
 }
@@ -574,6 +579,7 @@ export interface DefaultPolicy {
   priority: number | null;
   disabled?: boolean | null;
   concurrency_limit?: number | null;
+  concurrency_15s_limit?: number | null;
   quota_policy?: AccountQuotaPolicy | null;
   note?: string | null;
   prefix?: string | null;
@@ -606,6 +612,7 @@ export interface ConditionalPolicyActions {
   disabled?: boolean;
   priority?: number;
   concurrency_limit?: number;
+  concurrency_15s_limit?: number;
   quota_policy?: AccountQuotaPolicy;
   note?: string;
   prefix?: string;
@@ -1180,6 +1187,7 @@ export interface GlobalPolicy {
   disabled?: boolean | null;
   priority?: number | null;
   concurrency_limit?: number | null;
+  concurrency_15s_limit?: number | null;
   quota_policy?: AccountQuotaPolicy | null;
   note?: string | null;
   prefix?: string | null;
@@ -1377,6 +1385,9 @@ export interface AIProviderRuntimeSnapshot {
   reason?: string;
   active: number;
   limit: number;
+  limit_15s: number;
+  used_60s: number;
+  used_15s: number;
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;

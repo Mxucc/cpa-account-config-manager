@@ -363,6 +363,7 @@ func (a *App) Registration() Registration {
 			Version:          PluginVersion,
 			Author:           "cpa-account-config-manager contributors",
 			GitHubRepository: PluginRepository,
+			Logo:             pluginLogoDataURI,
 			ConfigFields: []cpaapi.ConfigField{
 				{Name: "workers", Type: cpaapi.ConfigFieldTypeInteger, Description: "Optional maximum concurrent account mutations (default 6, range 1-16)."},
 				{Name: "data_dir", Type: cpaapi.ConfigFieldTypeString, Description: "Optional writable directory for sanitized job, policy, usage, inspection, update, and operation-journal state."},

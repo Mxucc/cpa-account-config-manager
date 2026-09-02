@@ -6,6 +6,15 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%230d5145'/%3E%3Cpath d='M9 8h9l5 5v11H9z' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M18 8v6h5M13 19h6M16 16v6' stroke='white' stroke-width='2'/%3E%3C/svg%3E" />
     <title>CPA Account Config Manager</title>
+    <script>
+      // The source entrypoint references TypeScript modules and cannot be
+      // executed directly by a browser under file://. Redirect local opens
+      // to the self-contained build output while leaving HTTP/Vite untouched.
+      const isSourceEntrypoint = /\/web\/index\.html$/.test(window.location.pathname) && !/\/internal\/web\/dist\//.test(window.location.pathname);
+      if (window.location.protocol === "file:" && isSourceEntrypoint) {
+        window.location.replace(new URL("../internal/web/dist/index.html", window.location.href).href);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

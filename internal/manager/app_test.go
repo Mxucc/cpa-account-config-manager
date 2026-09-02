@@ -172,6 +172,9 @@ func TestRegistrationUsesInjectedReleaseMetadata(t *testing.T) {
 	if registration.Metadata.Version != "1.2.3" || registration.Metadata.GitHubRepository != PluginRepository {
 		t.Fatalf("metadata = %#v", registration.Metadata)
 	}
+	if !strings.HasPrefix(registration.Metadata.Logo, "data:image/svg+xml;base64,") {
+		t.Fatalf("metadata logo = %q, want embedded SVG data URI", registration.Metadata.Logo)
+	}
 	if !registration.Capabilities.ManagementAPI || !registration.Capabilities.UsagePlugin || !registration.Capabilities.RequestInterceptor {
 		t.Fatalf("capabilities = %#v", registration.Capabilities)
 	}

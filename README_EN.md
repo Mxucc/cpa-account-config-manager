@@ -3,126 +3,97 @@
 [中文文档](README.md)
 
 `cpa-account-config-manager` is a native
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) plugin for managing
-CPA accounts from one authenticated workspace. It adds account CRUD, batch
-operations, import/export conversion, quota visibility, model tests,
-inspection automation, conditional policies, notifications, and an operation
-journal without exposing raw credentials to the browser.
+[CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin for managing accounts, AI providers, usage, routing policy, and automation from the CPA Management Center. It brings batch configuration, format conversion, model probes, quota and cost accounting, inspection, remediation, proxies, notifications, and audit logs into one CPA-authenticated workspace while keeping raw credentials out of browser-visible data and logs.
 
-## Highlights
+## Core Capabilities
 
-- List, search, filter, view, add, edit, enable, disable, deduplicate, and
-  delete accounts. Page sizes include 20, 50, 100, 200, 500, and 1000.
-- Run selected or filtered batch edits with a server-side preview, revision
-  checks, bounded workers, per-account results, and failed-only retry.
-- Display CPA request counters, token totals, Codex 5-hour and 7-day quota
-  windows, plan type, and active reset count when CPA or the upstream account
-  provides that data.
-- Test provider models through CPA for Codex/OpenAI, Claude, Gemini/AI Studio,
-  and xAI. Account allow-lists and deny-lists are respected by manual tests,
-  automatic probes, and inspection.
-- Detect restricted Codex model sets and apply a compatible account allow-list
-  when policy-driven new-account probing is enabled. This capability is built
-  in; it is not controlled by an experimental switch.
-- Inspect all accounts with CPA-native evidence and optional active model
-  probes. Results are published while a scan is running and include health,
-  evidence, recovery time, and an executable recommendation.
-- Optionally auto-disable failed or exhausted accounts, auto-enable only
-  inspection-owned disables after recovery, and auto-delete narrowly eligible
-  accounts after explicit confirmation and a grace period.
-- Keep a persistent, redacted operation journal. Disable and enable entries
-  include the actual normalized reason, such as quota exhaustion, invalid
-  credentials, quota reset, health recovery, or credential refresh.
-- Apply base presets to newly imported or discovered accounts, then override
-  them with prioritized nested conditional policies for provider, plan,
-  account type, and email suffix.
-- Manage reusable proxy profiles with masked credentials. Automation policies
-  can assign default account and AI-provider proxies, while conditional rules
-  can override them by provider, plan, account type, or email suffix. This
-  resolves [issue #3](https://github.com/Mxucc/cpa-account-config-manager/issues/3).
-- Detect plugin updates through the CPA Plugin Store and display the current
-  and latest CPA server versions. CPA executable updates remain read-only
-  version guidance; the plugin never replaces the CPA binary.
-- Read Codex plan and active-reset metadata and, after explicit confirmation,
-  consume one available reset credit and refresh the account quota.
-- Send previewable and testable HTTPS GET notifications to services such as
-  Bark and ntfy. Generic and conditional notifications can combine account,
-  availability, quota, and health variables.
-- Experimentally support Codex 5-hour and 7-day quota overdraft continuation plus Agent
-  Identity and personal access token import, login, and native plugin auth.
-- Monitor multiple OpenCode Go accounts: bind a Workspace ID and auth Cookie,
-  scrape the opencode.ai workspace dashboard for 5-hour / 7-day / 30-day usage
-  and reset times, with quota queries, manual refresh, and per-account removal
-  all available from the AI Providers view.
-- Manage OpenCode Zen credentials in the AI Providers view: store Zen API keys
-  (masked in the UI, kept when the edit key is left blank), point the base URL
-  at the Zen gateway (https://opencode.ai/zen) or a self-hosted
-  [opencode-cc](https://github.com/Kiowx/opencode-cc) bridge, and probe
-  connectivity on save, with per-account re-test, edit, and removal.
-- Follow the CPA Management Center language and theme. The UI supports English,
-  Simplified Chinese, Traditional Chinese, and Russian.
+### Dashboard And Account Pool
 
-## Account Transfer
+- Summarizes account and AI-provider totals, enabled/disabled state, health, active requests, tokens, cost, inspection results, pending actions, and model cost rankings.
+- Account lists support search, filters, persistent sorting, and page sizes of 20, 50, 100, 200, 500, or 1,000.
+- View, add, edit, enable, disable, delete, and batch-edit accounts. Single-account editing loads the current configuration; batch workflows include previews, revision conflict checks, bounded concurrency, per-account results, and failed-item retries.
+- Deduplicate by email first and account ID second, with options to ignore IDs or exclude Team/K12 accounts whose members may share an ID.
+- Refresh tokens through CPA's native endpoint, or use the compatible full refresh flow when an account has a valid Refresh Token but the current CPA does not expose a refresh endpoint.
+- Display creation and disable times, Priority, WebSockets, notes, routing prefixes, headers, proxies, model policy, concurrency, and quota policy.
 
-Import accepts pasted JSON text or up to 10,000 accounts from mixed JSON,
-JSON Lines, text, and ZIP files. A ZIP may contain multiple supported files.
-Every import is previewed, bounded, duplicate-checked, and written in a
-cancellable background job only through
-CPA Auth callbacks; existing Auth files are not overwritten.
+### Import, Export, And Format Conversion
 
-Supported inputs include native CPA files, common sub2api account collections,
-Codex OAuth/PAT and Agent Identity variants, Claude, Gemini, and other formats
-that can be converted into a CPA-supported Auth document. The recursive
-importer also recognizes common account JSON structures emitted by Cockpit,
-9router, AxonHub, and Codex Manager. Agent Identity conversion remains opt-in
-under Experimental Features because it depends on upstream authentication
-behavior.
+Imports accept pasted JSON and mixed JSON, JSON Lines, TXT, or ZIP uploads. A job can process up to 10,000 accounts and provides a preview, duplicate checks, background progress, and cancellation. ZIP input is guarded against path traversal and abnormal expansion, and existing Auth files are not overwritten.
 
-Exports can target CPA, sub2api, Cockpit, 9router, Codex, AxonHub, and Codex
-Manager formats. Formats that cannot represent multiple accounts as one file
-are downloaded as a ZIP containing separate account files. Operational reports
-are available as JSON, CSV, or JSON Lines and never contain credentials.
+Commonly recognized sources include:
 
-## Inspection And Automation
+- Native CPA Auth, Sub2API collections, Codex OAuth, Codex PAT, and Agent Identity.
+- Claude/Anthropic, Kimi, Qwen, xAI/Grok, Gemini, Gemini CLI, and Vertex service accounts.
+- Cockpit, 9Router, AxonHub, Codex Manager, and other common JSON shapes that can be normalized into CPA Auth files.
 
-Inspection combines three evidence sources:
+Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, and Codex Manager. A ZIP is produced automatically when a target cannot represent multiple accounts in one file. Batch and operation reports are also available as JSON, CSV, or JSON Lines without exposing credentials.
 
-1. CPA account state, recent requests, and usage records.
-2. Scheduled or manual active model probes through CPA.
-3. Passive failures observed while CPA serves traffic.
+### Usage, Cost, Concurrency, And Quotas
 
-Automatic actions are disabled by default. Auto-enable never claims an account
-disabled by an operator or another system. Automatic deletion requires a
-separate risk confirmation and remains limited to file-backed accounts with
-strong, current evidence. Raw upstream bodies are not persisted in inspection
-state or operation logs.
+- Persist successful and failed requests, tokens, live concurrency, and accumulated cost for both accounts and AI providers across CPA restarts.
+- Display Codex 5-hour/7-day official quota windows, reset times, plans, and proactive reset counts. Plan detection prefers data inside `id_token`, then CPA info, then outer type fields.
+- New Codex accounts collect plan and reset metadata automatically. Manual refresh updates both values, and accounts with remaining resets can consume one after explicit confirmation. Non-Codex accounts display `-`.
+- Sub2API-compatible credit accounting is a permanent, default-on capability. Model prices synchronize in the background, successful requests are estimated in USD while raw token totals remain available, and very small costs retain useful precision.
+- Accounts and supported AI providers can show current concurrency and enforce independent 15-second and 60-second rolling-window limits. `0` or an empty value means unlimited; both windows are enforced together.
+- Account quota policies use the official 5h/7d percentages returned by CPA. AI providers can define 5h/7d token budgets and then apply percentage thresholds to those budgets.
 
-The default policy is incremental. Each stable account is processed once and
-its processed identity is persisted across plugin and CPA restarts. Periodic
-scans still discover new accounts, but already processed accounts are skipped.
-Codex plan and active-reset metadata is refreshed before conditional rules are
-evaluated. A quota endpoint HTTP 401 becomes sanitized invalid-credential
-evidence for inspection instead of inflating the policy write-failure count.
+### Model Tests, Routing, And Codex Identity
 
-Conditional policies can match nested `all`/`any` conditions using provider,
-account type, plan type, and email suffix. Rules have explicit priorities and
-can set account priority, WebSockets, new-account probing, and model policy.
-The base policy runs first; conditional rules then override only the actions
-they own.
+- Load model catalogs from an account or AI provider and run a real probe through the selected account or the provider's own Base URL.
+- Results include model, HTTP status, latency, and a sanitized upstream response. Primary, fallback, and compatibility models are supported, and completed `200` responses are recognized as success.
+- The UI persists the last manually selected model and tested-model history; allowlisted accounts load an allowed model first.
+- Model routing supports all models, allowlists, and blocklists. Manual tests, automatic probes, and inspection honor the policy. New Codex accounts can detect restricted compatibility and receive an automatic allowlist. Compatibility allowlisting is permanent and no longer requires an experimental toggle.
+- Codex client identity policy is a standard configuration surface. It supports outbound identity convergence, an official-client ingress gate, App Server allowance, minimum/maximum versions, allowlists, blocklists, engine-fingerprint signals, and pass-through, device, session, or fully converged modes.
+- Identity settings can be inherited or overridden at global, default-policy, conditional-policy, account, and AI-provider levels. Codex OAuth, `codex-api-key` health checks, and internal model, quota, token, PAT, and Agent Identity probes use a consistent compatible identity.
 
-External notifications support multiple operator-defined HTTPS GET templates.
-Templates can combine allow-listed account and health variables, can be
-previewed with current values, and have a test action. Delivery outcomes and
-bounded HTTP metadata are recorded in the operation journal.
-Each endpoint can remain generic or bind one ordered notification policy.
-Policy notifications reuse nested provider, account-type, and email-suffix
-conditions, then apply independent low-count and low-availability thresholds.
+### Inspection, Automated Remediation, And Policies
+
+- Inspection combines native CPA state, recent requests, Usage data, active model probes, and passive failures observed during service. It supports native fast scans, full scans, incremental scans, selected-account rechecks, review retries, live progress, and cancellation.
+- Results distinguish healthy, abnormal, authentication-failed, quota-limited, and review states. HTTP 401 is recorded as invalid-credential evidence, recommends re-login or deletion, and can trigger immediate automatic disablement.
+- Accounts can be disabled from evidence, re-enabled after quota refresh or reset time, and optionally receive a Priority boost after fresh quota becomes available. Automatic enablement only manages accounts that inspection disabled; it does not take ownership of manually disabled accounts.
+- Automatic deletion has a separate risk confirmation, grace period, strong-evidence requirement, and file-backed-account restriction. Every automatic disable, enable, or delete action records its reason.
+- Policy order is global policy, new-account default policy, then conditional policy. Default policy processes only new or changed accounts; processed fingerprints persist so stable accounts are not rescanned when the page opens or CPA restarts.
+- Conditional rules support priorities and nested `all`/`any` groups matching provider, account type/plan, and email suffix.
+- Actions include enable/disable state, Priority, 15-second/60-second concurrency, 5h/7d quota policy, notes, prefix, headers, WebSockets, separate account/AI-provider proxy profiles, model probing, all/allowlist/blocklist model policy, and Codex identity policy. Long-running work is asynchronous and does not block settings saves.
+
+### Proxy Profiles And External Notifications
+
+- Maintain multiple proxy profiles with add, edit, delete, enable, and disable operations. Credentials are shown only in masked form and existing secrets are never refilled into the browser.
+- Accounts and AI providers reference proxy profiles separately, with overrides available in global policy, default policy, conditional policy, and batch editing. This capability resolves [issue #3](https://github.com/Mxucc/cpa-account-config-manager/issues/3).
+- External notifications support multiple HTTPS GET targets, including generic Bark and ntfy endpoints. Template values can be previewed and test-sent; diagnostics show the final URL, HTTP status, attempt count, and concrete variable values. Percentage variables include `%`.
+- General notifications and policy notifications are independent. A policy notification has a unique name, display order, one or more URLs, nested `all`/`any` match conditions, and available-count or availability-rate thresholds. Once attached to a policy, it is not controlled by the general trigger settings.
+
+### AI Providers
+
+The dedicated AI Providers workspace manages:
+
+- OpenAI-compatible, Gemini API Key, Interactions API Key, Claude API Key, Codex API Key, xAI API Key, Vertex API Key, and CPA generic API-key channels.
+- OpenCode Go.
+- OpenCode Zen and self-hosted `opencode-cc` through a custom Base URL. OpenCode Zen defaults to `https://opencode.ai/zen` when no Base URL is provided.
+
+Provider fields include type, name, state, model count, concurrency, Base URL, API Key, model mappings, Priority, Weight, prefix, headers, proxy, and channel-specific options. API keys are always masked, and an empty key during editing preserves the stored value. Supported operations include view, test, edit, enable, disable, delete, model catalogs, real model probes, token/cost accounting, 15-second/60-second concurrency, 5h/7d custom budgets, proxy profiles, and Codex identity policy. Capabilities that the current CPA cannot edit are shown as compatibility-limited instead of pretending to work.
+
+OpenCode Go additionally supports Workspace ID plus auth Cookie, 5h/7d/30d quotas, reset times, manual refresh, and deletion.
+
+### Audit Log, UI, And Updates
+
+- The persistent audit log covers import, export, batch changes, model tests, policy scans, inspection, automatic remediation, notifications, and plugin updates. It records success, failure, partial completion, failure basis, counts, sanitized samples, source, and time.
+- The UI supports Simplified Chinese, Traditional Chinese, English, and Russian, and follows CPA language and theme. Optional neutral, indigo, forest, and rose themes, comfortable/compact density, small/medium/large fonts, and separate title/description sizing are available.
+- Table sorting, page size, filters, and manual model selections persist.
+- The plugin can check and install updates through the CPA Plugin Store and display current/latest CPA versions. It only detects CPA program updates and never replaces the CPA executable.
+
+## Experimental Features
+
+The remaining opt-in experiments are:
+
+- **Codex 5h/7d quota overdraft continuation**: after a quota is exhausted, run up to five probes; any successful probe keeps the account enabled, while five failures allow automatic disablement. The first ordinary-request failure freezes the quota-window baseline, overdraft tokens and costs are tracked separately, and the cycle ends when quota resets. This modifies the Codex tool-call chain and may increase time-to-first-token on slower servers.
+- **Agent Identity and PAT**: import, conversion, login, and native-plugin authentication paths for these formats, including common Sub2API-compatible structures.
+
+Sub2API-compatible cost accounting, automatic model compatibility allowlists, and Codex client identity policy are permanent features and are not experimental toggles.
 
 ## Installation
 
-Installing from the CPA Plugin Store is recommended because CPA selects the
-platform archive, verifies checksums, and reports whether a host restart is
-required. Manual release archives are also available for:
+Installing from the CPA Plugin Store is recommended. CPA selects the platform archive, verifies checksums, and reports whether a host restart is required. Releases are also provided for:
 
 | Platform | Architecture | Library |
 | --- | --- | --- |
@@ -131,8 +102,7 @@ required. Manual release archives are also available for:
 | macOS | arm64 | `.dylib` |
 | Windows | amd64 | `.dll` |
 
-For a manual installation, verify the matching `.sha256` file, extract the
-library into CPA's platform plugin directory, and enable it in `config.yaml`:
+For a manual installation, verify the matching `.sha256`, extract the library into CPA's plugin directory, and enable it in `config.yaml`:
 
 ```yaml
 plugins:
@@ -144,62 +114,39 @@ plugins:
       priority: 20
 ```
 
-After CPA loads the plugin, open **CPA-A Manager** in the Management Center.
-Most CPA plugin-store updates need only a page refresh; restart CPA only when
-the host reports `restart_required: true` or the loaded library is locked.
+After CPA loads the plugin, open **CPA-A Manager** in the Management Center. Most Plugin Store updates need only a page refresh; restart CPA only when the host reports `restart_required: true` or the loaded library is locked.
 
 ## Configuration And Persistence
 
-The UI persists supported settings back to CPA's plugin configuration. These
-optional plugin fields remain available for deployment-level configuration:
+UI settings are written back to CPA's plugin configuration. Deployment-level fields remain available:
 
 | Field | Default | Purpose |
 | --- | --- | --- |
 | `workers` | `6` | Concurrent account mutations, clamped to 1-16. |
-| `data_dir` | `data/cpa-account-config-manager` | Private state for usage, inspection, policies, updates, runtime ownership, jobs, and logs. |
-| `management_base_url` | `http://127.0.0.1:8317` | Loopback CPA Management API base for authenticated operations. |
+| `data_dir` | `data/cpa-account-config-manager` | Private usage, cost, inspection, policy, notification, update, job, and log state. |
+| `management_base_url` | `http://127.0.0.1:8317` | Loopback CPA Management API address used by the plugin. |
 
-Persist `data_dir` when CPA runs in a replaceable container. If no explicit
-data directory is configured, the plugin can mirror sanitized usage state
-under a common local Auth directory, but an explicit persistent mount is more
-predictable. The CPA process needs read/write access to the Auth directory and
-the effective plugin data directory.
-
-Experimental Features currently contains:
-
-- Codex 5-hour and 7-day quota overdraft probing, which relies on upstream tool-call
-  continuation behavior.
-- Codex Agent Identity/PAT conversion and authentication hooks.
-
-Both are off by default and isolated behind stable hooks so they can be removed
-without changing the standard account-management paths.
+Persist `data_dir` when CPA runs in a replaceable container. Without an explicit directory, the plugin can store sanitized usage state beside a common Auth directory, but an explicit persistent mount is more predictable. The CPA process needs read/write access to the Auth directory and the effective data directory.
 
 ## Security Model
 
-- All privileged endpoints are fixed, authenticated CPA Management routes.
-- The public resource route serves only the embedded static UI.
-- Management keys remain in the current browser/CPA request path and are never
-  persisted by the plugin.
-- Raw Auth JSON, tokens, cookies, proxy credentials, header values, and raw
-  upstream responses are excluded from public models, logs, and saved state.
-- Imports and exports are count- and size-bounded. ZIP entries are validated
-  against path traversal and archive expansion limits.
-- Account mutations use previews, physical revisions, a shared writer lock,
-  and conflict checks. Destructive actions require explicit confirmation.
+- Privileged operations use fixed, CPA-authenticated Management routes; the public Resource route serves only the embedded static UI.
+- The Management Key remains in the current browser/CPA request chain and is never persisted by the plugin.
+- Raw Auth JSON, tokens, cookies, API keys, proxy credentials, header values, and upstream responses are excluded from public models, logs, and persisted state.
+- Imports and exports are bounded by count and size. ZIP input is checked for path traversal and abnormal expansion.
+- Account writes use previews, physical revisions, a shared writer lock, and conflict checks. Destructive operations such as deletion and quota reset require explicit confirmation.
 - Private directories and files use restrictive permissions where supported.
 
 ## Compatibility
 
-The plugin uses CLIProxyAPI native plugin ABI/schema version 1 and requires a
-CPA build with native plugin discovery, Auth list/get/save callbacks, the Usage
-Plugin callback, and current authenticated Management APIs for Auth status,
-field edits, account-selected API calls, deletion, and plugin-store updates.
-It does not import CLIProxyAPI Go packages and does not patch the CPA binary.
+- Baseline features require CLIProxyAPI native plugin ABI/schema v1, Auth list/get/save callbacks, the Usage Plugin callback, and current authenticated Management APIs.
+- Live concurrency and 15-second/60-second enforcement require a newer CPA request-lifecycle hook/native plugin schema v2. Older CPA versions show unsupported/unavailable state instead of claiming that limits are active.
+- AI-provider runtime and quota policy degrade safely when older CPA builds lack the corresponding Management routes; editable capabilities follow what the connected CPA actually exposes.
+- The plugin does not import CPA Go packages and does not patch the CPA binary.
 
 ## Development
 
-Prerequisites: Go 1.24+, Node.js 20+, npm, `make`, and a C toolchain suitable
-for CGO.
+Prerequisites are Go 1.24+, Node.js 20+, npm, `make`, and a C toolchain suitable for CGO.
 
 ```bash
 make verify
@@ -207,29 +154,16 @@ make build
 make package VERSION=X.Y.Z
 ```
 
-`make verify` formats and tests Go code, tests and builds the React UI, checks
-embedded assets, and validates release metadata. Release tags are annotated as
-`vX.Y.Z`; the release workflow builds four platform archives, four matching
-`.sha256` files, and `checksums.txt`.
+`make verify` checks Go formatting and tests, React tests and build output, embedded assets, and release metadata. Release tags use `vX.Y.Z`; the workflow produces archives for four platforms, matching `.sha256` files, and `checksums.txt`.
 
 ## Acknowledgements
 
-- Inspection design and remediation workflow:
-  [seakee/CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
-- Native inspection and job patterns:
-  [ywddd/grok-inspection](https://github.com/ywddd/grok-inspection)
-- Codex failure and quota presentation:
-  [ysxk/codex-429-autoban](https://github.com/ysxk/codex-429-autoban) and
-  [zhumengling/codex-token-usage](https://github.com/zhumengling/codex-token-usage)
-- Agent Identity import and login concepts:
-  [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
-- OpenCode Go quota monitor:
-  [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
-- OpenCode Zen and multi-protocol bridging:
-  [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
-- OpenCode Zen and multi-protocol bridging:
-  [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
+- Inspection design and remediation workflow: [seakee/CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
+- Native inspection and job patterns: [ywddd/grok-inspection](https://github.com/ywddd/grok-inspection)
+- Codex failure and quota presentation: [ysxk/codex-429-autoban](https://github.com/ysxk/codex-429-autoban), [zhumengling/codex-token-usage](https://github.com/zhumengling/codex-token-usage)
+- Agent Identity import and login concepts: [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
+- OpenCode Go quota monitor: [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
+- OpenCode Zen and multi-protocol bridging: [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
 - Community link: [LINUX DO](https://linux.do/)
 
-These projects informed product behavior. Their code is not copied into this
-plugin unless separately identified by the repository license history.
+These projects informed product behavior. Their code is not copied into this plugin unless separately identified by the repository license history.

@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
+import pluginLogo from "./assets/cpama.svg";
 import { AccountDetailsDialog } from "./components/AccountDetailsDialog";
 import { AccountActionsMenu } from "./components/AccountActionsMenu";
 import { AccountDeduplicationDialog } from "./components/AccountDeduplicationDialog";
@@ -1122,7 +1123,7 @@ function AccountManagerApp() {
       {authState === "ready" ? <PluginUpdateAutomation onAPIError={handleAPIError} onNotice={setNotice} /> : null}
       <aside className="app-sidebar">
         <div className="sidebar-brand">
-          <span className="brand-icon"><FileCog size={21} /></span>
+          <span className="brand-icon"><img src={pluginLogo} alt="" aria-hidden="true" /></span>
           <div>
             <strong>CPA</strong>
             <span>Account Config Manager</span>

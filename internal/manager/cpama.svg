@@ -1,0 +1,15 @@
+<svg width="256" height="256" viewBox="0 0 256 256"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cpaGradient" x1="48" y1="40" x2="208" y2="216" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="0.5" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="128" cy="128" r="104" fill="none" stroke="url(#cpaGradient)" stroke-width="12"/>
+  <path d="M68 89 C88 68 108 68 128 84 C148 100 168 100 188 79" fill="none" stroke="url(#cpaGradient)" stroke-width="10" stroke-linecap="round"/>
+  <path d="M174 76 L190 78 L187 94" fill="none" stroke="url(#cpaGradient)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="128" y="145" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="61" font-weight="800" letter-spacing="-4" fill="url(#cpaGradient)">CPA</text>
+  <text x="128" y="181" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" letter-spacing="2" fill="url(#cpaGradient)">A+++</text>
+</svg>

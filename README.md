@@ -3,62 +3,97 @@
 [English documentation](README_EN.md)
 
 `cpa-account-config-manager` 是一个
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 原生插件，用于在同一个经过鉴权的工作区中管理 CPA 账号。插件提供账号增删改查、批量操作、导入导出转换、额度展示、模型测试、巡检自动化、条件策略、外部通知和操作日志，同时避免把原始凭据暴露给浏览器。
+[CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI) 原生插件，用于在 CPA Management Center 中统一管理账号、AI 提供商、用量、路由策略和自动化任务。插件把批量配置、格式转换、模型探测、额度与成本统计、巡检处置、代理、通知和审计日志集中到一个经过 CPA 鉴权的界面中，并对浏览器和日志隐藏原始凭据。
 
-## 功能说明
+## 核心能力
 
-| 功能 | 说明 |
-| --- | --- |
-| 批量账号管理 | 集中完成账号搜索、筛选、查看、添加、编辑、启用、禁用、删除和去重；可对已选账号或全部筛选结果批量修改，支持预览、Revision 冲突检查、有界并发、逐账号结果和仅重试失败项。 |
-| 全格式兼容导入 | 支持粘贴 JSON 文本，以及混合上传 JSON、JSON Lines、TXT 和 ZIP；ZIP 可包含多个文件，单次最多处理 10,000 个账号。可识别 CPA、sub2api、Codex Auth、Agent Identity、PAT、Claude、Gemini，以及 Cockpit、9router、AxonHub、Codex Manager 等常见账号 JSON 结构。 |
-| 全格式输出 | 可导出 CPA、sub2api、Cockpit、9router、Codex、AxonHub 和 Codex Manager；无法用单文件容纳多账号的目标格式会自动打包为 ZIP。批量结果和操作报告可另行导出为 JSON、CSV 或 JSON Lines。 |
-| 配置预设 | 基础策略可为以后导入或新发现的账号设置默认 Priority、WebSockets、模型探测和模型策略；条件策略可按提供方、套餐、账号类型和邮箱后缀进一步覆盖。 |
-| 账号池用量 | 提供接近 sub2api 的账号利用率视图，集中展示请求成功/失败次数、Token 总量、Codex 5 小时和 7 天额度、恢复时间、套餐及主动重置次数，便于判断号池容量。 |
-| 模型测试 | 通过 CPA 对指定账号执行真实模型测试，展示 HTTP 状态、延迟、回退模型和脱敏后的上游响应；账号白名单与黑名单会自动约束手动测试、自动探测和巡检模型。 |
-| 账号巡检 | 结合 CPA 原生状态、Usage 记录、主动模型测试和被动失败进行全量巡检，实时展示进度、健康证据、恢复时间和建议操作，并支持批量执行建议。 |
-| 自动处置 | 可选自动禁用失败或额度耗尽账号、在恢复后启用由巡检自身禁用的账号，并对严格符合条件且经过风险确认和宽限期的账号执行自动删除。 |
-| 插件与 CPA 版本检测 | 从 CPA 插件商店检查并安装插件更新，同时展示当前 CPA 服务端版本和可用的新版本。CPA 主程序只做版本检测，插件不会自行替换 CPA 可执行文件。 |
-| Codex 5h / 7d 额度透支 | 实验性额度透支功能会利用最后一条消息为 tool call 时可继续生成的行为；5 小时或 7 天额度耗尽后，自动禁用前最多进行 5 次可用性验证，任意一次成功就保留账号。 |
-| Agent Identity 与 PAT | 实验性支持 Codex Agent Identity 和 Personal Access Token 的导入、转换、登录和 CPA 原生插件鉴权路径，并兼容常见 sub2api 结构。 |
-| 用量与异常通知 | 使用可预览、可测试的 HTTPS GET URL 模板发送通知，可对接 Bark、ntfy 等服务；变量可组合账号总数、可用账号数、可用率、异常占比、额度受限数量和触发时间。 |
-| 额度重置 | 自动读取 Codex 套餐和主动重置次数；账号存在重置次数时，可在二次确认后消耗一次重置并立即刷新套餐、额度和剩余次数。 |
-| 条件策略 | 支持多个带优先级的规则，并使用嵌套 `all`/`any` 条件匹配提供方、账号类型、套餐类型和邮箱后缀；可配置 Priority、WebSockets、新账号模型探测及全部/白名单/黑名单模型策略。 |
-| 代理档案与策略代理 | 在自动策略中为账号和 AI 供应商设置默认代理，并可在条件策略中按提供方、套餐或邮箱后缀覆盖；代理档案支持启用/停用、批量编辑引用、脱敏展示和安全持久化。该功能解决 [issue #3](https://github.com/Mxucc/cpa-account-config-manager/issues/3)。 |
-| 条件通知 | 每个通知策略拥有独立名称、嵌套匹配条件、全部满足/任意满足逻辑、低可用账号数和低可用率阈值，以及一个或多个有序通知地址。 |
-| 模型路由策略 | 单账号和批量编辑均支持全部模型、白名单和黑名单模式；新账号探测可识别只支持部分 Codex 模型的账号并应用兼容白名单。 |
-| 操作日志 | 对账号修改、导入导出、模型测试、策略扫描、巡检处置、通知和更新操作进行持久化脱敏审计，记录真实原因、结果、失败分类和安全账号样本。 |
-| OpenCode Go 额度监控 | 参考社区插件整合 OpenCode Go 多账号额度监控，入口并入「AI 提供商」视图：绑定 Workspace ID 与 auth Cookie 后，抓取 opencode.ai 工作区仪表盘，展示 5 小时 / 7 天 / 30 天使用率与重置时间，支持配额测试、手动刷新与单账号删除。 |
-| OpenCode Zen 与 opencode-cc 桥接 | 参照 [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc) 的多协议桥接方案，在「AI 提供商」视图新增 OpenCode Zen 渠道：统一管理 Zen API Key（密钥脱敏、留空保留），指向 Zen 网关（https://opencode.ai/zen）或自建 opencode-cc 桥接地址，入库即探测连通性，支持单账号重新测试、编辑与删除。 |
-| OpenCode Zen 与 opencode-cc 桥接 | 参照 [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc) 的多协议桥接方案，在「AI 提供商」视图新增 OpenCode Zen 渠道：统一管理 Zen API Key（密钥脱敏、留空保留）、指向 Zen 网关（https://opencode.ai/zen）或自建 opencode-cc 桥接地址，入库即探测连通性，支持单账号重新测试、编辑与删除。 |
-| 多语言与主题 | 跟随 CPA Management Center 的语言和主题，支持 English、简体中文、繁体中文和俄语，不维护容易与宿主脱节的独立语言设置。 |
+### 仪表盘与账号池
 
-## 账号导入与导出
+- 汇总账号与 AI 提供商数量、启用/禁用状态、健康与异常账号、活跃请求、Token、成本、巡检结果、待处理操作和模型成本排行。
+- 账号列表支持搜索、筛选、持久化排序，以及 20、50、100、200、500、1000 条分页。
+- 支持查看、添加、编辑、启用、禁用、删除、批量修改和结果重试；单账号编辑会加载当前配置，批处理支持预览、Revision 冲突检查、有界并发和逐账号结果。
+- 支持账号去重：邮箱优先、账号 ID 辅助，并可忽略 ID 或排除 Team/K12 团队账号，避免团队共享 ID 被误删。
+- 支持 CPA 原生 Token 刷新；CPA 未提供刷新接口时，可对持有有效 Refresh Token 的兼容账号执行完整刷新流程。
+- 展示账号初始时间、禁用时间、Priority、WebSockets、备注、路由前缀、Header、代理、模型、并发和额度策略。
 
-导入支持粘贴 JSON 文本，也支持从混合的 JSON、JSON Lines、文本和 ZIP 文件中一次导入最多 10,000 个账号。ZIP 中可以包含多个受支持文件。每次导入都会先生成预览，执行数量和体积限制及重复检查，然后仅通过 CPA Auth 回调在可取消的后台任务中写入；不会覆盖现有 Auth 文件。
+### 导入、导出与格式转换
 
-支持的输入包括 CPA 原生文件、常见 sub2api 账号集合、Codex OAuth/PAT 和 Agent Identity 变体、Claude、Gemini，以及其他能够转换为 CPA Auth 文档的格式。Agent Identity 转换仍需在“实验性功能”中手动开启，因为它依赖上游鉴权行为。
+导入入口支持粘贴 JSON，以及混合上传 JSON、JSON Lines、TXT 和 ZIP；单次最多处理 10,000 个账号，并提供预览、重复检查、后台进度和取消任务。ZIP 会检查路径穿越和异常解压膨胀，导入不会覆盖已有 Auth 文件。
 
-导出目标支持 CPA、sub2api、Cockpit、9router、Codex、AxonHub 和 Codex Manager。无法用单个文件表示多账号的格式会下载为 ZIP，其中每个账号使用独立文件。操作报告可导出为 JSON、CSV 或 JSON Lines，且绝不包含凭据。
+可识别的常见来源包括：
 
-## 巡检与自动化
+- CPA 原生 Auth、Sub2API 集合、Codex OAuth、Codex PAT、Agent Identity。
+- Claude/Anthropic、Kimi、Qwen、xAI/Grok、Gemini、Gemini CLI、Vertex 服务账号。
+- Cockpit、9Router、AxonHub、Codex Manager，以及其他可归一化为 CPA Auth 的常见 JSON 结构。
 
-巡检结合三类证据：
+可导出为 CPA、Sub2API、Cockpit、9Router、Codex、AxonHub 和 Codex Manager。目标格式无法用一个文件表达多账号时会自动生成 ZIP；批量任务和操作结果还可导出为 JSON、CSV 或 JSON Lines，公开结果不包含凭据。
 
-1. CPA 账号状态、近期请求和 Usage 记录。
-2. 通过 CPA 执行的定时或手动主动模型探测。
-3. CPA 提供服务时观察到的被动失败。
+### 用量、成本、并发与额度
 
-自动操作默认关闭。自动启用不会接管由操作员或其他系统禁用的账号。自动删除需要单独确认风险，并且只适用于具有当前强证据的文件型账号。巡检状态和操作日志不会持久化原始上游响应正文。
+- 持久化账号和 AI 提供商的成功/失败请求、Token、活跃并发和累计成本，重启 CPA 后继续保留统计。
+- 展示 Codex 5 小时/7 天官方额度、恢复时间、套餐和主动重置次数。套餐识别优先读取 `id_token` 内部信息，再降级到 CPA info 和外层类型字段。
+- 新 Codex 账号会采集套餐与主动重置次数；手动刷新会同时更新套餐和次数，有剩余次数时可在二次确认后执行额度重置，非 Codex 账号显示 `-`。
+- Sub2API 兼容额度计费已作为常驻能力默认启用：后台异步同步模型价格并按成功请求估算 USD 成本，同时保留原始 Token 统计，对极小金额使用足够精度展示。
+- 账号和支持的 AI 提供商均可显示实时并发，并独立配置 15 秒与 60 秒滚动窗口限制；`0` 或留空表示不限制，两个窗口同时生效。
+- 账号额度策略使用 CPA 返回的 5h/7d 官方百分比；AI 提供商可先配置 5h/7d Token 总预算，再使用百分比阈值限制。
 
-默认策略采用增量处理。每个稳定账号只处理一次，处理身份会跨插件更新和 CPA 重启持久化。定时扫描仍会发现新账号，但会跳过已经处理过的账号。Codex 套餐和主动重置次数会在条件规则判定前刷新。额度接口返回 HTTP 401 时，会转换为脱敏的凭据失效巡检证据，而不会错误增加策略写入失败数量。
+### 模型测试、路由与 Codex 身份
 
-条件策略支持使用提供方、账号类型、套餐类型和邮箱后缀组成嵌套的 `all`/`any` 条件。规则具有明确优先级，可以设置账号 Priority、WebSockets、新账号模型探测和模型策略。基础策略先执行，条件规则随后只覆盖自身管理的操作。
+- 从账号或 AI 提供商读取模型目录，并通过对应账号或 Provider Base URL 发起真实测试。
+- 测试结果展示模型、HTTP 状态、延迟和脱敏后的上游响应；支持主模型、回退模型和兼容模型，成功的 `200` 完成响应会被正确识别。
+- 手动测试会持久化最后一次模型和历史测试模型；白名单账号会优先加载白名单模型。
+- 模型策略支持全部模型、白名单和黑名单。手动测试、自动探测与巡检都会遵守策略；新 Codex 账号可自动识别受限兼容模型并应用白名单。自动兼容白名单属于常驻能力，不需要实验开关。
+- Codex 客户端身份策略是常驻配置，支持出站身份收敛、官方客户端入口门、App Server 放行、最低/最高版本、白名单/黑名单、引擎指纹信号，以及关闭、设备级、会话级和完全收敛模式。
+- 身份策略可在全局策略、默认策略、条件策略、单账号和 AI 提供商层级继承或覆盖；Codex OAuth、`codex-api-key` 健康检查及内部模型、额度、Token、PAT、Agent Identity 探测使用一致的兼容身份。
 
-外部通知支持多个由操作员配置的 HTTPS GET 模板。模板可以组合白名单内的账号和健康变量，支持使用当前值预览及发送测试。通知结果和受限的 HTTP 元数据会写入操作日志。每个通知地址既可以使用通用触发，也可以绑定一个有序的通知策略。策略通知复用嵌套的提供方、账号类型和邮箱后缀条件，并应用独立的低账号数量与低可用率阈值。
+### 巡检、自动处置与策略
+
+- 巡检结合 CPA 原生状态、近期请求、Usage、主动模型探测和运行期间观察到的被动失败，支持原生快速扫描、完整巡检、增量巡检、指定账号复检、待复核重试、实时进度和停止任务。
+- 结果区分健康、异常、认证失败、额度受限和待复核状态。HTTP 401 会被记录为凭据失效证据，建议重新登录或删除，并可直接自动禁用。
+- 可按证据自动禁用、在额度刷新或恢复时间到达后自动启用，并可提高刚刷新额度账号的 Priority。自动启用只接管由巡检自身禁用的账号，不修改人工禁用状态。
+- 自动删除具有独立风险确认、宽限期、强证据和文件型账号限制；所有自动禁用、启用和删除都会在操作日志中记录原因。
+- 策略执行顺序为全局策略、新账号默认策略、条件策略。默认策略只处理新账号或内容已变化账号，已处理指纹会持久化，稳定账号不会因打开页面或重启而重复扫描。
+- 条件策略支持多规则、优先级和嵌套 `all`/`any`，可按提供方、账号类型/套餐和邮箱后缀匹配。
+- 策略动作包括启用/禁用、Priority、15 秒/60 秒并发、5h/7d 额度策略、备注、前缀、Header、WebSockets、账号/AI 提供商代理档案、模型探测、全部/白名单/黑名单模型策略和 Codex 身份策略。长任务在后台异步运行，不阻塞保存界面。
+
+### 代理与外部通知
+
+- 代理档案支持添加、编辑、删除、启用/停用和多个档案管理；代理凭据只脱敏展示，不会把已保存密钥回填浏览器。
+- 账号与 AI 提供商可分别引用代理档案，并能在全局策略、默认策略、条件策略和批量编辑中覆盖。此能力解决了 [issue #3](https://github.com/Mxucc/cpa-account-config-manager/issues/3)。
+- 外部通知支持多个 HTTPS GET 地址，可对接 Bark、ntfy 等通用接口；模板变量可预览并发送测试，测试结果会展示实际 URL、HTTP 状态、尝试次数和具体变量值，百分比变量自带 `%`。
+- 通用通知和策略通知相互独立。策略通知具有唯一名称、顺序、一个或多个通知地址、嵌套 `all`/`any` 匹配条件，以及可用账号数和可用率阈值；指定策略后不再受通用通知触发规则控制。
+
+### AI 提供商
+
+AI 提供商是独立工作区，当前可管理：
+
+- OpenAI-compatible、Gemini API Key、Interactions API Key、Claude API Key、Codex API Key、xAI API Key、Vertex API Key 和 CPA 通用 API Key 渠道。
+- OpenCode Go。
+- OpenCode Zen，以及通过自定义 Base URL 接入的自建 `opencode-cc`；OpenCode Zen 未填写 Base URL 时默认使用 `https://opencode.ai/zen`。
+
+支持提供商名称、状态、模型数量、并发用量、Base URL、API Key、模型映射、Priority、Weight、前缀、Header、代理和渠道专用选项。API Key 始终脱敏，编辑时留空会保留原值。支持查看、测试、编辑、启用、禁用、删除、模型目录、真实模型测试、Token/成本统计、15 秒/60 秒并发、5h/7d 自定义预算、代理档案和 Codex 身份策略；无法由当前 CPA 修改的能力会显示兼容提示，而不是伪造可用状态。
+
+OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置时间、手动刷新和删除。
+
+### 操作日志、界面与更新
+
+- 操作日志覆盖导入、导出、批量修改、模型测试、策略扫描、巡检、自动处置、通知和插件更新，记录成功/失败/部分完成、失败依据、数量、脱敏样本、来源和时间。
+- 界面支持简体中文、繁体中文、English 和 Русский，并跟随 CPA 语言与主题；另提供中性、靛蓝、森林、玫瑰主题，舒适/紧凑密度，小/中/大字号，以及主标题与描述字号区分。
+- 表格排序、分页大小、筛选条件和手动测试模型会持久化。
+- 可检查并从 CPA 插件商店安装插件更新，也会展示 CPA 当前版本和最新版本。插件只检测 CPA 主程序更新，不替换 CPA 可执行文件。
+
+## 实验性功能
+
+当前仍需手动开启的实验能力为：
+
+- **Codex 5h / 7d 额度透支续用**：额度耗尽后最多探测 5 次，任意一次成功则保持启用，全部失败才自动禁用；以普通请求首次不可用时间冻结窗口基线，单独统计透支 Token 和成本，并在额度恢复后结束当前透支周期。该功能会修改 Codex 工具调用链，可能增加性能较低服务器的首字延迟。
+- **Agent Identity 与 PAT**：提供相关格式的导入、转换、登录和 CPA 原生插件鉴权路径，并兼容常见 Sub2API 结构。
+
+Sub2API 兼容成本计费、自动模型兼容白名单和 Codex 客户端身份策略均已是常驻功能，不在实验性开关中。
 
 ## 安装
 
-推荐从 CPA 插件商店安装，由 CPA 选择对应平台压缩包、校验 Checksum，并明确报告是否需要重启宿主。GitHub Release 也提供以下平台的手动安装包：
+推荐从 CPA 插件商店安装，CPA 会选择对应平台包、校验 checksum，并明确返回是否需要重启宿主。Release 同时提供：
 
 | 平台 | 架构 | 动态库 |
 | --- | --- | --- |
@@ -67,7 +102,7 @@
 | macOS | arm64 | `.dylib` |
 | Windows | amd64 | `.dll` |
 
-手动安装时，请先校验对应的 `.sha256` 文件，再将动态库解压到 CPA 的平台插件目录，并在 `config.yaml` 中启用：
+手动安装时，请校验同名 `.sha256`，解压动态库到 CPA 插件目录，并在 `config.yaml` 中启用：
 
 ```yaml
 plugins:
@@ -79,46 +114,39 @@ plugins:
       priority: 20
 ```
 
-CPA 加载插件后，在 Management Center 中打开 **CPA-A Manager**。大多数通过 CPA 插件商店完成的更新只需刷新页面；仅当宿主返回 `restart_required: true`，或已加载的动态库被系统锁定时，才需要重启 CPA。
+CPA 加载插件后，可从 Management Center 打开 **CPA-A Manager**。大多数插件商店更新只需刷新页面；只有 CPA 明确返回 `restart_required: true` 或动态库被宿主锁定时才需要完整重启。
 
 ## 配置与持久化
 
-界面会把支持的设置持久化到 CPA 插件配置中。部署层仍可使用以下可选配置字段：
+界面设置会写回 CPA 插件配置。部署层还可使用以下字段：
 
 | 字段 | 默认值 | 用途 |
 | --- | --- | --- |
-| `workers` | `6` | 账号修改并发数，限制在 1-16。 |
-| `data_dir` | `data/cpa-account-config-manager` | Usage、巡检、策略、更新、运行时所有权、任务和日志等私有状态目录。 |
-| `management_base_url` | `http://127.0.0.1:8317` | 插件执行鉴权操作时使用的 CPA Management API 回环地址。 |
+| `workers` | `6` | 账号并发写入数，限制在 1-16。 |
+| `data_dir` | `data/cpa-account-config-manager` | 用量、成本、巡检、策略、通知、更新、任务和日志的私有状态目录。 |
+| `management_base_url` | `http://127.0.0.1:8317` | 插件访问 CPA Management API 的回环地址。 |
 
-如果 CPA 运行在会被替换的容器中，请持久化挂载 `data_dir`。没有显式配置数据目录时，插件可以把脱敏 Usage 状态镜像到常见的本地 Auth 目录，但显式的持久化挂载更可预测。CPA 进程需要对 Auth 目录和实际插件数据目录具有读写权限。
-
-“实验性功能”目前包括：
-
-- Codex 5 小时与 7 天额度透支探测，依赖上游的 tool-call 续写行为。
-- Codex Agent Identity/PAT 转换和鉴权 Hook。
-
-两项功能默认关闭，并通过稳定 Hook 与标准账号管理流程隔离，因此以后可以单独移除实验实现，而无需修改常规路径。
+容器会被替换时应持久化 `data_dir`。未显式配置时，插件可在常见 Auth 目录旁保存脱敏用量状态，但显式挂载最可靠；CPA 进程需要对 Auth 目录和实际数据目录具有读写权限。
 
 ## 安全模型
 
-- 所有特权接口都是固定路径且经过鉴权的 CPA Management 路由。
-- 公共 Resource 路由只提供内嵌静态界面。
-- Management Key 仅存在于当前浏览器与 CPA 请求链路中，插件不会持久化。
-- 原始 Auth JSON、Token、Cookie、代理凭据、Header 值和原始上游响应不会进入公开模型、日志或持久化状态。
-- 导入和导出都限制账号数量和数据体积；ZIP 条目会检查路径穿越和解压膨胀。
-- 账号修改使用预览、物理 Revision、共享写入锁和冲突检查；破坏性操作需要明确确认。
-- 在平台支持的情况下，私有目录和文件使用限制性权限。
+- 所有特权操作都使用固定且经过 CPA 鉴权的 Management 路由；公共 Resource 路由只提供嵌入式静态 UI。
+- Management Key 只存在于当前浏览器/CPA 请求链路，插件不会持久化。
+- 原始 Auth JSON、Token、Cookie、API Key、代理凭据、Header 值和上游响应不会进入公开模型、日志或持久化状态。
+- 导入导出具有数量和体积限制；ZIP 会检查路径穿越和异常展开。
+- 账号写入使用预览、物理 Revision、共享写锁和冲突检查；删除、额度重置等破坏性操作需要明确确认。
+- 私有目录和文件在平台支持时使用限制性权限。
 
 ## 兼容性
 
-插件使用 CLIProxyAPI 原生插件 ABI/Schema v1，需要 CPA 支持原生插件发现、Auth list/get/save 回调、Usage Plugin 回调，以及用于 Auth 状态、字段编辑、指定账号 API 调用、删除和插件商店更新的当前鉴权 Management API。
-
-插件不导入 CLIProxyAPI Go 包，也不会修改 CPA 可执行文件。
+- 基础功能依赖 CLIProxyAPI native plugin ABI/schema v1，以及 Auth list/get/save、Usage Plugin 回调和当前鉴权 Management API。
+- 实时并发与 15 秒/60 秒限制需要较新的 CPA 请求生命周期 Hook/native plugin schema v2；旧版 CPA 会显示“不支持/暂不可用”，不会假装执行限制。
+- AI 提供商运行时和额度策略会对旧 CPA 缺少的 Management 路由做兼容降级，具体可编辑能力以当前 CPA 返回结果为准。
+- 插件不导入 CPA 的 Go 包，不修改或补丁 CPA 二进制。
 
 ## 开发
 
-环境要求：Go 1.24+、Node.js 20+、npm、`make`，以及适用于 CGO 的 C 工具链。
+需要 Go 1.24+、Node.js 20+、npm、`make` 和可用于 CGO 的 C 工具链。
 
 ```bash
 make verify
@@ -126,23 +154,16 @@ make build
 make package VERSION=X.Y.Z
 ```
 
-`make verify` 会格式化并测试 Go 代码、测试和构建 React 界面、检查内嵌资源并验证发行元数据。Release 使用 `vX.Y.Z` annotated tag；发布工作流会构建四个平台压缩包、四个对应的 `.sha256` 文件和汇总的 `checksums.txt`。
+`make verify` 会检查 Go 格式与测试、React 测试与构建、嵌入资源和发布元数据。Release tag 使用 `vX.Y.Z`；工作流为四个平台生成压缩包、对应 `.sha256` 和 `checksums.txt`。
 
 ## 致谢
 
-- 巡检设计与处置流程：
-  [seakee/CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
-- 原生巡检与任务模式：
-  [ywddd/grok-inspection](https://github.com/ywddd/grok-inspection)
-- Codex 失败和额度展示：
-  [ysxk/codex-429-autoban](https://github.com/ysxk/codex-429-autoban) 与
-  [zhumengling/codex-token-usage](https://github.com/zhumengling/codex-token-usage)
-- Agent Identity 导入与登录思路：
-  [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
-- OpenCode Go 额度监控：
-  [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
-- OpenCode Zen 与多协议桥接：
-  [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
-- 社区友链：[LINUX DO](https://linux.do/)
+- 巡检设计与处置流程：[seakee/CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
+- 原生巡检与任务模式：[ywddd/grok-inspection](https://github.com/ywddd/grok-inspection)
+- Codex 错误与额度展示：[ysxk/codex-429-autoban](https://github.com/ysxk/codex-429-autoban)、[zhumengling/codex-token-usage](https://github.com/zhumengling/codex-token-usage)
+- Agent Identity 导入与登录思路：[catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
+- OpenCode Go 额度监控：[zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
+- OpenCode Zen 与多协议桥接：[Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
+- 社区链接：[LINUX DO](https://linux.do/)
 
-以上项目为产品行为提供了参考。除非仓库许可证历史中另有明确说明，本插件没有复制这些项目的代码。
+这些项目提供了产品行为参考；除非仓库许可历史另有说明，本插件没有直接复制其代码。

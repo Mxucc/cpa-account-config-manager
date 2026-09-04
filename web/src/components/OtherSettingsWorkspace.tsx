@@ -34,24 +34,29 @@ import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
 import { readPluginDensity, readPluginTheme, readPluginThemeEnabled, resetPluginTheme, setPluginDensity, setPluginTheme, setPluginThemeEnabled, type PluginDensity, type PluginThemePreset } from "../store/pluginTheme";
 
+export type OtherSettingsSection = "automation" | "proxy_profiles" | "notifications" | "updates" | "experimental";
+
 interface OtherSettingsWorkspaceProps {
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
   forceLoading?: boolean;
   onForcePreview?: () => void;
   onExperimentalSettingsChange?: (settings: ExperimentalSettings) => void;
-  initialSection?: "automation" | "proxy_profiles" | "notifications" | "updates" | "experimental";
+  initialSection?: OtherSettingsSection;
+  /** Restrict the embedded tabs without changing the legacy default workspace. */
+  visibleSections?: OtherSettingsSection[];
   standalone?: boolean;
 }
 
 const ignoreExperimentalSettingsChange = (_settings: ExperimentalSettings) => undefined;
 
-export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined, onExperimentalSettingsChange = ignoreExperimentalSettingsChange, initialSection = "automation", standalone = false }: OtherSettingsWorkspaceProps) {
+export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = false, onForcePreview = () => undefined, onExperimentalSettingsChange = ignoreExperimentalSettingsChange, initialSection = "automation", visibleSections, standalone = false }: OtherSettingsWorkspaceProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<"automation" | "proxy_profiles" | "notifications" | "updates" | "experimental">(initialSection);
+  const [activeSection, setActiveSection] = useState<OtherSettingsSection>(initialSection);
+  const sections = visibleSections ?? ["automation", "proxy_profiles", "notifications", "updates", "experimental"];
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
   const [typographyDistinction, setTypographyDistinction] = useState(readTypographyDistinction);
   const [pluginTheme, setPluginThemeState] = useState<PluginThemePreset>(readPluginTheme);
@@ -283,22 +288,22 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         </button>
       </header>
 
-      {!standalone ? <div className="other-settings-tabs" role="tablist" aria-label={tx("ui.other_settings_sections")}>
-        <button type="button" role="tab" aria-selected={activeSection === "automation"} className={activeSection === "automation" ? "active" : ""} onClick={() => setActiveSection("automation")}>
+      {!standalone ? <div className={`other-settings-tabs other-settings-tabs-${sections.length}`} role="tablist" aria-label={tx("ui.other_settings_sections")}>
+        {sections.includes("automation") ? <button type="button" role="tab" aria-selected={activeSection === "automation"} className={activeSection === "automation" ? "active" : ""} onClick={() => setActiveSection("automation")}>
           <Workflow size={15} />{tx("ui.automation_policy")}
-        </button>
-        <button type="button" role="tab" aria-selected={activeSection === "proxy_profiles"} className={activeSection === "proxy_profiles" ? "active" : ""} onClick={() => setActiveSection("proxy_profiles")}>
+        </button> : null}
+        {sections.includes("proxy_profiles") ? <button type="button" role="tab" aria-selected={activeSection === "proxy_profiles"} className={activeSection === "proxy_profiles" ? "active" : ""} onClick={() => setActiveSection("proxy_profiles")}>
           <Network size={15} />{tx("ui.proxy_profiles")}
-        </button>
-        <button type="button" role="tab" aria-selected={activeSection === "notifications"} className={activeSection === "notifications" ? "active" : ""} onClick={() => setActiveSection("notifications")}>
+        </button> : null}
+        {sections.includes("notifications") ? <button type="button" role="tab" aria-selected={activeSection === "notifications"} className={activeSection === "notifications" ? "active" : ""} onClick={() => setActiveSection("notifications")}>
           <BellRing size={15} />{tx("ui.external_notifications")}
-        </button>
-        <button type="button" role="tab" aria-selected={activeSection === "updates"} className={activeSection === "updates" ? "active" : ""} onClick={() => setActiveSection("updates")}>
+        </button> : null}
+        {sections.includes("updates") ? <button type="button" role="tab" aria-selected={activeSection === "updates"} className={activeSection === "updates" ? "active" : ""} onClick={() => setActiveSection("updates")}>
           <Server size={15} />{tx("ui.plugin_configuration_and_version")}
-        </button>
-        <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
+        </button> : null}
+        {sections.includes("experimental") ? <button type="button" role="tab" aria-selected={activeSection === "experimental"} className={activeSection === "experimental" ? "active" : ""} onClick={() => setActiveSection("experimental")}>
           <FlaskConical size={15} />{tx("ui.experimental_features")}
-        </button>
+        </button> : null}
       </div> : null}
 
       {error ? <div className="automation-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError("")}>{tx("ui.close")}</button></div> : null}

@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  BellRing,
   Boxes,
   ChevronLeft,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
   CircleHelp,
   LoaderCircle,
   LockKeyhole,
+  Network,
   Power,
   PowerOff,
   Pencil,
@@ -30,6 +32,7 @@ import {
   UserPlus,
   Wifi,
   WifiOff,
+  Workflow,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -48,6 +51,9 @@ import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { AIProvidersSettings } from "./components/AIProvidersSettings";
 import { OperationLogWorkspace } from "./components/OperationLogWorkspace";
+import { AutomationPolicySettings } from "./components/AutomationPolicySettings";
+import { ProxyProfilesSettings } from "./components/ProxyProfilesSettings";
+import { ExternalNotificationSettings } from "./components/ExternalNotificationSettings";
 import { RiskControlWorkspace } from "./components/RiskControlWorkspace";
 import { OtherSettingsWorkspace } from "./components/OtherSettingsWorkspace";
 import { PluginUpdateAutomation } from "./components/PluginUpdateAutomation";
@@ -225,7 +231,7 @@ export default function App() {
 function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "risk" | "providers" | "operations" | "settings">("accounts");
+  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "operations" | "risk" | "automation" | "proxy_profiles" | "notifications" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -1136,9 +1142,12 @@ function AccountManagerApp() {
           <button type="button" className={activeView === "dashboard" ? "active" : ""} aria-current={activeView === "dashboard" ? "page" : undefined} onClick={() => setActiveView("dashboard")}><Gauge size={16} /><span>{tx("ui.dashboard")}</span></button>
           <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} /><span>{tx("ui.accounts")}</span></button>
           <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} /><span>{tx("ui.inspection_and_automation")}</span></button>
-          <button type="button" className={activeView === "risk" ? "active" : ""} aria-current={activeView === "risk" ? "page" : undefined} onClick={() => setActiveView("risk")}><ShieldAlert size={16} /><span>{tx("ui.risk_control_center")}</span></button>
           <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} /><span>{tx("ui.ai_providers")}</span></button>
           <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} /><span>{tx("ui.operation_log")}</span></button>
+          <button type="button" className={activeView === "risk" ? "active" : ""} aria-current={activeView === "risk" ? "page" : undefined} onClick={() => setActiveView("risk")}><ShieldAlert size={16} /><span>{tx("ui.risk_control_center")}</span></button>
+          <button type="button" className={activeView === "automation" ? "active" : ""} aria-current={activeView === "automation" ? "page" : undefined} onClick={() => setActiveView("automation")}><Workflow size={16} /><span>{tx("ui.automation_policy")}</span></button>
+          <button type="button" className={activeView === "proxy_profiles" ? "active" : ""} aria-current={activeView === "proxy_profiles" ? "page" : undefined} onClick={() => setActiveView("proxy_profiles")}><Network size={16} /><span>{tx("ui.proxy_profiles")}</span></button>
+          <button type="button" className={activeView === "notifications" ? "active" : ""} aria-current={activeView === "notifications" ? "page" : undefined} onClick={() => setActiveView("notifications")}><BellRing size={16} /><span>{tx("ui.external_notifications")}</span></button>
           <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} /><span>{tx("ui.other_settings")}</span></button>
         </nav>
         <div className="sidebar-telemetry" aria-live="polite">
@@ -1160,11 +1169,17 @@ function AccountManagerApp() {
                   ? tx("ui.inspection_and_automation")
                   : activeView === "providers"
                     ? tx("ui.ai_providers")
-                    : activeView === "risk"
-                      ? tx("ui.risk_control_center")
                     : activeView === "operations"
                       ? tx("ui.operation_log")
-                      : tx("ui.other_settings")} · CPA Account Config Manager</p>
+                      : activeView === "risk"
+                        ? tx("ui.risk_control_center")
+                        : activeView === "automation"
+                          ? tx("ui.automation_policy")
+                          : activeView === "proxy_profiles"
+                            ? tx("ui.proxy_profiles")
+                            : activeView === "notifications"
+                              ? tx("ui.external_notifications")
+                              : tx("ui.other_settings")} · CPA Account Config Manager</p>
           </div>
           <div className="workspace-controls">
             <div className="header-status">
@@ -1361,8 +1376,6 @@ function AccountManagerApp() {
         </section>
         ) : activeView === "inspection" ? (
           <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} onAccountsChanged={requestInspectionAccountSync} />
-        ) : activeView === "risk" ? (
-          <RiskControlWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "providers" ? (
           <AIProvidersSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "operations" ? (
@@ -1380,6 +1393,14 @@ function AccountManagerApp() {
               }
             }}
           />
+        ) : activeView === "risk" ? (
+          <RiskControlWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
+        ) : activeView === "automation" ? (
+          <AutomationPolicySettings refreshRevision={0} forceLoading={forcePreviewLoading} onAPIError={handleAPIError} onNotice={setNotice} onForcePreview={() => void previewForceSync()} />
+        ) : activeView === "proxy_profiles" ? (
+          <ProxyProfilesSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
+        ) : activeView === "notifications" ? (
+          <ExternalNotificationSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : (
           <OtherSettingsWorkspace
             onAPIError={handleAPIError}
@@ -1387,6 +1408,8 @@ function AccountManagerApp() {
             forceLoading={forcePreviewLoading}
             onForcePreview={() => void previewForceSync()}
             onExperimentalSettingsChange={handleExperimentalSettingsChange}
+            initialSection="updates"
+            visibleSections={["updates", "experimental"]}
           />
         )}
       </div>

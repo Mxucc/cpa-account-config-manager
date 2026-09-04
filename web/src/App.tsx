@@ -1489,6 +1489,7 @@ function AccountLifecycleTime({ value }: { value?: string }) {
 	const { formatDateTime } = useI18n();
 	if (!value) return <span className="account-time-empty">-</span>;
 	const formatted = formatDateTime(value);
+	if (formatted === "-") return <span className="account-time-empty">-</span>;
 	return <time className="account-lifecycle-time" dateTime={value} title={formatted}>{formatted}</time>;
 }
 
@@ -1499,12 +1500,13 @@ function AccountQuotaMetadataCell({ account, busy, onRefresh, onReset }: { accou
 	const count = account.usage?.codex?.active_reset_count;
 	const known = typeof count === "number" && Number.isFinite(count) && count >= 0;
 	const observedAt = account.usage?.codex?.metadata_observed_at;
+	const observedAtLabel = formatDateTime(observedAt);
 	if (!supported) return <span className="quota-metadata-unsupported">-</span>;
 	return (
 		<div className="quota-metadata-cell">
 			<div className="quota-metadata-value"><strong>{known ? formatNumber(count) : "-"}</strong><IconButton label={tx("ui.refresh_plan_and_active_reset", { account: account.label || account.email || account.name || account.id })} disabled={Boolean(busy)} onClick={onRefresh}>{busy === "refresh" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}</IconButton></div>
 			{known && count > 0 ? <button className="quota-reset-button" type="button" disabled={Boolean(busy)} onClick={onReset}>{busy === "reset" ? <LoaderCircle className="spin" size={12} /> : <RotateCcw size={12} />}{tx("ui.use_active_reset")}</button> : null}
-			<small>{observedAt ? tx("ui.quota_metadata_collected_at", { time: formatDateTime(observedAt) }) : tx("ui.not_collected")}</small>
+			<small>{observedAtLabel !== "-" ? tx("ui.quota_metadata_collected_at", { time: observedAtLabel }) : tx("ui.not_collected")}</small>
 		</div>
 	);
 }
@@ -1519,10 +1521,10 @@ function AccountConcurrencyCell({ account }: { account: Account }) {
 	const fifteenSecondLimit = accountConcurrencyLimitLabel(account.concurrency, "15s");
 	const saturated = accountConcurrencySaturated(account.concurrency);
 	return (
-		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={tx("ui.account_concurrency_dual_window_title", { active: account.concurrency.active, used15s: account.concurrency.used_15s, limit15s: fifteenSecondLimit, used60s: account.concurrency.used_60s, limit60s: minuteLimit })}>
-			<span>{tx("ui.account_concurrency_active_short")} <strong>{account.concurrency.active}</strong></span>
-			<span>{tx("ui.account_concurrency_15s_short")} <strong>{account.concurrency.used_15s}</strong>/<strong>{fifteenSecondLimit}</strong></span>
-			<span>{tx("ui.account_concurrency_60s_short")} <strong>{account.concurrency.used_60s}</strong>/<strong>{minuteLimit}</strong></span>
+		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={tx("ui.account_concurrency_dual_window_title", { active: account.concurrency.active, shortWindow: `${account.concurrency.used_15s}/${fifteenSecondLimit}`, minuteWindow: `${account.concurrency.used_60s}/${minuteLimit}` })}>
+			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_active")}</span><strong>{account.concurrency.active}</strong></span>
+			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_15s")}</span><strong>{account.concurrency.used_15s}/{fifteenSecondLimit}</strong></span>
+			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_60s")}</span><strong>{account.concurrency.used_60s}/{minuteLimit}</strong></span>
 		</div>
 	);
 }

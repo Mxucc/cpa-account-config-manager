@@ -14,7 +14,9 @@ interface I18nValue {
 function formatDateTimeForLocale(locale: Locale, value?: string | Date): string {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
+  // Go zero-value timestamps are commonly serialized as year 1. They mean
+  // "not observed" in CPA responses and must not surface as a real date.
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) return "-";
   const format = localeFormats[locale];
   return new Intl.DateTimeFormat(format.dateTimeLocale, {
     year: "numeric",

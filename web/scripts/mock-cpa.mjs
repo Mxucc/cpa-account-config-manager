@@ -1770,6 +1770,21 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname.endsWith("/inspection/live")) {
     return json(response, 200, mockInspectionSnapshot(Date.now() < inspectionRunUntil), { "Cache-Control": "no-store" });
   }
+  if (url.pathname.endsWith("/risk-control") || url.pathname.endsWith("/risk-control/events") || url.pathname.endsWith("/risk-control/hashes")) {
+    const current = state.riskControl ?? {
+      config: { enabled: true, mode: "observe", blocked_keywords: ["credential theft", "exfiltrate"], model_filter: { mode: "all", models: [] }, pre_hash_check_enabled: true, block_status: 403, block_message: "request blocked by the configured risk-control policy", event_retention_days: 30, max_events: 500 },
+      status: { active: true, mode: "observe", total_events: 3, observed: 3, blocked: 0, keyword_hits: 2, hash_hits: 1, remembered_hashes: 12 },
+      events: [
+        { id: "risk-demo-1", time: new Date(Date.now() - 240000).toISOString(), action: "keyword_observe", account_ref: "acct:5d9a…", provider: "codex", model: "gpt-5.5", format: "codex", matched_rules: ["kw:ab12cd"], input_hash: "ab12cd34ef56", latency_ms: 2 },
+        { id: "risk-demo-2", time: new Date(Date.now() - 660000).toISOString(), action: "hash_observe", account_ref: "acct:0c7f…", provider: "codex", model: "gpt-5.4-mini", format: "openai", input_hash: "0c7fa9b01234", latency_ms: 1 },
+      ],
+    };
+    if (request.method === "GET") return json(current);
+    if (request.method === "PUT") { state.riskControl = { ...current, config: await request.json() }; state.riskControl.status = { ...current.status, mode: state.riskControl.config.mode, active: state.riskControl.config.enabled && state.riskControl.config.mode !== "off" }; return json(state.riskControl); }
+    if (request.method === "DELETE" && url.pathname.endsWith("/events")) { state.riskControl = { ...current, events: [], status: { ...current.status, total_events: 0, observed: 0, blocked: 0, keyword_hits: 0, hash_hits: 0 } }; return json(state.riskControl); }
+    if (request.method === "DELETE" && url.pathname.endsWith("/hashes")) { state.riskControl = { ...current, status: { ...current.status, remembered_hashes: 0 } }; return json(state.riskControl); }
+  }
+
   if (request.method === "GET" && url.pathname.endsWith("/inspection")) {
     return json(response, 200, mockInspectionSnapshot());
   }

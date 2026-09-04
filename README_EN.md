@@ -3,7 +3,7 @@
 [中文文档](README.md)
 
 `cpa-account-config-manager` is a native
-[CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin for managing accounts, AI providers, usage, routing policy, and automation from the CPA Management Center. It brings batch configuration, format conversion, model probes, quota and cost accounting, inspection, remediation, proxies, notifications, and audit logs into one CPA-authenticated workspace while keeping raw credentials out of browser-visible data and logs.
+[CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin for managing accounts, AI providers, usage, routing policy, and automation from the CPA Management Center. It brings batch configuration, format conversion, model probes, quota and cost accounting, request risk control, inspection, remediation, proxies, notifications, and audit logs into one CPA-authenticated workspace while keeping raw credentials out of browser-visible data and logs.
 
 ## Core Capabilities
 
@@ -36,6 +36,16 @@ Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, and Codex Manage
 - Sub2API-compatible credit accounting is a permanent, default-on capability. Model prices synchronize in the background, successful requests are estimated in USD while raw token totals remain available, and very small costs retain useful precision.
 - Accounts and supported AI providers can show current concurrency and enforce independent 15-second and 60-second rolling-window limits. `0` or an empty value means unlimited; both windows are enforced together.
 - Account quota policies use the official 5h/7d percentages returned by CPA. AI providers can define 5h/7d token budgets and then apply percentage thresholds to those budgets.
+
+### Risk Control Center
+
+- Inspired by Sub2API's content-risk workflow, the plugin runs a native check at the front of CPA's request-transformer chain. It supports disabled, observe-only (`observe`), and pre-routing block (`pre_block`) modes.
+- Configure local blocked keywords plus all/include/exclude model filters, the public block status and message, event retention, and the maximum event count.
+- Optional SHA-256 input-hash memory reuses a confirmed risk result so an identical normalized input can still be recognized after keyword changes. Both runtime insertion and persisted-state loading are capped at 4,096 hashes.
+- The workspace reports observed, blocked, keyword-hit, and hash-hit totals with sanitized events, and can clear events or remembered hashes independently.
+- Risk-control storage and Management APIs never retain prompt text, excerpts, request headers, tokens, cookies, API keys, or proxy credentials. Account identifiers are SHA-256-pseudonymized and matched rules are stored only as irreversible `kw:` references.
+- The risk center contains content moderation, prompt auditing, and custom auditing modules; external audits persist only the endpoint, model, scanners, queue/timeout settings, and credential environment-variable name, with fail-open/fail-closed policies.
+- Account quota limits use only CPA-collected official Codex 5-hour and 7-day usage percentages; each window has an independent threshold, blank means unlimited, and missing official usage is passed through rather than fabricated.
 
 ### Model Tests, Routing, And Codex Identity
 

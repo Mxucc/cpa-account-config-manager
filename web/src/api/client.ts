@@ -2362,3 +2362,23 @@ function parseProxyProfile(value: unknown): ProxyProfileView {
 	if (normalized.profiles.length !== 1) throw new APIError(502, "ui.invalid_api_response");
 	return normalized.profiles[0];
 }
+
+
+export async function getRiskControl(signal?: AbortSignal): Promise<import("../types").RiskControlSnapshot> {
+  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control`, { signal });
+}
+
+export async function saveRiskControl(config: import("../types").RiskControlConfig): Promise<import("../types").RiskControlSnapshot> {
+  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control`, {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+}
+
+export async function clearRiskControlEvents(): Promise<import("../types").RiskControlSnapshot> {
+  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control/events`, { method: "DELETE" });
+}
+
+export async function clearRiskControlHashes(): Promise<import("../types").RiskControlSnapshot> {
+  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control/hashes`, { method: "DELETE" });
+}

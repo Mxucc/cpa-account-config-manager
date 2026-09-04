@@ -27,38 +27,71 @@ func concurrencyRequest(requestID, authID string) cpaapi.RequestInterceptRequest
 	}
 }
 
-func TestAccountConcurrencyRejectsOnlyTheSaturatedAccount(t *testing.T) {
+func TestAccountConcurrencyWaitsForSaturatedAccountWithout429(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
-	if errSet := service.SetLimit(Account{ID: "index-a", AuthID: "auth-a"}, 1); errSet != nil {
+	service.maxWait = 2 * time.Second
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	accountA := Account{ID: "index-a", AuthID: "auth-a"}
+	accountB := Account{ID: "index-b", AuthID: "auth-b"}
+	if errSet := service.SetLimit(accountA, 1); errSet != nil {
 		t.Fatalf("SetLimit(auth-a) error = %v", errSet)
 	}
-	if errSet := service.SetLimit(Account{ID: "index-b", AuthID: "auth-b"}, 1); errSet != nil {
+	if errSet := service.SetLimit(accountB, 1); errSet != nil {
 		t.Fatalf("SetLimit(auth-b) error = %v", errSet)
 	}
-
 	if response, changed := service.InterceptRequest(concurrencyRequest("request-a-1", "auth-a")); changed || response.Terminate {
 		t.Fatalf("first auth-a admission = %#v, changed %v", response, changed)
 	}
-	response, changed := service.InterceptRequest(concurrencyRequest("request-a-2", "auth-a"))
-	if !changed || !response.Terminate || response.StatusCode != http.StatusTooManyRequests || response.ResponseHeaders.Get("Retry-After") != "1" {
-		t.Fatalf("second auth-a admission = %#v, changed %v", response, changed)
+
+	type admissionResult struct {
+		response cpaapi.RequestInterceptResponse
+		changed  bool
 	}
-	if !json.Valid(response.ResponseBody) || !strings.Contains(string(response.ResponseBody), "account_concurrency_limit_reached") {
-		t.Fatalf("rejection body = %q", response.ResponseBody)
+	result := make(chan admissionResult, 1)
+	go func() {
+		response, changed := service.InterceptRequest(concurrencyRequest("request-a-2", "auth-a"))
+		result <- admissionResult{response: response, changed: changed}
+	}()
+	deadline := time.Now().Add(time.Second)
+	for service.Summary("auth-a").Waiting != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("waiter was not registered: %#v", service.Summary("auth-a"))
+		}
+		time.Sleep(time.Millisecond)
 	}
 	if response, changed := service.InterceptRequest(concurrencyRequest("request-b-1", "auth-b")); changed || response.Terminate {
 		t.Fatalf("auth-b admission was affected by auth-a = %#v, changed %v", response, changed)
 	}
-	if got := service.Summary("auth-a"); got.Active != 1 || got.Limit != 1 {
-		t.Fatalf("auth-a summary = %#v", got)
+	if got := service.Summary("auth-a"); got.Active != 1 || got.Waiting != 1 || got.Limit != 1 {
+		t.Fatalf("auth-a saturated summary = %#v", got)
 	}
-	if got := service.Summary("auth-b"); got.Active != 1 || got.Limit != 1 {
-		t.Fatalf("auth-b summary = %#v", got)
+
+	// Move the fake clock past the rolling minute and wake the waiter. The
+	// request must be admitted instead of receiving a synthetic 429.
+	now = now.Add(61 * time.Second)
+	if errSet := service.SetLimit(accountA, 1); errSet != nil {
+		t.Fatalf("wake saturated account error = %v", errSet)
 	}
+	select {
+	case outcome := <-result:
+		if outcome.changed || outcome.response.Terminate {
+			t.Fatalf("waited admission = %#v, changed %v", outcome.response, outcome.changed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("saturated request was not admitted after the window opened")
+	}
+	if got := service.Summary("auth-a"); got.Active != 2 || got.Waiting != 0 {
+		t.Fatalf("auth-a admitted summary = %#v", got)
+	}
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-a-1"})
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-a-2"})
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-b-1"})
 }
 
 func TestAccountConcurrencyEnforcesFifteenSecondAndMinuteWindows(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	service.maxWait = 0
 	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 	minuteLimit, fifteenSecondLimit := 3, 2
@@ -75,8 +108,8 @@ func TestAccountConcurrencyEnforcesFifteenSecondAndMinuteWindows(t *testing.T) {
 		t.Fatalf("summary after first window = %#v", got)
 	}
 	response, changed := service.InterceptRequest(concurrencyRequest("request-3", "auth-a"))
-	if !changed || !response.Terminate || !strings.Contains(string(response.ResponseBody), `"window_seconds":15`) {
-		t.Fatalf("15-second request was not rejected: %#v changed=%v", response, changed)
+	if !changed || !response.Terminate || response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(response.ResponseBody), "account_concurrency_wait_timeout") {
+		t.Fatalf("15-second saturated request did not fail safely: %#v changed=%v", response, changed)
 	}
 	now = now.Add(16 * time.Second)
 	if response, changed = service.InterceptRequest(concurrencyRequest("request-3", "auth-a")); changed || response.Terminate {
@@ -84,8 +117,8 @@ func TestAccountConcurrencyEnforcesFifteenSecondAndMinuteWindows(t *testing.T) {
 	}
 	service.Complete(cpaapi.RequestCompletion{RequestID: "request-3"})
 	response, changed = service.InterceptRequest(concurrencyRequest("request-4", "auth-a"))
-	if !changed || !response.Terminate || !strings.Contains(string(response.ResponseBody), `"window_seconds":60`) {
-		t.Fatalf("minute request was not rejected: %#v changed=%v", response, changed)
+	if !changed || !response.Terminate || response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(response.ResponseBody), "account_concurrency_wait_timeout") {
+		t.Fatalf("minute saturated request did not fail safely: %#v changed=%v", response, changed)
 	}
 }
 
@@ -114,6 +147,7 @@ func TestAccountConcurrencyUpdatingOneWindowPreservesTheOther(t *testing.T) {
 
 func TestAccountConcurrencyCompletionIsIdempotentForEveryOutcome(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	service.maxWait = 0
 	if errSet := service.SetLimit(Account{ID: "index-a", AuthID: "auth-a"}, 1); errSet != nil {
 		t.Fatalf("SetLimit() error = %v", errSet)
 	}
@@ -197,6 +231,7 @@ func TestAccountConcurrencyTracksUnlimitedAccounts(t *testing.T) {
 
 func TestAccountConcurrencyDynamicLimitAndClear(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	service.maxWait = 0
 	account := Account{ID: "index-a", AuthID: "auth-a"}
 	if errSet := service.SetLimit(account, 2); errSet != nil {
 		t.Fatalf("SetLimit(2) error = %v", errSet)

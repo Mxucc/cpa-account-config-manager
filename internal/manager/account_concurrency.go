@@ -17,11 +17,15 @@ import (
 )
 
 const (
-	accountConcurrencyStoreVersion  = 1
-	MaxAccountConcurrencyLimit      = 1000
-	accountConcurrencyLeaseTTL      = 24 * time.Hour
-	accountConcurrencyPruneInterval = time.Minute
-	selectedAuthMetadataKey         = "selected_auth_id"
+	accountConcurrencyStoreVersion      = 1
+	MaxAccountConcurrencyLimit          = 1000
+	accountConcurrencyLeaseTTL          = 24 * time.Hour
+	accountConcurrencyPruneInterval     = time.Minute
+	accountConcurrencyMaxWait           = 60 * time.Second
+	accountConcurrencyMaxWaitersAccount = 100
+	accountConcurrencyMaxWaitersTotal   = 1000
+	accountConcurrencyTombstoneTTL      = 2 * time.Minute
+	selectedAuthMetadataKey             = "selected_auth_id"
 )
 
 var (
@@ -44,6 +48,7 @@ type AccountConcurrencySummary struct {
 	Supported       bool `json:"supported"`
 	Limit           int  `json:"limit"`
 	Active          int  `json:"active"`
+	Waiting         int  `json:"waiting"`
 }
 
 type accountConcurrencyRecord struct {
@@ -64,29 +69,47 @@ type accountConcurrencyAdmission struct {
 }
 
 type AccountConcurrencyService struct {
-	mu         sync.Mutex
-	store      string
-	loaded     bool
-	loadFailed bool
-	storageErr string
-	hostSchema uint32
-	limits     map[string]accountConcurrencyRecord
-	active     map[string]int
-	requests   map[string]accountConcurrencyAdmission
-	events     map[string][]time.Time
-	now        func() time.Time
-	nextPrune  time.Time
-	activeGate atomic.Bool
+	mu              sync.Mutex
+	store           string
+	loaded          bool
+	loadFailed      bool
+	storageErr      string
+	hostSchema      uint32
+	limits          map[string]accountConcurrencyRecord
+	active          map[string]int
+	requests        map[string]accountConcurrencyAdmission
+	events          map[string][]time.Time
+	waiting         map[string]int
+	waitingRequests map[string]string
+	canceled        map[string]time.Time
+	wake            chan struct{}
+	epoch           uint64
+	shuttingDown    bool
+	now             func() time.Time
+	maxWait         time.Duration
+	maxWaiters      int
+	maxWaitersTotal int
+	tombstoneTTL    time.Duration
+	nextPrune       time.Time
+	activeGate      atomic.Bool
 }
 
 func NewAccountConcurrencyService() *AccountConcurrencyService {
 	return &AccountConcurrencyService{
-		hostSchema: cpaapi.SchemaVersion,
-		limits:     make(map[string]accountConcurrencyRecord),
-		active:     make(map[string]int),
-		requests:   make(map[string]accountConcurrencyAdmission),
-		events:     make(map[string][]time.Time),
-		now:        time.Now,
+		hostSchema:      cpaapi.SchemaVersion,
+		limits:          make(map[string]accountConcurrencyRecord),
+		active:          make(map[string]int),
+		requests:        make(map[string]accountConcurrencyAdmission),
+		events:          make(map[string][]time.Time),
+		waiting:         make(map[string]int),
+		waitingRequests: make(map[string]string),
+		canceled:        make(map[string]time.Time),
+		wake:            make(chan struct{}),
+		now:             time.Now,
+		maxWait:         accountConcurrencyMaxWait,
+		maxWaiters:      accountConcurrencyMaxWaitersAccount,
+		maxWaitersTotal: accountConcurrencyMaxWaitersTotal,
+		tombstoneTTL:    accountConcurrencyTombstoneTTL,
 	}
 }
 
@@ -102,7 +125,6 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 	hostSchema = normalizeHostSchemaVersion(hostSchema)
 	storePath := accountConcurrencyStorePath(config.DataDir)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	previousSchema := s.hostSchema
 	s.hostSchema = hostSchema
 	sameStore := s.loaded && s.store == storePath
@@ -114,10 +136,13 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 		s.active = make(map[string]int)
 		s.requests = make(map[string]accountConcurrencyAdmission)
 		s.events = make(map[string][]time.Time)
+		s.cancelWaitersLocked()
 		s.nextPrune = time.Time{}
 	}
+	s.shuttingDown = false
 	if sameStore && !s.loadFailed {
 		s.updateActiveGateLocked()
+		s.mu.Unlock()
 		return
 	}
 	s.store = storePath
@@ -134,12 +159,14 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 			s.storageErr = ""
 		}
 		s.updateActiveGateLocked()
+		s.mu.Unlock()
 		return
 	}
 	s.limits = loaded
 	s.loadFailed = false
 	s.storageErr = ""
 	s.updateActiveGateLocked()
+	s.mu.Unlock()
 }
 
 func normalizeHostSchemaVersion(version uint32) uint32 {
@@ -178,7 +205,7 @@ func (s *AccountConcurrencyService) Summary(authID string) AccountConcurrencySum
 	record := s.limits[authID]
 	now := s.now().UTC()
 	used60, used15 := s.windowUsageLocked(authID, now)
-	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, FifteenSecLimit: record.Limit15s, Active: s.active[authID], Used60s: used60, Used15s: used15}
+	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, FifteenSecLimit: record.Limit15s, Active: s.active[authID], Waiting: s.waiting[authID], Used60s: used60, Used15s: used15}
 }
 
 func (s *AccountConcurrencyService) SetLimit(account Account, limit int) error {
@@ -231,6 +258,7 @@ func (s *AccountConcurrencyService) SetLimits(account Account, minuteLimit, fift
 	s.loadFailed = false
 	s.storageErr = ""
 	s.updateActiveGateLocked()
+	s.broadcastLocked()
 	return nil
 }
 
@@ -246,7 +274,11 @@ func (s *AccountConcurrencyService) RequestInterceptionAcceptsFormat(string) boo
 }
 
 func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
-	if s == nil || strings.TrimSpace(request.RequestID) == "" {
+	if s == nil {
+		return cpaapi.RequestInterceptResponse{}, false
+	}
+	requestID := strings.TrimSpace(request.RequestID)
+	if requestID == "" {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
 	authID, _ := request.Metadata[selectedAuthMetadataKey].(string)
@@ -254,70 +286,180 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 	if authID == "" {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
-	now := s.now().UTC()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.hostSchema < cpaapi.SchemaVersion {
-		return cpaapi.RequestInterceptResponse{}, false
-	}
-	s.pruneExpiredLocked(now)
-	if current, exists := s.requests[request.RequestID]; exists {
-		if current.AuthID == authID {
+
+	deadline := s.now().UTC().Add(s.maxWait)
+	registered := false
+	var waitEpoch uint64
+	for {
+		now := s.now().UTC()
+		s.mu.Lock()
+		s.pruneExpiredLocked(now)
+
+		if _, canceled := s.canceled[requestID]; canceled {
+			delete(s.canceled, requestID)
+			if registered {
+				s.removeWaiterLocked(requestID, authID)
+			}
+			s.mu.Unlock()
+			return accountConcurrencyUnavailableResponse("account_concurrency_wait_canceled", "the request completed before account admission", time.Second), true
+		}
+		if s.shuttingDown || (registered && waitEpoch != s.epoch) {
+			if registered {
+				s.removeWaiterLocked(requestID, authID)
+			}
+			s.mu.Unlock()
+			return accountConcurrencyUnavailableResponse("account_concurrency_wait_interrupted", "account admission was interrupted by plugin reconfiguration", time.Second), true
+		}
+		if s.hostSchema < cpaapi.SchemaVersion {
+			if registered {
+				s.removeWaiterLocked(requestID, authID)
+			}
+			s.mu.Unlock()
 			return cpaapi.RequestInterceptResponse{}, false
 		}
-		delete(s.requests, request.RequestID)
-		if s.active[current.AuthID] <= 1 {
-			delete(s.active, current.AuthID)
-		} else {
-			s.active[current.AuthID]--
+		if current, exists := s.requests[requestID]; exists {
+			if current.AuthID == authID {
+				if registered {
+					s.removeWaiterLocked(requestID, authID)
+				}
+				s.mu.Unlock()
+				return cpaapi.RequestInterceptResponse{}, false
+			}
+			delete(s.requests, requestID)
+			s.decrementActiveLocked(current.AuthID)
+		}
+
+		record := s.limits[authID]
+		used60, used15 := s.windowUsageLocked(authID, now)
+		waitFor, saturated := s.nextAdmissionWaitLocked(authID, record, used60, used15, now)
+		if !saturated {
+			if registered {
+				s.removeWaiterLocked(requestID, authID)
+			}
+			s.active[authID]++
+			s.events[authID] = append(s.events[authID], now)
+			s.requests[requestID] = accountConcurrencyAdmission{AuthID: authID, AdmittedAt: now}
+			s.mu.Unlock()
+			return cpaapi.RequestInterceptResponse{}, false
+		}
+
+		if !registered {
+			if _, duplicate := s.waitingRequests[requestID]; duplicate {
+				s.mu.Unlock()
+				return accountConcurrencyUnavailableResponse("account_concurrency_duplicate_wait", "the request is already waiting for account admission", time.Second), true
+			}
+			if s.waiting[authID] >= s.maxWaiters || len(s.waitingRequests) >= s.maxWaitersTotal {
+				s.mu.Unlock()
+				return accountConcurrencyUnavailableResponse("account_concurrency_queue_full", "the selected account wait queue is full", waitFor), true
+			}
+			s.waiting[authID]++
+			s.waitingRequests[requestID] = authID
+			registered = true
+			waitEpoch = s.epoch
+		}
+
+		remaining := deadline.Sub(s.now().UTC())
+		if s.maxWait <= 0 || remaining <= 0 {
+			s.removeWaiterLocked(requestID, authID)
+			s.mu.Unlock()
+			return accountConcurrencyUnavailableResponse("account_concurrency_wait_timeout", "timed out waiting for account admission", waitFor), true
+		}
+		if waitFor <= 0 {
+			waitFor = time.Millisecond
+		}
+		if waitFor > remaining {
+			waitFor = remaining
+		}
+		wake := s.wake
+		s.mu.Unlock()
+
+		timer := time.NewTimer(waitFor)
+		select {
+		case <-wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
 		}
 	}
-	record := s.limits[authID]
-	used60, used15 := s.windowUsageLocked(authID, now)
-	if record.Limit15s > 0 && used15 >= record.Limit15s {
-		return accountConcurrencyRejectedResponse(record.Limit15s, 15, used15), true
-	}
-	if record.Limit > 0 && used60 >= record.Limit {
-		return accountConcurrencyRejectedResponse(record.Limit, 60, used60), true
-	}
-	s.active[authID]++
-	s.events[authID] = append(s.events[authID], now)
-	s.requests[request.RequestID] = accountConcurrencyAdmission{AuthID: authID, AdmittedAt: now}
-	return cpaapi.RequestInterceptResponse{}, false
 }
 
-func accountConcurrencyRejectedResponse(limit, window, used int) cpaapi.RequestInterceptResponse {
+func (s *AccountConcurrencyService) nextAdmissionWaitLocked(authID string, record accountConcurrencyRecord, used60, used15 int, now time.Time) (time.Duration, bool) {
+	var availableAt time.Time
+	if record.Limit15s > 0 && used15 >= record.Limit15s {
+		if candidate := windowAvailableAt(s.events[authID], now, 15*time.Second, record.Limit15s, used15); candidate.After(availableAt) {
+			availableAt = candidate
+		}
+	}
+	if record.Limit > 0 && used60 >= record.Limit {
+		if candidate := windowAvailableAt(s.events[authID], now, time.Minute, record.Limit, used60); candidate.After(availableAt) {
+			availableAt = candidate
+		}
+	}
+	if availableAt.IsZero() {
+		return 0, false
+	}
+	return availableAt.Sub(now), true
+}
+
+func windowAvailableAt(events []time.Time, now time.Time, window time.Duration, limit, used int) time.Time {
+	needed := used - limit + 1
+	cutoff := now.Add(-window)
+	for _, event := range events {
+		if !event.After(cutoff) || event.After(now) {
+			continue
+		}
+		needed--
+		if needed == 0 {
+			return event.Add(window).Add(time.Nanosecond)
+		}
+	}
+	return now.Add(time.Millisecond)
+}
+
+func accountConcurrencyUnavailableResponse(kind, message string, retryAfter time.Duration) cpaapi.RequestInterceptResponse {
+	seconds := int(retryAfter.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
 	body, _ := json.Marshal(map[string]any{"error": map[string]any{
-		"type":           "account_concurrency_limit_reached",
-		"message":        "the selected account has reached its configured request limit",
-		"limit":          limit,
-		"used":           used,
-		"window_seconds": window,
+		"type":    kind,
+		"message": message,
 	}})
 	return cpaapi.RequestInterceptResponse{
 		Terminate:       true,
-		StatusCode:      http.StatusTooManyRequests,
-		ResponseHeaders: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"1"}},
+		StatusCode:      http.StatusServiceUnavailable,
+		ResponseHeaders: http.Header{"Content-Type": {"application/json"}, "Retry-After": {fmt.Sprintf("%d", seconds)}},
 		ResponseBody:    body,
 	}
 }
 
 func (s *AccountConcurrencyService) Complete(completion cpaapi.RequestCompletion) {
-	if s == nil || strings.TrimSpace(completion.RequestID) == "" {
+	if s == nil {
+		return
+	}
+	requestID := strings.TrimSpace(completion.RequestID)
+	if requestID == "" {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	admission, exists := s.requests[completion.RequestID]
-	if !exists {
+	if authID, waiting := s.waitingRequests[requestID]; waiting {
+		s.removeWaiterLocked(requestID, authID)
+		s.canceled[requestID] = s.now().UTC()
+		s.broadcastLocked()
+		s.mu.Unlock()
 		return
 	}
-	delete(s.requests, completion.RequestID)
-	if s.active[admission.AuthID] <= 1 {
-		delete(s.active, admission.AuthID)
-	} else {
-		s.active[admission.AuthID]--
+	admission, exists := s.requests[requestID]
+	if exists {
+		delete(s.requests, requestID)
+		s.decrementActiveLocked(admission.AuthID)
+		s.broadcastLocked()
 	}
+	s.mu.Unlock()
 }
 
 func (s *AccountConcurrencyService) Shutdown() {
@@ -325,11 +467,49 @@ func (s *AccountConcurrencyService) Shutdown() {
 		return
 	}
 	s.mu.Lock()
+	s.shuttingDown = true
 	s.active = make(map[string]int)
 	s.requests = make(map[string]accountConcurrencyAdmission)
 	s.events = make(map[string][]time.Time)
+	s.cancelWaitersLocked()
 	s.activeGate.Store(false)
 	s.mu.Unlock()
+}
+
+func (s *AccountConcurrencyService) decrementActiveLocked(authID string) {
+	if s.active[authID] <= 1 {
+		delete(s.active, authID)
+	} else {
+		s.active[authID]--
+	}
+}
+
+func (s *AccountConcurrencyService) removeWaiterLocked(requestID, authID string) {
+	if current, exists := s.waitingRequests[requestID]; !exists || current != authID {
+		return
+	}
+	delete(s.waitingRequests, requestID)
+	if s.waiting[authID] <= 1 {
+		delete(s.waiting, authID)
+	} else {
+		s.waiting[authID]--
+	}
+}
+
+func (s *AccountConcurrencyService) cancelWaitersLocked() {
+	s.waiting = make(map[string]int)
+	s.waitingRequests = make(map[string]string)
+	s.epoch++
+	s.broadcastLocked()
+}
+
+func (s *AccountConcurrencyService) broadcastLocked() {
+	if s.wake == nil {
+		s.wake = make(chan struct{})
+		return
+	}
+	close(s.wake)
+	s.wake = make(chan struct{})
 }
 
 func (s *AccountConcurrencyService) updateActiveGateLocked() {

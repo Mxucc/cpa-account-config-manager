@@ -1420,3 +1420,99 @@ export interface AIProviderChannelSnapshot {
   /** Stable issue code when the channel exists but its persisted state is unavailable. */
   storage_error?: string;
 }
+
+
+export type RiskControlMode = "off" | "observe" | "pre_block";
+export type RiskControlModelFilterMode = "all" | "include" | "exclude";
+
+export interface RiskControlModelFilter {
+  mode: RiskControlModelFilterMode;
+  models?: string[];
+}
+
+export type RiskAuditFailurePolicy = "fail_open" | "fail_closed";
+
+export interface RiskExternalAuditConfig {
+  enabled: boolean;
+  mode: RiskControlMode;
+  endpoint: string;
+  model: string;
+  credential_env: string;
+  scanners: string[];
+  latest_turn_only: boolean;
+  store_pass_events: boolean;
+  timeout_ms: number;
+  input_limit: number;
+  worker_count: number;
+  queue_capacity: number;
+  failure_policy: RiskAuditFailurePolicy;
+  block_status: number;
+  block_message: string;
+}
+
+export interface RiskCustomAuditConfig extends RiskExternalAuditConfig {
+  confidence_threshold: number;
+  system_prompt: string;
+}
+
+export interface RiskAuditModuleStatus {
+  active: boolean;
+  mode: RiskControlMode;
+  queue_length: number;
+  queue_capacity: number;
+  worker_count: number;
+  processed: number;
+  blocked: number;
+  errors: number;
+  dropped: number;
+  credential_configured: boolean;
+  credential_available: boolean;
+}
+
+export interface RiskControlConfig {
+  enabled: boolean;
+  mode: RiskControlMode;
+  blocked_keywords: string[];
+  model_filter: RiskControlModelFilter;
+  pre_hash_check_enabled: boolean;
+  block_status: number;
+  block_message: string;
+  event_retention_days: number;
+  max_events: number;
+  prompt_audit: RiskExternalAuditConfig;
+  custom_audit: RiskCustomAuditConfig;
+}
+
+export interface RiskControlEvent {
+  id: string;
+  time: string;
+  action: "keyword_observe" | "keyword_block" | "hash_observe" | "hash_block";
+  account_ref?: string;
+  provider?: string;
+  model?: string;
+  format?: string;
+  matched_rules?: string[];
+  input_hash: string;
+  latency_ms: number;
+}
+
+export interface RiskControlStatus {
+  active: boolean;
+  mode: RiskControlMode;
+  total_events: number;
+  observed: number;
+  blocked: number;
+  keyword_hits: number;
+  hash_hits: number;
+  remembered_hashes: number;
+  last_event_at?: string;
+  prompt_audit: RiskAuditModuleStatus;
+  custom_audit: RiskAuditModuleStatus;
+}
+
+export interface RiskControlSnapshot {
+  config: RiskControlConfig;
+  status: RiskControlStatus;
+  events: RiskControlEvent[];
+  storage_error?: string;
+}

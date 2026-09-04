@@ -24,6 +24,7 @@ import {
   ScrollText,
   Settings2,
   ShieldCheck,
+  ShieldAlert,
   SlidersHorizontal,
   Trash2,
   UserPlus,
@@ -47,6 +48,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { AIProvidersSettings } from "./components/AIProvidersSettings";
 import { OperationLogWorkspace } from "./components/OperationLogWorkspace";
+import { RiskControlWorkspace } from "./components/RiskControlWorkspace";
 import { OtherSettingsWorkspace } from "./components/OtherSettingsWorkspace";
 import { PluginUpdateAutomation } from "./components/PluginUpdateAutomation";
 import { JobPanel, jobStateLabel } from "./components/JobPanel";
@@ -223,7 +225,7 @@ export default function App() {
 function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "operations" | "settings">("accounts");
+  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "risk" | "providers" | "operations" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -1134,6 +1136,7 @@ function AccountManagerApp() {
           <button type="button" className={activeView === "dashboard" ? "active" : ""} aria-current={activeView === "dashboard" ? "page" : undefined} onClick={() => setActiveView("dashboard")}><Gauge size={16} /><span>{tx("ui.dashboard")}</span></button>
           <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} /><span>{tx("ui.accounts")}</span></button>
           <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} /><span>{tx("ui.inspection_and_automation")}</span></button>
+          <button type="button" className={activeView === "risk" ? "active" : ""} aria-current={activeView === "risk" ? "page" : undefined} onClick={() => setActiveView("risk")}><ShieldAlert size={16} /><span>{tx("ui.risk_control_center")}</span></button>
           <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} /><span>{tx("ui.ai_providers")}</span></button>
           <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} /><span>{tx("ui.operation_log")}</span></button>
           <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} /><span>{tx("ui.other_settings")}</span></button>
@@ -1157,6 +1160,8 @@ function AccountManagerApp() {
                   ? tx("ui.inspection_and_automation")
                   : activeView === "providers"
                     ? tx("ui.ai_providers")
+                    : activeView === "risk"
+                      ? tx("ui.risk_control_center")
                     : activeView === "operations"
                       ? tx("ui.operation_log")
                       : tx("ui.other_settings")} · CPA Account Config Manager</p>
@@ -1356,6 +1361,8 @@ function AccountManagerApp() {
         </section>
         ) : activeView === "inspection" ? (
           <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} onAccountsChanged={requestInspectionAccountSync} />
+        ) : activeView === "risk" ? (
+          <RiskControlWorkspace onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "providers" ? (
           <AIProvidersSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "operations" ? (

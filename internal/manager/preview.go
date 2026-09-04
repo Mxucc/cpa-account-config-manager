@@ -188,7 +188,7 @@ func (s *PreviewService) build(ctx context.Context, rawScope TargetScope, rawPat
 	if errPatch != nil {
 		return previewSnapshot{}, errPatch
 	}
-	if patch.ConcurrencyLimit != nil && (s.concurrency == nil || !s.concurrency.Availability().Supported) {
+	if (patch.ConcurrencyLimit != nil || patch.Concurrency15sLimit != nil || patch.ConcurrencyWindowSeconds != nil) && (s.concurrency == nil || !s.concurrency.Availability().Supported) {
 		return previewSnapshot{}, ErrAccountConcurrencyUnsupported
 	}
 	patch, errPatch = patch.ResolveProxyProfile(s.proxyProfileResolver)

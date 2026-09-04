@@ -1064,7 +1064,7 @@ describe("primary account batch flow", () => {
 				accounts: [{
 					...account,
 					created_at: "0001-01-01T00:00:00Z",
-					concurrency: { supported: true, active: 0, used_15s: 0, limit_15s: 3, used_60s: 0, limit: 10 },
+					concurrency: { supported: true, active: 0, request_limit: 3, request_window_seconds: 15, used_requests: 0, waiting: 0, limit: 10 },
 					usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, codex: { active_reset_count: 0, metadata_observed_at: "0001-01-01T00:00:00Z" } },
 				}],
 				total: 1, page: 1, page_size: 50, pages: 1,
@@ -1078,15 +1078,15 @@ describe("primary account batch flow", () => {
 		const concurrency = row.querySelector(".concurrency-cell") as HTMLElement;
 		const metrics = concurrency.querySelectorAll(".concurrency-metric");
 		expect(metrics).toHaveLength(3);
-		expect(metrics[0]).toHaveTextContent("当前传输数");
-		expect(metrics[0].querySelector("strong")).toHaveTextContent("0");
-		expect(metrics[1]).toHaveTextContent("15 秒窗口");
-		expect(metrics[1].querySelector("strong")).toHaveTextContent("0/3");
-		expect(metrics[2]).toHaveTextContent("每分钟窗口");
-		expect(metrics[2].querySelector("strong")).toHaveTextContent("0/10");
+		expect(metrics[0]).toHaveTextContent("并发");
+		expect(metrics[0].querySelector("strong")).toHaveTextContent("0 / 10");
+		expect(metrics[1]).toHaveTextContent("15s 请求");
+		expect(metrics[1].querySelector("strong")).toHaveTextContent("0 / 3");
+		expect(metrics[2]).toHaveTextContent("队列");
+		expect(metrics[2].querySelector("strong")).toHaveTextContent("0");
 		expect(Array.from(metrics).every((metric) => metric.querySelectorAll(":scope > span, :scope > strong").length === 2)).toBe(true);
 		expect(concurrency).not.toHaveTextContent(/\{(?:active|value|shortWindow|minuteWindow)\}/);
-		expect(concurrency).toHaveAttribute("title", "当前传输 0 · 15 秒 0/3 · 每分钟 0/10");
+		expect(concurrency).toHaveAttribute("title", "并发: 0/10 · 15s 请求: 0/3 · 队列: 0");
 		expect(within(row).getByText("尚未采集")).toBeInTheDocument();
 		expect(row.querySelector(".account-time-empty")).toHaveTextContent("-");
 		expect(row).not.toHaveTextContent("1/01/01");

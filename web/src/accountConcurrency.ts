@@ -1,20 +1,35 @@
 import type { AccountConcurrencySummary } from "./types";
 
-export type AccountConcurrencyWindow = "15s" | "60s";
+export function accountConcurrencyRequestLimit(summary: AccountConcurrencySummary): number {
+  return summary.request_limit ?? summary.limit_15s ?? 0;
+}
 
-export function accountConcurrencyLimitLabel(summary: AccountConcurrencySummary, window: AccountConcurrencyWindow = "60s"): string {
-	const limit = window === "15s" ? summary.limit_15s : summary.limit;
-	return limit > 0 ? String(limit) : "∞";
+export function accountConcurrencyUsedRequests(summary: AccountConcurrencySummary): number {
+  return summary.used_requests ?? summary.used_15s ?? summary.used_60s ?? 0;
+}
+
+export function accountConcurrencyWindowSeconds(summary: AccountConcurrencySummary): number {
+  const value = summary.request_window_seconds;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 15;
+}
+
+export function accountConcurrencyLimitLabel(summary: AccountConcurrencySummary): string {
+  return summary.limit > 0 ? String(summary.limit) : "∞";
+}
+
+export function accountConcurrencyRequestLimitLabel(summary: AccountConcurrencySummary): string {
+  const limit = accountConcurrencyRequestLimit(summary);
+  return limit > 0 ? String(limit) : "∞";
 }
 
 export function accountConcurrencySaturated(summary: AccountConcurrencySummary): boolean {
-	return (summary.limit_15s > 0 && summary.used_15s >= summary.limit_15s)
-		|| (summary.limit > 0 && summary.used_60s >= summary.limit);
+  return (summary.limit > 0 && summary.active >= summary.limit)
+    || (accountConcurrencyRequestLimit(summary) > 0 && accountConcurrencyUsedRequests(summary) >= accountConcurrencyRequestLimit(summary));
 }
 
 export function formatAccountConcurrency(
-	summary: AccountConcurrencySummary,
-	labels: { active: string; fifteenSeconds: string; minute: string } = { active: "active", fifteenSeconds: "15s", minute: "60s" },
+  summary: AccountConcurrencySummary,
+  labels: { active: string; request: string; queue: string } = { active: "active", request: "request", queue: "queue" },
 ): string {
-	return `${labels.active} ${summary.active} · ${labels.fifteenSeconds} ${summary.used_15s}/${accountConcurrencyLimitLabel(summary, "15s")} · ${labels.minute} ${summary.used_60s}/${accountConcurrencyLimitLabel(summary, "60s")}`;
+  return `${labels.active} ${summary.active}/${accountConcurrencyLimitLabel(summary)} · ${accountConcurrencyWindowSeconds(summary)}s ${labels.request} ${accountConcurrencyUsedRequests(summary)}/${accountConcurrencyRequestLimitLabel(summary)} · ${labels.queue} ${summary.waiting ?? 0}`;
 }

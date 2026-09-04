@@ -17,15 +17,18 @@ import (
 )
 
 const (
-	accountConcurrencyStoreVersion      = 1
-	MaxAccountConcurrencyLimit          = 1000
-	accountConcurrencyLeaseTTL          = 24 * time.Hour
-	accountConcurrencyPruneInterval     = time.Minute
-	accountConcurrencyMaxWait           = 60 * time.Second
-	accountConcurrencyMaxWaitersAccount = 100
-	accountConcurrencyMaxWaitersTotal   = 1000
-	accountConcurrencyTombstoneTTL      = 2 * time.Minute
-	selectedAuthMetadataKey             = "selected_auth_id"
+	accountConcurrencyStoreVersion         = 1
+	MaxAccountConcurrencyLimit             = 1000
+	accountConcurrencyLeaseTTL             = 24 * time.Hour
+	accountConcurrencyPruneInterval        = time.Minute
+	accountConcurrencyMaxWait              = 60 * time.Second
+	accountConcurrencyMaxWaitersAccount    = 100
+	accountConcurrencyMaxWaitersTotal      = 1000
+	accountConcurrencyTombstoneTTL         = 2 * time.Minute
+	DefaultAccountConcurrencyWindowSeconds = 15
+	MinAccountConcurrencyWindowSeconds     = 1
+	MaxAccountConcurrencyWindowSeconds     = 3600
+	selectedAuthMetadataKey                = "selected_auth_id"
 )
 
 var (
@@ -42,20 +45,28 @@ type AccountConcurrencyAvailability struct {
 }
 
 type AccountConcurrencySummary struct {
-	FifteenSecLimit int  `json:"limit_15s"`
-	Used60s         int  `json:"used_60s"`
-	Used15s         int  `json:"used_15s"`
-	Supported       bool `json:"supported"`
-	Limit           int  `json:"limit"`
-	Active          int  `json:"active"`
-	Waiting         int  `json:"waiting"`
+	// Limit is the maximum number of requests that may be in flight at once.
+	Limit int `json:"limit"`
+	// RequestLimit is the maximum number of requests admitted in the configured window.
+	RequestLimit         int  `json:"request_limit"`
+	RequestWindowSeconds int  `json:"request_window_seconds"`
+	UsedRequests         int  `json:"used_requests"`
+	Active               int  `json:"active"`
+	Waiting              int  `json:"waiting"`
+	Supported            bool `json:"supported"`
+
+	// Deprecated aliases are retained for older clients and persisted policy code.
+	FifteenSecLimit int `json:"limit_15s,omitempty"`
+	Used60s         int `json:"used_60s,omitempty"`
+	Used15s         int `json:"used_15s,omitempty"`
 }
 
 type accountConcurrencyRecord struct {
-	AuthID    string `json:"auth_id"`
-	AccountID string `json:"account_id,omitempty"`
-	Limit     int    `json:"limit"`
-	Limit15s  int    `json:"limit_15s,omitempty"`
+	AuthID        string `json:"auth_id"`
+	AccountID     string `json:"account_id,omitempty"`
+	Limit         int    `json:"limit"`
+	Limit15s      int    `json:"limit_15s,omitempty"`
+	WindowSeconds int    `json:"window_seconds,omitempty"`
 }
 
 type persistedAccountConcurrency struct {
@@ -204,25 +215,38 @@ func (s *AccountConcurrencyService) Summary(authID string) AccountConcurrencySum
 	s.pruneExpiredLocked(s.now().UTC())
 	record := s.limits[authID]
 	now := s.now().UTC()
-	used60, used15 := s.windowUsageLocked(authID, now)
-	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, FifteenSecLimit: record.Limit15s, Active: s.active[authID], Waiting: s.waiting[authID], Used60s: used60, Used15s: used15}
+	windowSeconds := normalizeAccountConcurrencyWindowSeconds(record.WindowSeconds)
+	usedRequests := s.windowUsageLocked(authID, now, time.Duration(windowSeconds)*time.Second)
+	return AccountConcurrencySummary{Supported: s.hostSchema >= cpaapi.SchemaVersion, Limit: record.Limit, RequestLimit: record.Limit15s, RequestWindowSeconds: windowSeconds, UsedRequests: usedRequests, Active: s.active[authID], Waiting: s.waiting[authID], FifteenSecLimit: record.Limit15s, Used60s: usedRequests, Used15s: usedRequests}
 }
 
 func (s *AccountConcurrencyService) SetLimit(account Account, limit int) error {
 	return s.SetLimits(account, &limit, nil)
 }
 
-// SetLimits updates either or both rolling request-window limits. A nil value
-// preserves that window's current setting; zero clears it.
-func (s *AccountConcurrencyService) SetLimits(account Account, minuteLimit, fifteenSecondLimit *int) error {
+// SetLimits updates the simultaneous in-flight limit and the request-window limit.
+// A nil value preserves that setting; zero clears it.
+func (s *AccountConcurrencyService) SetLimits(account Account, concurrencyLimit, requestLimit *int) error {
+	return s.setConfiguration(account, concurrencyLimit, requestLimit, nil)
+}
+
+// SetRequestWindowSeconds changes the rolling request window without changing its limit.
+func (s *AccountConcurrencyService) SetRequestWindowSeconds(account Account, seconds int) error {
+	return s.setConfiguration(account, nil, nil, &seconds)
+}
+
+func (s *AccountConcurrencyService) setConfiguration(account Account, concurrencyLimit, requestLimit, windowSeconds *int) error {
 	if s == nil {
 		return ErrAccountConcurrencyUnsupported
 	}
-	if minuteLimit != nil && (*minuteLimit < 0 || *minuteLimit > MaxAccountConcurrencyLimit) {
+	if concurrencyLimit != nil && (*concurrencyLimit < 0 || *concurrencyLimit > MaxAccountConcurrencyLimit) {
 		return fmt.Errorf("account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
 	}
-	if fifteenSecondLimit != nil && (*fifteenSecondLimit < 0 || *fifteenSecondLimit > MaxAccountConcurrencyLimit) {
-		return fmt.Errorf("15-second account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
+	if requestLimit != nil && (*requestLimit < 0 || *requestLimit > MaxAccountConcurrencyLimit) {
+		return fmt.Errorf("account request limit must be between 0 and %d", MaxAccountConcurrencyLimit)
+	}
+	if windowSeconds != nil && !validAccountConcurrencyWindowSeconds(*windowSeconds) {
+		return fmt.Errorf("account request window must be between %d and %d seconds", MinAccountConcurrencyWindowSeconds, MaxAccountConcurrencyWindowSeconds)
 	}
 	authID := strings.TrimSpace(account.AuthID)
 	if authID == "" || len(authID) > 4096 {
@@ -240,15 +264,19 @@ func (s *AccountConcurrencyService) SetLimits(account Account, minuteLimit, fift
 	next := cloneAccountConcurrencyRecords(s.limits)
 	current := next[authID]
 	current.AuthID, current.AccountID = authID, accountID
-	if minuteLimit != nil {
-		current.Limit = *minuteLimit
+	if concurrencyLimit != nil {
+		current.Limit = *concurrencyLimit
 	}
-	if fifteenSecondLimit != nil {
-		current.Limit15s = *fifteenSecondLimit
+	if requestLimit != nil {
+		current.Limit15s = *requestLimit
+	}
+	if windowSeconds != nil {
+		current.WindowSeconds = *windowSeconds
 	}
 	if current.Limit == 0 && current.Limit15s == 0 {
 		delete(next, authID)
 	} else {
+		current.WindowSeconds = normalizeAccountConcurrencyWindowSeconds(current.WindowSeconds)
 		next[authID] = current
 	}
 	if errSave := saveAccountConcurrency(s.store, next); errSave != nil {
@@ -330,8 +358,9 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 		}
 
 		record := s.limits[authID]
-		used60, used15 := s.windowUsageLocked(authID, now)
-		waitFor, saturated := s.nextAdmissionWaitLocked(authID, record, used60, used15, now)
+		windowSeconds := normalizeAccountConcurrencyWindowSeconds(record.WindowSeconds)
+		usedRequests := s.windowUsageLocked(authID, now, time.Duration(windowSeconds)*time.Second)
+		waitFor, saturated := s.nextAdmissionWaitLocked(authID, record, usedRequests, now)
 		if !saturated {
 			if registered {
 				s.removeWaiterLocked(requestID, authID)
@@ -387,22 +416,20 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 	}
 }
 
-func (s *AccountConcurrencyService) nextAdmissionWaitLocked(authID string, record accountConcurrencyRecord, used60, used15 int, now time.Time) (time.Duration, bool) {
-	var availableAt time.Time
-	if record.Limit15s > 0 && used15 >= record.Limit15s {
-		if candidate := windowAvailableAt(s.events[authID], now, 15*time.Second, record.Limit15s, used15); candidate.After(availableAt) {
-			availableAt = candidate
+func (s *AccountConcurrencyService) nextAdmissionWaitLocked(authID string, record accountConcurrencyRecord, usedRequests int, now time.Time) (time.Duration, bool) {
+	if record.Limit > 0 && s.active[authID] >= record.Limit {
+		// Completion broadcasts wake waiters immediately; the fallback avoids a busy loop
+		// when a host does not deliver completion callbacks.
+		return time.Second, true
+	}
+	windowSeconds := normalizeAccountConcurrencyWindowSeconds(record.WindowSeconds)
+	if record.Limit15s > 0 && usedRequests >= record.Limit15s {
+		window := time.Duration(windowSeconds) * time.Second
+		if candidate := windowAvailableAt(s.events[authID], now, window, record.Limit15s, usedRequests); candidate.After(now) {
+			return candidate.Sub(now), true
 		}
 	}
-	if record.Limit > 0 && used60 >= record.Limit {
-		if candidate := windowAvailableAt(s.events[authID], now, time.Minute, record.Limit, used60); candidate.After(availableAt) {
-			availableAt = candidate
-		}
-	}
-	if availableAt.IsZero() {
-		return 0, false
-	}
-	return availableAt.Sub(now), true
+	return 0, false
 }
 
 func windowAvailableAt(events []time.Time, now time.Time, window time.Duration, limit, used int) time.Time {
@@ -536,7 +563,7 @@ func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {
 	for authID, events := range s.events {
 		kept := events[:0]
 		for _, event := range events {
-			if event.After(now.Add(-time.Minute)) && !event.After(now) {
+			if event.After(now.Add(-time.Duration(MaxAccountConcurrencyWindowSeconds)*time.Second)) && !event.After(now) {
 				kept = append(kept, event)
 			}
 		}
@@ -548,18 +575,15 @@ func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {
 	}
 }
 
-func (s *AccountConcurrencyService) windowUsageLocked(authID string, now time.Time) (int, int) {
-	cutoff60, cutoff15 := now.Add(-time.Minute), now.Add(-15*time.Second)
-	used60, used15 := 0, 0
+func (s *AccountConcurrencyService) windowUsageLocked(authID string, now time.Time, window time.Duration) int {
+	cutoff := now.Add(-window)
+	used := 0
 	for _, event := range s.events[authID] {
-		if event.After(cutoff60) && !event.After(now) {
-			used60++
-		}
-		if event.After(cutoff15) && !event.After(now) {
-			used15++
+		if event.After(cutoff) && !event.After(now) {
+			used++
 		}
 	}
-	return used60, used15
+	return used
 }
 
 func loadAccountConcurrency(path string) (map[string]accountConcurrencyRecord, error) {
@@ -578,7 +602,10 @@ func loadAccountConcurrency(path string) (map[string]accountConcurrencyRecord, e
 	for _, record := range persisted.Limits {
 		record.AuthID = strings.TrimSpace(record.AuthID)
 		record.AccountID = strings.TrimSpace(record.AccountID)
-		if record.AuthID == "" || len(record.AuthID) > 4096 || (record.Limit < 1 && record.Limit15s < 1) || record.Limit > MaxAccountConcurrencyLimit || record.Limit15s > MaxAccountConcurrencyLimit {
+		if record.WindowSeconds == 0 {
+			record.WindowSeconds = DefaultAccountConcurrencyWindowSeconds
+		}
+		if record.AuthID == "" || len(record.AuthID) > 4096 || (record.Limit < 1 && record.Limit15s < 1) || record.Limit > MaxAccountConcurrencyLimit || record.Limit15s > MaxAccountConcurrencyLimit || !validAccountConcurrencyWindowSeconds(record.WindowSeconds) {
 			continue
 		}
 		if len(record.AccountID) > maxAccountConfigIDLength {
@@ -607,4 +634,15 @@ func cloneAccountConcurrencyRecords(input map[string]accountConcurrencyRecord) m
 		cloned[authID] = record
 	}
 	return cloned
+}
+
+func normalizeAccountConcurrencyWindowSeconds(seconds int) int {
+	if !validAccountConcurrencyWindowSeconds(seconds) {
+		return DefaultAccountConcurrencyWindowSeconds
+	}
+	return seconds
+}
+
+func validAccountConcurrencyWindowSeconds(seconds int) bool {
+	return seconds >= MinAccountConcurrencyWindowSeconds && seconds <= MaxAccountConcurrencyWindowSeconds
 }

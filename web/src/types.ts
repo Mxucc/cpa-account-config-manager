@@ -88,6 +88,7 @@ export interface ProviderQuotaPolicy {
 	label?: string;
 	concurrency_limit?: number;
 	concurrency_15s_limit?: number;
+	concurrency_window_seconds?: number;
 	five_hour: QuotaWindowPolicy;
 	seven_day: QuotaWindowPolicy;
 }
@@ -109,10 +110,15 @@ export interface AccountConcurrencyAvailability {
 export interface AccountConcurrencySummary {
 	supported: boolean;
 	limit: number;
-	limit_15s: number;
+	request_limit?: number;
+	request_window_seconds?: number;
+	used_requests?: number;
+	waiting?: number;
 	active: number;
-	used_60s: number;
-	used_15s: number;
+	// Legacy response aliases retained for older CPA/plugin versions.
+	limit_15s?: number;
+	used_60s?: number;
+	used_15s?: number;
 }
 
 export type ModelPolicyMode = "all" | "allow_only" | "deny_only";
@@ -491,6 +497,7 @@ export interface BatchPatch {
 	model_policy?: ModelPolicyPatch;
 	concurrency_limit?: number;
 	concurrency_15s_limit?: number;
+	concurrency_window_seconds?: number;
 	quota_policy?: AccountQuotaPolicy;
 	codex_identity?: CodexIdentityOverride;
 }
@@ -580,6 +587,7 @@ export interface DefaultPolicy {
   disabled?: boolean | null;
   concurrency_limit?: number | null;
   concurrency_15s_limit?: number | null;
+  concurrency_window_seconds?: number | null;
   quota_policy?: AccountQuotaPolicy | null;
   note?: string | null;
   prefix?: string | null;
@@ -613,6 +621,7 @@ export interface ConditionalPolicyActions {
   priority?: number;
   concurrency_limit?: number;
   concurrency_15s_limit?: number;
+  concurrency_window_seconds?: number;
   quota_policy?: AccountQuotaPolicy;
   note?: string;
   prefix?: string;
@@ -1188,6 +1197,7 @@ export interface GlobalPolicy {
   priority?: number | null;
   concurrency_limit?: number | null;
   concurrency_15s_limit?: number | null;
+  concurrency_window_seconds?: number | null;
   quota_policy?: AccountQuotaPolicy | null;
   note?: string | null;
   prefix?: string | null;

@@ -8,7 +8,7 @@ import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
-type FieldName = "disabled" | "priority" | "concurrency_limit" | "concurrency_15s_limit" | "quota_policy" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy" | "codex_identity";
+type FieldName = "disabled" | "priority" | "concurrency_limit" | "concurrency_15s_limit" | "concurrency_window_seconds" | "quota_policy" | "note" | "prefix" | "proxy_url" | "websockets" | "headers" | "model_policy" | "codex_identity";
 type IdentityBooleanValue = "" | "true" | "false";
 type IdentityConvergenceValue = "" | "off" | "device" | "session" | "full";
 
@@ -35,6 +35,7 @@ const initialEnabled: Record<FieldName, boolean> = {
   priority: false,
 	concurrency_limit: false,
 	concurrency_15s_limit: false,
+	concurrency_window_seconds: false,
 	quota_policy: false,
   note: false,
   prefix: false,
@@ -57,6 +58,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
   const [priority, setPriority] = useState("0");
 	const [concurrencyLimit, setConcurrencyLimit] = useState("0");
 	const [concurrency15sLimit, setConcurrency15sLimit] = useState("0");
+	const [concurrencyWindowSeconds, setConcurrencyWindowSeconds] = useState("15");
 	const [fiveHourQuotaLimit, setFiveHourQuotaLimit] = useState("");
 	const [sevenDayQuotaLimit, setSevenDayQuotaLimit] = useState("");
   const [note, setNote] = useState("");
@@ -95,7 +97,8 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			setDisabled(config.disabled);
 			setPriority(config.priority === null ? "" : String(config.priority));
 			setConcurrencyLimit(String(config.concurrency?.limit ?? 0));
-			setConcurrency15sLimit(String(config.concurrency?.limit_15s ?? 0));
+			setConcurrency15sLimit(String(config.concurrency?.request_limit ?? config.concurrency?.limit_15s ?? 0));
+			setConcurrencyWindowSeconds(String(config.concurrency?.request_window_seconds ?? 15));
 			setFiveHourQuotaLimit(config.quota_policy?.five_hour.limit_percent === undefined ? "" : String(config.quota_policy.five_hour.limit_percent));
 			setSevenDayQuotaLimit(config.quota_policy?.seven_day.limit_percent === undefined ? "" : String(config.quota_policy.seven_day.limit_percent));
 			setNote(config.note);
@@ -217,6 +220,13 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 			}
 			patch.concurrency_15s_limit = parsed;
 		}
+		if (enabled.concurrency_window_seconds) {
+			if (!concurrencyAvailability.supported) { setError(tx("ui.account_concurrency_unavailable_old_cpa")); return; }
+			if (!/^\d+$/.test(concurrencyWindowSeconds.trim())) { setError(tx("ui.account_concurrency_window_seconds_must_be_an_integer")); return; }
+			const parsed = Number(concurrencyWindowSeconds);
+			if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 3600) { setError(tx("ui.account_concurrency_window_seconds_range")); return; }
+			patch.concurrency_window_seconds = parsed;
+		}
 		if (enabled.quota_policy) {
 			const parsePercent = (value: string) => {
 				const trimmed = value.trim();
@@ -316,16 +326,22 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         <EditRow checked={enabled.priority} label={tx("ui.priority")} onToggle={togglePriority}>
           <input value={priority} onChange={(event) => setPriority(event.target.value)} inputMode="numeric" disabled={!enabled.priority} aria-label={tx("ui.priority_value")} />
         </EditRow>
-				<EditRow checked={enabled.concurrency_15s_limit} label={tx("ui.account_concurrency_15s_limit")} onToggle={() => toggle("concurrency_15s_limit")} disabled={!concurrencyAvailability.supported}>
+				<EditRow checked={enabled.concurrency_limit} label={tx("ui.account_concurrency_active_limit_setting")} onToggle={() => toggle("concurrency_limit")} disabled={!concurrencyAvailability.supported}>
 					<div className="concurrency-editor-control">
-						<input type="number" min="0" max="1000" step="1" value={concurrency15sLimit} onChange={(event) => setConcurrency15sLimit(event.target.value)} disabled={!enabled.concurrency_15s_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_15s_value")} />
-						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_window_help") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
+						<input type="number" min="0" max="1000" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} disabled={!enabled.concurrency_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_active_limit_value")} />
+						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_zero_unlimited") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
 					</div>
 				</EditRow>
-				<EditRow checked={enabled.concurrency_limit} label={tx("ui.account_concurrency_60s_limit")} onToggle={() => toggle("concurrency_limit")} disabled={!concurrencyAvailability.supported}>
+				<EditRow checked={enabled.concurrency_15s_limit} label={tx("ui.account_concurrency_request_limit")} onToggle={() => toggle("concurrency_15s_limit")} disabled={!concurrencyAvailability.supported}>
 					<div className="concurrency-editor-control">
-						<input type="number" min="0" max="1000" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} disabled={!enabled.concurrency_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_60s_value")} />
-						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_window_help") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
+						<input type="number" min="0" max="1000" step="1" value={concurrency15sLimit} onChange={(event) => setConcurrency15sLimit(event.target.value)} disabled={!enabled.concurrency_15s_limit || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_request_limit_value")} />
+						<span>{concurrencyAvailability.supported ? tx("ui.account_concurrency_zero_unlimited") : tx("ui.account_concurrency_unavailable_old_cpa")}</span>
+					</div>
+				</EditRow>
+				<EditRow checked={enabled.concurrency_window_seconds} label={tx("ui.account_concurrency_window_seconds")} onToggle={() => toggle("concurrency_window_seconds")} disabled={!concurrencyAvailability.supported}>
+					<div className="concurrency-editor-control">
+						<input type="number" min="1" max="3600" step="1" value={concurrencyWindowSeconds} onChange={(event) => setConcurrencyWindowSeconds(event.target.value)} disabled={!enabled.concurrency_window_seconds || !concurrencyAvailability.supported} aria-label={tx("ui.account_concurrency_window_seconds")} />
+						<span>{tx("ui.account_concurrency_window_seconds_help")}</span>
 					</div>
 				</EditRow>
 				<EditRow checked={enabled.quota_policy} label={tx("ui.account_quota_limit")} onToggle={() => toggle("quota_policy")}>
@@ -463,7 +479,7 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 		: tx(policy.mode === "all" ? "ui.all_models" : policy.mode === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist");
 	const modelNames = policy?.models ?? [];
 	const concurrencyAvailability = config.account_concurrency ?? defaultConcurrencyAvailability;
-	const concurrency = config.concurrency ?? { supported: concurrencyAvailability.supported, active: 0, limit: 0, limit_15s: 0, used_60s: 0, used_15s: 0 };
+	const concurrency = config.concurrency ?? { supported: concurrencyAvailability.supported, active: 0, limit: 0, request_limit: 0, request_window_seconds: 15, used_requests: 0, waiting: 0 };
 	return (
 		<section className="current-account-config" aria-label={tx("ui.current_account_configuration")}>
 			<header>
@@ -473,7 +489,7 @@ function CurrentAccountConfiguration({ config }: { config: AccountEditableConfig
 			<dl>
 				<CurrentConfigItem label={tx("ui.enabled_state")} value={tx(config.disabled ? "ui.disable" : "ui.enable")} />
 				<CurrentConfigItem label={tx("ui.priority")} value={config.priority === null ? tx("ui.not_set") : String(config.priority)} mono />
-				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!concurrencyAvailability.supported || !concurrency.supported ? tx("ui.unavailable") : formatAccountConcurrency(concurrency, { active: tx("ui.account_concurrency_active"), fifteenSeconds: tx("ui.account_concurrency_15s"), minute: tx("ui.account_concurrency_60s") })} mono wide />
+				<CurrentConfigItem label={tx("ui.account_concurrency")} value={!concurrencyAvailability.supported || !concurrency.supported ? tx("ui.unavailable") : formatAccountConcurrency(concurrency, { active: tx("ui.account_concurrency_active"), request: tx("ui.account_concurrency_request"), queue: tx("ui.account_concurrency_queue") })} mono wide />
 				<CurrentConfigItem label={tx("ui.account_quota_limit")} value={formatQuotaPolicy(config.quota_policy, tx)} mono wide />
 				<CurrentConfigItem label={tx("ui.websockets")} value={config.websockets === null ? tx("ui.not_set") : tx(config.websockets ? "ui.on_2" : "ui.off_2")} />
 				<CurrentConfigItem label={tx("ui.codex_convergence_mode")} value={formatCodexConvergence(config.codex_identity?.convergence_mode, tx)} />

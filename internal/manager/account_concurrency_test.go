@@ -67,36 +67,35 @@ func TestAccountConcurrencyWaitsForSaturatedAccountWithout429(t *testing.T) {
 		t.Fatalf("auth-a saturated summary = %#v", got)
 	}
 
-	// Move the fake clock past the rolling minute and wake the waiter. The
-	// request must be admitted instead of receiving a synthetic 429.
-	now = now.Add(61 * time.Second)
-	if errSet := service.SetLimit(accountA, 1); errSet != nil {
-		t.Fatalf("wake saturated account error = %v", errSet)
-	}
+	// Completion of the in-flight request wakes the queue and admits the waiter.
+	service.Complete(cpaapi.RequestCompletion{RequestID: "request-a-1"})
 	select {
 	case outcome := <-result:
 		if outcome.changed || outcome.response.Terminate {
 			t.Fatalf("waited admission = %#v, changed %v", outcome.response, outcome.changed)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("saturated request was not admitted after the window opened")
+		t.Fatal("saturated request was not admitted after the active slot was released")
 	}
-	if got := service.Summary("auth-a"); got.Active != 2 || got.Waiting != 0 {
+	if got := service.Summary("auth-a"); got.Active != 1 || got.Waiting != 0 {
 		t.Fatalf("auth-a admitted summary = %#v", got)
 	}
-	service.Complete(cpaapi.RequestCompletion{RequestID: "request-a-1"})
 	service.Complete(cpaapi.RequestCompletion{RequestID: "request-a-2"})
 	service.Complete(cpaapi.RequestCompletion{RequestID: "request-b-1"})
 }
 
-func TestAccountConcurrencyEnforcesFifteenSecondAndMinuteWindows(t *testing.T) {
+func TestAccountConcurrencyEnforcesConfiguredRequestWindow(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
 	service.maxWait = 0
 	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	minuteLimit, fifteenSecondLimit := 3, 2
-	if errSet := service.SetLimits(Account{ID: "index-a", AuthID: "auth-a"}, &minuteLimit, &fifteenSecondLimit); errSet != nil {
+	activeLimit, requestLimit, windowSeconds := 3, 2, 15
+	account := Account{ID: "index-a", AuthID: "auth-a"}
+	if errSet := service.SetLimits(account, &activeLimit, &requestLimit); errSet != nil {
 		t.Fatalf("SetLimits() error = %v", errSet)
+	}
+	if errSet := service.SetRequestWindowSeconds(account, windowSeconds); errSet != nil {
+		t.Fatalf("SetRequestWindowSeconds() error = %v", errSet)
 	}
 	for _, requestID := range []string{"request-1", "request-2"} {
 		if response, changed := service.InterceptRequest(concurrencyRequest(requestID, "auth-a")); changed || response.Terminate {
@@ -104,44 +103,52 @@ func TestAccountConcurrencyEnforcesFifteenSecondAndMinuteWindows(t *testing.T) {
 		}
 		service.Complete(cpaapi.RequestCompletion{RequestID: requestID})
 	}
-	if got := service.Summary("auth-a"); got.Active != 0 || got.Used15s != 2 || got.Used60s != 2 || got.FifteenSecLimit != 2 || got.Limit != 3 {
+	if got := service.Summary("auth-a"); got.Active != 0 || got.UsedRequests != 2 || got.RequestLimit != 2 || got.RequestWindowSeconds != 15 || got.Limit != 3 || got.Waiting != 0 {
 		t.Fatalf("summary after first window = %#v", got)
 	}
 	response, changed := service.InterceptRequest(concurrencyRequest("request-3", "auth-a"))
 	if !changed || !response.Terminate || response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(response.ResponseBody), "account_concurrency_wait_timeout") {
-		t.Fatalf("15-second saturated request did not fail safely: %#v changed=%v", response, changed)
+		t.Fatalf("request-window saturated request did not fail safely: %#v changed=%v", response, changed)
 	}
 	now = now.Add(16 * time.Second)
 	if response, changed = service.InterceptRequest(concurrencyRequest("request-3", "auth-a")); changed || response.Terminate {
-		t.Fatalf("request after 15-second expiry rejected: %#v changed=%v", response, changed)
+		t.Fatalf("request after configured window expiry rejected: %#v", response)
+	}
+	if got := service.Summary("auth-a"); got.UsedRequests != 1 || got.RequestWindowSeconds != 15 {
+		t.Fatalf("summary after configured window expiry = %#v", got)
 	}
 	service.Complete(cpaapi.RequestCompletion{RequestID: "request-3"})
-	response, changed = service.InterceptRequest(concurrencyRequest("request-4", "auth-a"))
-	if !changed || !response.Terminate || response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(response.ResponseBody), "account_concurrency_wait_timeout") {
-		t.Fatalf("minute saturated request did not fail safely: %#v changed=%v", response, changed)
-	}
 }
 
-func TestAccountConcurrencyUpdatingOneWindowPreservesTheOther(t *testing.T) {
+func TestAccountConcurrencyUpdatingOneSettingPreservesTheOthers(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
 	account := Account{ID: "index-a", AuthID: "auth-a"}
-	minuteLimit, fifteenSecondLimit := 10, 3
-	if errSet := service.SetLimits(account, &minuteLimit, &fifteenSecondLimit); errSet != nil {
+	activeLimit, requestLimit := 10, 3
+	if errSet := service.SetLimits(account, &activeLimit, &requestLimit); errSet != nil {
 		t.Fatal(errSet)
 	}
-	updatedMinute := 8
-	if errSet := service.SetLimits(account, &updatedMinute, nil); errSet != nil {
+	if errSet := service.SetRequestWindowSeconds(account, 30); errSet != nil {
 		t.Fatal(errSet)
 	}
-	if got := service.Summary("auth-a"); got.Limit != 8 || got.FifteenSecLimit != 3 {
-		t.Fatalf("minute update changed 15-second limit: %#v", got)
-	}
-	clear15s := 0
-	if errSet := service.SetLimits(account, nil, &clear15s); errSet != nil {
+	updatedActive := 8
+	if errSet := service.SetLimits(account, &updatedActive, nil); errSet != nil {
 		t.Fatal(errSet)
 	}
-	if got := service.Summary("auth-a"); got.Limit != 8 || got.FifteenSecLimit != 0 {
-		t.Fatalf("15-second clear changed minute limit: %#v", got)
+	if got := service.Summary("auth-a"); got.Limit != 8 || got.RequestLimit != 3 || got.RequestWindowSeconds != 30 {
+		t.Fatalf("active update changed request settings: %#v", got)
+	}
+	clearRequestLimit := 0
+	if errSet := service.SetLimits(account, nil, &clearRequestLimit); errSet != nil {
+		t.Fatal(errSet)
+	}
+	if got := service.Summary("auth-a"); got.Limit != 8 || got.RequestLimit != 0 || got.RequestWindowSeconds != 30 {
+		t.Fatalf("request-limit clear changed active/window settings: %#v", got)
+	}
+	if errSet := service.SetRequestWindowSeconds(account, 45); errSet != nil {
+		t.Fatal(errSet)
+	}
+	if got := service.Summary("auth-a"); got.Limit != 8 || got.RequestLimit != 0 || got.RequestWindowSeconds != 45 {
+		t.Fatalf("window update changed other settings: %#v", got)
 	}
 }
 

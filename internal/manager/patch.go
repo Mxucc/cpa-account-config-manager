@@ -29,19 +29,20 @@ type HeaderPatch struct {
 }
 
 type BatchPatch struct {
-	Disabled            *bool                  `json:"disabled,omitempty"`
-	Priority            *int                   `json:"priority,omitempty"`
-	Note                *string                `json:"note,omitempty"`
-	Prefix              *string                `json:"prefix,omitempty"`
-	ProxyURL            *string                `json:"proxy_url,omitempty"`
-	ProxyProfileID      *string                `json:"proxy_profile_id,omitempty"`
-	Websockets          *bool                  `json:"websockets,omitempty"`
-	Headers             *HeaderPatch           `json:"headers,omitempty"`
-	ModelPolicy         *ModelPolicyPatch      `json:"model_policy,omitempty"`
-	ConcurrencyLimit    *int                   `json:"concurrency_limit,omitempty"`
-	Concurrency15sLimit *int                   `json:"concurrency_15s_limit,omitempty"`
-	QuotaPolicy         *AccountQuotaPolicy    `json:"quota_policy,omitempty"`
-	CodexIdentity       *CodexIdentityOverride `json:"codex_identity,omitempty"`
+	Disabled                 *bool                  `json:"disabled,omitempty"`
+	Priority                 *int                   `json:"priority,omitempty"`
+	Note                     *string                `json:"note,omitempty"`
+	Prefix                   *string                `json:"prefix,omitempty"`
+	ProxyURL                 *string                `json:"proxy_url,omitempty"`
+	ProxyProfileID           *string                `json:"proxy_profile_id,omitempty"`
+	Websockets               *bool                  `json:"websockets,omitempty"`
+	Headers                  *HeaderPatch           `json:"headers,omitempty"`
+	ModelPolicy              *ModelPolicyPatch      `json:"model_policy,omitempty"`
+	ConcurrencyLimit         *int                   `json:"concurrency_limit,omitempty"`
+	Concurrency15sLimit      *int                   `json:"concurrency_15s_limit,omitempty"`
+	ConcurrencyWindowSeconds *int                   `json:"concurrency_window_seconds,omitempty"`
+	QuotaPolicy              *AccountQuotaPolicy    `json:"quota_policy,omitempty"`
+	CodexIdentity            *CodexIdentityOverride `json:"codex_identity,omitempty"`
 
 	resolvedModelFields map[string]any
 }
@@ -140,7 +141,10 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 		return BatchPatch{}, fmt.Errorf("account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
 	}
 	if patch.Concurrency15sLimit != nil && (*patch.Concurrency15sLimit < 0 || *patch.Concurrency15sLimit > MaxAccountConcurrencyLimit) {
-		return BatchPatch{}, fmt.Errorf("15-second account concurrency must be between 0 and %d", MaxAccountConcurrencyLimit)
+		return BatchPatch{}, fmt.Errorf("account request limit must be between 0 and %d", MaxAccountConcurrencyLimit)
+	}
+	if patch.ConcurrencyWindowSeconds != nil && !validAccountConcurrencyWindowSeconds(*patch.ConcurrencyWindowSeconds) {
+		return BatchPatch{}, fmt.Errorf("account request window must be between %d and %d seconds", MinAccountConcurrencyWindowSeconds, MaxAccountConcurrencyWindowSeconds)
 	}
 	if patch.QuotaPolicy != nil {
 		if err := validateQuotaPolicy(patch.QuotaPolicy.FiveHour); err != nil {
@@ -165,7 +169,7 @@ func (patch BatchPatch) Validate() (BatchPatch, error) {
 
 func (patch BatchPatch) Empty() bool {
 	return patch.Disabled == nil && patch.Priority == nil && patch.Note == nil &&
-		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil && patch.Concurrency15sLimit == nil && patch.QuotaPolicy == nil && patch.CodexIdentity == nil
+		patch.Prefix == nil && patch.ProxyURL == nil && patch.ProxyProfileID == nil && patch.Websockets == nil && patch.Headers == nil && patch.ModelPolicy == nil && patch.ConcurrencyLimit == nil && patch.Concurrency15sLimit == nil && patch.ConcurrencyWindowSeconds == nil && patch.QuotaPolicy == nil && patch.CodexIdentity == nil
 }
 
 func (patch BatchPatch) Summary() PatchSummary {
@@ -199,6 +203,9 @@ func (patch BatchPatch) Summary() PatchSummary {
 	}
 	if patch.Concurrency15sLimit != nil {
 		fields = append(fields, "concurrency_15s_limit")
+	}
+	if patch.ConcurrencyWindowSeconds != nil {
+		fields = append(fields, "concurrency_window_seconds")
 	}
 	if patch.QuotaPolicy != nil {
 		fields = append(fields, "quota_policy")
@@ -282,7 +289,7 @@ func (patch BatchPatch) HasFieldUpdates() bool {
 }
 
 func (patch BatchPatch) HasPluginUpdates() bool {
-	return patch.ConcurrencyLimit != nil || patch.Concurrency15sLimit != nil || patch.QuotaPolicy != nil || patch.CodexIdentity != nil
+	return patch.ConcurrencyLimit != nil || patch.Concurrency15sLimit != nil || patch.ConcurrencyWindowSeconds != nil || patch.QuotaPolicy != nil || patch.CodexIdentity != nil
 }
 
 func cloneBatchPatch(patch BatchPatch) BatchPatch {
@@ -333,6 +340,10 @@ func cloneBatchPatch(patch BatchPatch) BatchPatch {
 	if patch.Concurrency15sLimit != nil {
 		value := *patch.Concurrency15sLimit
 		clone.Concurrency15sLimit = &value
+	}
+	if patch.ConcurrencyWindowSeconds != nil {
+		value := *patch.ConcurrencyWindowSeconds
+		clone.ConcurrencyWindowSeconds = &value
 	}
 	if patch.QuotaPolicy != nil {
 		policy := *patch.QuotaPolicy

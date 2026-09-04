@@ -2365,20 +2365,20 @@ function parseProxyProfile(value: unknown): ProxyProfileView {
 
 
 export async function getRiskControl(signal?: AbortSignal): Promise<import("../types").RiskControlSnapshot> {
-  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control`, { signal });
+  return requestRecord<import("../types").RiskControlSnapshot>("/risk-control", { signal });
 }
 
 export async function saveRiskControl(config: import("../types").RiskControlConfig): Promise<import("../types").RiskControlSnapshot> {
-  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control`, {
+  return requestRecord<import("../types").RiskControlSnapshot>("/risk-control", {
     method: "PUT",
     body: JSON.stringify(config),
   });
 }
 
 export async function clearRiskControlEvents(): Promise<import("../types").RiskControlSnapshot> {
-  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control/events`, { method: "DELETE" });
+  return requestRecord<import("../types").RiskControlSnapshot>("/risk-control/events", { method: "DELETE" });
 }
 
 export async function clearRiskControlHashes(): Promise<import("../types").RiskControlSnapshot> {
-  return managementRequest<import("../types").RiskControlSnapshot>(`${API_ROOT}/risk-control/hashes`, { method: "DELETE" });
+  return requestRecord<import("../types").RiskControlSnapshot>("/risk-control/hashes", { method: "DELETE" });
 }

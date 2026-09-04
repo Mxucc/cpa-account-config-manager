@@ -113,7 +113,7 @@ import type {
   ResultExportFormat,
   TargetScope,
 } from "./types";
-import { accountConcurrencyLimitLabel, accountConcurrencySaturated } from "./accountConcurrency";
+import { accountConcurrencyLimitLabel, accountConcurrencyRequestLimitLabel, accountConcurrencySaturated, accountConcurrencyUsedRequests, accountConcurrencyWindowSeconds } from "./accountConcurrency";
 
 const exportFormatLabels: Record<ExportFormat, string> = {
   cpa: "CPA",
@@ -144,16 +144,17 @@ function applyCompletedAccountPatch(current: AccountListResponse, job: JobSnapsh
         ...account,
         ...(patch.disabled !== undefined ? { disabled: patch.disabled } : {}),
         ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
-				...((patch.concurrency_limit !== undefined || patch.concurrency_15s_limit !== undefined) ? {
-					concurrency: {
-						supported: account.concurrency?.supported ?? current.account_concurrency?.supported ?? false,
-						active: account.concurrency?.active ?? 0,
-						limit: patch.concurrency_limit ?? account.concurrency?.limit ?? 0,
-						limit_15s: patch.concurrency_15s_limit ?? account.concurrency?.limit_15s ?? 0,
-						used_60s: account.concurrency?.used_60s ?? 0,
-						used_15s: account.concurrency?.used_15s ?? 0,
-					},
-				} : {}),
+        ...((patch.concurrency_limit !== undefined || patch.concurrency_15s_limit !== undefined || patch.concurrency_window_seconds !== undefined) ? {
+          concurrency: {
+            supported: account.concurrency?.supported ?? current.account_concurrency?.supported ?? false,
+            active: account.concurrency?.active ?? 0,
+            limit: patch.concurrency_limit ?? account.concurrency?.limit ?? 0,
+            request_limit: patch.concurrency_15s_limit ?? account.concurrency?.request_limit ?? account.concurrency?.limit_15s ?? 0,
+            request_window_seconds: patch.concurrency_window_seconds ?? account.concurrency?.request_window_seconds ?? 15,
+            used_requests: account.concurrency?.used_requests ?? account.concurrency?.used_15s ?? account.concurrency?.used_60s ?? 0,
+            waiting: account.concurrency?.waiting ?? 0,
+          },
+        } : {}),
         ...(patch.note !== undefined ? { note: patch.note } : {}),
         ...(patch.prefix !== undefined ? { prefix: patch.prefix } : {}),
         ...(patch.proxy_url !== undefined ? { proxy_configured: patch.proxy_url.trim() !== "" } : {}),
@@ -1547,14 +1548,16 @@ function AccountConcurrencyCell({ account }: { account: Account }) {
 		const explanation = tx("ui.account_concurrency_unavailable_old_cpa");
 		return <span className="concurrency-unavailable" title={explanation} aria-label={`${tx("ui.unavailable")}: ${explanation}`} tabIndex={0}>{tx("ui.unavailable")}<CircleHelp size={12} aria-hidden="true" /></span>;
 	}
-	const minuteLimit = accountConcurrencyLimitLabel(account.concurrency, "60s");
-	const fifteenSecondLimit = accountConcurrencyLimitLabel(account.concurrency, "15s");
+	const activeLimit = accountConcurrencyLimitLabel(account.concurrency);
+	const requestLimit = accountConcurrencyRequestLimitLabel(account.concurrency);
+	const usedRequests = accountConcurrencyUsedRequests(account.concurrency);
+	const windowSeconds = accountConcurrencyWindowSeconds(account.concurrency);
 	const saturated = accountConcurrencySaturated(account.concurrency);
 	return (
-		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={tx("ui.account_concurrency_dual_window_title", { active: account.concurrency.active, shortWindow: `${account.concurrency.used_15s}/${fifteenSecondLimit}`, minuteWindow: `${account.concurrency.used_60s}/${minuteLimit}` })}>
-			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_active")}</span><strong>{account.concurrency.active}</strong></span>
-			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_15s")}</span><strong>{account.concurrency.used_15s}/{fifteenSecondLimit}</strong></span>
-			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_60s")}</span><strong>{account.concurrency.used_60s}/{minuteLimit}</strong></span>
+		<div className={`concurrency-cell ${saturated ? "is-saturated" : ""}`} title={`${tx("ui.account_concurrency_active")}: ${account.concurrency.active}/${activeLimit} · ${windowSeconds}s ${tx("ui.account_concurrency_request")}: ${usedRequests}/${requestLimit} · ${tx("ui.account_concurrency_queue")}: ${account.concurrency.waiting ?? 0}`}>
+			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_active")}</span><strong>{account.concurrency.active} / {activeLimit}</strong></span>
+			<span className="concurrency-metric"><span>{windowSeconds}s {tx("ui.account_concurrency_request")}</span><strong>{usedRequests} / {requestLimit}</strong></span>
+			<span className="concurrency-metric"><span>{tx("ui.account_concurrency_queue")}</span><strong>{account.concurrency.waiting ?? 0}</strong></span>
 		</div>
 	);
 }

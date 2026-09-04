@@ -41,6 +41,7 @@ type ConditionalPolicyActions struct {
 	Disabled                 *bool                  `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 	ConcurrencyLimit         *int                   `json:"concurrency_limit,omitempty" yaml:"concurrency_limit,omitempty"`
 	Concurrency15sLimit      *int                   `json:"concurrency_15s_limit,omitempty" yaml:"concurrency_15s_limit,omitempty"`
+	ConcurrencyWindowSeconds *int                   `json:"concurrency_window_seconds,omitempty" yaml:"concurrency_window_seconds,omitempty"`
 	QuotaPolicy              *AccountQuotaPolicy    `json:"quota_policy,omitempty" yaml:"quota_policy,omitempty"`
 	Note                     *string                `json:"note,omitempty" yaml:"note,omitempty"`
 	Prefix                   *string                `json:"prefix,omitempty" yaml:"prefix,omitempty"`
@@ -68,6 +69,7 @@ type ResolvedConditionalPolicy struct {
 	Disabled                 *bool
 	ConcurrencyLimit         *int
 	Concurrency15sLimit      *int
+	ConcurrencyWindowSeconds *int
 	QuotaPolicy              *AccountQuotaPolicy
 	Note                     *string
 	Prefix                   *string
@@ -252,7 +254,7 @@ func validPolicyEmailSuffix(value string) bool {
 }
 
 func validateConditionalPolicyActions(actions ConditionalPolicyActions) (ConditionalPolicyActions, error) {
-	patch := BatchPatch{Disabled: actions.Disabled, Priority: actions.Priority, Note: actions.Note, Prefix: actions.Prefix, ProxyURL: actions.ProxyURL, ProxyProfileID: actions.ProxyProfileID, Websockets: actions.Websockets, Headers: actions.Headers, ModelPolicy: actions.ModelPolicy, ConcurrencyLimit: actions.ConcurrencyLimit, Concurrency15sLimit: actions.Concurrency15sLimit, QuotaPolicy: actions.QuotaPolicy, CodexIdentity: actions.CodexIdentity}
+	patch := BatchPatch{Disabled: actions.Disabled, Priority: actions.Priority, Note: actions.Note, Prefix: actions.Prefix, ProxyURL: actions.ProxyURL, ProxyProfileID: actions.ProxyProfileID, Websockets: actions.Websockets, Headers: actions.Headers, ModelPolicy: actions.ModelPolicy, ConcurrencyLimit: actions.ConcurrencyLimit, Concurrency15sLimit: actions.Concurrency15sLimit, ConcurrencyWindowSeconds: actions.ConcurrencyWindowSeconds, QuotaPolicy: actions.QuotaPolicy, CodexIdentity: actions.CodexIdentity}
 	if !patch.Empty() {
 		validated, errValidate := patch.Validate()
 		if errValidate != nil {
@@ -260,7 +262,7 @@ func validateConditionalPolicyActions(actions ConditionalPolicyActions) (Conditi
 		}
 		actions.Disabled, actions.Priority, actions.Note, actions.Prefix, actions.ProxyURL = validated.Disabled, validated.Priority, validated.Note, validated.Prefix, validated.ProxyURL
 		actions.ProxyProfileID, actions.Websockets, actions.Headers, actions.ModelPolicy = validated.ProxyProfileID, validated.Websockets, validated.Headers, validated.ModelPolicy
-		actions.ConcurrencyLimit, actions.Concurrency15sLimit, actions.QuotaPolicy, actions.CodexIdentity = validated.ConcurrencyLimit, validated.Concurrency15sLimit, validated.QuotaPolicy, validated.CodexIdentity
+		actions.ConcurrencyLimit, actions.Concurrency15sLimit, actions.ConcurrencyWindowSeconds, actions.QuotaPolicy, actions.CodexIdentity = validated.ConcurrencyLimit, validated.Concurrency15sLimit, validated.ConcurrencyWindowSeconds, validated.QuotaPolicy, validated.CodexIdentity
 	}
 	if actions.NewAccountModelProbe == nil && patch.Empty() {
 		return ConditionalPolicyActions{}, fmt.Errorf("conditional policy requires at least one action")
@@ -337,6 +339,7 @@ func resolveConditionalPolicy(policy DefaultPolicy, account Account) ResolvedCon
 		resolved.Disabled = cloneBoolPointer(policy.Disabled)
 		resolved.ConcurrencyLimit = cloneIntPointer(policy.ConcurrencyLimit)
 		resolved.Concurrency15sLimit = cloneIntPointer(policy.Concurrency15sLimit)
+		resolved.ConcurrencyWindowSeconds = cloneIntPointer(policy.ConcurrencyWindowSeconds)
 		if policy.QuotaPolicy != nil {
 			value := *policy.QuotaPolicy
 			resolved.QuotaPolicy = &value
@@ -393,6 +396,10 @@ func resolveConditionalPolicy(policy DefaultPolicy, account Account) ResolvedCon
 		}
 		if actions.Concurrency15sLimit != nil {
 			resolved.Concurrency15sLimit = cloneIntPointer(actions.Concurrency15sLimit)
+			resolved.ConcurrencyFromRule = true
+		}
+		if actions.ConcurrencyWindowSeconds != nil {
+			resolved.ConcurrencyWindowSeconds = cloneIntPointer(actions.ConcurrencyWindowSeconds)
 			resolved.ConcurrencyFromRule = true
 		}
 		if actions.QuotaPolicy != nil {
@@ -473,6 +480,7 @@ func cloneConditionalPolicyActions(actions ConditionalPolicyActions) Conditional
 	clone.Disabled = cloneBoolPointer(actions.Disabled)
 	clone.ConcurrencyLimit = cloneIntPointer(actions.ConcurrencyLimit)
 	clone.Concurrency15sLimit = cloneIntPointer(actions.Concurrency15sLimit)
+	clone.ConcurrencyWindowSeconds = cloneIntPointer(actions.ConcurrencyWindowSeconds)
 	clone.Note = cloneStringPointer(actions.Note)
 	clone.Prefix = cloneStringPointer(actions.Prefix)
 	clone.ProxyURL = cloneStringPointer(actions.ProxyURL)

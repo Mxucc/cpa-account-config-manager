@@ -101,7 +101,7 @@ export function AccountDetailsDialog({ account, creditUsageEnabled = false, week
 
 		<DetailSection title={tx("ui.plugin_configuration")}>
 			<DetailItem label={tx("ui.plugin_configuration_state")} value={tx(modelPolicy ? "ui.managed_by_plugin" : "ui.not_managed_by_plugin")} />
-			<DetailItem label={tx("ui.account_concurrency")} value={!account.concurrency?.supported ? tx("ui.unavailable") : formatAccountConcurrency(account.concurrency, { active: tx("ui.account_concurrency_active"), fifteenSeconds: tx("ui.account_concurrency_15s"), minute: tx("ui.account_concurrency_60s") })} mono wide />
+			<DetailItem label={tx("ui.account_concurrency")} value={!account.concurrency?.supported ? tx("ui.unavailable") : formatAccountConcurrency(account.concurrency, { active: tx("ui.account_concurrency_active"), request: tx("ui.account_concurrency_request"), queue: tx("ui.account_concurrency_queue") })} mono wide />
 			<DetailItem label={tx("ui.model_policy_mode")} value={modelPolicyMode} />
 			<DetailItem label={tx("ui.managed_model_exclusions")} value={modelPolicy?.excluded_count ?? 0} mono />
 			<div className="detail-item detail-item-wide">

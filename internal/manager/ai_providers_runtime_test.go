@@ -1,8 +1,6 @@
 package manager
 
 import (
-	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,7 +205,7 @@ func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestProviderRuntimeEnforcesBothRollingRequestWindows(t *testing.T) {
+func TestProviderRuntimeObservesConfiguredRollingWindowsWithoutRejecting(t *testing.T) {
 	policies := NewQuotaPolicyService()
 	policies.Configure(Config{DataDir: t.TempDir()})
 	if errSet := policies.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:auth-a", Concurrency: intPointer(3), Concurrency15s: intPointer(2)}); errSet != nil {
@@ -220,40 +218,14 @@ func TestProviderRuntimeEnforcesBothRollingRequestWindows(t *testing.T) {
 	request := func(id string) cpaapi.RequestInterceptRequest {
 		return cpaapi.RequestInterceptRequest{RequestID: id, ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}}
 	}
-	for _, id := range []string{"request-1", "request-2"} {
-		if response, changed := tracker.InterceptRequest(request(id)); changed || response.Terminate {
-			t.Fatalf("%s rejected: %#v changed=%v", id, response, changed)
+	for _, id := range []string{"request-1", "request-2", "request-3"} {
+		if response, changed := tracker.InterceptRequest(request(id)); changed || response.Terminate || response.StatusCode != 0 {
+			t.Fatalf("configured provider window rejected %s: %#v changed=%v", id, response, changed)
 		}
 		tracker.Complete(cpaapi.RequestCompletion{RequestID: id})
 	}
-	response, changed := tracker.InterceptRequest(request("request-3"))
-	if !changed || !response.Terminate || response.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("15-second request was not rejected: %#v changed=%v", response, changed)
-	}
-	var payload struct {
-		Error struct {
-			WindowSeconds int `json:"window_seconds"`
-			Used          int `json:"used"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(response.ResponseBody, &payload); err != nil || payload.Error.WindowSeconds != 15 || payload.Error.Used != 2 {
-		t.Fatalf("15-second rejection payload = %s, err=%v", response.ResponseBody, err)
-	}
-	now = now.Add(16 * time.Second)
-	if response, changed = tracker.InterceptRequest(request("request-3")); changed || response.Terminate {
-		t.Fatalf("request after 15-second expiry rejected: %#v changed=%v", response, changed)
-	}
-	tracker.Complete(cpaapi.RequestCompletion{RequestID: "request-3"})
-	response, changed = tracker.InterceptRequest(request("request-4"))
-	if !changed || !response.Terminate {
-		t.Fatalf("60-second request was not rejected: %#v changed=%v", response, changed)
-	}
-	if err := json.Unmarshal(response.ResponseBody, &payload); err != nil || payload.Error.WindowSeconds != 60 || payload.Error.Used != 3 {
-		t.Fatalf("60-second rejection payload = %s, err=%v", response.ResponseBody, err)
-	}
-	now = now.Add(45 * time.Second)
-	if response, changed = tracker.InterceptRequest(request("request-4")); changed || response.Terminate {
-		t.Fatalf("request after minute expiry rejected: %#v changed=%v", response, changed)
+	if snapshot := tracker.Snapshot()[0]; snapshot.Used15s != 3 || snapshot.Used60s != 3 {
+		t.Fatalf("observed rolling windows = %+v", snapshot)
 	}
 }
 

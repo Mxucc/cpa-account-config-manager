@@ -378,19 +378,12 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 	if aggregate == nil {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
-	policy, configurable := ProviderQuotaPolicy{}, false
-	if t.quotaPolicies != nil {
-		policy, configurable = t.quotaPolicies.ResolveProviderPolicy(provider, authIndex, identity)
-	}
 	aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
-	used60 := len(aggregate.RequestEvents)
-	used15 := countProviderRequestEvents(aggregate.RequestEvents, now.Add(-15*time.Second), now)
-	if configurable && policy.Concurrency15s != nil && *policy.Concurrency15s > 0 && used15 >= *policy.Concurrency15s {
-		return providerConcurrencyRejectedResponse(*policy.Concurrency15s, 15, used15), true
-	}
-	if configurable && policy.Concurrency != nil && *policy.Concurrency > 0 && used60 >= *policy.Concurrency {
-		return providerConcurrencyRejectedResponse(*policy.Concurrency, 60, used60), true
-	}
+	// This tracker is observational. Account admission is the only concurrency
+	// gate that can wait for a slot in CPA's request lifecycle. Returning a
+	// synthetic 429 here makes CPA/sub2api classify an internal dashboard policy
+	// as an upstream provider failure and stop scheduling the account. Provider
+	// policies remain available in Snapshot for display and external scheduling.
 	t.requests[request.RequestID] = providerRuntimeRequest{AggregateKey: aggregateKey, AdmittedAt: now}
 	aggregate.Active++
 	aggregate.RequestEvents = append(aggregate.RequestEvents, now)
@@ -400,22 +393,6 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 
 func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptRequest) {
 	_, _ = t.InterceptRequest(request)
-}
-
-func providerConcurrencyRejectedResponse(limit, window, used int) cpaapi.RequestInterceptResponse {
-	body, _ := json.Marshal(map[string]any{"error": map[string]any{
-		"type":           "provider_concurrency_limit_reached",
-		"message":        "the selected AI provider has reached its configured request limit",
-		"limit":          limit,
-		"used":           used,
-		"window_seconds": window,
-	}})
-	return cpaapi.RequestInterceptResponse{
-		Terminate:       true,
-		StatusCode:      http.StatusTooManyRequests,
-		ResponseHeaders: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"1"}},
-		ResponseBody:    body,
-	}
 }
 
 func (t *ProviderRuntimeTracker) Complete(completion cpaapi.RequestCompletion) {

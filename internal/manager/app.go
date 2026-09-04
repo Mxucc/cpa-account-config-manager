@@ -144,7 +144,10 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
 	providerRuntime.SetQuotaPolicies(quotaPolicies)
 	quotaGuard := NewAccountQuotaGuard(usage, quotaPolicies)
-	requestHooks := NewRequestHook(riskControl, quotaGuard, providerRuntime, concurrency, weeklyOverdraft, codexIdentity)
+	// Admission must run before observational trackers. A saturated account can
+	// block in the concurrency transformer; recording it as active before that
+	// wait would skew provider runtime metrics and rolling request windows.
+	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()

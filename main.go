@@ -55,6 +55,12 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		pluginApp.ConfigureHost(lifecycle.ConfigYAML, lifecycle.SchemaVersion)
 		return okEnvelope(pluginApp.Registration())
+	case cpaapi.MethodSchedulerPick:
+		var schedulerRequest cpaapi.SchedulerPickRequest
+		if errUnmarshal := json.Unmarshal(request, &schedulerRequest); errUnmarshal != nil {
+			return nil, fmt.Errorf("decode scheduler pick input: %w", errUnmarshal)
+		}
+		return okEnvelope(pluginApp.HandleSchedulerPick(schedulerRequest))
 	case cpaapi.MethodManagementRegister:
 		return okEnvelope(pluginApp.ManagementRegistration())
 	case cpaapi.MethodManagementHandle:

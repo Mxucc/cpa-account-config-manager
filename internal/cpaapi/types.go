@@ -20,6 +20,7 @@ const (
 const (
 	MethodPluginRegister         = "plugin.register"
 	MethodPluginReconfigure      = "plugin.reconfigure"
+	MethodSchedulerPick          = "scheduler.pick"
 	MethodManagementRegister     = "management.register"
 	MethodManagementHandle       = "management.handle"
 	MethodRequestInterceptBefore = "request.intercept_before"
@@ -105,6 +106,35 @@ type ManagementResponse struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+}
+
+type SchedulerPickRequest struct {
+	Provider   string                   `json:"Provider"`
+	Providers  []string                 `json:"Providers"`
+	Model      string                   `json:"Model"`
+	Stream     bool                     `json:"Stream"`
+	Options    SchedulerOptions         `json:"Options"`
+	Candidates []SchedulerAuthCandidate `json:"Candidates"`
+}
+
+type SchedulerOptions struct {
+	Headers  map[string][]string `json:"Headers"`
+	Metadata map[string]any      `json:"Metadata"`
+}
+
+type SchedulerAuthCandidate struct {
+	ID         string            `json:"ID"`
+	Provider   string            `json:"Provider"`
+	Priority   int               `json:"Priority"`
+	Status     string            `json:"Status"`
+	Attributes map[string]string `json:"Attributes"`
+	Metadata   map[string]any    `json:"Metadata"`
+}
+
+type SchedulerPickResponse struct {
+	AuthID          string `json:"AuthID,omitempty"`
+	DelegateBuiltin string `json:"DelegateBuiltin,omitempty"`
+	Handled         bool   `json:"Handled"`
 }
 
 type RequestInterceptRequest struct {

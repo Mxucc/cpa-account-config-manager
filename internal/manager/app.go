@@ -41,6 +41,7 @@ type Registration struct {
 type RegistrationCapabilities struct {
 	ManagementAPI          bool     `json:"management_api"`
 	UsagePlugin            bool     `json:"usage_plugin"`
+	Scheduler              bool     `json:"scheduler"`
 	RequestInterceptor     bool     `json:"request_interceptor"`
 	RequestLifecyclePlugin bool     `json:"request_lifecycle_plugin"`
 	AuthProvider           bool     `json:"auth_provider"`
@@ -380,13 +381,20 @@ func (a *App) Registration() Registration {
 			},
 		},
 		Capabilities: RegistrationCapabilities{
-			ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true, RequestLifecyclePlugin: requestLifecycle,
+			ManagementAPI: true, UsagePlugin: true, Scheduler: hostSchema >= cpaapi.SchemaVersion, RequestInterceptor: true, RequestLifecyclePlugin: requestLifecycle,
 			AuthProvider: true, ModelProvider: true, Executor: true,
 			ExecutorModelScope:    "oauth",
 			ExecutorInputFormats:  []string{"codex"},
 			ExecutorOutputFormats: []string{"codex"},
 		},
 	}
+}
+
+func (a *App) HandleSchedulerPick(request cpaapi.SchedulerPickRequest) cpaapi.SchedulerPickResponse {
+	if a == nil || a.concurrency == nil || a.runtimeSuperseded() {
+		return cpaapi.SchedulerPickResponse{}
+	}
+	return a.concurrency.PickAuth(request)
 }
 
 func (a *App) HandleRequestBefore(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {

@@ -152,7 +152,7 @@ func TestDecodeHostHTTPResponseRejectsMissingInvalidAndConflictingStatusCodes(t 
 }
 
 func TestHandleMethodRegistersManagementCapability(t *testing.T) {
-	raw, errHandle := handleMethod(cpaapi.MethodPluginRegister, []byte(`{"config_yaml":"d29ya2VyczogNAo="}`))
+	raw, errHandle := handleMethod(cpaapi.MethodPluginRegister, []byte(`{"config_yaml":"d29ya2VyczogNAo=","schema_version":2}`))
 	if errHandle != nil {
 		t.Fatalf("handleMethod() error = %v", errHandle)
 	}
@@ -173,6 +173,9 @@ func TestHandleMethodRegistersManagementCapability(t *testing.T) {
 	if !registration.Capabilities.RequestInterceptor {
 		t.Fatal("request_interceptor capability is false")
 	}
+	if !registration.Capabilities.Scheduler {
+		t.Fatal("scheduler capability is false")
+	}
 	if registration.Metadata.Name != manager.PluginName {
 		t.Fatalf("metadata name = %q", registration.Metadata.Name)
 	}
@@ -190,9 +193,10 @@ func TestHandleMethodNegotiatesLifecycleCapabilityWithHostSchema(t *testing.T) {
 	for _, test := range []struct {
 		schema        uint32
 		wantLifecycle bool
+		wantScheduler bool
 	}{
-		{schema: cpaapi.LegacySchemaVersion, wantLifecycle: false},
-		{schema: cpaapi.SchemaVersion, wantLifecycle: true},
+		{schema: cpaapi.LegacySchemaVersion, wantLifecycle: false, wantScheduler: false},
+		{schema: cpaapi.SchemaVersion, wantLifecycle: true, wantScheduler: true},
 	} {
 		rawRequest, errMarshal := json.Marshal(lifecycleRequest{ConfigYAML: []byte("data_dir: " + t.TempDir()), SchemaVersion: test.schema})
 		if errMarshal != nil {
@@ -210,9 +214,43 @@ func TestHandleMethodNegotiatesLifecycleCapabilityWithHostSchema(t *testing.T) {
 		if errUnmarshal := json.Unmarshal(result, &registration); errUnmarshal != nil {
 			t.Fatalf("Unmarshal(schema %d) error = %v", test.schema, errUnmarshal)
 		}
-		if registration.SchemaVersion != test.schema || registration.Capabilities.RequestLifecyclePlugin != test.wantLifecycle {
+		if registration.SchemaVersion != test.schema || registration.Capabilities.RequestLifecyclePlugin != test.wantLifecycle || registration.Capabilities.Scheduler != test.wantScheduler {
 			t.Fatalf("registration for schema %d = %#v", test.schema, registration)
 		}
+	}
+}
+
+func TestHandleMethodSchedulerPickUsesEnvelope(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.SchemaVersion)
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	request, errMarshal := json.Marshal(cpaapi.SchedulerPickRequest{
+		Provider:   "codex",
+		Candidates: []cpaapi.SchedulerAuthCandidate{{ID: "auth-a", Provider: "codex"}, {ID: "auth-b", Provider: "codex"}},
+	})
+	if errMarshal != nil {
+		t.Fatalf("marshal scheduler request: %v", errMarshal)
+	}
+	raw, errHandle := handleMethod(cpaapi.MethodSchedulerPick, request)
+	if errHandle != nil {
+		t.Fatalf("handleMethod(scheduler.pick) error = %v", errHandle)
+	}
+	result, errDecode := decodeEnvelopeResult(raw)
+	if errDecode != nil {
+		t.Fatalf("decode scheduler envelope: %v", errDecode)
+	}
+	var response cpaapi.SchedulerPickResponse
+	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+		t.Fatalf("decode scheduler result: %v", errUnmarshal)
+	}
+	if response.Handled {
+		t.Fatalf("unconfigured scheduler response = %#v, want unhandled", response)
 	}
 }
 

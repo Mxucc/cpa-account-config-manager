@@ -25,6 +25,7 @@ const (
 	accountConcurrencyMaxWaitersAccount    = 100
 	accountConcurrencyMaxWaitersTotal      = 1000
 	accountConcurrencyTombstoneTTL         = 2 * time.Minute
+	accountConcurrencySchedulerReserveTTL  = 10 * time.Second
 	DefaultAccountConcurrencyWindowSeconds = 15
 	MinAccountConcurrencyWindowSeconds     = 1
 	MaxAccountConcurrencyWindowSeconds     = 3600
@@ -93,6 +94,8 @@ type AccountConcurrencyService struct {
 	waiting         map[string]int
 	waitingRequests map[string]string
 	canceled        map[string]time.Time
+	reservations    map[string][]time.Time
+	schedulerCursor uint64
 	wake            chan struct{}
 	epoch           uint64
 	shuttingDown    bool
@@ -115,6 +118,7 @@ func NewAccountConcurrencyService() *AccountConcurrencyService {
 		waiting:         make(map[string]int),
 		waitingRequests: make(map[string]string),
 		canceled:        make(map[string]time.Time),
+		reservations:    make(map[string][]time.Time),
 		wake:            make(chan struct{}),
 		now:             time.Now,
 		maxWait:         accountConcurrencyMaxWait,
@@ -147,6 +151,7 @@ func (s *AccountConcurrencyService) Configure(config Config, hostSchema uint32) 
 		s.active = make(map[string]int)
 		s.requests = make(map[string]accountConcurrencyAdmission)
 		s.events = make(map[string][]time.Time)
+		s.reservations = make(map[string][]time.Time)
 		s.cancelWaitersLocked()
 		s.nextPrune = time.Time{}
 	}
@@ -301,6 +306,94 @@ func (s *AccountConcurrencyService) RequestInterceptionAcceptsFormat(string) boo
 	return s.RequestInterceptionActive()
 }
 
+type accountSchedulerCandidateLoad struct {
+	authID   string
+	pressure int64
+	load     int
+}
+
+// PickAuth only overrides CPA's configured selector while plugin-managed load exists.
+// Idle traffic remains delegated to CPA so its native session affinity semantics stay
+// intact; concurrent or rolling-window pressure is spread across the least-loaded
+// managed credentials before requests reach the after-auth waiting queue.
+func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest) cpaapi.SchedulerPickResponse {
+	if s == nil || len(request.Candidates) < 2 {
+		return cpaapi.SchedulerPickResponse{}
+	}
+	now := s.now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hostSchema < cpaapi.SchemaVersion || s.shuttingDown {
+		return cpaapi.SchedulerPickResponse{}
+	}
+	s.pruneExpiredLocked(now)
+	s.pruneSchedulerReservationsLocked(now)
+
+	loads := make([]accountSchedulerCandidateLoad, 0, len(request.Candidates))
+	seen := make(map[string]struct{}, len(request.Candidates))
+	hasLoad := false
+	for _, candidate := range request.Candidates {
+		authID := strings.TrimSpace(candidate.ID)
+		if authID == "" {
+			continue
+		}
+		if _, duplicate := seen[authID]; duplicate {
+			continue
+		}
+		seen[authID] = struct{}{}
+		record, managed := s.limits[authID]
+		if !managed || record.Limit <= 0 && record.Limit15s <= 0 {
+			// Mixed managed/unmanaged pools retain the host selector. The plugin has
+			// no declared capacity contract for an unmanaged credential and must not
+			// silently turn it into the preferred overflow destination.
+			return cpaapi.SchedulerPickResponse{}
+		}
+		reserved := len(s.reservations[authID])
+		activeLoad := s.active[authID] + s.waiting[authID] + reserved
+		windowSeconds := normalizeAccountConcurrencyWindowSeconds(record.WindowSeconds)
+		requestLoad := s.windowUsageLocked(authID, now, time.Duration(windowSeconds)*time.Second) + reserved
+		load := activeLoad + requestLoad
+		if load > 0 {
+			hasLoad = true
+		}
+		var pressure int64
+		if record.Limit > 0 {
+			pressure = int64(activeLoad) * 1_000_000 / int64(record.Limit)
+		}
+		if record.Limit15s > 0 {
+			requestPressure := int64(requestLoad) * 1_000_000 / int64(record.Limit15s)
+			if requestPressure > pressure {
+				pressure = requestPressure
+			}
+		}
+		loads = append(loads, accountSchedulerCandidateLoad{authID: authID, pressure: pressure, load: load})
+	}
+	if len(loads) < 2 || !hasLoad {
+		return cpaapi.SchedulerPickResponse{}
+	}
+
+	bestPressure := loads[0].pressure
+	bestLoad := loads[0].load
+	best := make([]string, 0, len(loads))
+	for _, candidate := range loads {
+		if candidate.pressure < bestPressure || candidate.pressure == bestPressure && candidate.load < bestLoad {
+			bestPressure = candidate.pressure
+			bestLoad = candidate.load
+			best = best[:0]
+		}
+		if candidate.pressure == bestPressure && candidate.load == bestLoad {
+			best = append(best, candidate.authID)
+		}
+	}
+	if len(best) == 0 {
+		return cpaapi.SchedulerPickResponse{}
+	}
+	selected := best[int(s.schedulerCursor%uint64(len(best)))]
+	s.schedulerCursor++
+	s.reservations[selected] = append(s.reservations[selected], now)
+	return cpaapi.SchedulerPickResponse{AuthID: selected, Handled: true}
+}
+
 func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
 	if s == nil {
 		return cpaapi.RequestInterceptResponse{}, false
@@ -317,6 +410,7 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 
 	deadline := s.now().UTC().Add(s.maxWait)
 	registered := false
+	reservationConsumed := false
 	var waitEpoch uint64
 	for {
 		now := s.now().UTC()
@@ -355,6 +449,10 @@ func (s *AccountConcurrencyService) InterceptRequest(request cpaapi.RequestInter
 			}
 			delete(s.requests, requestID)
 			s.decrementActiveLocked(current.AuthID)
+		}
+		if !reservationConsumed {
+			s.consumeSchedulerReservationLocked(authID)
+			reservationConsumed = true
 		}
 
 		record := s.limits[authID]
@@ -498,6 +596,7 @@ func (s *AccountConcurrencyService) Shutdown() {
 	s.active = make(map[string]int)
 	s.requests = make(map[string]accountConcurrencyAdmission)
 	s.events = make(map[string][]time.Time)
+	s.reservations = make(map[string][]time.Time)
 	s.cancelWaitersLocked()
 	s.activeGate.Store(false)
 	s.mu.Unlock()
@@ -541,6 +640,32 @@ func (s *AccountConcurrencyService) broadcastLocked() {
 
 func (s *AccountConcurrencyService) updateActiveGateLocked() {
 	s.activeGate.Store(s.hostSchema >= cpaapi.SchemaVersion)
+}
+
+func (s *AccountConcurrencyService) consumeSchedulerReservationLocked(authID string) {
+	reservations := s.reservations[authID]
+	if len(reservations) <= 1 {
+		delete(s.reservations, authID)
+		return
+	}
+	s.reservations[authID] = reservations[1:]
+}
+
+func (s *AccountConcurrencyService) pruneSchedulerReservationsLocked(now time.Time) {
+	cutoff := now.Add(-accountConcurrencySchedulerReserveTTL)
+	for authID, reservations := range s.reservations {
+		kept := reservations[:0]
+		for _, reservedAt := range reservations {
+			if reservedAt.After(cutoff) && !reservedAt.After(now) {
+				kept = append(kept, reservedAt)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.reservations, authID)
+		} else {
+			s.reservations[authID] = kept
+		}
+	}
 }
 
 func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {

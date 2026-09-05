@@ -21,7 +21,7 @@ const (
 	codexQuotaUsageURL        = "https://chatgpt.com/backend-api/wham/usage"
 	codexQuotaResetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	codexQuotaResetConsumeURL = codexQuotaResetCreditsURL + "/consume"
-	codexQuotaUserAgent       = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexQuotaUserAgent       = defaultCodexCLIUserAgent
 	maxActiveResetCount       = 1_000_000
 )
 
@@ -422,7 +422,7 @@ func codexQuotaHeaders(chatGPTAccountID string) map[string]string {
 		"Authorization": "Bearer $TOKEN$",
 		"Content-Type":  "application/json",
 		"User-Agent":    codexQuotaUserAgent,
-		"Originator":    "codex_cli_rs",
+		"Originator":    "codex-tui",
 	}
 	if chatGPTAccountID != "" {
 		headers["Chatgpt-Account-Id"] = chatGPTAccountID

@@ -11,12 +11,12 @@ import (
 const (
 	// codexUpstreamMinVersion is the lowest engine version accepted by the
 	// current Codex backend when the request supplies a Version header.
-	codexUpstreamMinVersion = "0.144.0"
+	codexUpstreamMinVersion = "0.153.0"
 	// codexCLIVersion is the stable identity used when an untrusted or legacy
 	// client identity cannot be paired safely.
-	codexCLIVersion = "0.144.1"
-	// defaultCodexCLIUserAgent matches the current official Rust CLI.
-	defaultCodexCLIUserAgent = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexCLIVersion = "0.153.3"
+	// defaultCodexCLIUserAgent matches the Codex TUI identity required by current GPT models.
+	defaultCodexCLIUserAgent = "codex-tui/0.153.3 (Linux Unknown; x86_64) xterm-256color (codex-tui; 0.153.3)"
 )
 
 // codexOfficialClientUAPrefixes are deterministic first-party User-Agent
@@ -231,7 +231,7 @@ func ensureCodexIdentityHeaders(h http.Header) {
 		h.Set("User-Agent", defaultCodexCLIUserAgent)
 	}
 	if strings.TrimSpace(h.Get("Originator")) == "" {
-		h.Set("Originator", "codex_cli_rs")
+		h.Set("Originator", "codex-tui")
 	}
 	if strings.TrimSpace(h.Get("Version")) == "" {
 		h.Set("Version", codexCLIVersion)
@@ -245,7 +245,7 @@ func enforceCodexIdentityHeaders(h http.Header) {
 	}
 	originator, pairedUA, ok := pairCodexClientIdentity(h.Get("User-Agent"))
 	if !ok {
-		originator = "codex_cli_rs"
+		originator = "codex-tui"
 		pairedUA = defaultCodexCLIUserAgent
 	}
 	h.Set("User-Agent", pairedUA)

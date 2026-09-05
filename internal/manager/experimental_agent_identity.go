@@ -983,8 +983,8 @@ func agentIdentityHeaders(parsed agentIdentityParsed, authorization string, stre
 	headers.Set("ChatGPT-Account-ID", parsed.claims.AccountID)
 	headers.Set("Content-Type", "application/json")
 	headers.Set("Accept", accept)
-	headers.Set("Originator", "codex_cli_rs")
-	headers.Set("User-Agent", "codex_cli_rs/cpa-account-config-manager")
+	headers.Set("Originator", "codex-tui")
+	headers.Set("User-Agent", defaultCodexCLIUserAgent)
 	if parsed.claims.ChatGPTAccountIsFedRAMP {
 		headers.Set("X-OpenAI-Fedramp", "true")
 	}

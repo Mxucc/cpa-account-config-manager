@@ -23,7 +23,7 @@ func TestCodexTokenRefreshExchangerUsesVerifiedProtocolAndParsesBoundedResponse(
 			if request.Method != http.MethodPost || request.URL.String() != codexTokenRefreshEndpoint {
 				t.Fatalf("request = %s %s", request.Method, request.URL)
 			}
-			if request.Header.Get("Content-Type") != "application/x-www-form-urlencoded" || request.Header.Get("User-Agent") != defaultCodexCLIUserAgent || request.Header.Get("Originator") != "codex_cli_rs" || request.Header.Get("Version") != codexCLIVersion {
+			if request.Header.Get("Content-Type") != "application/x-www-form-urlencoded" || request.Header.Get("User-Agent") != defaultCodexCLIUserAgent || request.Header.Get("Originator") != "codex-tui" || request.Header.Get("Version") != codexCLIVersion {
 				t.Fatalf("request headers = %#v", request.Header)
 			}
 			body, errRead := io.ReadAll(request.Body)

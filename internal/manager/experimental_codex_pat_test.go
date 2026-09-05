@@ -218,7 +218,7 @@ func TestCodexPATQuotaCompatibilityExposesHostTokenAndAllowsExactEndpoints(t *te
 
 func verifyCodexPATBearerHeaders(t *testing.T, headers http.Header, token, accountID string) {
 	t.Helper()
-	if headers.Get("Authorization") != "Bearer "+token || headers.Get("Originator") != "codex_cli_rs" {
+	if headers.Get("Authorization") != "Bearer "+token || headers.Get("Originator") != "codex-tui" {
 		t.Fatalf("PAT authentication headers are invalid")
 	}
 	if headers.Get("ChatGPT-Account-ID") != accountID {

@@ -15,7 +15,7 @@ const (
 	codexPATLegacyAuthMode  = "personal_access_token"
 	codexPATAccountType     = "personal_access_token"
 	codexPATWhoamiURL       = "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami"
-	codexPATUserAgent       = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexPATUserAgent       = defaultCodexCLIUserAgent
 	codexPATMaxTokenLength  = 8192
 	codexPATMaxWhoamiResult = 64 << 10
 )
@@ -236,7 +236,7 @@ func codexPATHeaders(parsed codexPATParsed, stream, includeAccount bool) http.He
 	}
 	headers := http.Header{
 		"Authorization": []string{"Bearer " + parsed.accessToken},
-		"Accept":        []string{accept}, "Originator": []string{"codex_cli_rs"},
+		"Accept":        []string{accept}, "Originator": []string{"codex-tui"},
 		"User-Agent": []string{codexPATUserAgent},
 	}
 	if includeAccount {

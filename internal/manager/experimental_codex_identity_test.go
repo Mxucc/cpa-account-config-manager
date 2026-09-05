@@ -90,6 +90,9 @@ func TestPairCodexClientIdentity(t *testing.T) {
 	}{
 		{name: "cli leading identity", ua: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color", wantOriginator: "codex_cli_rs", wantUA: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color", wantOK: true},
 		{name: "tui leading identity", ua: "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)", wantOriginator: "codex-tui", wantUA: "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)", wantOK: true},
+		{name: "latest linux tui identity", ua: "codex-tui/0.153.3 (Linux Unknown; x86_64) xterm-256color (codex-tui; 0.153.3)", wantOriginator: "codex-tui", wantUA: "codex-tui/0.153.3 (Linux Unknown; x86_64) xterm-256color (codex-tui; 0.153.3)", wantOK: true},
+		{name: "latest windows tui identity", ua: "codex-tui/0.153.0 (Windows 10.0.26100; x86_64) unknown (codex-tui; 0.153.0)", wantOriginator: "codex-tui", wantUA: "codex-tui/0.153.0 (Windows 10.0.26100; x86_64) unknown (codex-tui; 0.153.0)", wantOK: true},
+		{name: "latest mac tui identity", ua: "codex-tui/0.153.2 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.153.2)", wantOriginator: "codex-tui", wantUA: "codex-tui/0.153.2 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.153.2)", wantOK: true},
 		{name: "desktop family keeps case", ua: "Codex Desktop/1.2.3", wantOriginator: "Codex Desktop", wantUA: "Codex Desktop/1.2.3", wantOK: true},
 		{name: "trailer rewrites override", ua: "cccc/0.142.0 (Ubuntu 22.4.0; x86_64) screen (codex-tui; 0.142.0)", wantOriginator: "codex-tui", wantUA: "codex-tui/0.142.0 (Ubuntu 22.4.0; x86_64) screen (codex-tui; 0.142.0)", wantOK: true},
 		{name: "canonical exact case", ua: "CODEX_CLI_RS/1.0.0", wantOriginator: "codex_cli_rs", wantUA: "codex_cli_rs/1.0.0", wantOK: true},
@@ -125,7 +128,7 @@ func TestEnforceCodexIdentityHeaders(t *testing.T) {
 
 	fallback := http.Header{"Originator": []string{"evil"}}
 	enforceCodexIdentityHeaders(fallback)
-	if fallback.Get("User-Agent") != defaultCodexCLIUserAgent || fallback.Get("Originator") != "codex_cli_rs" {
+	if fallback.Get("User-Agent") != defaultCodexCLIUserAgent || fallback.Get("Originator") != "codex-tui" {
 		t.Fatalf("fallback identity = %#v", fallback)
 	}
 

@@ -1394,7 +1394,11 @@ export interface AIProviderRuntimeSnapshot {
   concurrency_configurable?: boolean;
   reason?: string;
   active: number;
+  waiting: number;
   limit: number;
+  request_limit: number;
+  request_window_seconds: number;
+  used_requests: number;
   limit_15s: number;
   used_60s: number;
   used_15s: number;

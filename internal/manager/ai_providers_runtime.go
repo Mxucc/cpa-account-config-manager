@@ -23,6 +23,7 @@ const (
 	providerRuntimeMaxIdentities = 10000
 	providerRuntimeMaxModels     = 512
 	providerRuntimeMaxEvents     = 10000
+	providerRuntimeMaxWindow     = time.Hour
 	// A missing completion callback must not leave the runtime dashboard's
 	// active count (or request map) growing forever. CPA requests can be long
 	// lived, so use a generous lease and prune at a lower cadence.
@@ -33,28 +34,33 @@ const (
 // ProviderRuntimeSnapshot is intentionally redacted. It contains no API key,
 // token, cookie, header, or provider credential material.
 type ProviderRuntimeSnapshot struct {
-	Provider                string               `json:"provider"`
-	AuthIndex               string               `json:"auth_index,omitempty"`
-	Identity                string               `json:"identity"`
-	Supported               bool                 `json:"supported"`
-	Reason                  string               `json:"reason,omitempty"`
-	ConcurrencyConfigurable bool                 `json:"concurrency_configurable"`
-	Active                  int                  `json:"active"`
-	Limit                   int                  `json:"limit"`
-	Limit15s                int                  `json:"limit_15s"`
-	Used60s                 int                  `json:"used_60s"`
-	Used15s                 int                  `json:"used_15s"`
-	InputTokens             int64                `json:"input_tokens"`
-	OutputTokens            int64                `json:"output_tokens"`
-	ReasoningTokens         int64                `json:"reasoning_tokens"`
-	CachedTokens            int64                `json:"cached_tokens"`
-	TotalTokens             int64                `json:"total_tokens"`
-	AmountUSD               float64              `json:"amount_usd"`
-	RatedRequests           int64                `json:"rated_requests"`
-	UnratedRequests         int64                `json:"unrated_requests"`
-	Quota                   ProviderRuntimeQuota `json:"quota"`
-	Models                  []ProviderModelUsage `json:"models,omitempty"`
-	UpdatedAt               time.Time            `json:"updated_at"`
+	Provider                string `json:"provider"`
+	AuthIndex               string `json:"auth_index,omitempty"`
+	Identity                string `json:"identity"`
+	Supported               bool   `json:"supported"`
+	Reason                  string `json:"reason,omitempty"`
+	ConcurrencyConfigurable bool   `json:"concurrency_configurable"`
+	Active                  int    `json:"active"`
+	Waiting                 int    `json:"waiting"`
+	Limit                   int    `json:"limit"`
+	RequestLimit            int    `json:"request_limit"`
+	RequestWindowSeconds    int    `json:"request_window_seconds"`
+	UsedRequests            int    `json:"used_requests"`
+	// Legacy aliases retained for older clients.
+	Limit15s        int                  `json:"limit_15s"`
+	Used60s         int                  `json:"used_60s"`
+	Used15s         int                  `json:"used_15s"`
+	InputTokens     int64                `json:"input_tokens"`
+	OutputTokens    int64                `json:"output_tokens"`
+	ReasoningTokens int64                `json:"reasoning_tokens"`
+	CachedTokens    int64                `json:"cached_tokens"`
+	TotalTokens     int64                `json:"total_tokens"`
+	AmountUSD       float64              `json:"amount_usd"`
+	RatedRequests   int64                `json:"rated_requests"`
+	UnratedRequests int64                `json:"unrated_requests"`
+	Quota           ProviderRuntimeQuota `json:"quota"`
+	Models          []ProviderModelUsage `json:"models,omitempty"`
+	UpdatedAt       time.Time            `json:"updated_at"`
 }
 
 type ProviderRuntimeQuota struct {
@@ -521,14 +527,14 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 			policy, configurable = t.quotaPolicies.ResolveProviderPolicy(aggregate.Provider, aggregate.AuthIndex, aggregate.Identity)
 		}
 		aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
-		used60 := len(aggregate.RequestEvents)
-		used15 := countProviderRequestEvents(aggregate.RequestEvents, now.Add(-15*time.Second), now)
-		limit, limit15s := 0, 0
+		windowSeconds := providerConcurrencyWindowSeconds(policy, configurable)
+		usedRequests := countProviderRequestEvents(aggregate.RequestEvents, now.Add(-time.Duration(windowSeconds)*time.Second), now)
+		limit, requestLimit := 0, 0
 		if configurable && policy.Concurrency != nil {
 			limit = *policy.Concurrency
 		}
 		if configurable && policy.Concurrency15s != nil {
-			limit15s = *policy.Concurrency15s
+			requestLimit = *policy.Concurrency15s
 		}
 		out = append(out, ProviderRuntimeSnapshot{
 			Provider:                aggregate.Provider,
@@ -538,10 +544,14 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 			Reason:                  reason,
 			ConcurrencyConfigurable: configurable,
 			Active:                  aggregate.Active,
+			Waiting:                 0, // Provider queueing belongs to the CPA/sub2api scheduler.
 			Limit:                   limit,
-			Limit15s:                limit15s,
-			Used60s:                 used60,
-			Used15s:                 used15,
+			RequestLimit:            requestLimit,
+			RequestWindowSeconds:    windowSeconds,
+			UsedRequests:            usedRequests,
+			Limit15s:                requestLimit,
+			Used60s:                 len(aggregate.RequestEvents),
+			Used15s:                 countProviderRequestEvents(aggregate.RequestEvents, now.Add(-15*time.Second), now),
 			InputTokens:             aggregate.InputTokens,
 			OutputTokens:            aggregate.OutputTokens,
 			ReasoningTokens:         aggregate.ReasoningTokens,
@@ -641,7 +651,7 @@ func pruneProviderRequestEvents(events []time.Time, now time.Time) []time.Time {
 	if len(events) == 0 {
 		return nil
 	}
-	cutoff := now.Add(-time.Minute)
+	cutoff := now.Add(-providerRuntimeMaxWindow)
 	kept := events[:0]
 	for _, event := range events {
 		if event.After(cutoff) && !event.After(now) {
@@ -649,6 +659,13 @@ func pruneProviderRequestEvents(events []time.Time, now time.Time) []time.Time {
 		}
 	}
 	return kept
+}
+
+func providerConcurrencyWindowSeconds(policy ProviderQuotaPolicy, configured bool) int {
+	if configured && policy.WindowSeconds != nil && *policy.WindowSeconds >= 1 && *policy.WindowSeconds <= 3600 {
+		return *policy.WindowSeconds
+	}
+	return 15
 }
 
 func countProviderRequestEvents(events []time.Time, cutoff, now time.Time) int {

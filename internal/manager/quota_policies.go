@@ -33,6 +33,7 @@ type ProviderQuotaPolicy struct {
 	Label          string            `json:"label,omitempty"`
 	Concurrency    *int              `json:"concurrency_limit,omitempty"`
 	Concurrency15s *int              `json:"concurrency_15s_limit,omitempty"`
+	WindowSeconds  *int              `json:"concurrency_window_seconds,omitempty"`
 	FiveHour       QuotaWindowPolicy `json:"five_hour"`
 	SevenDay       QuotaWindowPolicy `json:"seven_day"`
 }
@@ -221,7 +222,10 @@ func (s *QuotaPolicyService) SetProviderPolicy(policy ProviderQuotaPolicy) error
 		return fmt.Errorf("provider concurrency must be between 0 and 1000")
 	}
 	if policy.Concurrency15s != nil && (*policy.Concurrency15s < 0 || *policy.Concurrency15s > 1000) {
-		return fmt.Errorf("provider 15-second concurrency must be between 0 and 1000")
+		return fmt.Errorf("provider request concurrency must be between 0 and 1000")
+	}
+	if policy.WindowSeconds != nil && (*policy.WindowSeconds < 1 || *policy.WindowSeconds > 3600) {
+		return fmt.Errorf("provider concurrency window must be between 1 and 3600 seconds")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -252,7 +256,7 @@ func quotaPolicyEmpty(policy AccountQuotaPolicy) bool {
 	return quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
 }
 func providerPolicyEmpty(policy ProviderQuotaPolicy) bool {
-	return policy.Label == "" && policy.Concurrency == nil && policy.Concurrency15s == nil && quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
+	return policy.Label == "" && policy.Concurrency == nil && policy.Concurrency15s == nil && policy.WindowSeconds == nil && quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
 }
 func quotaWindowEmpty(policy QuotaWindowPolicy) bool {
 	return policy.TotalTokens == nil && policy.LimitPercent == nil

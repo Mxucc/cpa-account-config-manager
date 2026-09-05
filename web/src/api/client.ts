@@ -1753,6 +1753,10 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
       || (raw.concurrency_configurable !== undefined && typeof raw.concurrency_configurable !== "boolean")
       || !isFiniteNonNegativeInteger(raw.active)
       || !isFiniteNonNegativeInteger(raw.limit)
+      || (raw.waiting !== undefined && !isFiniteNonNegativeInteger(raw.waiting))
+      || (raw.request_limit !== undefined && !isFiniteNonNegativeInteger(raw.request_limit))
+      || (raw.request_window_seconds !== undefined && !isFiniteNonNegativeInteger(raw.request_window_seconds))
+      || (raw.used_requests !== undefined && !isFiniteNonNegativeInteger(raw.used_requests))
       || (raw.limit_15s !== undefined && !isFiniteNonNegativeInteger(raw.limit_15s))
       || (raw.used_60s !== undefined && !isFiniteNonNegativeInteger(raw.used_60s))
       || (raw.used_15s !== undefined && !isFiniteNonNegativeInteger(raw.used_15s))
@@ -1786,9 +1790,13 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
     }
     return {
       ...raw,
-      limit_15s: raw.limit_15s ?? 0,
+      waiting: raw.waiting ?? 0,
+      request_limit: raw.request_limit ?? raw.limit_15s ?? 0,
+      request_window_seconds: raw.request_window_seconds ?? 15,
+      used_requests: raw.used_requests ?? raw.used_15s ?? 0,
+      limit_15s: raw.limit_15s ?? raw.request_limit ?? 0,
       used_60s: raw.used_60s ?? 0,
-      used_15s: raw.used_15s ?? 0,
+      used_15s: raw.used_15s ?? raw.used_requests ?? 0,
     } as unknown as AIProviderRuntimeResponse["snapshots"][number];
   });
   return { snapshots, updated_at: response.updated_at };

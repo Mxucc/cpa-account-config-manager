@@ -613,7 +613,7 @@ func (s *ModelTestService) applyCodexFingerprintToProbe(ctx context.Context, acc
 
 func buildCodexCredentialProbe(metadata modelTestAuthMetadata) modelProbe {
 	headers := bearerJSONHeaders(false)
-	headers["Originator"] = "codex_cli_rs"
+	headers["Originator"] = "codex-tui"
 	headers["User-Agent"] = defaultCodexCLIUserAgent
 	headers["Version"] = codexCLIVersion
 	headers["OpenAI-Beta"] = "responses=experimental"
@@ -779,7 +779,7 @@ func buildModelProbe(provider, requestedModel string, metadata modelTestAuthMeta
 		}
 		data, errMarshal := marshal(openAIResponsesProbePayload(model, true))
 		headers := bearerJSONHeaders(true)
-		headers["Originator"] = "codex_cli_rs"
+		headers["Originator"] = "codex-tui"
 		headers["User-Agent"] = defaultCodexCLIUserAgent
 		headers["Version"] = codexCLIVersion
 		headers["OpenAI-Beta"] = "responses=experimental"

@@ -68,13 +68,43 @@ function formatTime(value: string, formatDateTime: (value: string) => string): s
   try { return formatDateTime(value); } catch { return value; }
 }
 
-function mergeConfig(next: RiskControlConfig): RiskControlConfig {
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function mergeConfig(next: RiskControlConfig | null | undefined): RiskControlConfig {
+  const candidate = next ?? defaultConfig;
+  const modelFilter = candidate.model_filter ?? defaultConfig.model_filter;
+  const promptAudit = candidate.prompt_audit ?? defaultPromptAudit;
+  const customAudit = candidate.custom_audit ?? defaultCustomAudit;
   return {
     ...defaultConfig,
+    ...candidate,
+    blocked_keywords: stringList(candidate.blocked_keywords),
+    model_filter: {
+      ...defaultConfig.model_filter,
+      ...modelFilter,
+      models: stringList(modelFilter.models),
+    },
+    prompt_audit: {
+      ...defaultPromptAudit,
+      ...promptAudit,
+      scanners: stringList(promptAudit.scanners),
+    },
+    custom_audit: {
+      ...defaultCustomAudit,
+      ...customAudit,
+      scanners: stringList(customAudit.scanners),
+    },
+  };
+}
+
+function mergeSnapshot(next: RiskControlSnapshot): RiskControlSnapshot {
+  return {
     ...next,
-    model_filter: { ...defaultConfig.model_filter, ...next.model_filter },
-    prompt_audit: { ...defaultPromptAudit, ...(next.prompt_audit ?? {}) },
-    custom_audit: { ...defaultCustomAudit, ...(next.custom_audit ?? {}) },
+    config: mergeConfig(next?.config),
+    events: Array.isArray(next?.events) ? next.events : [],
   };
 }
 
@@ -165,9 +195,9 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
     setLoading(true);
     setError("");
     try {
-      const next = await api.getRiskControl(signal);
+      const next = mergeSnapshot(await api.getRiskControl(signal));
       setSnapshot(next);
-      setConfig(mergeConfig(next.config));
+      setConfig(next.config);
     } catch (caught) {
       if (!signal?.aborted) {
         setError(tx("ui.risk_control_load_failed"));
@@ -193,7 +223,7 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
     try {
       const next = await api.saveRiskControl({
         ...config,
-        blocked_keywords: lines(config.blocked_keywords.join("\n")),
+        blocked_keywords: lines((config.blocked_keywords ?? []).join("\n")),
         model_filter: { mode: config.model_filter.mode, models: lines((config.model_filter.models ?? []).join("\n")) },
         block_status: Math.round(Number(config.block_status) || 403),
         event_retention_days: Math.round(Number(config.event_retention_days) || 30),
@@ -201,8 +231,9 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
         prompt_audit: { ...config.prompt_audit, scanners: lines((config.prompt_audit.scanners ?? []).join("\n")) },
         custom_audit: { ...config.custom_audit, scanners: lines((config.custom_audit.scanners ?? []).join("\n")) },
       });
-      setSnapshot(next);
-      setConfig(mergeConfig(next.config));
+      const normalized = mergeSnapshot(next);
+      setSnapshot(normalized);
+      setConfig(normalized.config);
       onNotice(tx("ui.risk_control_saved"));
     } catch (caught) {
       setError(tx("ui.risk_control_save_failed"));
@@ -217,7 +248,7 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
     setError("");
     try {
       const next = kind === "events" ? await api.clearRiskControlEvents() : await api.clearRiskControlHashes();
-      setSnapshot(next);
+      setSnapshot(mergeSnapshot(next));
       onNotice(tx(kind === "events" ? "ui.risk_control_events_cleared" : "ui.risk_control_hashes_cleared"));
     } catch (caught) {
       setError(tx("ui.risk_control_clear_failed"));
@@ -228,11 +259,11 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
   };
 
   const statusLabel = useMemo(() => {
-    if (!snapshot) return tx("ui.loading");
+    if (!snapshot?.status) return snapshot ? tx("ui.risk_status_inactive") : tx("ui.loading");
     if (!snapshot.status.active) return tx("ui.risk_status_inactive");
     return snapshot.status.mode === "pre_block" ? tx("ui.risk_status_blocking") : tx("ui.risk_status_observing");
   }, [snapshot, tx]);
-  const events: RiskControlEvent[] = snapshot?.events ?? [];
+  const events: RiskControlEvent[] = Array.isArray(snapshot?.events) ? snapshot.events : [];
   const status = snapshot?.status;
 
   return (

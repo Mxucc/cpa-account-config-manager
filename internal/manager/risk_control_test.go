@@ -25,6 +25,25 @@ func configuredRiskControl(t *testing.T, config RiskControlConfig) (*RiskControl
 	return service, dataDir
 }
 
+func TestRiskControlSnapshotSerializesEmptyCollectionsAsArrays(t *testing.T) {
+	service := NewRiskControlService()
+	service.Configure(Config{DataDir: t.TempDir()})
+	raw, err := json.Marshal(service.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"blocked_keywords":[]`, `"events":[]`} {
+		if !bytes.Contains(raw, []byte(field)) {
+			t.Fatalf("snapshot missing non-null collection %s: %s", field, raw)
+		}
+	}
+	for _, field := range []string{`"blocked_keywords":null`, `"models":null`, `"scanners":null`, `"events":null`} {
+		if bytes.Contains(raw, []byte(field)) {
+			t.Fatalf("snapshot contains nullable collection %s: %s", field, raw)
+		}
+	}
+}
+
 func TestRiskControlPreBlockRecordsOnlyRedactedMetadata(t *testing.T) {
 	service, dataDir := configuredRiskControl(t, RiskControlConfig{
 		Enabled:             true,

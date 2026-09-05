@@ -156,11 +156,11 @@ func (r *riskAuditRuntime) counters(module string) *riskAuditCounters {
 }
 
 func defaultPromptAuditConfig() RiskExternalAuditConfig {
-	return RiskExternalAuditConfig{Mode: RiskControlModeOff, TimeoutMS: 3000, InputLimit: 32 << 10, WorkerCount: 2, QueueCapacity: 128, FailurePolicy: RiskAuditFailOpen, BlockStatus: http.StatusForbidden, BlockMessage: "request blocked by prompt audit"}
+	return RiskExternalAuditConfig{Mode: RiskControlModeOff, Scanners: []string{}, TimeoutMS: 3000, InputLimit: 32 << 10, WorkerCount: 2, QueueCapacity: 128, FailurePolicy: RiskAuditFailOpen, BlockStatus: http.StatusForbidden, BlockMessage: "request blocked by prompt audit"}
 }
 
 func defaultCustomAuditConfig() RiskCustomAuditConfig {
-	return RiskCustomAuditConfig{RiskExternalAuditConfig: RiskExternalAuditConfig{Mode: RiskControlModeOff, TimeoutMS: 3000, InputLimit: 32 << 10, WorkerCount: 2, QueueCapacity: 128, FailurePolicy: RiskAuditFailOpen, BlockStatus: http.StatusForbidden, BlockMessage: "request blocked by custom audit"}, ConfidenceThreshold: 0.8, SystemPrompt: defaultCustomAuditSystemPrompt}
+	return RiskCustomAuditConfig{RiskExternalAuditConfig: RiskExternalAuditConfig{Mode: RiskControlModeOff, Scanners: []string{}, TimeoutMS: 3000, InputLimit: 32 << 10, WorkerCount: 2, QueueCapacity: 128, FailurePolicy: RiskAuditFailOpen, BlockStatus: http.StatusForbidden, BlockMessage: "request blocked by custom audit"}, ConfidenceThreshold: 0.8, SystemPrompt: defaultCustomAuditSystemPrompt}
 }
 
 var riskCredentialEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)

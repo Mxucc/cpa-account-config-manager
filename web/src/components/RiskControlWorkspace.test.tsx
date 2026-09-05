@@ -20,6 +20,26 @@ beforeEach(() => {
 });
 
 describe("RiskControlWorkspace", () => {
+  it("normalizes nullable persisted lists without crashing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      ...snapshot,
+      config: {
+        ...snapshot.config,
+        blocked_keywords: null,
+        model_filter: { mode: "all", models: null },
+        prompt_audit: { ...snapshot.config.prompt_audit, scanners: null },
+        custom_audit: { ...snapshot.config.custom_audit, scanners: null },
+      },
+      events: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    expect(within(workspace).getByLabelText("阻断关键词")).toHaveValue("");
+    expect(within(workspace).getByText("暂无风控事件。")).toBeInTheDocument();
+  });
+
   it("loads, saves normalized lists, and clears events and hashes", async () => {
     const user = userEvent.setup();
     const requests: Array<{ url: string; init?: RequestInit }> = [];

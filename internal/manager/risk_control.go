@@ -136,7 +136,8 @@ func NewRiskControlService() *RiskControlService {
 func defaultRiskControlConfig() RiskControlConfig {
 	return RiskControlConfig{
 		Mode:                RiskControlModeOff,
-		ModelFilter:         RiskControlModelFilter{Mode: RiskControlModelFilterAll},
+		BlockedKeywords:     []string{},
+		ModelFilter:         RiskControlModelFilter{Mode: RiskControlModelFilterAll, Models: []string{}},
 		PreHashCheckEnabled: true,
 		BlockStatus:         http.StatusForbidden,
 		BlockMessage:        "request blocked by the configured risk-control policy",
@@ -353,7 +354,7 @@ func (s *RiskControlService) Snapshot() RiskControlSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(s.now().UTC())
-	events := append([]RiskControlEvent(nil), s.events...)
+	events := append([]RiskControlEvent{}, s.events...)
 	config := cloneRiskControlConfig(s.config)
 	status := RiskControlStatus{Active: config.Enabled && config.Mode != RiskControlModeOff || config.PromptAudit.Enabled && config.PromptAudit.Mode != RiskControlModeOff || config.CustomAudit.Enabled && config.CustomAudit.Mode != RiskControlModeOff, Mode: config.Mode, TotalEvents: len(events), RememberedHashes: len(s.hashes)}
 	status.PromptAudit = s.auditStatus(config.PromptAudit, "prompt_audit")
@@ -524,10 +525,10 @@ func normalizeRiskStringList(values []string, maxItems, maxRunes int, field stri
 }
 
 func cloneRiskControlConfig(config RiskControlConfig) RiskControlConfig {
-	config.BlockedKeywords = append([]string(nil), config.BlockedKeywords...)
-	config.ModelFilter.Models = append([]string(nil), config.ModelFilter.Models...)
-	config.PromptAudit.Scanners = append([]string(nil), config.PromptAudit.Scanners...)
-	config.CustomAudit.Scanners = append([]string(nil), config.CustomAudit.Scanners...)
+	config.BlockedKeywords = append([]string{}, config.BlockedKeywords...)
+	config.ModelFilter.Models = append([]string{}, config.ModelFilter.Models...)
+	config.PromptAudit.Scanners = append([]string{}, config.PromptAudit.Scanners...)
+	config.CustomAudit.Scanners = append([]string{}, config.CustomAudit.Scanners...)
 	return config
 }
 

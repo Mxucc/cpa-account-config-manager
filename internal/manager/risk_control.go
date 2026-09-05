@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	riskControlStoreVersion    = 1
+	riskControlStoreVersion    = 2
 	riskControlStoreName       = "risk-control.json"
 	riskControlMaxBodyBytes    = 1 << 20
 	riskControlMaxTextBytes    = 64 << 10
@@ -53,17 +53,17 @@ type RiskControlModelFilter struct {
 }
 
 type RiskControlConfig struct {
-	Enabled             bool                    `json:"enabled"`
-	Mode                RiskControlMode         `json:"mode"`
-	BlockedKeywords     []string                `json:"blocked_keywords"`
-	ModelFilter         RiskControlModelFilter  `json:"model_filter"`
-	PreHashCheckEnabled bool                    `json:"pre_hash_check_enabled"`
-	BlockStatus         int                     `json:"block_status"`
-	BlockMessage        string                  `json:"block_message"`
-	EventRetentionDays  int                     `json:"event_retention_days"`
-	MaxEvents           int                     `json:"max_events"`
-	PromptAudit         RiskExternalAuditConfig `json:"prompt_audit"`
-	CustomAudit         RiskCustomAuditConfig   `json:"custom_audit"`
+	Enabled             bool                   `json:"enabled"`
+	Mode                RiskControlMode        `json:"mode"`
+	BlockedKeywords     []string               `json:"blocked_keywords"`
+	ModelFilter         RiskControlModelFilter `json:"model_filter"`
+	PreHashCheckEnabled bool                   `json:"pre_hash_check_enabled"`
+	BlockStatus         int                    `json:"block_status"`
+	BlockMessage        string                 `json:"block_message"`
+	EventRetentionDays  int                    `json:"event_retention_days"`
+	MaxEvents           int                    `json:"max_events"`
+	Audit               RiskAuditConfig        `json:"audit"`
+	SystemPrompts       []RiskSystemPrompt     `json:"system_prompts"`
 }
 
 type RiskControlEvent struct {
@@ -94,8 +94,7 @@ type RiskControlStatus struct {
 	HashHits         int                   `json:"hash_hits"`
 	RememberedHashes int                   `json:"remembered_hashes"`
 	LastEventAt      *time.Time            `json:"last_event_at,omitempty"`
-	PromptAudit      RiskAuditModuleStatus `json:"prompt_audit"`
-	CustomAudit      RiskAuditModuleStatus `json:"custom_audit"`
+	Audit            RiskAuditModuleStatus `json:"audit"`
 }
 
 type RiskControlSnapshot struct {
@@ -110,6 +109,26 @@ type persistedRiskControl struct {
 	Config  RiskControlConfig  `json:"config"`
 	Events  []RiskControlEvent `json:"events,omitempty"`
 	Hashes  []string           `json:"hashes,omitempty"`
+}
+
+type legacyRiskControlConfig struct {
+	Enabled             bool                    `json:"enabled"`
+	Mode                RiskControlMode         `json:"mode"`
+	BlockedKeywords     []string                `json:"blocked_keywords"`
+	ModelFilter         RiskControlModelFilter  `json:"model_filter"`
+	PreHashCheckEnabled bool                    `json:"pre_hash_check_enabled"`
+	BlockStatus         int                     `json:"block_status"`
+	BlockMessage        string                  `json:"block_message"`
+	EventRetentionDays  int                     `json:"event_retention_days"`
+	MaxEvents           int                     `json:"max_events"`
+	PromptAudit         RiskExternalAuditConfig `json:"prompt_audit"`
+	CustomAudit         legacyCustomAuditConfig `json:"custom_audit"`
+}
+
+type legacyCustomAuditConfig struct {
+	RiskExternalAuditConfig
+	ConfidenceThreshold float64 `json:"confidence_threshold"`
+	SystemPrompt        string  `json:"system_prompt"`
 }
 
 type RiskControlService struct {
@@ -143,8 +162,8 @@ func defaultRiskControlConfig() RiskControlConfig {
 		BlockMessage:        "request blocked by the configured risk-control policy",
 		EventRetentionDays:  30,
 		MaxEvents:           500,
-		PromptAudit:         defaultPromptAuditConfig(),
-		CustomAudit:         defaultCustomAuditConfig(),
+		Audit:               defaultRiskAuditConfig(),
+		SystemPrompts:       defaultRiskSystemPrompts(),
 	}
 }
 
@@ -173,8 +192,33 @@ func (s *RiskControlService) Configure(config Config) {
 		s.storageError = "risk-control state is unavailable"
 		return
 	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		s.storageError = "risk-control state is invalid"
+		return
+	}
 	var persisted persistedRiskControl
-	if err := json.Unmarshal(raw, &persisted); err != nil || persisted.Version != riskControlStoreVersion {
+	switch header.Version {
+	case riskControlStoreVersion:
+		if err := json.Unmarshal(raw, &persisted); err != nil {
+			s.storageError = "risk-control state is invalid"
+			return
+		}
+	case 1:
+		var legacy struct {
+			Version int                     `json:"version"`
+			Config  legacyRiskControlConfig `json:"config"`
+			Events  []RiskControlEvent      `json:"events,omitempty"`
+			Hashes  []string                `json:"hashes,omitempty"`
+		}
+		if err := json.Unmarshal(raw, &legacy); err != nil {
+			s.storageError = "risk-control state is invalid"
+			return
+		}
+		persisted = persistedRiskControl{Version: riskControlStoreVersion, Config: migrateLegacyRiskControlConfig(legacy.Config), Events: legacy.Events, Hashes: legacy.Hashes}
+	default:
 		s.storageError = "risk-control state is invalid"
 		return
 	}
@@ -184,6 +228,9 @@ func (s *RiskControlService) Configure(config Config) {
 		return
 	}
 	s.config = normalized
+	// API keys are intentionally process-local. The persisted marker keeps the UI
+	// honest about prior configuration without writing the secret to disk.
+	s.config.Audit.APIKey = ""
 	s.events = append([]RiskControlEvent(nil), persisted.Events...)
 	for _, hash := range persisted.Hashes {
 		if len(s.hashes) >= riskControlMaxHashes {
@@ -203,8 +250,7 @@ func (s *RiskControlService) RequestInterceptionActive() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.config.Enabled && s.config.Mode != RiskControlModeOff ||
-		s.config.PromptAudit.Enabled && s.config.PromptAudit.Mode != RiskControlModeOff ||
-		s.config.CustomAudit.Enabled && s.config.CustomAudit.Mode != RiskControlModeOff
+		s.config.Audit.Enabled && s.config.Audit.Mode != RiskControlModeOff
 }
 
 func (s *RiskControlService) RequestInterceptionAcceptsFormat(string) bool {
@@ -229,31 +275,24 @@ func (s *RiskControlService) InterceptRequest(request cpaapi.RequestInterceptReq
 	inputHash := hex.EncodeToString(digest[:])
 
 	s.mu.RLock()
-	promptConfig := s.config.PromptAudit
-	customConfig := s.config.CustomAudit
+	auditConfig := s.config.Audit
+	prompt, promptFound := findRiskSystemPrompt(s.config.SystemPrompts, auditConfig.PromptID)
 	s.mu.RUnlock()
-	modules := []riskAuditTask{}
-	if promptConfig.Enabled && promptConfig.Mode != RiskControlModeOff {
-		promptText := text
-		if promptConfig.LatestTurnOnly {
-			if latest, found := latestRiskControlTurn(request.Body); found {
-				promptText = latest
-			}
-		}
-		modules = append(modules, riskAuditTask{module: "prompt_audit", config: promptConfig, text: promptText, model: model, format: format, account: account, hash: inputHash})
+	if !auditConfig.Enabled || auditConfig.Mode == RiskControlModeOff || !promptFound {
+		return cpaapi.RequestInterceptResponse{}, false
 	}
-	if customConfig.Enabled && customConfig.Mode != RiskControlModeOff {
-		customCopy := customConfig
-		modules = append(modules, riskAuditTask{module: "custom_audit", config: customCopy.RiskExternalAuditConfig, custom: &customCopy, text: text, model: model, format: format, account: account, hash: inputHash})
+	if auditConfig.LatestTurnOnly {
+		if latest, found := latestRiskControlTurn(request.Body); found {
+			text = latest
+		}
 	}
-	for _, task := range modules {
-		if task.config.Mode == RiskControlModeObserve {
-			s.enqueueAudit(task)
-			continue
-		}
-		if response, changed := s.processAudit(task); changed {
-			return response, true
-		}
+	task := riskAuditTask{module: "audit", config: auditConfig.RiskExternalAuditConfig, prompt: prompt, threshold: auditConfig.ConfidenceThreshold, text: text, model: model, format: format, account: account, hash: inputHash}
+	if task.config.Mode == RiskControlModeObserve {
+		s.enqueueAudit(task)
+		return cpaapi.RequestInterceptResponse{}, false
+	}
+	if response, changed := s.processAudit(task); changed {
+		return response, true
 	}
 	return cpaapi.RequestInterceptResponse{}, false
 }
@@ -356,9 +395,11 @@ func (s *RiskControlService) Snapshot() RiskControlSnapshot {
 	s.pruneLocked(s.now().UTC())
 	events := append([]RiskControlEvent{}, s.events...)
 	config := cloneRiskControlConfig(s.config)
-	status := RiskControlStatus{Active: config.Enabled && config.Mode != RiskControlModeOff || config.PromptAudit.Enabled && config.PromptAudit.Mode != RiskControlModeOff || config.CustomAudit.Enabled && config.CustomAudit.Mode != RiskControlModeOff, Mode: config.Mode, TotalEvents: len(events), RememberedHashes: len(s.hashes)}
-	status.PromptAudit = s.auditStatus(config.PromptAudit, "prompt_audit")
-	status.CustomAudit = s.auditStatus(config.CustomAudit.RiskExternalAuditConfig, "custom_audit")
+	config.Audit.APIKeySet = s.config.Audit.APIKey != "" || s.config.Audit.APIKeySet
+	config.Audit.APIKey = ""
+	config.Audit.APIKeyClear = false
+	status := RiskControlStatus{Active: config.Enabled && config.Mode != RiskControlModeOff || config.Audit.Enabled && config.Audit.Mode != RiskControlModeOff, Mode: config.Mode, TotalEvents: len(events), RememberedHashes: len(s.hashes)}
+	status.Audit = s.auditStatus(s.config.Audit.RiskExternalAuditConfig, "audit")
 	for _, event := range events {
 		if strings.HasSuffix(event.Action, "_block") || event.Action == "error_block" {
 			status.Blocked++
@@ -383,13 +424,22 @@ func (s *RiskControlService) UpdateConfig(config RiskControlConfig) (RiskControl
 	if s == nil {
 		return RiskControlSnapshot{}, fmt.Errorf("risk-control service is unavailable")
 	}
-	normalized, err := normalizeRiskControlConfig(config)
-	if err != nil {
-		return RiskControlSnapshot{}, err
-	}
 	s.mu.Lock()
 	previous := s.config
 	previousEvents := append([]RiskControlEvent(nil), s.events...)
+	if config.Audit.APIKeyClear {
+		config.Audit.APIKey = ""
+		config.Audit.APIKeySet = false
+		config.Audit.APIKeyClear = false
+	} else if config.Audit.APIKey == "" {
+		config.Audit.APIKey = previous.Audit.APIKey
+		config.Audit.APIKeySet = previous.Audit.APIKeySet || previous.Audit.APIKey != ""
+	}
+	normalized, err := normalizeRiskControlConfig(config)
+	if err != nil {
+		s.mu.Unlock()
+		return RiskControlSnapshot{}, err
+	}
 	s.config = normalized
 	s.pruneLocked(s.now().UTC())
 	if err := s.persistLocked(); err != nil {
@@ -487,16 +537,16 @@ func normalizeRiskControlConfig(config RiskControlConfig) (RiskControlConfig, er
 	if config.MaxEvents < 1 || config.MaxEvents > riskControlMaxEventsLimit {
 		return RiskControlConfig{}, fmt.Errorf("max_events must be between 1 and 2000")
 	}
-	promptAudit, err := normalizeExternalAuditConfig(config.PromptAudit, defaults.PromptAudit, "prompt_audit")
+	prompts, err := normalizeRiskSystemPrompts(config.SystemPrompts)
 	if err != nil {
 		return RiskControlConfig{}, err
 	}
-	customAudit, err := normalizeCustomAuditConfig(config.CustomAudit)
+	audit, err := normalizeRiskAuditConfig(config.Audit, prompts)
 	if err != nil {
 		return RiskControlConfig{}, err
 	}
-	config.PromptAudit = promptAudit
-	config.CustomAudit = customAudit
+	config.SystemPrompts = prompts
+	config.Audit = audit
 	return config, nil
 }
 
@@ -524,11 +574,53 @@ func normalizeRiskStringList(values []string, maxItems, maxRunes int, field stri
 	return result, nil
 }
 
+func findRiskSystemPrompt(prompts []RiskSystemPrompt, id string) (RiskSystemPrompt, bool) {
+	for _, prompt := range prompts {
+		if prompt.ID == id {
+			return prompt, true
+		}
+	}
+	return RiskSystemPrompt{}, false
+}
+
+func migrateLegacyRiskControlConfig(legacy legacyRiskControlConfig) RiskControlConfig {
+	config := RiskControlConfig{
+		Enabled:             legacy.Enabled,
+		Mode:                legacy.Mode,
+		BlockedKeywords:     legacy.BlockedKeywords,
+		ModelFilter:         legacy.ModelFilter,
+		PreHashCheckEnabled: legacy.PreHashCheckEnabled,
+		BlockStatus:         legacy.BlockStatus,
+		BlockMessage:        legacy.BlockMessage,
+		EventRetentionDays:  legacy.EventRetentionDays,
+		MaxEvents:           legacy.MaxEvents,
+		Audit: RiskAuditConfig{
+			RiskExternalAuditConfig: legacy.PromptAudit,
+			ConfidenceThreshold:     0.8,
+			PromptID:                defaultRiskSystemPromptID,
+		},
+		SystemPrompts: defaultRiskSystemPrompts(),
+	}
+	custom := legacy.CustomAudit
+	if custom.Enabled || custom.Endpoint != "" || custom.Model != "" || custom.SystemPrompt != "" {
+		config.Audit.RiskExternalAuditConfig = custom.RiskExternalAuditConfig
+		config.Audit.ConfidenceThreshold = custom.ConfidenceThreshold
+		if strings.TrimSpace(custom.SystemPrompt) != "" && strings.TrimSpace(custom.SystemPrompt) != defaultRiskSystemPrompt {
+			config.SystemPrompts = append(config.SystemPrompts, RiskSystemPrompt{ID: "migrated-custom", Name: "Migrated custom audit prompt", SystemPrompt: custom.SystemPrompt})
+			config.Audit.PromptID = "migrated-custom"
+		}
+	}
+	// credential_env was intentionally not resolved: legacy environment lookup is removed.
+	config.Audit.APIKey = ""
+	config.Audit.APIKeySet = false
+	return config
+}
+
 func cloneRiskControlConfig(config RiskControlConfig) RiskControlConfig {
 	config.BlockedKeywords = append([]string{}, config.BlockedKeywords...)
 	config.ModelFilter.Models = append([]string{}, config.ModelFilter.Models...)
-	config.PromptAudit.Scanners = append([]string{}, config.PromptAudit.Scanners...)
-	config.CustomAudit.Scanners = append([]string{}, config.CustomAudit.Scanners...)
+	config.Audit.Scanners = append([]string{}, config.Audit.Scanners...)
+	config.SystemPrompts = append([]RiskSystemPrompt{}, config.SystemPrompts...)
 	return config
 }
 
@@ -555,7 +647,11 @@ func (s *RiskControlService) persistLocked() error {
 		hashes = append(hashes, hash)
 	}
 	sort.Strings(hashes)
-	return savePrivateJSON(s.store, persistedRiskControl{Version: riskControlStoreVersion, Config: cloneRiskControlConfig(s.config), Events: append([]RiskControlEvent(nil), s.events...), Hashes: hashes})
+	persistedConfig := cloneRiskControlConfig(s.config)
+	persistedConfig.Audit.APIKey = ""
+	persistedConfig.Audit.APIKeyClear = false
+	persistedConfig.Audit.APIKeySet = s.config.Audit.APIKey != "" || s.config.Audit.APIKeySet
+	return savePrivateJSON(s.store, persistedRiskControl{Version: riskControlStoreVersion, Config: persistedConfig, Events: append([]RiskControlEvent(nil), s.events...), Hashes: hashes})
 }
 
 func riskControlModelSelected(filter RiskControlModelFilter, model string) bool {

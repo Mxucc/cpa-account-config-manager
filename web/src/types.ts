@@ -1451,7 +1451,9 @@ export interface RiskExternalAuditConfig {
   mode: RiskControlMode;
   endpoint: string;
   model: string;
-  credential_env: string;
+  api_key: string;
+  api_key_set?: boolean;
+  api_key_clear?: boolean;
   scanners: string[];
   latest_turn_only: boolean;
   store_pass_events: boolean;
@@ -1464,9 +1466,16 @@ export interface RiskExternalAuditConfig {
   block_message: string;
 }
 
-export interface RiskCustomAuditConfig extends RiskExternalAuditConfig {
+export interface RiskAuditConfig extends RiskExternalAuditConfig {
   confidence_threshold: number;
+  prompt_id: string;
+}
+
+export interface RiskSystemPrompt {
+  id: string;
+  name: string;
   system_prompt: string;
+  builtin: boolean;
 }
 
 export interface RiskAuditModuleStatus {
@@ -1479,8 +1488,8 @@ export interface RiskAuditModuleStatus {
   blocked: number;
   errors: number;
   dropped: number;
-  credential_configured: boolean;
-  credential_available: boolean;
+  api_key_configured: boolean;
+  api_key_available: boolean;
 }
 
 export interface RiskControlConfig {
@@ -1493,14 +1502,14 @@ export interface RiskControlConfig {
   block_message: string;
   event_retention_days: number;
   max_events: number;
-  prompt_audit: RiskExternalAuditConfig;
-  custom_audit: RiskCustomAuditConfig;
+  audit: RiskAuditConfig;
+  system_prompts: RiskSystemPrompt[];
 }
 
 export interface RiskControlEvent {
   id: string;
   time: string;
-  action: "keyword_observe" | "keyword_block" | "hash_observe" | "hash_block";
+  action: "keyword_observe" | "keyword_block" | "hash_observe" | "hash_block" | "audit_observe" | "audit_block" | "error_block" | "pass";
   account_ref?: string;
   provider?: string;
   model?: string;
@@ -1508,6 +1517,11 @@ export interface RiskControlEvent {
   matched_rules?: string[];
   input_hash: string;
   latency_ms: number;
+  module?: string;
+  decision?: string;
+  reason_code?: string;
+  risk_level?: string;
+  confidence?: number;
 }
 
 export interface RiskControlStatus {
@@ -1520,8 +1534,7 @@ export interface RiskControlStatus {
   hash_hits: number;
   remembered_hashes: number;
   last_event_at?: string;
-  prompt_audit: RiskAuditModuleStatus;
-  custom_audit: RiskAuditModuleStatus;
+  audit: RiskAuditModuleStatus;
 }
 
 export interface RiskControlSnapshot {

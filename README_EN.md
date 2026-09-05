@@ -36,6 +36,7 @@ Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, and Codex Manage
 - Sub2API-compatible credit accounting is a permanent, default-on capability. Model prices synchronize in the background, successful requests are estimated in USD while raw token totals remain available, and very small costs retain useful precision.
 - Accounts and supported AI providers can show current concurrency and enforce independent 15-second and 60-second rolling-window limits. `0` or an empty value means unlimited; both windows are enforced together.
 - Account quota policies use the official 5h/7d percentages returned by CPA. AI providers can define 5h/7d USD budget amounts and then apply percentage thresholds to those budgets.
+- AI provider model editors include “Fetch models”: the current channel credential is used to read the provider catalog, merge new models, and preserve existing aliases, display names, and mapping options.
 
 ### Risk Control Center
 

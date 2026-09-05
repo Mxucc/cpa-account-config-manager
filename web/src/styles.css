@@ -1832,6 +1832,7 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-form-grid .field-block { grid-column: auto; }
 .ai-provider-quota-editor { width: 100%; max-width: 100%; min-width: 0; }
 .ai-provider-models-editor, .ai-provider-keys-editor { min-width: 0; display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); overflow-x: hidden; }
+.ai-provider-models-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .ai-provider-models-title { color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); font-weight: 700; text-transform: uppercase; }
 .ai-provider-model-row { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: center; gap: 8px; }
 .ai-provider-keys-editor .ai-provider-model-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; }

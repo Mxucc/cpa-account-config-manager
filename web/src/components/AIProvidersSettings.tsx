@@ -125,6 +125,7 @@ type EditingEntry = {
   websockets: boolean;
   rebuildMidSystemMessage: boolean;
   fingerprintProfile: string;
+  authIndex?: string;
   accountID?: string;
   workspaceID?: string;
   concurrency15sLimit: string;
@@ -384,6 +385,8 @@ function RichChannelFields({
 }) {
   const { tx } = useI18n();
   const set = (patch: Partial<EditingEntry>) => onEntry(patch);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelCatalogMessage, setModelCatalogMessage] = useState("");
 
   const setModelsRow = (index: number, patch: Partial<AIProviderChannelModel>) => {
     const models = entry.models.map((model, i) => (i === index ? { ...model, ...patch } : model));
@@ -391,6 +394,59 @@ function RichChannelFields({
   };
   const addModelsRow = () => set({ models: [...entry.models, { name: "" }] });
   const removeModelsRow = (index: number) => set({ models: entry.models.filter((_, i) => i !== index) });
+  const fetchModels = async () => {
+    if (fetchingModels) return;
+    if (kind === "vertex-api-key" || kind === "api-keys") {
+      setModelCatalogMessage(tx("ui.ai_provider_model_catalog_unavailable"));
+      return;
+    }
+
+    const apiKey = entry.apiKey.trim() || entry.apiKeyEntries[0]?.apiKey.trim() || "";
+    setFetchingModels(true);
+    setModelCatalogMessage("");
+    try {
+      const result = await api.testAIProviderChannelForKind(
+        kind,
+        entry.baseURL.trim(),
+        apiKey,
+        15,
+        headersToMap(entry.headersText),
+        entry.authIndex || entry.accountID,
+        undefined,
+        entry.quotaPolicyKey || undefined,
+      );
+      const discovered = (result.models ?? [])
+        .map((model) => ({
+          name: String(model.id ?? "").trim(),
+          ...(model.display_name?.trim() ? { display_name: model.display_name.trim() } : {}),
+        }))
+        .filter((model) => model.name);
+      if (discovered.length === 0) {
+        setModelCatalogMessage(tx("ui.ai_provider_model_catalog_unavailable"));
+        return;
+      }
+
+      const existingByName = new Map<string, AIProviderChannelModel>();
+      for (const model of entry.models) {
+        const name = model.name.trim();
+        if (name && !existingByName.has(name)) existingByName.set(name, model);
+      }
+      const merged = [...entry.models];
+      for (const model of discovered) {
+        if (existingByName.has(model.name)) continue;
+        merged.push(model);
+        existingByName.set(model.name, model);
+      }
+      set({ models: merged });
+      setModelCatalogMessage(tx("ui.ai_provider_models_fetched", { count: discovered.length }));
+    } catch {
+      // Do not expose request details here: they may contain a provider URL or
+      // credential-related data. Existing hand-configured models remain intact.
+      setModelCatalogMessage(tx("ui.ai_provider_fetch_models_failed"));
+    } finally {
+      setFetchingModels(false);
+    }
+  };
   const setKeyRow = (index: number, patch: { apiKey?: string; weight?: string; proxyURL?: string }) => {
     const apiKeyEntries = entry.apiKeyEntries.map((keyEntry, i) => (i === index ? { ...keyEntry, ...patch } : keyEntry));
     set({ apiKeyEntries, apiKeyEntriesDirty: true });
@@ -469,7 +525,14 @@ function RichChannelFields({
       </label>
       {hasModelEditor(kind) ? (
         <div className="ai-provider-models-editor">
-          <span className="ai-provider-models-title">{tx("ui.ai_provider_field_models")}</span>
+          <div className="ai-provider-models-heading">
+            <span className="ai-provider-models-title">{tx("ui.ai_provider_field_models")}</span>
+            <button className="button" type="button" onClick={() => void fetchModels()} disabled={fetchingModels}>
+              {fetchingModels ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
+              {fetchingModels ? tx("ui.ai_provider_fetching_models") : tx("ui.ai_provider_fetch_models")}
+            </button>
+          </div>
+          {modelCatalogMessage ? <p className="ai-provider-field-note">{modelCatalogMessage}</p> : null}
           {entry.models.map((model, index) => (
             <div className="ai-provider-model-row" key={index}>
               <input value={model.name} onChange={(event) => setModelsRow(index, { name: event.target.value })} placeholder={tx("ui.ai_provider_field_model_name")} autoComplete="off" />
@@ -668,6 +731,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       websockets: entry.websockets === true,
       rebuildMidSystemMessage: entry.rebuild_mid_system_message === true,
       fingerprintProfile: entry.fingerprint_profile ?? "",
+      authIndex: entry.auth_index,
       accountID: entry.account_id,
       workspaceID: entry.workspace_id,
       concurrency15sLimit: policy?.concurrency_15s_limit === undefined ? "" : String(policy.concurrency_15s_limit),

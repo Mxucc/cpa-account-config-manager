@@ -47,6 +47,7 @@ describe("AIProvidersSettings", () => {
       }
       if (url.endsWith("/opencode/accounts")) return jsonResponse({ accounts: opencode });
       if (url.endsWith("/opencode/refresh")) return jsonResponse({ results: {} });
+      if (url.endsWith("/ai-providers/test")) return jsonResponse(overrides["ai-providers-test"] ?? {});
       if (url.endsWith("/openai-compatibility")) {
         return jsonResponse({ "openai-compatibility": openai.map(authIndexedOpenAIEntry) });
       }
@@ -209,6 +210,49 @@ describe("AIProvidersSettings", () => {
     const probeRequests = requests.filter(({ url }) => url.endsWith("/ai-providers/test"));
     expect(probeRequests).toHaveLength(2);
     expect(JSON.parse(String(probeRequests[1].init.body)).model).toBe("deepseek-chat");
+  });
+
+  it("fetches and merges a provider model catalog without losing hand-edited fields", async () => {
+    const user = userEvent.setup();
+    const requests = providerFetchMock({
+      "openai-compatibility": [{
+        name: "CatalogProvider",
+        "base-url": "https://catalog.example.com/v1",
+        "api-key-entries": [{ "api-key": "sk-catalog-secret-1234" }],
+        models: [{ name: "existing-model", alias: "legacy-alias", "display-name": "Legacy model", "force-mapping": true, image: true }],
+      }],
+      "ai-providers-test": {
+        reachable: true,
+        status: "available",
+        models: [
+          { id: "existing-model", display_name: "Catalog name" },
+          { id: "new-model", display_name: "New model" },
+        ],
+      },
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((candidate) => candidate.textContent?.includes("CatalogProvider"));
+    expect(row).toBeDefined();
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+    const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+    await user.click(within(dialog).getByRole("button", { name: "快速获取模型" }));
+
+    await waitFor(() => expect(within(dialog).getByDisplayValue("new-model")).toBeInTheDocument());
+    const modelRows = Array.from(dialog.querySelectorAll(".ai-provider-models-editor .ai-provider-model-row"));
+    expect(modelRows).toHaveLength(2);
+    expect(within(modelRows[0] as HTMLElement).getByDisplayValue("legacy-alias")).toBeInTheDocument();
+    expect(within(modelRows[0] as HTMLElement).getByDisplayValue("Legacy model")).toBeInTheDocument();
+    expect(within(modelRows[0] as HTMLElement).getByRole("checkbox", { name: "强制映射" })).toBeChecked();
+
+    const probe = requests.find(({ url, init }) => url.endsWith("/ai-providers/test") && init.method === "POST");
+    expect(JSON.parse(String(probe?.init.body))).toMatchObject({
+      kind: "openai-compatibility",
+      base_url: "https://catalog.example.com/v1",
+      api_key: "sk-catalog-secret-1234",
+    });
   });
 
   it("saves a replacement OpenAI-compatible API key inside api-key-entries", async () => {

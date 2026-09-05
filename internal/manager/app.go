@@ -145,6 +145,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	modelTests.SetCodexIdentityExperiment(codexIdentity)
 	providerRuntime := NewProviderRuntimeTracker(creditUsage)
 	providerRuntime.SetQuotaPolicies(quotaPolicies)
+	accounts.AddUsageStorageDiscoverer(providerRuntime)
 	quotaGuard := NewAccountQuotaGuard(usage, quotaPolicies)
 	// Admission must run before observational trackers. A saturated account can
 	// block in the concurrency transformer; recording it as active before that

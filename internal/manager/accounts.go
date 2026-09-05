@@ -61,12 +61,24 @@ type AccountLifecycleReader interface {
 type AccountService struct {
 	host          AuthHost
 	usage         UsageSnapshotReader
+	storageExtras []UsageStorageDiscoverer
 	concurrency   *AccountConcurrencyService
 	quotaPolicies *QuotaPolicyService
 	codexIdentity *CodexIdentityOverrideService
 	observer      interface{ ObserveAccounts([]Account) }
 	detailCacheMu sync.Mutex
 	detailCache   map[string]accountDetailCacheEntry
+}
+
+// AddUsageStorageDiscoverer lets other non-secret runtime stores follow the
+// host auth directory selected by the account usage tracker. This keeps all
+// durable plugin state beside CPA auth files when the plugin data directory is
+// implicit, without coupling those stores to account projection.
+func (s *AccountService) AddUsageStorageDiscoverer(discoverer UsageStorageDiscoverer) {
+	if s == nil || discoverer == nil {
+		return
+	}
+	s.storageExtras = append(s.storageExtras, discoverer)
 }
 
 type accountDetailCacheEntry struct {
@@ -305,6 +317,9 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 		return nil, fmt.Errorf("list host auth records: %w", errList)
 	}
 	if discoverer, ok := s.usage.(UsageStorageDiscoverer); ok {
+		discoverer.DiscoverAuthStorage(entries)
+	}
+	for _, discoverer := range s.storageExtras {
 		discoverer.DiscoverAuthStorage(entries)
 	}
 	pathCounts := make(map[string]int)

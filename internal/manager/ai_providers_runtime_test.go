@@ -55,8 +55,8 @@ func TestProviderRuntimePersistsAggregatesAcrossRestart(t *testing.T) {
 	if snapshot.Active != 0 {
 		t.Fatalf("in-flight request was restored as active: %+v", snapshot)
 	}
-	if snapshot.Used60s != 0 || snapshot.Used15s != 0 {
-		t.Fatalf("rolling request events were restored across restart: %+v", snapshot)
+	if snapshot.Used60s != 1 || snapshot.Used15s != 1 {
+		t.Fatalf("rolling request events were not restored across restart: %+v", snapshot)
 	}
 	second.Shutdown()
 }
@@ -64,15 +64,74 @@ func TestProviderRuntimePersistsAggregatesAcrossRestart(t *testing.T) {
 func TestProviderRuntimeIgnoresCorruptState(t *testing.T) {
 	dataDir := t.TempDir()
 	path := filepath.Join(dataDir, providerRuntimeStoreFileName)
+	backupPath := providerRuntimeBackupPath(path)
 	if errWrite := os.WriteFile(path, []byte("not-json"), 0o600); errWrite != nil {
 		t.Fatalf("write corrupt state: %v", errWrite)
+	}
+	if errWrite := os.WriteFile(backupPath, []byte("also-not-json"), 0o600); errWrite != nil {
+		t.Fatalf("write corrupt backup: %v", errWrite)
 	}
 	tracker := NewProviderRuntimeTracker(nil)
 	tracker.Configure(Config{DataDir: dataDir})
 	if snapshots := tracker.Snapshot(); len(snapshots) != 0 {
 		t.Fatalf("corrupt state produced snapshots: %+v", snapshots)
 	}
+	if got := tracker.StorageError(); got != "provider runtime state could not be loaded" {
+		t.Fatalf("StorageError() = %q", got)
+	}
+	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 3}})
 	tracker.Shutdown()
+	for _, corruptPath := range []string{path, backupPath} {
+		raw, errRead := os.ReadFile(corruptPath)
+		if errRead != nil {
+			t.Fatalf("read %s: %v", corruptPath, errRead)
+		}
+		if string(raw) != map[string]string{path: "not-json", backupPath: "also-not-json"}[corruptPath] {
+			t.Fatalf("corrupt state %s was overwritten: %q", corruptPath, raw)
+		}
+	}
+}
+
+func TestProviderRuntimePrunesPersistedRollingEventsOnLoad(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(dataDir, providerRuntimeStoreFileName)
+	key := runtimeAggregateKey("openai", "auth-index:auth-a")
+	state := persistedProviderRuntimeState{
+		Version: providerRuntimeStoreVersion,
+		Aggregates: map[string]providerRuntimeAggregate{
+			key: {
+				Provider: "openai", AuthIndex: "auth-a", Identity: "auth-index:auth-a",
+				Events: []providerRuntimeEvent{
+					{At: now.Add(-8 * 24 * time.Hour), AmountNanos: 1},
+					{At: now.Add(-time.Hour), AmountNanos: 2},
+				},
+				RequestEvents: []time.Time{now.Add(-2 * time.Hour), now.Add(-10 * time.Second)},
+				Models:        map[string]*providerRuntimeModel{},
+			},
+		},
+	}
+	if errSave := savePrivateJSON(path, state); errSave != nil {
+		t.Fatalf("write provider state: %v", errSave)
+	}
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.now = func() time.Time { return now }
+	tracker.Configure(Config{DataDir: dataDir})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].Used60s != 1 {
+		t.Fatalf("loaded rolling events = %+v", snapshots)
+	}
+	tracker.Shutdown()
+	loaded, errLoad := loadProviderRuntimeState(path)
+	if errLoad != nil {
+		t.Fatalf("reload provider state: %v", errLoad)
+	}
+	if got := len(loaded.Aggregates[key].RequestEvents); got != 1 {
+		t.Fatalf("persisted request events = %d, want 1", got)
+	}
+	if got := len(loaded.Aggregates[key].Events); got != 1 {
+		t.Fatalf("persisted cost events = %d, want 1", got)
+	}
 }
 
 func TestProviderRuntimeReloadsAfterShutdownOnSameTracker(t *testing.T) {
@@ -292,5 +351,106 @@ func TestProviderRuntimeExcludesEventsOutsideSevenDayWindow(t *testing.T) {
 	now = now.Add(7*24*time.Hour + time.Second)
 	if quota := tracker.Snapshot()[0].Quota; quota.FiveHourAmountUSD != 0 || quota.SevenDayAmountUSD != 0 {
 		t.Fatalf("expired quota events retained = %#v", quota)
+	}
+}
+
+func TestProviderRuntimePreservesStableCredentialAcrossAuthIndexChange(t *testing.T) {
+	dataDir := t.TempDir()
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.Configure(Config{DataDir: dataDir})
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai", AuthIndex: "auth-old", APIKey: "sk-same", Model: "gpt-5.5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 10},
+	})
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai", AuthIndex: "auth-new", APIKey: "sk-same", Model: "gpt-5.5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 7},
+	})
+	tracker.Shutdown()
+	for _, statePath := range []string{filepath.Join(dataDir, providerRuntimeStoreFileName), providerRuntimeBackupPath(filepath.Join(dataDir, providerRuntimeStoreFileName))} {
+		raw, errRead := os.ReadFile(statePath)
+		if errRead != nil {
+			t.Fatalf("read persisted state: %v", errRead)
+		}
+		if strings.Contains(string(raw), "sk-same") {
+			t.Fatalf("API key leaked into persisted state %s", statePath)
+		}
+	}
+
+	restored := NewProviderRuntimeTracker(nil)
+	restored.Configure(Config{DataDir: dataDir})
+	snapshots := restored.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("credential rotation created duplicate aggregates: %+v", snapshots)
+	}
+	if snapshots[0].TotalTokens != 17 || snapshots[0].AuthIndex != "auth-new" {
+		t.Fatalf("credential rotation lost usage: %+v", snapshots[0])
+	}
+	if strings.Contains(snapshots[0].Identity, "sk-same") {
+		t.Fatalf("credential leaked into identity: %q", snapshots[0].Identity)
+	}
+	restored.Shutdown()
+}
+
+func TestProviderRuntimePersistsDurableAuthAdjacentStore(t *testing.T) {
+	authDir := t.TempDir()
+	authPath := filepath.Join(authDir, "codex-auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"type":"codex"}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	entry := cpaapi.HostAuthFileEntry{
+		AuthIndex: "auth-a", Name: filepath.Base(authPath), Source: "file", Path: authPath,
+	}
+	fallbackDir := t.TempDir()
+	first := NewProviderRuntimeTracker(nil)
+	first.Configure(Config{DataDir: fallbackDir, implicitDataDir: true})
+	first.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai", AuthIndex: "auth-a", Model: "gpt-5.5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 23},
+	})
+	first.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	first.Shutdown()
+
+	durablePath := providerRuntimeStorePath(filepath.Join(authDir, usageDurableDirName))
+	if _, err := os.Stat(durablePath); err != nil {
+		t.Fatalf("durable provider store was not written: %v", err)
+	}
+	second := NewProviderRuntimeTracker(nil)
+	second.Configure(Config{DataDir: t.TempDir(), implicitDataDir: true})
+	second.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
+	defer second.Shutdown()
+	snapshots := second.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].TotalTokens != 23 {
+		t.Fatalf("durable provider usage was not restored: %+v", snapshots)
+	}
+}
+
+func TestProviderRuntimeRecoversFromBackup(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, providerRuntimeStoreFileName)
+	state := persistedProviderRuntimeState{
+		Version: providerRuntimeStoreVersion,
+		Aggregates: map[string]providerRuntimeAggregate{
+			runtimeAggregateKey("openai", "auth-index:auth-a"): {
+				Provider: "openai", AuthIndex: "auth-a", Identity: "auth-index:auth-a",
+				TotalTokens: 31, Models: map[string]*providerRuntimeModel{},
+			},
+		},
+	}
+	if err := savePrivateJSON(providerRuntimeBackupPath(path), state); err != nil {
+		t.Fatalf("write provider backup: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("corrupt"), 0o600); err != nil {
+		t.Fatalf("write corrupt provider state: %v", err)
+	}
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.Configure(Config{DataDir: dataDir})
+	defer tracker.Shutdown()
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].TotalTokens != 31 {
+		t.Fatalf("backup state was not recovered: %+v", snapshots)
+	}
+	if tracker.StorageError() != "" {
+		t.Fatalf("backup recovery left storage error: %q", tracker.StorageError())
 	}
 }

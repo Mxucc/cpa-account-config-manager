@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,7 +18,7 @@ import (
 )
 
 const (
-	providerRuntimeStoreVersion  = 1
+	providerRuntimeStoreVersion  = 2
 	providerRuntimeStoreFileName = "ai-provider-runtime.json"
 	providerRuntimePersistDelay  = 500 * time.Millisecond
 	providerRuntimeMaxIdentities = 10000
@@ -112,13 +113,18 @@ type providerRuntimeAggregate struct {
 	UnratedRequests int64
 	Models          map[string]*providerRuntimeModel
 	Events          []providerRuntimeEvent
-	RequestEvents   []time.Time `json:"-"`
+	RequestEvents   []time.Time `json:"request_events,omitempty"`
 	UpdatedAt       time.Time
 }
 
 type persistedProviderRuntimeState struct {
 	Version    int                                 `json:"version"`
 	Aggregates map[string]providerRuntimeAggregate `json:"aggregates"`
+	// Aliases map volatile CPA auth indexes to a stable, redacted aggregate
+	// identity. CPA may regenerate auth-index values when a provider channel is
+	// rewritten; the alias keeps historical usage attached to that credential
+	// without storing the credential itself.
+	Aliases map[string]string `json:"aliases,omitempty"`
 }
 
 // ProviderRuntimeTracker observes request lifecycle and usage callbacks without
@@ -134,15 +140,25 @@ type ProviderRuntimeTracker struct {
 	now           func() time.Time
 	nextPrune     time.Time
 	store         string
+	durableStore  string
+	allowDurable  bool
 	loaded        bool
 	dirty         bool
-	persistTimer  *time.Timer
+	// storageBlocked prevents a corrupt primary/backup pair from being
+	// overwritten by an empty snapshot. New observations remain available in
+	// memory, while the non-sensitive storage error tells the operator that
+	// recovery or manual repair is required.
+	storageBlocked bool
+	storageErr     string
+	aliases        map[string]string
+	persistTimer   *time.Timer
 }
 
 func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntimeTracker {
 	return &ProviderRuntimeTracker{
 		requests:   make(map[string]providerRuntimeRequest),
 		aggregates: make(map[string]*providerRuntimeAggregate),
+		aliases:    make(map[string]string),
 		calculator: calculator,
 		now:        time.Now,
 	}
@@ -159,6 +175,13 @@ func (t *ProviderRuntimeTracker) Configure(config Config) {
 	path := providerRuntimeStorePath(config.DataDir)
 	t.storeMu.Lock()
 	defer t.storeMu.Unlock()
+	t.allowDurable = config.implicitDataDir
+	if !t.allowDurable {
+		t.durableStore = ""
+	}
+	if t.allowDurable && t.durableStore != "" {
+		path = t.durableStore
+	}
 	if t.loaded && t.store == path {
 		return
 	}
@@ -167,23 +190,138 @@ func (t *ProviderRuntimeTracker) Configure(config Config) {
 		t.persistTimer = nil
 	}
 	if t.loaded && t.dirty && t.store != "" {
-		_ = t.persistLocked()
+		if errPersist := t.persistLocked(); errPersist != nil {
+			return
+		}
 	}
-	aggregates, errLoad := loadProviderRuntimeState(path)
+	state, errLoad := loadProviderRuntimeState(path)
+	aggregates := providerRuntimeAggregatePointers(state.Aggregates)
+	storageErr := ""
+	storageBlocked := false
 	if errLoad != nil {
-		// Runtime metrics are best-effort. A corrupt or older state file should
-		// not prevent the plugin from loading; the next usage event will replace
-		// it with a valid current-version file.
+		// Runtime metrics must never prevent the plugin from loading, but retain a
+		// diagnosable error and do not pretend that a corrupt file was an empty
+		// successful store. A backup is attempted before giving up.
+		if backupState, backupErr := loadProviderRuntimeState(providerRuntimeBackupPath(path)); backupErr == nil {
+			state = backupState
+			aggregates = providerRuntimeAggregatePointers(state.Aggregates)
+			errLoad = nil
+			storageErr = "provider runtime state was recovered from backup"
+		} else if errors.Is(errLoad, os.ErrNotExist) {
+			errLoad = nil
+		} else {
+			storageErr = "provider runtime state could not be loaded"
+			storageBlocked = true
+		}
+	}
+	pruned := pruneProviderRuntimeState(&state, t.now().UTC())
+	aggregates = providerRuntimeAggregatePointers(state.Aggregates)
+	if aggregates == nil {
 		aggregates = make(map[string]*providerRuntimeAggregate)
 	}
 	t.mu.Lock()
 	t.requests = make(map[string]providerRuntimeRequest)
 	t.aggregates = aggregates
+	t.aliases = state.Aliases
+	if t.aliases == nil {
+		t.aliases = make(map[string]string)
+	}
 	t.nextPrune = time.Time{}
+	t.storageErr = storageErr
+	t.storageBlocked = storageBlocked
+	t.dirty = storageErr == "provider runtime state was recovered from backup" || pruned
 	t.mu.Unlock()
 	t.store = path
 	t.loaded = true
-	t.dirty = false
+	if storageErr == "provider runtime state was recovered from backup" {
+		_ = t.persistLocked()
+	}
+}
+
+// DiscoverAuthStorage selects the same durable, host-adjacent store used by
+// account usage when the plugin is using its implicit data directory. This is
+// important for CPA restarts: a relative plugin data directory may be rebuilt
+// or mounted differently while the auth directory remains stable.
+func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
+	if t == nil || !t.allowDurable {
+		return
+	}
+	authDir := discoverUsageAuthDir(entries)
+	if authDir == "" {
+		return
+	}
+	path := providerRuntimeStorePath(filepath.Join(authDir, usageDurableDirName))
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
+	if t.durableStore == path && t.store == path {
+		return
+	}
+	if t.loaded && t.store == path {
+		t.durableStore = path
+		return
+	}
+	if t.persistTimer != nil {
+		t.persistTimer.Stop()
+		t.persistTimer = nil
+	}
+	if t.loaded && t.dirty && t.store != "" {
+		if errPersist := t.persistLocked(); errPersist != nil {
+			return
+		}
+	}
+	currentAggregates := t.snapshotAggregates()
+	currentAliases := t.snapshotAliases()
+	state, errLoad := loadProviderRuntimeState(path)
+	recovered := false
+	if errLoad != nil {
+		if backup, backupErr := loadProviderRuntimeState(providerRuntimeBackupPath(path)); backupErr == nil {
+			state = backup
+			errLoad = nil
+			recovered = true
+		} else if !errors.Is(errLoad, os.ErrNotExist) {
+			t.mu.Lock()
+			t.storageErr = "provider runtime state could not be loaded"
+			t.mu.Unlock()
+			return
+		}
+	}
+	// The fallback store may have received usage before the first account list
+	// discovered CPA's absolute auth directory. Merge it with the durable
+	// store instead of blindly replacing either side. Counters are monotonic,
+	// so merging by maximum preserves new observations without double-counting
+	// the copy that was already loaded from the fallback store.
+	mergedAggregates := mergeProviderRuntimeAggregates(
+		currentAggregates,
+		providerRuntimeAggregatePointers(state.Aggregates),
+	)
+	mergedAliases := mergeProviderRuntimeAliases(currentAliases, state.Aliases)
+	mergedPointers := providerRuntimeAggregatePointers(mergedAggregates)
+	pruned := pruneProviderRuntimeAggregates(mergedPointers, t.now().UTC())
+	mergedAggregates = providerRuntimeAggregateValues(mergedPointers)
+	t.mu.Lock()
+	t.aggregates = providerRuntimeAggregatePointers(mergedAggregates)
+	t.aliases = mergedAliases
+	t.requests = make(map[string]providerRuntimeRequest)
+	t.nextPrune = time.Time{}
+	t.store = path
+	t.durableStore = path
+	t.loaded = true
+	t.storageErr = ""
+	t.storageBlocked = false
+	t.dirty = len(currentAggregates) > 0 || recovered || pruned
+	t.mu.Unlock()
+	if t.dirty {
+		_ = t.persistLocked()
+	}
+}
+
+func (t *ProviderRuntimeTracker) StorageError() string {
+	if t == nil {
+		return "provider runtime state is unavailable"
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.storageErr
 }
 
 func (t *ProviderRuntimeTracker) markDirty() {
@@ -220,6 +358,31 @@ func (t *ProviderRuntimeTracker) persistLocked() error {
 		return nil
 	}
 	t.mu.RLock()
+	blocked := t.storageBlocked
+	t.mu.RUnlock()
+	if blocked {
+		return errors.New("provider runtime storage is blocked after load failure")
+	}
+	aggregates := t.snapshotAggregates()
+	aliases := t.snapshotAliases()
+	if errSave := saveProviderRuntimeState(t.store, aggregates, aliases); errSave != nil {
+		t.mu.Lock()
+		if !t.storageBlocked {
+			t.storageErr = "provider runtime state could not be persisted"
+		}
+		t.mu.Unlock()
+		return errSave
+	}
+	t.mu.Lock()
+	t.dirty = false
+	t.storageErr = ""
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *ProviderRuntimeTracker) snapshotAggregates() map[string]*providerRuntimeAggregate {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	aggregates := make(map[string]*providerRuntimeAggregate, len(t.aggregates))
 	for key, aggregate := range t.aggregates {
 		if aggregate == nil {
@@ -238,33 +401,38 @@ func (t *ProviderRuntimeTracker) persistLocked() error {
 		clone.Events = append([]providerRuntimeEvent(nil), aggregate.Events...)
 		aggregates[key] = &clone
 	}
-	t.mu.RUnlock()
-	if errSave := saveProviderRuntimeState(t.store, aggregates); errSave != nil {
-		return errSave
+	return aggregates
+}
+
+func (t *ProviderRuntimeTracker) snapshotAliases() map[string]string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	aliases := make(map[string]string, len(t.aliases))
+	for key, value := range t.aliases {
+		aliases[key] = value
 	}
-	t.mu.Lock()
-	t.dirty = false
-	t.mu.Unlock()
-	return nil
+	return aliases
 }
 
 func providerRuntimeStorePath(dataDir string) string {
 	return filepath.Join(dataDir, providerRuntimeStoreFileName)
 }
 
-func loadProviderRuntimeState(path string) (map[string]*providerRuntimeAggregate, error) {
+func providerRuntimeBackupPath(path string) string { return path + ".bak" }
+
+func loadProviderRuntimeState(path string) (persistedProviderRuntimeState, error) {
 	raw, errRead := os.ReadFile(path)
 	if errRead != nil {
-		return nil, errRead
+		return persistedProviderRuntimeState{}, errRead
 	}
 	var persisted persistedProviderRuntimeState
 	if errDecode := json.Unmarshal(raw, &persisted); errDecode != nil {
-		return nil, fmt.Errorf("decode provider runtime state: %w", errDecode)
+		return persistedProviderRuntimeState{}, fmt.Errorf("decode provider runtime state: %w", errDecode)
 	}
-	if persisted.Version != providerRuntimeStoreVersion {
-		return nil, fmt.Errorf("unsupported provider runtime store version %d", persisted.Version)
+	if persisted.Version != 1 && persisted.Version != providerRuntimeStoreVersion {
+		return persistedProviderRuntimeState{}, fmt.Errorf("unsupported provider runtime store version %d", persisted.Version)
 	}
-	aggregates := make(map[string]*providerRuntimeAggregate, len(persisted.Aggregates))
+	aggregates := make(map[string]providerRuntimeAggregate, len(persisted.Aggregates))
 	for key, value := range persisted.Aggregates {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value.Provider) == "" || strings.TrimSpace(value.Identity) == "" {
 			continue
@@ -275,10 +443,78 @@ func loadProviderRuntimeState(path string) (map[string]*providerRuntimeAggregate
 			value.Events = value.Events[len(value.Events)-providerRuntimeMaxEvents:]
 		}
 		value.Active = 0
-		aggregate := value
-		aggregates[key] = &aggregate
+		aggregates[key] = value
 	}
-	return aggregates, nil
+	persisted.Aggregates = aggregates
+	persisted.Aliases = normalizeProviderRuntimeAliases(persisted.Aliases)
+	return persisted, nil
+}
+
+func providerRuntimeAggregatePointers(values map[string]providerRuntimeAggregate) map[string]*providerRuntimeAggregate {
+	result := make(map[string]*providerRuntimeAggregate, len(values))
+	for key, value := range values {
+		clone := value
+		result[key] = &clone
+	}
+	return result
+}
+
+func providerRuntimeAggregateValues(values map[string]*providerRuntimeAggregate) map[string]providerRuntimeAggregate {
+	result := make(map[string]providerRuntimeAggregate, len(values))
+	for key, value := range values {
+		if value != nil {
+			result[key] = *value
+		}
+	}
+	return result
+}
+
+// pruneProviderRuntimeState removes rolling-window data that can no longer
+// affect a dashboard or quota calculation. Doing this during load keeps a
+// long-lived provider state file bounded even when no new request arrives
+// after a restart.
+func pruneProviderRuntimeState(state *persistedProviderRuntimeState, now time.Time) bool {
+	if state == nil {
+		return false
+	}
+	pointers := providerRuntimeAggregatePointers(state.Aggregates)
+	changed := pruneProviderRuntimeAggregates(pointers, now)
+	state.Aggregates = providerRuntimeAggregateValues(pointers)
+	return changed
+}
+
+func pruneProviderRuntimeAggregates(aggregates map[string]*providerRuntimeAggregate, now time.Time) bool {
+	changed := false
+	for _, aggregate := range aggregates {
+		if aggregate == nil {
+			continue
+		}
+		requestEvents := pruneProviderRequestEvents(aggregate.RequestEvents, now)
+		if len(requestEvents) != len(aggregate.RequestEvents) {
+			aggregate.RequestEvents = requestEvents
+			changed = true
+		}
+		costEvents := pruneProviderRuntimeCostEvents(aggregate.Events, now)
+		if len(costEvents) != len(aggregate.Events) {
+			aggregate.Events = costEvents
+			changed = true
+		}
+	}
+	return changed
+}
+
+func pruneProviderRuntimeCostEvents(events []providerRuntimeEvent, now time.Time) []providerRuntimeEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	kept := events[:0]
+	for _, event := range events {
+		if event.At.After(cutoff) && !event.At.After(now) {
+			kept = append(kept, event)
+		}
+	}
+	return kept
 }
 
 func normalizeProviderRuntimeModels(models map[string]*providerRuntimeModel) map[string]*providerRuntimeModel {
@@ -314,7 +550,166 @@ func normalizeProviderRuntimeModels(models map[string]*providerRuntimeModel) map
 	return result
 }
 
-func saveProviderRuntimeState(path string, aggregates map[string]*providerRuntimeAggregate) error {
+// mergeProviderRuntimeAggregates combines two snapshots of cumulative
+// provider metrics. The fallback store and the auth-adjacent store can both
+// contain the same history, so counters use the maximum rather than addition.
+// Window events are de-duplicated by timestamp and amount before being capped.
+func mergeProviderRuntimeAggregates(left, right map[string]*providerRuntimeAggregate) map[string]providerRuntimeAggregate {
+	merged := make(map[string]providerRuntimeAggregate, len(left)+len(right))
+	for key, aggregate := range left {
+		if aggregate == nil {
+			continue
+		}
+		merged[key] = cloneProviderRuntimeAggregate(*aggregate)
+	}
+	for key, aggregate := range right {
+		if aggregate == nil {
+			continue
+		}
+		if current, exists := merged[key]; exists {
+			merged[key] = mergeProviderRuntimeAggregate(current, *aggregate)
+		} else {
+			merged[key] = cloneProviderRuntimeAggregate(*aggregate)
+		}
+	}
+	return merged
+}
+
+func mergeProviderRuntimeAggregate(left, right providerRuntimeAggregate) providerRuntimeAggregate {
+	merged := cloneProviderRuntimeAggregate(left)
+	merged.Active = 0
+	if merged.Provider == "" {
+		merged.Provider = normalizeRuntimeProvider(right.Provider)
+	}
+	if merged.Identity == "" || strings.HasPrefix(right.Identity, "credential:") && !strings.HasPrefix(merged.Identity, "credential:") {
+		merged.Identity = right.Identity
+	}
+	if right.UpdatedAt.After(merged.UpdatedAt) || merged.AuthIndex == "" {
+		merged.AuthIndex = right.AuthIndex
+	}
+	merged.InputTokens = maxInt64(merged.InputTokens, right.InputTokens)
+	merged.OutputTokens = maxInt64(merged.OutputTokens, right.OutputTokens)
+	merged.ReasoningTokens = maxInt64(merged.ReasoningTokens, right.ReasoningTokens)
+	merged.CachedTokens = maxInt64(merged.CachedTokens, right.CachedTokens)
+	merged.TotalTokens = maxInt64(merged.TotalTokens, right.TotalTokens)
+	merged.AmountNanos = maxInt64(merged.AmountNanos, right.AmountNanos)
+	merged.RatedRequests = maxInt64(merged.RatedRequests, right.RatedRequests)
+	merged.UnratedRequests = maxInt64(merged.UnratedRequests, right.UnratedRequests)
+	merged.Models = mergeProviderRuntimeModels(merged.Models, right.Models)
+	merged.Events = mergeProviderRuntimeEvents(merged.Events, right.Events)
+	merged.RequestEvents = mergeProviderRuntimeRequestEvents(merged.RequestEvents, right.RequestEvents)
+	if right.UpdatedAt.After(merged.UpdatedAt) {
+		merged.UpdatedAt = right.UpdatedAt
+	}
+	return merged
+}
+
+func cloneProviderRuntimeAggregate(value providerRuntimeAggregate) providerRuntimeAggregate {
+	clone := value
+	clone.Active = 0
+	clone.Models = normalizeProviderRuntimeModels(value.Models)
+	clone.Events = append([]providerRuntimeEvent(nil), value.Events...)
+	clone.RequestEvents = append([]time.Time(nil), value.RequestEvents...)
+	return clone
+}
+
+func mergeProviderRuntimeModels(left, right map[string]*providerRuntimeModel) map[string]*providerRuntimeModel {
+	merged := normalizeProviderRuntimeModels(left)
+	for model, value := range right {
+		if value == nil || strings.TrimSpace(model) == "" {
+			continue
+		}
+		if current := merged[model]; current != nil {
+			current.InputTokens = maxInt64(current.InputTokens, value.InputTokens)
+			current.OutputTokens = maxInt64(current.OutputTokens, value.OutputTokens)
+			current.ReasoningTokens = maxInt64(current.ReasoningTokens, value.ReasoningTokens)
+			current.CachedTokens = maxInt64(current.CachedTokens, value.CachedTokens)
+			current.TotalTokens = maxInt64(current.TotalTokens, value.TotalTokens)
+			if value.AmountUSD > current.AmountUSD {
+				current.AmountUSD = value.AmountUSD
+			}
+			current.Rated = current.Rated || value.Rated
+			current.RatedRequests = maxInt64(current.RatedRequests, value.RatedRequests)
+			current.UnratedRequests = maxInt64(current.UnratedRequests, value.UnratedRequests)
+			continue
+		}
+		if len(merged) < providerRuntimeMaxModels {
+			copy := *value
+			merged[model] = &copy
+		}
+	}
+	return merged
+}
+
+func mergeProviderRuntimeEvents(left, right []providerRuntimeEvent) []providerRuntimeEvent {
+	seen := make(map[string]struct{}, len(left)+len(right))
+	merged := make([]providerRuntimeEvent, 0, len(left)+len(right))
+	for _, event := range append(append([]providerRuntimeEvent(nil), left...), right...) {
+		key := fmt.Sprintf("%d:%d", event.At.UnixNano(), event.AmountNanos)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, event)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].At.Before(merged[j].At) })
+	if len(merged) > providerRuntimeMaxEvents {
+		merged = merged[len(merged)-providerRuntimeMaxEvents:]
+	}
+	return merged
+}
+
+func mergeProviderRuntimeRequestEvents(left, right []time.Time) []time.Time {
+	seen := make(map[int64]struct{}, len(left)+len(right))
+	merged := make([]time.Time, 0, len(left)+len(right))
+	for _, event := range append(append([]time.Time(nil), left...), right...) {
+		key := event.UnixNano()
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, event)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Before(merged[j]) })
+	if len(merged) > providerRuntimeMaxEvents {
+		merged = merged[len(merged)-providerRuntimeMaxEvents:]
+	}
+	return merged
+}
+
+func mergeProviderRuntimeAliases(left, right map[string]string) map[string]string {
+	merged := normalizeProviderRuntimeAliases(left)
+	for key, value := range normalizeProviderRuntimeAliases(right) {
+		if _, exists := merged[key]; !exists {
+			merged[key] = value
+		}
+	}
+	return normalizeProviderRuntimeAliases(merged)
+}
+
+func normalizeProviderRuntimeAliases(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return make(map[string]string)
+	}
+	keys := make([]string, 0, len(values))
+	for key, value := range values {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" || len(key) > 512 || len(value) > 512 {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) > providerRuntimeMaxIdentities*2 {
+		keys = keys[:providerRuntimeMaxIdentities*2]
+	}
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		result[key] = strings.TrimSpace(values[key])
+	}
+	return result
+}
+
+func saveProviderRuntimeState(path string, aggregates map[string]*providerRuntimeAggregate, aliases map[string]string) error {
 	values := make(map[string]providerRuntimeAggregate, len(aggregates))
 	for key, aggregate := range aggregates {
 		if aggregate == nil {
@@ -333,7 +728,15 @@ func saveProviderRuntimeState(path string, aggregates map[string]*providerRuntim
 		clone.Events = append([]providerRuntimeEvent(nil), aggregate.Events...)
 		values[key] = clone
 	}
-	return savePrivateJSON(path, persistedProviderRuntimeState{Version: providerRuntimeStoreVersion, Aggregates: values})
+	state := persistedProviderRuntimeState{
+		Version:    providerRuntimeStoreVersion,
+		Aggregates: values,
+		Aliases:    normalizeProviderRuntimeAliases(aliases),
+	}
+	if errSave := savePrivateJSON(path, state); errSave != nil {
+		return errSave
+	}
+	return savePrivateJSON(providerRuntimeBackupPath(path), state)
 }
 
 // SetQuotaPolicies attaches the provider policy store used for request-window
@@ -365,11 +768,11 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 	}
 	now := t.now().UTC()
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.pruneExpiredLocked(now)
-	aggregateKey := runtimeAggregateKey(provider, identity)
+	aggregateKey, aggregateIdentity := t.resolveAggregateKeyLocked(provider, identity, authIndex, "")
 	if current, exists := t.requests[request.RequestID]; exists {
 		if current.AggregateKey == aggregateKey {
+			t.mu.Unlock()
 			return cpaapi.RequestInterceptResponse{}, false
 		}
 		delete(t.requests, request.RequestID)
@@ -380,8 +783,9 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 			previous.UpdatedAt = now
 		}
 	}
-	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
+	aggregate := t.ensureAggregateLocked(aggregateKey, aggregateIdentity, provider, authIndex)
 	if aggregate == nil {
+		t.mu.Unlock()
 		return cpaapi.RequestInterceptResponse{}, false
 	}
 	aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
@@ -394,6 +798,8 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 	aggregate.Active++
 	aggregate.RequestEvents = append(aggregate.RequestEvents, now)
 	aggregate.UpdatedAt = now
+	t.mu.Unlock()
+	t.markDirty()
 	return cpaapi.RequestInterceptResponse{}, false
 }
 
@@ -436,9 +842,11 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 	}
 	t.mu.Lock()
 	provider := normalizeRuntimeProvider(record.Provider)
-	aggregateKey := runtimeAggregateKey(provider, identity)
-	aggregate := t.ensureAggregateLocked(aggregateKey, identity, provider, authIndex)
+	credentialIdentity := runtimeCredentialIdentity(record)
+	aggregateKey, aggregateIdentity := t.resolveAggregateKeyLocked(provider, identity, authIndex, credentialIdentity)
+	aggregate := t.ensureAggregateLocked(aggregateKey, aggregateIdentity, provider, authIndex)
 	if aggregate == nil {
+		t.mu.Unlock()
 		return
 	}
 	input := nonNegative(record.Detail.InputTokens)
@@ -497,6 +905,9 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 		}
 	}
 	aggregate.UpdatedAt = now
+	if authIndex != "" {
+		aggregate.AuthIndex = authIndex
+	}
 	t.mu.Unlock()
 	t.markDirty()
 }
@@ -699,6 +1110,66 @@ func runtimeAggregateKey(provider, identity string) string {
 	return normalizeRuntimeProvider(provider) + "\x00" + identity
 }
 
+func runtimeAliasKey(provider, authIndex string) string {
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return ""
+	}
+	return runtimeAggregateKey(provider, "auth-index:"+authIndex)
+}
+
+// resolveAggregateKeyLocked prefers a credential digest when CPA supplies the
+// key with a usage callback. The digest is one-way and redacted; it lets a
+// provider keep the same aggregate when CPA regenerates auth-index metadata
+// after a channel update. Callers without the key reuse the persisted alias.
+func (t *ProviderRuntimeTracker) resolveAggregateKeyLocked(provider, identity, authIndex, credentialIdentity string) (string, string) {
+	provider = normalizeRuntimeProvider(provider)
+	identity = strings.TrimSpace(identity)
+	credentialIdentity = strings.TrimSpace(credentialIdentity)
+	if t.aliases == nil {
+		t.aliases = make(map[string]string)
+	}
+	aliasKey := runtimeAliasKey(provider, authIndex)
+	if credentialIdentity != "" {
+		stableKey := runtimeAggregateKey(provider, credentialIdentity)
+		legacyKey := runtimeAggregateKey(provider, identity)
+		if stableKey != legacyKey {
+			if legacy := t.aggregates[legacyKey]; legacy != nil {
+				if stable := t.aggregates[stableKey]; stable == nil {
+					delete(t.aggregates, legacyKey)
+					legacy.Identity = credentialIdentity
+					t.aggregates[stableKey] = legacy
+				} else {
+					merged := mergeProviderRuntimeAggregate(*stable, *legacy)
+					merged.Identity = credentialIdentity
+					merged.Active += legacy.Active
+					*stable = merged
+					delete(t.aggregates, legacyKey)
+				}
+				for requestID, request := range t.requests {
+					if request.AggregateKey == legacyKey {
+						request.AggregateKey = stableKey
+						t.requests[requestID] = request
+					}
+				}
+			}
+		}
+		if aliasKey != "" && len(t.aliases) < providerRuntimeMaxIdentities*2 {
+			t.aliases[aliasKey] = stableKey
+		}
+		return stableKey, credentialIdentity
+	}
+	if aliasKey != "" {
+		if stableKey := strings.TrimSpace(t.aliases[aliasKey]); stableKey != "" {
+			if aggregate := t.aggregates[stableKey]; aggregate != nil {
+				return stableKey, aggregate.Identity
+			}
+			delete(t.aliases, aliasKey)
+		}
+	}
+	return runtimeAggregateKey(provider, identity), identity
+}
+
 func (t *ProviderRuntimeTracker) evictIdleAggregateLocked() bool {
 	var oldestKey string
 	var oldest time.Time
@@ -765,17 +1236,29 @@ func runtimeIdentityFromUsage(record cpaapi.UsageRecord) (string, string) {
 	if authID := strings.TrimSpace(record.AuthID); authID != "" {
 		return "auth-id:" + authID, ""
 	}
-	provider, key := normalizeRuntimeProvider(record.Provider), strings.TrimSpace(record.APIKey)
-	if provider == "" || key == "" {
+	identity := runtimeCredentialIdentity(record)
+	if identity == "" {
 		return "", ""
 	}
+	return identity, ""
+}
+
+func runtimeCredentialIdentity(record cpaapi.UsageRecord) string {
+	provider, key := normalizeRuntimeProvider(record.Provider), strings.TrimSpace(record.APIKey)
+	if provider == "" || key == "" {
+		return ""
+	}
 	digest := sha256.Sum256([]byte(provider + "\x00" + key))
-	return "credential:" + hex.EncodeToString(digest[:]), ""
+	return "credential:" + hex.EncodeToString(digest[:])
 }
 
 func (a *App) handleAIProviderRuntime() cpaapi.ManagementResponse {
 	if a == nil || a.providerRuntime == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "provider runtime metrics are unavailable"})
 	}
-	return jsonResponse(http.StatusOK, map[string]any{"snapshots": a.providerRuntime.Snapshot(), "updated_at": time.Now().UTC()})
+	return jsonResponse(http.StatusOK, map[string]any{
+		"snapshots":     a.providerRuntime.Snapshot(),
+		"updated_at":    time.Now().UTC(),
+		"storage_error": a.providerRuntime.StorageError(),
+	})
 }

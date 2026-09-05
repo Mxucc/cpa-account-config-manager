@@ -312,10 +312,10 @@ type accountSchedulerCandidateLoad struct {
 	load     int
 }
 
-// PickAuth only overrides CPA's configured selector while plugin-managed load exists.
-// Idle traffic remains delegated to CPA so its native session affinity semantics stay
-// intact; concurrent or rolling-window pressure is spread across the least-loaded
-// managed credentials before requests reach the after-auth waiting queue.
+// PickAuth balances every multi-account pool whose candidates all have plugin-managed
+// limits. It reserves the selected account immediately so a burst of scheduler calls
+// cannot all observe an idle pool and fall through to the same sticky credential before
+// request.intercept_after has recorded the first admission.
 func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest) cpaapi.SchedulerPickResponse {
 	if s == nil || len(request.Candidates) < 2 {
 		return cpaapi.SchedulerPickResponse{}
@@ -331,7 +331,6 @@ func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest
 
 	loads := make([]accountSchedulerCandidateLoad, 0, len(request.Candidates))
 	seen := make(map[string]struct{}, len(request.Candidates))
-	hasLoad := false
 	for _, candidate := range request.Candidates {
 		authID := strings.TrimSpace(candidate.ID)
 		if authID == "" {
@@ -353,9 +352,6 @@ func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest
 		windowSeconds := normalizeAccountConcurrencyWindowSeconds(record.WindowSeconds)
 		requestLoad := s.windowUsageLocked(authID, now, time.Duration(windowSeconds)*time.Second) + reserved
 		load := activeLoad + requestLoad
-		if load > 0 {
-			hasLoad = true
-		}
 		var pressure int64
 		if record.Limit > 0 {
 			pressure = int64(activeLoad) * 1_000_000 / int64(record.Limit)
@@ -368,7 +364,7 @@ func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest
 		}
 		loads = append(loads, accountSchedulerCandidateLoad{authID: authID, pressure: pressure, load: load})
 	}
-	if len(loads) < 2 || !hasLoad {
+	if len(loads) < 2 {
 		return cpaapi.SchedulerPickResponse{}
 	}
 

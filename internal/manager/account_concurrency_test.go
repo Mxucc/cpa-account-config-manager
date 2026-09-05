@@ -518,6 +518,24 @@ func TestAccountConcurrencySchedulerMovesPressureToIdleAccount(t *testing.T) {
 	}
 }
 
+func TestAccountConcurrencySchedulerBalancesBurstBeforeAnyAdmission(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 3)
+	configureSchedulerLimit(t, service, "auth-b", 10, 3)
+
+	counts := map[string]int{}
+	for range 10 {
+		response := service.PickAuth(cpaapi.SchedulerPickRequest{Candidates: schedulerCandidates("auth-a", "auth-b")})
+		if !response.Handled || response.AuthID == "" {
+			t.Fatalf("idle burst scheduler response = %#v, want a handled account", response)
+		}
+		counts[response.AuthID]++
+	}
+	if counts["auth-a"] != 5 || counts["auth-b"] != 5 {
+		t.Fatalf("idle burst distribution = %#v, want 5 picks per account", counts)
+	}
+}
+
 func TestAccountConcurrencySchedulerUsesRoundRobinForEqualPressure(t *testing.T) {
 	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
 	configureSchedulerLimit(t, service, "auth-a", 10, 3)

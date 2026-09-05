@@ -64,10 +64,10 @@ type ProviderRuntimeSnapshot struct {
 }
 
 type ProviderRuntimeQuota struct {
-	FiveHourUsedTokens int64   `json:"five_hour_used_tokens"`
-	SevenDayUsedTokens int64   `json:"seven_day_used_tokens"`
-	FiveHourPercent    float64 `json:"five_hour_percent,omitempty"`
-	SevenDayPercent    float64 `json:"seven_day_percent,omitempty"`
+	FiveHourAmountUSD float64 `json:"five_hour_amount_usd"`
+	SevenDayAmountUSD float64 `json:"seven_day_amount_usd"`
+	FiveHourPercent   float64 `json:"five_hour_percent,omitempty"`
+	SevenDayPercent   float64 `json:"seven_day_percent,omitempty"`
 }
 
 type ProviderModelUsage struct {
@@ -93,8 +93,8 @@ type providerRuntimeModel struct {
 }
 
 type providerRuntimeEvent struct {
-	At     time.Time
-	Tokens int64
+	At          time.Time
+	AmountNanos int64
 }
 
 type providerRuntimeAggregate struct {
@@ -454,8 +454,8 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 	aggregate.ReasoningTokens = saturatingAdd(aggregate.ReasoningTokens, reasoning)
 	aggregate.CachedTokens = saturatingAdd(aggregate.CachedTokens, cached)
 	aggregate.TotalTokens = saturatingAdd(aggregate.TotalTokens, total)
-	if total > 0 {
-		aggregate.Events = append(aggregate.Events, providerRuntimeEvent{At: now, Tokens: total})
+	if !record.Failed && charge.Rated && charge.AmountNanos > 0 {
+		aggregate.Events = append(aggregate.Events, providerRuntimeEvent{At: now, AmountNanos: charge.AmountNanos})
 		if len(aggregate.Events) > providerRuntimeMaxEvents {
 			aggregate.Events = aggregate.Events[len(aggregate.Events)-providerRuntimeMaxEvents:]
 		}
@@ -511,7 +511,7 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	out := make([]ProviderRuntimeSnapshot, 0, len(t.aggregates))
 	now := t.now().UTC()
 	for _, aggregate := range t.aggregates {
-		fiveHourTokens, sevenDayTokens := runtimeWindowTokens(aggregate.Events, now)
+		fiveHourAmountNanos, sevenDayAmountNanos := runtimeWindowAmounts(aggregate.Events, now)
 		models := make([]ProviderModelUsage, 0, len(aggregate.Models))
 		for _, model := range aggregate.Models {
 			models = append(models, model.ProviderModelUsage)
@@ -560,12 +560,9 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 			AmountUSD:               float64(aggregate.AmountNanos) / creditNanosPerUSD,
 			RatedRequests:           aggregate.RatedRequests,
 			UnratedRequests:         aggregate.UnratedRequests,
-			Quota: ProviderRuntimeQuota{
-				FiveHourUsedTokens: fiveHourTokens,
-				SevenDayUsedTokens: sevenDayTokens,
-			},
-			Models:    models,
-			UpdatedAt: aggregate.UpdatedAt,
+			Quota:                   providerRuntimeQuota(policy, configurable, fiveHourAmountNanos, sevenDayAmountNanos),
+			Models:                  models,
+			UpdatedAt:               aggregate.UpdatedAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -577,7 +574,7 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	return out
 }
 
-func runtimeWindowTokens(events []providerRuntimeEvent, now time.Time) (int64, int64) {
+func runtimeWindowAmounts(events []providerRuntimeEvent, now time.Time) (int64, int64) {
 	if len(events) == 0 {
 		return 0, 0
 	}
@@ -589,13 +586,29 @@ func runtimeWindowTokens(events []providerRuntimeEvent, now time.Time) (int64, i
 			continue
 		}
 		if event.At.After(sevenDayCutoff) {
-			sevenDay = saturatingAdd(sevenDay, event.Tokens)
+			sevenDay = saturatingAdd(sevenDay, event.AmountNanos)
 		}
 		if event.At.After(fiveHourCutoff) {
-			fiveHour = saturatingAdd(fiveHour, event.Tokens)
+			fiveHour = saturatingAdd(fiveHour, event.AmountNanos)
 		}
 	}
 	return fiveHour, sevenDay
+}
+
+func providerRuntimeQuota(policy ProviderQuotaPolicy, configured bool, fiveHourAmountNanos, sevenDayAmountNanos int64) ProviderRuntimeQuota {
+	fiveHourAmount := float64(fiveHourAmountNanos) / creditNanosPerUSD
+	sevenDayAmount := float64(sevenDayAmountNanos) / creditNanosPerUSD
+	quota := ProviderRuntimeQuota{FiveHourAmountUSD: fiveHourAmount, SevenDayAmountUSD: sevenDayAmount}
+	if !configured {
+		return quota
+	}
+	if policy.FiveHour.BudgetAmountUSD != nil && *policy.FiveHour.BudgetAmountUSD > 0 {
+		quota.FiveHourPercent = fiveHourAmount / *policy.FiveHour.BudgetAmountUSD * 100
+	}
+	if policy.SevenDay.BudgetAmountUSD != nil && *policy.SevenDay.BudgetAmountUSD > 0 {
+		quota.SevenDayPercent = sevenDayAmount / *policy.SevenDay.BudgetAmountUSD * 100
+	}
+	return quota
 }
 
 func (t *ProviderRuntimeTracker) Shutdown() {

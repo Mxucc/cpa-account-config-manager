@@ -1508,8 +1508,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.list_metadata_fallback": "使用列表元数据（当前 CPA 不支持运行时详情）",
   "ui.credential_account_id": "凭据账号 ID"
   ,"ui.ai_provider_quota_settings": "供应商额度与并发策略"
-  ,"ui.ai_provider_quota_settings_description": "CPA 不提供 AI 供应商级官方 5 小时/7 天总额度；这里使用插件观察到的 Token 与手工预算计算百分比。并发上限同样是插件侧配置，当前 CPA 版本可能只能观测。"
-  ,"ui.ai_provider_budget_tokens": "预算 Token"
+  ,"ui.ai_provider_quota_settings_description": "CPA 不提供 AI 供应商级官方 5 小时/7 天总额度；这里使用插件估算的 USD 费用与手工预算额度计算百分比。并发上限同样是插件侧配置，当前 CPA 版本可能只能观测。"
+  ,"ui.ai_provider_budget_amount": "预算额度 (USD)"
   ,"ui.ai_provider_limit_percent": "限制百分比"
   ,"ui.account_quota_limit": "账号额度限制"
   ,"ui.account_quota_limit_description": "按 CPA 返回的 5 小时/7 天官方用量百分比限制该账号；留空表示不限制。"

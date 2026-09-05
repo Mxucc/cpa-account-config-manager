@@ -74,7 +74,7 @@ export interface Account {
 }
 
 export interface QuotaWindowPolicy {
-	total_tokens?: number;
+	budget_amount_usd?: number;
 	limit_percent?: number;
 }
 
@@ -1413,8 +1413,8 @@ export interface AIProviderRuntimeSnapshot {
   models?: AIProviderRuntimeModelUsage[];
 	updated_at: string;
 	quota?: {
-		five_hour_used_tokens: number;
-		seven_day_used_tokens: number;
+		five_hour_amount_usd: number;
+		seven_day_amount_usd: number;
 		five_hour_percent?: number;
 		seven_day_percent?: number;
 	};

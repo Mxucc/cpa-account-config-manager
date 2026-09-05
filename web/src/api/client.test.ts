@@ -1579,14 +1579,20 @@ describe("management API client", () => {
       rated_requests: 1,
       unrated_requests: 0,
       updated_at: "2026-09-01T00:00:00Z",
+      quota: { five_hour_amount_usd: 1.25, seven_day_amount_usd: 4.5, five_hour_percent: 12.5, seven_day_percent: 4.5 },
     };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ snapshots: [runtime], updated_at: "2026-09-01T00:00:00Z" }))
-      .mockResolvedValueOnce(jsonResponse({ snapshots: [{ ...runtime, used_15s: "bad" }], updated_at: "2026-09-01T00:00:00Z" }));
+      .mockResolvedValueOnce(jsonResponse({ snapshots: [{ ...runtime, used_15s: "bad" }], updated_at: "2026-09-01T00:00:00Z" }))
+      .mockResolvedValueOnce(jsonResponse({ snapshots: [{ ...runtime, quota: { five_hour_amount_usd: "bad", seven_day_amount_usd: 1 } }], updated_at: "2026-09-01T00:00:00Z" }));
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await getAIProviderRuntime();
-    expect(response.snapshots[0]).toMatchObject({ limit_15s: 0, used_60s: 0, used_15s: 0 });
+    expect(response.snapshots[0]).toMatchObject({
+      limit_15s: 0, used_60s: 0, used_15s: 0,
+      quota: { five_hour_amount_usd: 1.25, seven_day_amount_usd: 4.5, five_hour_percent: 12.5, seven_day_percent: 4.5 },
+    });
+    await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
     await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
   });
 

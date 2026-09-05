@@ -75,6 +75,7 @@ type App struct {
 	quotaBootstrap         *accountQuotaMetadataBootstrap
 	managementDoer         HTTPDoer
 	requestHooks           *RequestHook
+	quotaGuard             *AccountQuotaGuard
 	concurrency            *AccountConcurrencyService
 	providerRuntime        *ProviderRuntimeTracker
 	hostSchema             uint32
@@ -183,6 +184,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		newAccountProbe:        newAccountProbe,
 		quotaBootstrap:         quotaBootstrap,
 		requestHooks:           requestHooks,
+		quotaGuard:             quotaGuard,
 		concurrency:            concurrency,
 		providerRuntime:        providerRuntime,
 		hostSchema:             cpaapi.SchemaVersion,
@@ -393,6 +395,12 @@ func (a *App) Registration() Registration {
 func (a *App) HandleSchedulerPick(request cpaapi.SchedulerPickRequest) cpaapi.SchedulerPickResponse {
 	if a == nil || a.concurrency == nil || a.runtimeSuperseded() {
 		return cpaapi.SchedulerPickResponse{}
+	}
+	if a.quotaGuard != nil {
+		filtered, changed := a.quotaGuard.FilterSchedulerCandidates(request)
+		if changed {
+			request.Candidates = filtered
+		}
 	}
 	return a.concurrency.PickAuth(request)
 }

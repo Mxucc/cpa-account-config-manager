@@ -10,6 +10,14 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
+type scaledUsageCreditCalculator struct{}
+
+func (scaledUsageCreditCalculator) Enabled() bool { return true }
+func (scaledUsageCreditCalculator) Calculate(record cpaapi.UsageRecord) CreditCharge {
+	return CreditCharge{Enabled: true, Rated: true, AmountNanos: nonNegative(record.Detail.TotalTokens) * 1_000_000}
+}
+func (scaledUsageCreditCalculator) Snapshot() CreditPricingSnapshot { return CreditPricingSnapshot{} }
+
 func TestProviderRuntimePersistsAggregatesAcrossRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	first := NewProviderRuntimeTracker(nil)
@@ -248,7 +256,14 @@ func TestProviderRuntimeDuplicateRequestDoesNotConsumeWindowTwice(t *testing.T) 
 
 func TestProviderRuntimeCalculatesRollingFiveHourAndSevenDayWindows(t *testing.T) {
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
-	tracker := NewProviderRuntimeTracker(nil)
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	fiveHourBudget, sevenDayBudget := 0.10, 0.20
+	if err := policies.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:auth-a", FiveHour: QuotaWindowPolicy{BudgetAmountUSD: &fiveHourBudget}, SevenDay: QuotaWindowPolicy{BudgetAmountUSD: &sevenDayBudget}}); err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewProviderRuntimeTracker(scaledUsageCreditCalculator{})
+	tracker.SetQuotaPolicies(policies)
 	tracker.now = func() time.Time { return now }
 	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 10}})
 	now = now.Add(4 * time.Hour)
@@ -261,18 +276,21 @@ func TestProviderRuntimeCalculatesRollingFiveHourAndSevenDayWindows(t *testing.T
 		t.Fatalf("snapshots = %#v", snapshots)
 	}
 	quota := snapshots[0].Quota
-	if quota.FiveHourUsedTokens != 50 || quota.SevenDayUsedTokens != 60 {
-		t.Fatalf("rolling quota = %#v, want 50/60", quota)
+	if quota.FiveHourAmountUSD != 0.05 || quota.SevenDayAmountUSD != 0.06 {
+		t.Fatalf("rolling quota amounts = %#v, want 0.05/0.06 USD", quota)
+	}
+	if quota.FiveHourPercent != 50 || quota.SevenDayPercent != 30 {
+		t.Fatalf("rolling quota percentages = %#v, want 50/30", quota)
 	}
 }
 
 func TestProviderRuntimeExcludesEventsOutsideSevenDayWindow(t *testing.T) {
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
-	tracker := NewProviderRuntimeTracker(nil)
+	tracker := NewProviderRuntimeTracker(scaledUsageCreditCalculator{})
 	tracker.now = func() time.Time { return now }
 	tracker.ObserveUsage(cpaapi.UsageRecord{Provider: "openai", AuthIndex: "auth-a", Model: "gpt", Detail: cpaapi.UsageDetail{TotalTokens: 7}})
 	now = now.Add(7*24*time.Hour + time.Second)
-	if quota := tracker.Snapshot()[0].Quota; quota.FiveHourUsedTokens != 0 || quota.SevenDayUsedTokens != 0 {
+	if quota := tracker.Snapshot()[0].Quota; quota.FiveHourAmountUSD != 0 || quota.SevenDayAmountUSD != 0 {
 		t.Fatalf("expired quota events retained = %#v", quota)
 	}
 }

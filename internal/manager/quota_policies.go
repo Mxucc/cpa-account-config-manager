@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,10 +18,10 @@ var ErrQuotaPolicyStorageUnavailable = errors.New("quota policy storage is unava
 
 // QuotaWindowPolicy is a plugin-owned quota guard. Account percentages are
 // compared with CPA's reported window percentages; provider percentages are
-// calculated from the manually configured total token budget.
+// calculated from the manually configured USD budget amount.
 type QuotaWindowPolicy struct {
-	TotalTokens  *int64 `json:"total_tokens,omitempty"`
-	LimitPercent *int   `json:"limit_percent,omitempty"`
+	BudgetAmountUSD *float64 `json:"budget_amount_usd,omitempty"`
+	LimitPercent    *int     `json:"limit_percent,omitempty"`
 }
 
 type AccountQuotaPolicy struct {
@@ -243,8 +244,8 @@ func (s *QuotaPolicyService) SetProviderPolicy(policy ProviderQuotaPolicy) error
 }
 
 func validateQuotaPolicy(policy QuotaWindowPolicy) error {
-	if policy.TotalTokens != nil && (*policy.TotalTokens < 0 || *policy.TotalTokens > 9_000_000_000_000_000) {
-		return fmt.Errorf("quota total tokens is out of range")
+	if policy.BudgetAmountUSD != nil && (math.IsNaN(*policy.BudgetAmountUSD) || math.IsInf(*policy.BudgetAmountUSD, 0) || *policy.BudgetAmountUSD < 0 || *policy.BudgetAmountUSD > 1_000_000_000_000) {
+		return fmt.Errorf("quota budget amount USD is out of range")
 	}
 	if policy.LimitPercent != nil && (*policy.LimitPercent < 0 || *policy.LimitPercent > 100) {
 		return fmt.Errorf("quota limit percent must be between 0 and 100")
@@ -259,7 +260,7 @@ func providerPolicyEmpty(policy ProviderQuotaPolicy) bool {
 	return policy.Label == "" && policy.Concurrency == nil && policy.Concurrency15s == nil && policy.WindowSeconds == nil && quotaWindowEmpty(policy.FiveHour) && quotaWindowEmpty(policy.SevenDay)
 }
 func quotaWindowEmpty(policy QuotaWindowPolicy) bool {
-	return policy.TotalTokens == nil && policy.LimitPercent == nil
+	return policy.BudgetAmountUSD == nil && policy.LimitPercent == nil
 }
 
 func quotaPolicyPointer(service *QuotaPolicyService, id string) *AccountQuotaPolicy {

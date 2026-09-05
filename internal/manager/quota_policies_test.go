@@ -21,13 +21,13 @@ func TestQuotaPolicyServicePersistsAndReloadsPolicies(t *testing.T) {
 	service := NewQuotaPolicyService()
 	service.Configure(Config{DataDir: dir})
 	accountLimit := 85
-	providerBudget := int64(123456)
+	providerBudget := 123.45
 	providerLimit := 90
 	provider15sLimit := 2
 	if err := service.SetAccountPolicy("auth-a", AccountQuotaPolicy{FiveHour: QuotaWindowPolicy{LimitPercent: &accountLimit}}); err != nil {
 		t.Fatalf("SetAccountPolicy() error = %v", err)
 	}
-	if err := service.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:channel-a", Concurrency: intPointer(4), Concurrency15s: &provider15sLimit, FiveHour: QuotaWindowPolicy{TotalTokens: &providerBudget, LimitPercent: &providerLimit}}); err != nil {
+	if err := service.SetProviderPolicy(ProviderQuotaPolicy{Key: "openai:channel-a", Concurrency: intPointer(4), Concurrency15s: &provider15sLimit, FiveHour: QuotaWindowPolicy{BudgetAmountUSD: &providerBudget, LimitPercent: &providerLimit}}); err != nil {
 		t.Fatalf("SetProviderPolicy() error = %v", err)
 	}
 
@@ -38,7 +38,7 @@ func TestQuotaPolicyServicePersistsAndReloadsPolicies(t *testing.T) {
 		t.Fatalf("reloaded account policy = %#v", account)
 	}
 	provider := reloaded.ProviderPolicy("openai:channel-a")
-	if provider.Concurrency == nil || *provider.Concurrency != 4 || provider.Concurrency15s == nil || *provider.Concurrency15s != 2 || provider.FiveHour.TotalTokens == nil || *provider.FiveHour.TotalTokens != providerBudget {
+	if provider.Concurrency == nil || *provider.Concurrency != 4 || provider.Concurrency15s == nil || *provider.Concurrency15s != 2 || provider.FiveHour.BudgetAmountUSD == nil || *provider.FiveHour.BudgetAmountUSD != providerBudget {
 		t.Fatalf("reloaded provider policy = %#v", provider)
 	}
 }
@@ -78,9 +78,9 @@ func TestQuotaPolicyServiceValidatesRangesAndStorage(t *testing.T) {
 	if err := service.SetAccountPolicy("auth-a", AccountQuotaPolicy{FiveHour: QuotaWindowPolicy{LimitPercent: &tooHigh}}); err == nil {
 		t.Fatal("expected percent validation error")
 	}
-	negative := int64(-1)
-	if err := service.SetProviderPolicy(ProviderQuotaPolicy{Key: "x", SevenDay: QuotaWindowPolicy{TotalTokens: &negative}}); err == nil {
-		t.Fatal("expected token budget validation error")
+	negative := -1.0
+	if err := service.SetProviderPolicy(ProviderQuotaPolicy{Key: "x", SevenDay: QuotaWindowPolicy{BudgetAmountUSD: &negative}}); err == nil {
+		t.Fatal("expected budget amount validation error")
 	}
 	if err := service.SetProviderPolicy(ProviderQuotaPolicy{Key: "x", Concurrency: intPointer(1001)}); err == nil {
 		t.Fatal("expected concurrency validation error")
@@ -96,6 +96,24 @@ func TestQuotaPolicyServiceValidatesRangesAndStorage(t *testing.T) {
 	loaded, err := loadQuotaPolicies(path)
 	if err == nil || loaded != nil {
 		t.Fatalf("invalid version load = %#v, %v", loaded, err)
+	}
+}
+
+func TestQuotaPolicyServiceIgnoresLegacyTokenBudgetWithoutConvertingItToMoney(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quota-policies.json")
+	legacy := []byte(`{"version":1,"providers":{"openai:legacy":{"key":"openai:legacy","five_hour":{"total_tokens":123456,"limit_percent":90},"seven_day":{}}}}`)
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewQuotaPolicyService()
+	service.Configure(Config{DataDir: dir})
+	policy := service.ProviderPolicy("openai:legacy")
+	if policy.FiveHour.BudgetAmountUSD != nil {
+		t.Fatalf("legacy token count was converted into money: %#v", policy)
+	}
+	if policy.FiveHour.LimitPercent == nil || *policy.FiveHour.LimitPercent != 90 {
+		t.Fatalf("legacy percentage limit was not preserved: %#v", policy)
 	}
 }
 

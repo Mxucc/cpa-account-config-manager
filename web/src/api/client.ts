@@ -1773,6 +1773,13 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
       || (raw.reason !== undefined && typeof raw.reason !== "string")) {
       throw new APIError(502, "ui.invalid_api_response");
     }
+    if (raw.quota !== undefined && (!isRecord(raw.quota)
+      || !isFiniteNonNegativeNumber(raw.quota.five_hour_amount_usd)
+      || !isFiniteNonNegativeNumber(raw.quota.seven_day_amount_usd)
+      || (raw.quota.five_hour_percent !== undefined && !isFiniteNonNegativeNumber(raw.quota.five_hour_percent))
+      || (raw.quota.seven_day_percent !== undefined && !isFiniteNonNegativeNumber(raw.quota.seven_day_percent)))) {
+      throw new APIError(502, "ui.invalid_api_response");
+    }
     if (raw.models !== undefined && (!Array.isArray(raw.models) || raw.models.some((model) => {
       return !isRecord(model)
         || !isNonEmptyString(model.model)

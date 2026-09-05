@@ -92,7 +92,7 @@ describe("RiskControlWorkspace", () => {
     expect(within(workspace).getAllByDisplayValue("新提示词")[1]).toBeInTheDocument();
     await user.type(within(workspace).getAllByDisplayValue("新提示词")[1], " custom");
     await user.type(within(workspace).getByLabelText("系统提示词"), "custom body");
-    expect(list.value).toMatch(/^custom-/);
+    expect((list as HTMLSelectElement).value).toMatch(/^custom-/);
     expect(within(workspace).getByRole("button", { name: "删除提示词" })).not.toBeDisabled();
   });
 });

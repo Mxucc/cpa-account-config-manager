@@ -302,13 +302,13 @@ function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange
   const { tx } = useI18n();
   const identity = policy.codex_identity ?? emptyGlobalIdentity();
   const updateIdentity = (patch: Partial<ExperimentalCodexIdentitySettings>) => onChange({ codex_identity: { ...identity, ...patch } });
-  const updateQuota = (window: "five_hour" | "seven_day", field: "total_tokens" | "limit_percent", value: string) => {
+  const updateQuota = (window: "five_hour" | "seven_day", field: "limit_percent", value: string) => {
     const current = policy.quota_policy ?? { five_hour: {}, seven_day: {} };
     const nextWindow = { ...current[window] };
     if (value.trim() === "") delete nextWindow[field];
     else nextWindow[field] = Number(value);
     const next = { ...current, [window]: nextWindow };
-    const empty = !next.five_hour.total_tokens && next.five_hour.limit_percent === undefined && !next.seven_day.total_tokens && next.seven_day.limit_percent === undefined;
+    const empty = next.five_hour.limit_percent === undefined && next.seven_day.limit_percent === undefined;
     onChange({ quota_policy: empty ? null : next });
   };
   return <section className="automation-policy-section global-policy-section" aria-label={tx("ui.global_policy_heading")}>
@@ -353,7 +353,7 @@ function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange
   </section>;
 }
 
-function GlobalQuotaEditor({ policy, disabled, onChange }: { policy: AccountQuotaPolicy | null; disabled: boolean; onChange: (window: "five_hour" | "seven_day", field: "total_tokens" | "limit_percent", value: string) => void }) {
+function GlobalQuotaEditor({ policy, disabled, onChange }: { policy: AccountQuotaPolicy | null; disabled: boolean; onChange: (window: "five_hour" | "seven_day", field: "limit_percent", value: string) => void }) {
   const { tx } = useI18n();
   const value = policy ?? { five_hour: {}, seven_day: {} };
   return <div className="policy-subsection global-quota-editor"><div className="policy-subsection-heading"><strong>{tx("ui.account_quota_limit")}</strong><span>{tx("ui.account_quota_limit_description")}</span></div><div className="settings-inline-grid"><QuotaInput label={tx("ui.quota_window_five_hour")} value={value.five_hour.limit_percent} disabled={disabled} suffix="%" onChange={(next) => onChange("five_hour", "limit_percent", next)} /><QuotaInput label={tx("ui.quota_window_seven_day")} value={value.seven_day.limit_percent} disabled={disabled} suffix="%" onChange={(next) => onChange("seven_day", "limit_percent", next)} /></div></div>;

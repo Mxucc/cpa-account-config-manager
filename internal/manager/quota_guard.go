@@ -1,8 +1,6 @@
 package manager
 
 import (
-	"encoding/json"
-	"net/http"
 	"strings"
 
 	"cpa-account-config-manager/internal/cpaapi"
@@ -29,28 +27,70 @@ func (g *AccountQuotaGuard) RequestInterceptionAcceptsFormat(format string) bool
 	return g.RequestInterceptionActive() && strings.EqualFold(strings.TrimSpace(format), "codex")
 }
 
-func (g *AccountQuotaGuard) InterceptRequest(request cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
-	if g == nil || g.usage == nil || g.policies == nil || !g.RequestInterceptionAcceptsFormat(request.ToFormat) {
-		return cpaapi.RequestInterceptResponse{}, false
+// FilterSchedulerCandidates removes accounts that have reached a configured CPA quota
+// percentage before the host admits the request. Accounts without a usable usage
+// snapshot remain eligible so a missing observation never accidentally drains a pool.
+func (g *AccountQuotaGuard) FilterSchedulerCandidates(request cpaapi.SchedulerPickRequest) ([]cpaapi.SchedulerAuthCandidate, bool) {
+	if g == nil || g.usage == nil || g.policies == nil || len(request.Candidates) == 0 {
+		return request.Candidates, false
 	}
-	authIndex := requestAuthIdentifier(request.Metadata)
-	if authIndex == "" {
-		return cpaapi.RequestInterceptResponse{}, false
+	filtered := make([]cpaapi.SchedulerAuthCandidate, 0, len(request.Candidates))
+	changed := false
+	for _, candidate := range request.Candidates {
+		if g.schedulerCandidateQuotaLimited(candidate) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, candidate)
 	}
-	policy := g.policies.AccountPolicy(authIndex)
-	if quotaPolicyEmpty(policy) {
-		return cpaapi.RequestInterceptResponse{}, false
+	return filtered, changed
+}
+
+func (g *AccountQuotaGuard) schedulerCandidateQuotaLimited(candidate cpaapi.SchedulerAuthCandidate) bool {
+	identifiers := []string{strings.TrimSpace(candidate.ID)}
+	for _, key := range []string{"selected_auth_index", "auth_index", "selected_auth_id", "auth_id", "account_id"} {
+		if value, ok := candidate.Metadata[key].(string); ok {
+			identifiers = append(identifiers, strings.TrimSpace(value))
+		}
 	}
-	usage := g.usage.Snapshot(authIndex)
-	if usage == nil || usage.Codex == nil {
-		return cpaapi.RequestInterceptResponse{}, false
+	for _, key := range []string{"auth_index", "auth_id", "account_id"} {
+		if value := strings.TrimSpace(candidate.Attributes[key]); value != "" {
+			identifiers = append(identifiers, value)
+		}
 	}
-	if policy.FiveHour.LimitPercent != nil && usage.Codex.FiveHour != nil && usage.Codex.FiveHour.UsedPercent >= float64(*policy.FiveHour.LimitPercent) {
-		return accountQuotaRejectedResponse(authIndex, "five_hour", usage.Codex.FiveHour.UsedPercent, *policy.FiveHour.LimitPercent), true
+	seen := make(map[string]struct{}, len(identifiers))
+	for _, identifier := range identifiers {
+		if identifier == "" {
+			continue
+		}
+		if _, ok := seen[identifier]; ok {
+			continue
+		}
+		seen[identifier] = struct{}{}
+		policy := g.policies.AccountPolicy(identifier)
+		if quotaPolicyEmpty(policy) {
+			continue
+		}
+		usage := g.usage.Snapshot(identifier)
+		if usage != nil && usage.Codex != nil && accountQuotaLimitReached(policy, usage.Codex) {
+			return true
+		}
 	}
-	if policy.SevenDay.LimitPercent != nil && usage.Codex.SevenDay != nil && usage.Codex.SevenDay.UsedPercent >= float64(*policy.SevenDay.LimitPercent) {
-		return accountQuotaRejectedResponse(authIndex, "seven_day", usage.Codex.SevenDay.UsedPercent, *policy.SevenDay.LimitPercent), true
+	return false
+}
+
+func accountQuotaLimitReached(policy AccountQuotaPolicy, usage *CodexUsageSnapshot) bool {
+	if usage == nil {
+		return false
 	}
+	return (policy.FiveHour.LimitPercent != nil && usage.FiveHour != nil && usage.FiveHour.UsedPercent >= float64(*policy.FiveHour.LimitPercent)) ||
+		(policy.SevenDay.LimitPercent != nil && usage.SevenDay != nil && usage.SevenDay.UsedPercent >= float64(*policy.SevenDay.LimitPercent))
+}
+
+func (g *AccountQuotaGuard) InterceptRequest(cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
+	// Quota exhaustion is handled before scheduler admission. Never emit a plugin
+	// 429/503 here: a request-level rejection would stop sub2api scheduling
+	// instead of allowing the next eligible account to run.
 	return cpaapi.RequestInterceptResponse{}, false
 }
 
@@ -61,21 +101,4 @@ func requestAuthIdentifier(metadata map[string]any) string {
 		}
 	}
 	return ""
-}
-
-func accountQuotaRejectedResponse(authIndex, window string, used float64, limit int) cpaapi.RequestInterceptResponse {
-	body, _ := json.Marshal(map[string]any{"error": map[string]any{
-		"type":          "account_quota_limit_reached",
-		"message":       "the selected account reached its configured quota percentage limit",
-		"auth_index":    authIndex,
-		"quota_window":  window,
-		"used_percent":  used,
-		"limit_percent": limit,
-	}})
-	return cpaapi.RequestInterceptResponse{
-		Terminate:       true,
-		StatusCode:      http.StatusTooManyRequests,
-		ResponseHeaders: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"60"}},
-		ResponseBody:    body,
-	}
 }

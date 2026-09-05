@@ -1,9 +1,6 @@
 package manager
 
 import (
-	"encoding/json"
-	"net/http"
-	"strings"
 	"testing"
 
 	"cpa-account-config-manager/internal/cpaapi"
@@ -26,7 +23,7 @@ func configuredQuotaGuard(t *testing.T, policy AccountQuotaPolicy, usage *UsageT
 	return NewAccountQuotaGuard(usage, policies)
 }
 
-func TestAccountQuotaGuardRejectsFiveHourLimit(t *testing.T) {
+func TestAccountQuotaGuardPassesThroughAtFiveHourLimit(t *testing.T) {
 	usage := NewUsageTracker()
 	t.Cleanup(func() { usage.Close() })
 	used := 80.0
@@ -34,15 +31,12 @@ func TestAccountQuotaGuardRejectsFiveHourLimit(t *testing.T) {
 	limit := 80
 	guard := configuredQuotaGuard(t, AccountQuotaPolicy{FiveHour: QuotaWindowPolicy{LimitPercent: &limit}}, usage)
 	response, changed := guard.InterceptRequest(quotaGuardRequest("auth-a", "codex"))
-	if !changed || !response.Terminate || response.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("five-hour rejection = %#v, changed=%v", response, changed)
-	}
-	if response.ResponseHeaders.Get("Retry-After") != "60" || !json.Valid(response.ResponseBody) || !strings.Contains(string(response.ResponseBody), "five_hour") {
-		t.Fatalf("rejection response = %#v body=%s", response.ResponseHeaders, response.ResponseBody)
+	if changed || response.Terminate || response.StatusCode != 0 {
+		t.Fatalf("five-hour quota request was rejected = %#v, changed=%v", response, changed)
 	}
 }
 
-func TestAccountQuotaGuardRejectsSevenDayLimit(t *testing.T) {
+func TestAccountQuotaGuardPassesThroughAtSevenDayLimit(t *testing.T) {
 	usage := NewUsageTracker()
 	t.Cleanup(func() { usage.Close() })
 	used := 100.0
@@ -50,8 +44,8 @@ func TestAccountQuotaGuardRejectsSevenDayLimit(t *testing.T) {
 	limit := 95
 	guard := configuredQuotaGuard(t, AccountQuotaPolicy{SevenDay: QuotaWindowPolicy{LimitPercent: &limit}}, usage)
 	response, changed := guard.InterceptRequest(quotaGuardRequest("auth-a", "codex"))
-	if !changed || !response.Terminate || response.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("seven-day rejection = %#v, changed=%v", response, changed)
+	if changed || response.Terminate || response.StatusCode != 0 {
+		t.Fatalf("seven-day quota request was rejected = %#v, changed=%v", response, changed)
 	}
 }
 
@@ -79,10 +73,40 @@ func TestAccountQuotaGuardUsesFallbackAuthMetadataAndFormatGate(t *testing.T) {
 	guard := configuredQuotaGuard(t, AccountQuotaPolicy{FiveHour: QuotaWindowPolicy{LimitPercent: &limit}}, usage)
 	request := quotaGuardRequest("auth-a", "codex")
 	request.Metadata = map[string]any{"auth_id": "auth-a"}
-	if response, changed := guard.InterceptRequest(request); !changed || !response.Terminate {
-		t.Fatalf("fallback auth metadata was not enforced = %#v, changed=%v", response, changed)
+	if response, changed := guard.InterceptRequest(request); changed || response.Terminate || response.StatusCode != 0 {
+		t.Fatalf("fallback auth metadata was rejected = %#v, changed=%v", response, changed)
 	}
 	if response, changed := guard.InterceptRequest(quotaGuardRequest("auth-a", "openai")); changed || response.Terminate {
 		t.Fatalf("non-Codex format was rejected = %#v, changed=%v", response, changed)
+	}
+}
+
+func TestAccountQuotaGuardFiltersLimitedSchedulerCandidates(t *testing.T) {
+	usage := NewUsageTracker()
+	t.Cleanup(func() { usage.Close() })
+	used := 100.0
+	usage.ObserveCredentialUsage("auth-limited", &CodexUsageSnapshot{FiveHour: &UsageWindowSnapshot{UsedPercent: used}})
+	limit := 90
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	if err := policies.SetAccountPolicy("auth-limited", AccountQuotaPolicy{FiveHour: QuotaWindowPolicy{LimitPercent: &limit}}); err != nil {
+		t.Fatal(err)
+	}
+	guard := NewAccountQuotaGuard(usage, policies)
+	request := cpaapi.SchedulerPickRequest{Candidates: []cpaapi.SchedulerAuthCandidate{
+		{ID: "auth-limited"},
+		{ID: "auth-eligible"},
+	}}
+	filtered, changed := guard.FilterSchedulerCandidates(request)
+	if !changed || len(filtered) != 1 || filtered[0].ID != "auth-eligible" {
+		t.Fatalf("filtered candidates = %#v, changed=%v", filtered, changed)
+	}
+
+	allLimited := request
+	allLimited.Candidates = append(allLimited.Candidates, cpaapi.SchedulerAuthCandidate{ID: "auth-limited"})
+	allLimited.Candidates[1].ID = "auth-limited"
+	filtered, changed = guard.FilterSchedulerCandidates(allLimited)
+	if !changed || len(filtered) != 0 {
+		t.Fatalf("all limited candidates = %#v, changed=%v", filtered, changed)
 	}
 }

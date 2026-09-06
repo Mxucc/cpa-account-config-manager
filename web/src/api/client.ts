@@ -363,6 +363,31 @@ function nullableRecordArray(value: unknown): Record<string, unknown>[] | undefi
   return value as Record<string, unknown>[];
 }
 
+const pluginOwnedStateMarker = ".cpa-account-config-manager";
+
+function isPluginOwnedAccount(account: Account): boolean {
+  const values = [account.id, account.auth_id, account.name, account.label, account.email, account.source];
+  return values.some((raw) => {
+    if (typeof raw !== "string" || raw.trim() === "") return false;
+    let value = raw.trim().replaceAll("\\", "/");
+    for (let index = 0; index < 4; index += 1) {
+      try {
+        const decoded = decodeURIComponent(value);
+        if (decoded === value) break;
+        value = decoded;
+      } catch {
+        break;
+      }
+    }
+    value = value.replaceAll("\\", "/").toLowerCase();
+    return value.split("/").some((part) => part === pluginOwnedStateMarker) || value.includes(pluginOwnedStateMarker);
+  });
+}
+
+function filterPluginOwnedAccounts(accounts: Account[]): Account[] {
+  return accounts.filter((account) => !isPluginOwnedAccount(account));
+}
+
 function normalizeAccountListResponse(response: unknown, requestedPage: number, requestedPageSize: number): AccountListResponse {
   if (!isRecord(response) || !Array.isArray(response.accounts) || response.accounts.some((account) => !isRecord(account))) {
     // Never turn a malformed account payload into an apparently healthy empty
@@ -385,7 +410,7 @@ function normalizeAccountListResponse(response: unknown, requestedPage: number, 
     }
     availability = source.account_concurrency;
   }
-  const accounts = (source.accounts as Account[]).map((account) => {
+  const normalizedAccounts = (source.accounts as Account[]).map((account) => {
     if (account.concurrency !== undefined && !isValidAccountConcurrencySummary(account.concurrency)) {
       throw new APIError(502, "ui.invalid_accounts_response");
     }
@@ -396,13 +421,20 @@ function normalizeAccountListResponse(response: unknown, requestedPage: number, 
         : { supported: availability.supported, active: 0, limit: 0, limit_15s: 0, used_60s: 0, used_15s: 0 },
     };
   });
+  // Older CPA hosts can still expose the plugin's durable runtime file through
+  // host.auth.list. Keep this final UI boundary defensive so that an upgrade
+  // cannot render internal state as an account while the host is restarting.
+  const accounts = filterPluginOwnedAccounts(normalizedAccounts);
+  const hiddenPluginEntries = normalizedAccounts.length - accounts.length;
+  const visibleTotal = Math.max(0, total - hiddenPluginEntries);
+  const visiblePages = visibleTotal > 0 ? Math.ceil(visibleTotal / pageSize) : 0;
   return {
     ...(source as Partial<AccountListResponse>),
     accounts,
-    total,
+    total: visibleTotal,
     page,
     page_size: pageSize,
-    pages,
+    pages: visiblePages,
     account_concurrency: availability,
   };
 }
@@ -1729,6 +1761,11 @@ function channelEntriesFromResponse(kind: AIProviderChannelKind, payload: unknow
     if (typeof source["rebuild-mid-system-message"] === "boolean") entry.rebuild_mid_system_message = source["rebuild-mid-system-message"];
     if (typeof source["fingerprint-profile"] === "string") entry.fingerprint_profile = source["fingerprint-profile"];
     if (typeof source["auth-index"] === "string") entry.auth_index = source["auth-index"];
+    else if (typeof source["auth_index"] === "string") entry.auth_index = source["auth_index"];
+    if (typeof source["account-id"] === "string") entry.account_id = source["account-id"];
+    else if (typeof source["account_id"] === "string") entry.account_id = source["account_id"];
+    if (typeof source["workspace-id"] === "string") entry.workspace_id = source["workspace-id"];
+    else if (typeof source["workspace_id"] === "string") entry.workspace_id = source["workspace_id"];
     return entry;
   });
 }

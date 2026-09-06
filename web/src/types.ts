@@ -1390,6 +1390,8 @@ export interface AIProviderRuntimeSnapshot {
   provider: string;
   auth_index?: string;
   identity: string;
+  /** True only when the runtime aggregate was observed from a provider credential. */
+  credential_backed?: boolean;
   supported: boolean;
   concurrency_configurable?: boolean;
   reason?: string;

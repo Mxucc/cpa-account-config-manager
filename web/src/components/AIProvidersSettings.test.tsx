@@ -65,6 +65,9 @@ describe("AIProvidersSettings", () => {
         const runtime = overrides["ai-providers-runtime"] ?? { snapshots: [], updated_at: new Date().toISOString() };
         return jsonResponse(runtime);
       }
+      if (url.endsWith("/quota-policies")) {
+        return jsonResponse(overrides["quota-policies"] ?? { accounts: {}, providers: [] });
+      }
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -155,6 +158,7 @@ describe("AIProvidersSettings", () => {
           provider: "openai",
           auth_index: "openai-sk-or-live-1234abcd",
           identity: "provider-key",
+          credential_backed: true,
           supported: true,
           concurrency_configurable: true,
           active: 2,
@@ -191,6 +195,58 @@ describe("AIProvidersSettings", () => {
     expect(row.textContent).toContain("队列 0");
     expect(row.textContent).toContain("1,234");
     expect(row.textContent).toContain("$0.0123");
+  });
+
+  it("prefers a saved provider request window over a stale runtime default", async () => {
+    providerFetchMock({
+      "quota-policies": {
+        accounts: {},
+        providers: [{
+          key: "codex-api-key:openai-sk-or-live-1234abcd",
+          concurrency_15s_limit: 3,
+          concurrency_window_seconds: 5,
+        }],
+      },
+      "ai-providers-runtime": {
+        snapshots: [{
+          provider: "openai",
+          auth_index: "openai-sk-or-live-1234abcd",
+          identity: "credential:provider",
+          credential_backed: true,
+          supported: true,
+          concurrency_configurable: true,
+          active: 0,
+          limit: 10,
+          request_limit: 3,
+          request_window_seconds: 15,
+          used_requests: 0,
+          limit_15s: 3,
+          used_60s: 0,
+          used_15s: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          reasoning_tokens: 0,
+          cached_tokens: 0,
+          total_tokens: 0,
+          amount_usd: 0,
+          rated_requests: 0,
+          unrated_requests: 0,
+          updated_at: new Date().toISOString(),
+        }],
+        updated_at: new Date().toISOString(),
+      },
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = await waitFor(() => {
+      const found = Array.from(section.querySelectorAll(".ai-provider-table tbody tr"))
+        .find((item) => item.textContent?.includes("OpenRouter"));
+      expect(found).toBeDefined();
+      return found as HTMLElement;
+    });
+    expect(row.textContent).toContain("5 秒请求 0 / 3");
+    expect(row.textContent).not.toContain("15 秒请求 0 / 3");
   });
 
   it("tests a configured model without requiring an upstream model catalog", async () => {

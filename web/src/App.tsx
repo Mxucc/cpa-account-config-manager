@@ -50,6 +50,7 @@ import { IconButton } from "./components/IconButton";
 import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { AIProvidersSettings } from "./components/AIProvidersSettings";
+import { providerRuntimeSnapshotsForChannels } from "./format/providerRuntime";
 import { OperationLogWorkspace } from "./components/OperationLogWorkspace";
 import { AutomationPolicySettings } from "./components/AutomationPolicySettings";
 import { ProxyProfilesSettings } from "./components/ProxyProfilesSettings";
@@ -388,8 +389,14 @@ function AccountManagerApp() {
     const controller = new AbortController();
     const refreshSidebarTelemetry = async () => {
       try {
-        const [accounts, channels, runtime] = await Promise.all([
-          api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, controller.signal),
+        // Load accounts first: the account endpoint discovers CPA auth identities
+        // and purges legacy provider aggregates that used the same auth index.
+        // Reading provider runtime in parallel could race that reconciliation and
+        // briefly (or persistently, with stale data) copy account usage into the
+        // AI-provider sidebar totals.
+        const accounts = await api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, controller.signal);
+        if (cancelled) return;
+        const [channels, runtime] = await Promise.all([
           api.listAIProviderChannels(controller.signal),
           api.getAIProviderRuntime(controller.signal),
         ]);
@@ -1167,9 +1174,10 @@ function AccountManagerApp() {
     const accountCost = enabledAccounts.reduce((sum, account) => sum + Math.max(0, account.usage?.credit?.amount_usd ?? 0), 0);
     const providerEntries = sidebarProviderChannels.flatMap((channel) => channel.entries ?? []);
     const enabledProviders = providerEntries.filter((entry) => !entry.disabled);
-    const providerActive = sidebarProviderRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.active ?? 0), 0);
-    const providerLimit = sidebarProviderRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.limit ?? 0), 0);
-    const providerCost = sidebarProviderRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.amount_usd ?? 0), 0);
+    const providerRuntime = providerRuntimeSnapshotsForChannels(sidebarProviderChannels, sidebarProviderRuntime, sidebarAccounts);
+    const providerActive = providerRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.active ?? 0), 0);
+    const providerLimit = providerRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.limit ?? 0), 0);
+    const providerCost = providerRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.amount_usd ?? 0), 0);
     return { enabledAccounts: enabledAccounts.length, accountActive, accountLimit, accountCost, enabledProviders: enabledProviders.length, providerActive, providerLimit, providerCost };
   }, [sidebarAccounts, sidebarProviderChannels, sidebarProviderRuntime]);
 
@@ -1430,7 +1438,12 @@ function AccountManagerApp() {
         ) : activeView === "inspection" ? (
           <InspectionWorkspace onAPIError={handleAPIError} onNotice={setNotice} onAccountsChanged={requestInspectionAccountSync} />
         ) : activeView === "providers" ? (
-          <AIProvidersSettings refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
+          <AIProvidersSettings
+            refreshRevision={0}
+            onAPIError={handleAPIError}
+            onNotice={setNotice}
+            accountIdentities={sidebarAccounts.flatMap((account) => [account.id, account.auth_id, account.credential?.id, account.credential?.auth_id].filter((value): value is string => Boolean(value)))}
+          />
         ) : activeView === "operations" ? (
           <OperationLogWorkspace
             activeJobIDs={[job?.id, forceJob?.id].filter((id): id is string => Boolean(id))}

@@ -156,6 +156,25 @@ func (s *QuotaPolicyService) ResolveProviderPolicy(provider, authIndex, identity
 			return policy, true
 		}
 	}
+	// The UI stores policies under the channel kind (for example
+	// "codex-api-key:<auth-index>"), while CPA usage callbacks identify the
+	// same credential with its runtime provider family (for example
+	// "openai:<auth-index>"). When the prefixes differ, an auth-index suffix
+	// is still safe to use if it identifies exactly one saved policy.
+	if authIndex != "" {
+		var suffixMatch ProviderQuotaPolicy
+		suffixMatches := 0
+		suffix := ":" + strings.ToLower(authIndex)
+		for key, policy := range s.providers {
+			if strings.HasSuffix(strings.ToLower(strings.TrimSpace(key)), suffix) {
+				suffixMatch = policy
+				suffixMatches++
+			}
+		}
+		if suffixMatches == 1 {
+			return suffixMatch, true
+		}
+	}
 	var matched ProviderQuotaPolicy
 	found := false
 	for key, policy := range s.providers {

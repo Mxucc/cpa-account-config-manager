@@ -50,6 +50,10 @@ const (
 	MethodHostAuthGetRuntime     = "host.auth.get_runtime"
 	MethodHostAuthSave           = "host.auth.save"
 	MethodHostAuthRefresh        = "host.auth.refresh"
+	MethodHostModelExecute       = "host.model.execute"
+	MethodHostModelExecuteStream = "host.model.execute_stream"
+	MethodHostModelStreamRead    = "host.model.stream_read"
+	MethodHostModelStreamClose   = "host.model.stream_close"
 )
 
 type Metadata struct {
@@ -346,6 +350,24 @@ type ExecutorHTTPResponse struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+}
+
+type HostModelExecutionRequest struct {
+	HostCallbackID string      `json:"host_callback_id,omitempty"`
+	EntryProtocol  string      `json:"entry_protocol"`
+	ExitProtocol   string      `json:"exit_protocol"`
+	Model          string      `json:"model"`
+	Stream         bool        `json:"stream"`
+	Body           []byte      `json:"body"`
+	Headers        http.Header `json:"headers"`
+	Query          url.Values  `json:"query"`
+	Alt            string      `json:"alt"`
+}
+
+type HostModelExecutionResponse struct {
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers,omitempty"`
+	Body       []byte      `json:"body,omitempty"`
 }
 
 type HostHTTPRequest struct {

@@ -38,6 +38,7 @@ type ProviderRuntimeSnapshot struct {
 	Provider                string `json:"provider"`
 	AuthIndex               string `json:"auth_index,omitempty"`
 	Identity                string `json:"identity"`
+	CredentialBacked        bool   `json:"credential_backed"`
 	Supported               bool   `json:"supported"`
 	Reason                  string `json:"reason,omitempty"`
 	ConcurrencyConfigurable bool   `json:"concurrency_configurable"`
@@ -99,22 +100,23 @@ type providerRuntimeEvent struct {
 }
 
 type providerRuntimeAggregate struct {
-	Provider        string
-	AuthIndex       string
-	Identity        string
-	Active          int
-	InputTokens     int64
-	OutputTokens    int64
-	ReasoningTokens int64
-	CachedTokens    int64
-	TotalTokens     int64
-	AmountNanos     int64
-	RatedRequests   int64
-	UnratedRequests int64
-	Models          map[string]*providerRuntimeModel
-	Events          []providerRuntimeEvent
-	RequestEvents   []time.Time `json:"request_events,omitempty"`
-	UpdatedAt       time.Time
+	Provider         string
+	AuthIndex        string
+	Identity         string
+	CredentialBacked bool
+	Active           int
+	InputTokens      int64
+	OutputTokens     int64
+	ReasoningTokens  int64
+	CachedTokens     int64
+	TotalTokens      int64
+	AmountNanos      int64
+	RatedRequests    int64
+	UnratedRequests  int64
+	Models           map[string]*providerRuntimeModel
+	Events           []providerRuntimeEvent
+	RequestEvents    []time.Time `json:"request_events,omitempty"`
+	UpdatedAt        time.Time
 }
 
 type persistedProviderRuntimeState struct {
@@ -144,6 +146,12 @@ type ProviderRuntimeTracker struct {
 	allowDurable  bool
 	loaded        bool
 	dirty         bool
+	// accountAuthIndexes is populated from the host auth listing. CPA exposes
+	// account and API-key provider usage through the same callback, and older
+	// hosts can omit AuthType. Keeping the known native account indexes here
+	// lets us reject ambiguous provider aggregates instead of copying account
+	// usage into the provider dashboard.
+	accountAuthIndexes map[string]struct{}
 	// storageBlocked prevents a corrupt primary/backup pair from being
 	// overwritten by an empty snapshot. New observations remain available in
 	// memory, while the non-sensitive storage error tells the operator that
@@ -156,11 +164,12 @@ type ProviderRuntimeTracker struct {
 
 func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntimeTracker {
 	return &ProviderRuntimeTracker{
-		requests:   make(map[string]providerRuntimeRequest),
-		aggregates: make(map[string]*providerRuntimeAggregate),
-		aliases:    make(map[string]string),
-		calculator: calculator,
-		now:        time.Now,
+		requests:           make(map[string]providerRuntimeRequest),
+		aggregates:         make(map[string]*providerRuntimeAggregate),
+		aliases:            make(map[string]string),
+		accountAuthIndexes: make(map[string]struct{}),
+		calculator:         calculator,
+		now:                time.Now,
 	}
 }
 
@@ -243,7 +252,31 @@ func (t *ProviderRuntimeTracker) Configure(config Config) {
 // important for CPA restarts: a relative plugin data directory may be rebuilt
 // or mounted differently while the auth directory remains stable.
 func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
-	if t == nil || !t.allowDurable {
+	if t == nil {
+		return
+	}
+	accountIndexes := make(map[string]struct{}, len(entries)*2)
+	for _, entry := range entries {
+		if authIndex := strings.TrimSpace(entry.AuthIndex); authIndex != "" {
+			accountIndexes[authIndex] = struct{}{}
+		}
+		if authID := strings.TrimSpace(entry.ID); authID != "" {
+			accountIndexes[authID] = struct{}{}
+		}
+	}
+	// Do this before the durable-store switch below. The first account list is
+	// also the point at which we can safely remove historical auth-index-only
+	// aggregates written by versions that observed OAuth usage as provider
+	// usage. A later explicit API-key callback will create a fresh, credential-
+	// backed aggregate.
+	t.mu.Lock()
+	t.accountAuthIndexes = accountIndexes
+	removed := pruneProviderRuntimeAccountCollisionsLocked(t.aggregates, accountIndexes)
+	if removed {
+		t.dirty = true
+	}
+	t.mu.Unlock()
+	if !t.allowDurable {
 		return
 	}
 	authDir := discoverUsageAuthDir(entries)
@@ -297,6 +330,9 @@ func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFi
 	mergedAliases := mergeProviderRuntimeAliases(currentAliases, state.Aliases)
 	mergedPointers := providerRuntimeAggregatePointers(mergedAggregates)
 	pruned := pruneProviderRuntimeAggregates(mergedPointers, t.now().UTC())
+	if pruneProviderRuntimeAccountCollisionsLocked(mergedPointers, accountIndexes) {
+		removed = true
+	}
 	mergedAggregates = providerRuntimeAggregateValues(mergedPointers)
 	t.mu.Lock()
 	t.aggregates = providerRuntimeAggregatePointers(mergedAggregates)
@@ -308,11 +344,27 @@ func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFi
 	t.loaded = true
 	t.storageErr = ""
 	t.storageBlocked = false
-	t.dirty = len(currentAggregates) > 0 || recovered || pruned
+	t.dirty = len(currentAggregates) > 0 || recovered || pruned || removed
 	t.mu.Unlock()
 	if t.dirty {
 		_ = t.persistLocked()
 	}
+}
+
+func pruneProviderRuntimeAccountCollisionsLocked(aggregates map[string]*providerRuntimeAggregate, accountIndexes map[string]struct{}) bool {
+	changed := false
+	for key, aggregate := range aggregates {
+		if aggregate == nil {
+			continue
+		}
+		if authIndex := strings.TrimSpace(aggregate.AuthIndex); authIndex != "" && !strings.HasPrefix(aggregate.Identity, "credential:") {
+			if _, exists := accountIndexes[authIndex]; exists {
+				delete(aggregates, key)
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 func (t *ProviderRuntimeTracker) StorageError() string {
@@ -584,6 +636,7 @@ func mergeProviderRuntimeAggregate(left, right providerRuntimeAggregate) provide
 	if merged.Identity == "" || strings.HasPrefix(right.Identity, "credential:") && !strings.HasPrefix(merged.Identity, "credential:") {
 		merged.Identity = right.Identity
 	}
+	merged.CredentialBacked = merged.CredentialBacked || right.CredentialBacked || strings.HasPrefix(merged.Identity, "credential:") || strings.HasPrefix(right.Identity, "credential:")
 	if right.UpdatedAt.After(merged.UpdatedAt) || merged.AuthIndex == "" {
 		merged.AuthIndex = right.AuthIndex
 	}
@@ -755,6 +808,19 @@ func (t *ProviderRuntimeTracker) SetQuotaPolicies(service *QuotaPolicyService) {
 func (t *ProviderRuntimeTracker) RequestInterceptionActive() bool              { return t != nil }
 func (t *ProviderRuntimeTracker) RequestInterceptionAcceptsFormat(string) bool { return t != nil }
 func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestInterceptRequest) (cpaapi.RequestInterceptResponse, bool) {
+	return t.interceptRequest(request, false)
+}
+
+// ObserveRequest is a direct observer for callers that already know the
+// request belongs to a provider. It retains the format fallback for legacy
+// direct callers; the host request-interceptor path uses InterceptRequest and
+// requires explicit provider metadata to avoid classifying OAuth account
+// traffic as AI-provider traffic.
+func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptRequest) {
+	_, _ = t.interceptRequest(request, true)
+}
+
+func (t *ProviderRuntimeTracker) interceptRequest(request cpaapi.RequestInterceptRequest, allowFormatFallback bool) (cpaapi.RequestInterceptResponse, bool) {
 	if t == nil || strings.TrimSpace(request.RequestID) == "" {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
@@ -762,9 +828,20 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 	if identity == "" {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
+	// The host invokes request interceptors for both native OAuth accounts and
+	// API-key provider channels. ToFormat identifies the upstream protocol, not
+	// the credential class, so it must never be used as a provider fallback for
+	// the shared lifecycle path. Accept explicit API-key metadata, or an auth
+	// index already proven to belong to a credential-based provider aggregate.
+	if !allowFormatFallback && !requestMetadataIndicatesAPIKey(request.Metadata) && !t.knownProviderAuthIndex(authIndex) {
+		return cpaapi.RequestInterceptResponse{}, false
+	}
 	provider := runtimeProviderFromMetadata(request.Metadata)
-	if provider == "" {
+	if provider == "" && allowFormatFallback {
 		provider = normalizeRuntimeProvider(request.ToFormat)
+	}
+	if provider == "" {
+		return cpaapi.RequestInterceptResponse{}, false
 	}
 	now := t.now().UTC()
 	t.mu.Lock()
@@ -803,10 +880,6 @@ func (t *ProviderRuntimeTracker) InterceptRequest(request cpaapi.RequestIntercep
 	return cpaapi.RequestInterceptResponse{}, false
 }
 
-func (t *ProviderRuntimeTracker) ObserveRequest(request cpaapi.RequestInterceptRequest) {
-	_, _ = t.InterceptRequest(request)
-}
-
 func (t *ProviderRuntimeTracker) Complete(completion cpaapi.RequestCompletion) {
 	if t == nil || strings.TrimSpace(completion.RequestID) == "" {
 		return
@@ -828,7 +901,10 @@ func (t *ProviderRuntimeTracker) Complete(completion cpaapi.RequestCompletion) {
 }
 
 func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
-	if t == nil {
+	if t == nil || strings.EqualFold(strings.TrimSpace(record.AuthType), "oauth") || strings.EqualFold(strings.TrimSpace(record.AuthType), "oauth2") {
+		return
+	}
+	if strings.TrimSpace(record.AuthType) == "" && t.isKnownAccountIdentity(strings.TrimSpace(record.AuthIndex), strings.TrimSpace(record.AuthID)) {
 		return
 	}
 	identity, authIndex := runtimeIdentityFromUsage(record)
@@ -848,6 +924,13 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 	if aggregate == nil {
 		t.mu.Unlock()
 		return
+	}
+	// A request metadata hint is not sufficient provenance: CPA can expose
+	// protocol-level api_key metadata for native OAuth requests too. Mark an
+	// aggregate as provider-backed only when the usage callback carries an
+	// actual API key, which is immediately hashed and never persisted.
+	if runtimeCredentialIdentity(record) != "" {
+		aggregate.CredentialBacked = true
 	}
 	input := nonNegative(record.Detail.InputTokens)
 	output := nonNegative(record.Detail.OutputTokens)
@@ -912,6 +995,23 @@ func (t *ProviderRuntimeTracker) ObserveUsage(record cpaapi.UsageRecord) {
 	t.markDirty()
 }
 
+func (t *ProviderRuntimeTracker) isKnownAccountIdentity(authIndex, authID string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, value := range []string{authIndex, authID} {
+		if value == "" {
+			continue
+		}
+		if _, ok := t.accountAuthIndexes[value]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	if t == nil {
 		return nil
@@ -922,6 +1022,14 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	out := make([]ProviderRuntimeSnapshot, 0, len(t.aggregates))
 	now := t.now().UTC()
 	for _, aggregate := range t.aggregates {
+		if authIndex := strings.TrimSpace(aggregate.AuthIndex); authIndex != "" && !strings.HasPrefix(aggregate.Identity, "credential:") {
+			if _, isAccount := t.accountAuthIndexes[authIndex]; isAccount {
+				// Account and provider callbacks share CPA's auth-index namespace.
+				// Never expose a provider aggregate for an index currently owned by
+				// a native account.
+				continue
+			}
+		}
 		fiveHourAmountNanos, sevenDayAmountNanos := runtimeWindowAmounts(aggregate.Events, now)
 		models := make([]ProviderModelUsage, 0, len(aggregate.Models))
 		for _, model := range aggregate.Models {
@@ -951,6 +1059,7 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 			Provider:                aggregate.Provider,
 			AuthIndex:               aggregate.AuthIndex,
 			Identity:                aggregate.Identity,
+			CredentialBacked:        aggregate.CredentialBacked || strings.HasPrefix(aggregate.Identity, "credential:"),
 			Supported:               supported,
 			Reason:                  reason,
 			ConcurrencyConfigurable: configurable,
@@ -1207,6 +1316,47 @@ func (t *ProviderRuntimeTracker) ensureAggregateLocked(key, identity, provider, 
 	return aggregate
 }
 
+func requestMetadataIndicatesAPIKey(metadata map[string]any) bool {
+	for _, key := range []string{"auth_type", "authType", "account_type", "accountType", "credential_type", "credentialType"} {
+		value, ok := metadata[key].(string)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "apikey", "api_key", "api-key":
+			return true
+		case "oauth", "oauth2":
+			return false
+		}
+	}
+	for _, key := range []string{"is_api_key", "isApiKey", "provider_api_key", "providerApiKey"} {
+		if value, ok := metadata[key].(bool); ok && value {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *ProviderRuntimeTracker) knownProviderAuthIndex(authIndex string) bool {
+	authIndex = strings.TrimSpace(authIndex)
+	if t == nil || authIndex == "" {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, aggregate := range t.aggregates {
+		if aggregate == nil || aggregate.AuthIndex != authIndex {
+			continue
+		}
+		// Credential-derived identities are only created from API-key usage
+		// records. OAuth account aggregates use auth-index/auth-id identities.
+		if strings.HasPrefix(aggregate.Identity, "credential:") {
+			return true
+		}
+	}
+	return false
+}
+
 func runtimeProviderFromMetadata(metadata map[string]any) string {
 	for _, key := range []string{"provider", "selected_provider", "provider_name", "auth_provider"} {
 		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
@@ -1230,17 +1380,21 @@ func runtimeIdentityFromMetadata(metadata map[string]any) (string, string) {
 }
 
 func runtimeIdentityFromUsage(record cpaapi.UsageRecord) (string, string) {
+	// API-key callbacks may carry an auth index that CPA regenerates when a
+	// provider channel is edited. Prefer the redacted credential digest as the
+	// aggregate identity while retaining authIndex for display/policy lookup.
+	// This also prevents an API-key provider request from merging into an OAuth
+	// account aggregate that happens to use the same auth index.
+	if credentialIdentity := runtimeCredentialIdentity(record); credentialIdentity != "" {
+		return credentialIdentity, strings.TrimSpace(record.AuthIndex)
+	}
 	if authIndex := strings.TrimSpace(record.AuthIndex); authIndex != "" {
 		return "auth-index:" + authIndex, authIndex
 	}
 	if authID := strings.TrimSpace(record.AuthID); authID != "" {
 		return "auth-id:" + authID, ""
 	}
-	identity := runtimeCredentialIdentity(record)
-	if identity == "" {
-		return "", ""
-	}
-	return identity, ""
+	return "", ""
 }
 
 func runtimeCredentialIdentity(record cpaapi.UsageRecord) string {

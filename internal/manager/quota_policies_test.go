@@ -125,6 +125,18 @@ func TestQuotaPolicySnapshotJSONIsStable(t *testing.T) {
 	}
 }
 
+func TestQuotaPolicyServiceResolvesProviderPolicyAcrossRuntimeProviderPrefix(t *testing.T) {
+	service := NewQuotaPolicyService()
+	service.Configure(Config{DataDir: t.TempDir()})
+	window := 5
+	if err := service.SetProviderPolicy(ProviderQuotaPolicy{Key: "codex-api-key:auth-a", WindowSeconds: &window}); err != nil {
+		t.Fatal(err)
+	}
+	if policy, ok := service.ResolveProviderPolicy("codex", "auth-a", "credential:provider"); !ok || policy.WindowSeconds == nil || *policy.WindowSeconds != 5 {
+		t.Fatalf("cross-prefix provider policy was not resolved: %#v ok=%v", policy, ok)
+	}
+}
+
 func TestQuotaPolicyServiceResolvesProviderPolicyUnambiguously(t *testing.T) {
 	service := NewQuotaPolicyService()
 	service.Configure(Config{DataDir: t.TempDir()})

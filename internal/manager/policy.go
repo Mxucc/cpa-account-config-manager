@@ -970,6 +970,7 @@ func (e *PolicyEngine) scanWithState(ctx context.Context, policy DefaultPolicy, 
 		summary.FinishedAt = e.now().UTC()
 		return summary, nextFingerprints, nextFailures, nil
 	}
+	entries = filterPluginOwnedAuthEntries(entries)
 	summary.Scanned = len(entries)
 
 	pathCounts := make(map[string]int, len(entries))

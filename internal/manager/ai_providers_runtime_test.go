@@ -31,7 +31,7 @@ func TestProviderRuntimePersistsAggregatesAcrossRestart(t *testing.T) {
 	first.ObserveRequest(cpaapi.RequestInterceptRequest{
 		RequestID: "in-flight",
 		ToFormat:  "openai",
-		Metadata:  map[string]any{"selected_auth_index": "auth-a"},
+		Metadata:  map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"},
 	})
 	first.Shutdown()
 
@@ -179,9 +179,38 @@ func TestProviderRuntimeAggregatesByProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestProviderRuntimeInterceptorIgnoresRequestsWithoutProviderMetadata(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	request := cpaapi.RequestInterceptRequest{
+		RequestID: "account-request",
+		ToFormat:  "codex",
+		Metadata:  map[string]any{"selected_auth_index": "account-auth"},
+	}
+	if response, changed := tracker.InterceptRequest(request); changed || response.Terminate || response.StatusCode != 0 {
+		t.Fatalf("account-shaped request changed unexpectedly: %#v changed=%v", response, changed)
+	}
+	if snapshots := tracker.Snapshot(); len(snapshots) != 0 {
+		t.Fatalf("account-shaped request polluted provider runtime: %+v", snapshots)
+	}
+
+	request.RequestID = "provider-request"
+	request.Metadata["provider"] = "openai"
+	request.Metadata["auth_type"] = "api_key"
+	if response, changed := tracker.InterceptRequest(request); changed || response.Terminate || response.StatusCode != 0 {
+		t.Fatalf("provider request changed unexpectedly: %#v changed=%v", response, changed)
+	}
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].Provider != "openai" || snapshots[0].Active != 1 {
+		t.Fatalf("provider request was not observed: %+v", snapshots)
+	}
+	if snapshots[0].CredentialBacked || strings.HasPrefix(snapshots[0].Identity, "credential:") {
+		t.Fatalf("request metadata alone marked provider credential-backed: %+v", snapshots[0])
+	}
+}
+
 func TestProviderRuntimeActiveIsIdempotent(t *testing.T) {
 	tracker := NewProviderRuntimeTracker(nil)
-	request := cpaapi.RequestInterceptRequest{RequestID: "r1", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}}
+	request := cpaapi.RequestInterceptRequest{RequestID: "r1", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"}}
 	tracker.ObserveRequest(request)
 	tracker.ObserveRequest(request)
 	tracker.Complete(cpaapi.RequestCompletion{RequestID: "r1"})
@@ -209,14 +238,14 @@ func TestProviderRuntimePrunesRequestsWithoutCompletion(t *testing.T) {
 	tracker := NewProviderRuntimeTracker(nil)
 	now := time.Unix(10_000, 0).UTC()
 	tracker.now = func() time.Time { return now }
-	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{RequestID: "stale", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}})
+	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{RequestID: "stale", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"}})
 	if snapshots := tracker.Snapshot(); len(snapshots) != 1 || snapshots[0].Active != 1 {
 		t.Fatalf("initial snapshots = %+v", snapshots)
 	}
 	now = now.Add(providerRuntimeRequestLease + time.Minute)
 	// A later lifecycle event triggers the bounded cleanup even when CPA never
 	// delivered a completion callback for the stale request.
-	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{RequestID: "fresh", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}})
+	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{RequestID: "fresh", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"}})
 	snapshots := tracker.Snapshot()
 	if len(snapshots) != 1 || snapshots[0].Active != 1 {
 		t.Fatalf("stale request was not pruned: %+v", snapshots)
@@ -261,7 +290,7 @@ func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
 	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{
 		RequestID: "request-a",
 		ToFormat:  "openai",
-		Metadata:  map[string]any{"selected_auth_index": "auth-a"},
+		Metadata:  map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"},
 	})
 	snapshots := tracker.Snapshot()
 	if len(snapshots) != 1 {
@@ -269,6 +298,33 @@ func TestProviderRuntimeIncludesConfiguredConcurrencyLimit(t *testing.T) {
 	}
 	if snapshots[0].Active != 1 || snapshots[0].Limit != 7 || snapshots[0].Limit15s != 3 || snapshots[0].Used60s != 1 || snapshots[0].Used15s != 1 || !snapshots[0].ConcurrencyConfigurable {
 		t.Fatalf("runtime concurrency = %+v", snapshots[0])
+	}
+}
+
+func TestProviderRuntimeUsesConfiguredProviderRequestWindow(t *testing.T) {
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	window, requestLimit := 5, 3
+	if err := policies.SetProviderPolicy(ProviderQuotaPolicy{Key: "codex-api-key:auth-a", WindowSeconds: &window, Concurrency15s: &requestLimit}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.SetQuotaPolicies(policies)
+	tracker.now = func() time.Time { return now }
+	for _, id := range []string{"request-1", "request-2"} {
+		tracker.ObserveRequest(cpaapi.RequestInterceptRequest{
+			RequestID: id,
+			ToFormat:  "codex",
+			Metadata:  map[string]any{"selected_auth_index": "auth-a", "provider": "codex", "auth_type": "api_key"},
+		})
+	}
+	if snapshot := tracker.Snapshot()[0]; snapshot.RequestWindowSeconds != 5 || snapshot.RequestLimit != 3 || snapshot.UsedRequests != 2 {
+		t.Fatalf("configured provider request window = %+v", snapshot)
+	}
+	now = now.Add(6 * time.Second)
+	if snapshot := tracker.Snapshot()[0]; snapshot.RequestWindowSeconds != 5 || snapshot.UsedRequests != 0 {
+		t.Fatalf("provider request window did not expire at 5 seconds = %+v", snapshot)
 	}
 }
 
@@ -283,7 +339,7 @@ func TestProviderRuntimeObservesConfiguredRollingWindowsWithoutRejecting(t *test
 	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	tracker.now = func() time.Time { return now }
 	request := func(id string) cpaapi.RequestInterceptRequest {
-		return cpaapi.RequestInterceptRequest{RequestID: id, ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}}
+		return cpaapi.RequestInterceptRequest{RequestID: id, ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"}}
 	}
 	for _, id := range []string{"request-1", "request-2", "request-3"} {
 		if response, changed := tracker.InterceptRequest(request(id)); changed || response.Terminate || response.StatusCode != 0 {
@@ -304,7 +360,7 @@ func TestProviderRuntimeDuplicateRequestDoesNotConsumeWindowTwice(t *testing.T) 
 	}
 	tracker := NewProviderRuntimeTracker(nil)
 	tracker.SetQuotaPolicies(policies)
-	request := cpaapi.RequestInterceptRequest{RequestID: "same", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a"}}
+	request := cpaapi.RequestInterceptRequest{RequestID: "same", ToFormat: "openai", Metadata: map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"}}
 	tracker.InterceptRequest(request)
 	tracker.InterceptRequest(request)
 	snapshot := tracker.Snapshot()[0]
@@ -405,7 +461,7 @@ func TestProviderRuntimePersistsDurableAuthAdjacentStore(t *testing.T) {
 	first := NewProviderRuntimeTracker(nil)
 	first.Configure(Config{DataDir: fallbackDir, implicitDataDir: true})
 	first.ObserveUsage(cpaapi.UsageRecord{
-		Provider: "openai", AuthIndex: "auth-a", Model: "gpt-5.5",
+		Provider: "openai", AuthIndex: "auth-a", AuthType: "api_key", APIKey: "sk-provider", Model: "gpt-5.5",
 		Detail: cpaapi.UsageDetail{TotalTokens: 23},
 	})
 	first.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{entry})
@@ -422,6 +478,47 @@ func TestProviderRuntimePersistsDurableAuthAdjacentStore(t *testing.T) {
 	snapshots := second.Snapshot()
 	if len(snapshots) != 1 || snapshots[0].TotalTokens != 23 {
 		t.Fatalf("durable provider usage was not restored: %+v", snapshots)
+	}
+}
+
+func TestProviderRuntimeDropsHistoricalAccountCollisionAfterAuthDiscovery(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai", AuthIndex: "native-account", Model: "gpt-5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 672},
+	})
+	if got := len(tracker.Snapshot()); got != 1 {
+		t.Fatalf("pre-discovery snapshots = %d, want 1", got)
+	}
+
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		AuthIndex: "native-account", ID: "native-account-id", Name: "account.json",
+	}})
+	if snapshots := tracker.Snapshot(); len(snapshots) != 0 {
+		t.Fatalf("historical account collision remained visible: %+v", snapshots)
+	}
+
+	// An explicitly classified API-key record remains valid even if a provider
+	// happens to reuse the same auth index; its credential identity is stronger
+	// evidence than the volatile index.
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai", AuthIndex: "native-account", AuthType: "api_key", APIKey: "sk-provider", Model: "gpt-5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 25},
+	})
+	if snapshots := tracker.Snapshot(); len(snapshots) != 1 || !snapshots[0].CredentialBacked || snapshots[0].TotalTokens != 25 {
+		t.Fatalf("explicit provider usage was rejected after collision cleanup: %+v", snapshots)
+	}
+}
+
+func TestProviderRuntimeIgnoresUnknownAuthTypeForKnownAccount(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{AuthIndex: "native-account", Name: "account.json"}})
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai", AuthIndex: "native-account", APIKey: "legacy-value", Model: "gpt-5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 100},
+	})
+	if snapshots := tracker.Snapshot(); len(snapshots) != 0 {
+		t.Fatalf("unknown account usage entered provider runtime: %+v", snapshots)
 	}
 }
 
@@ -452,5 +549,54 @@ func TestProviderRuntimeRecoversFromBackup(t *testing.T) {
 	}
 	if tracker.StorageError() != "" {
 		t.Fatalf("backup recovery left storage error: %q", tracker.StorageError())
+	}
+}
+
+func TestProviderRuntimeObserveUsageSeparatesOAuthAndAPIKeyRecords(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider:  "codex",
+		AuthIndex: "oauth-account",
+		AuthType:  "oauth",
+		Model:     "gpt-5",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 100},
+	})
+	if snapshots := tracker.Snapshot(); len(snapshots) != 0 {
+		t.Fatalf("OAuth usage entered provider runtime: %+v", snapshots)
+	}
+
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider:  "openai",
+		AuthIndex: "provider-key",
+		AuthType:  "api_key",
+		APIKey:    "sk-provider-secret",
+		Model:     "gpt-5",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 25},
+	})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].Provider != "openai" || snapshots[0].TotalTokens != 25 {
+		t.Fatalf("API-key usage was not retained: %+v", snapshots)
+	}
+	if snapshots[0].Identity == "auth-index:provider-key" || snapshots[0].Identity == "" {
+		t.Fatalf("API-key usage used an ambiguous identity: %+v", snapshots[0])
+	}
+}
+
+func TestProviderRuntimeAPIKeyWithAuthIndexUsesCredentialIdentity(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.ObserveUsage(cpaapi.UsageRecord{
+		Provider:  "openai",
+		AuthIndex: "shared-auth-index",
+		AuthType:  "api_key",
+		APIKey:    "sk-provider-secret",
+		Model:     "gpt-5",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 25},
+	})
+	snapshots := tracker.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots = %+v", snapshots)
+	}
+	if snapshots[0].AuthIndex != "shared-auth-index" || !snapshots[0].CredentialBacked || !strings.HasPrefix(snapshots[0].Identity, "credential:") {
+		t.Fatalf("provider identity = %+v", snapshots[0])
 	}
 }

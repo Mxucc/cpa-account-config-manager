@@ -83,6 +83,20 @@ func (f *fakeAuthHost) SaveAuth(_ context.Context, name string, rawJSON json.Raw
 	return cpaapi.HostAuthSaveResponse{Name: name, Path: "/auths/" + name}, nil
 }
 
+func TestAccountServiceListExcludesPluginRuntimeState(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "account-1", Name: "account-1.json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/account-1.json"},
+		{AuthIndex: "plugin-state", Name: ".cpa-account-config-manager/ai-provider-runtime.json", Source: "file", Path: "/auths/.cpa-account-config-manager/ai-provider-runtime.json"},
+	}}
+	response, errList := NewAccountService(host).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if len(response.Accounts) != 1 || response.Accounts[0].ID != "account-1" {
+		t.Fatalf("accounts = %#v, want only the real account", response.Accounts)
+	}
+}
+
 func TestAccountServiceListReturnsEmptyJSONArray(t *testing.T) {
 	response, errList := NewAccountService(&fakeAuthHost{}).List(context.Background(), ListQuery{Page: 1, PageSize: 50})
 	if errList != nil {

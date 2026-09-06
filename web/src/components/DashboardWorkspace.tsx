@@ -2,6 +2,7 @@ import { Activity, AlertTriangle, Boxes, CircleDollarSign, HeartPulse, RefreshCw
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../api/client";
 import { useI18n } from "../i18n";
+import { providerRuntimeSnapshotsForChannels } from "../format/providerRuntime";
 import type { Account, AccountListResponse, AIProviderChannelSnapshot, AIProviderRuntimeResponse, InspectionSnapshot } from "../types";
 import { IconButton } from "./IconButton";
 
@@ -123,8 +124,12 @@ export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
     setLoading(true);
     setError("");
     try {
-      const [accountPage, inspection, runtime, providers] = await Promise.all([
-        api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, signal),
+      // Discover account auth identities before reading provider runtime.
+      // The two stores share CPA's auth-index namespace, so parallel requests
+      // can otherwise return a stale provider snapshot containing account usage.
+      const accountPage = await api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, signal);
+      if (signal?.aborted) return;
+      const [inspection, runtime, providers] = await Promise.all([
         optional(api.getInspection(signal)),
         optional(api.getAIProviderRuntime(signal)),
         optional(api.listAIProviderChannels(signal)),
@@ -158,29 +163,19 @@ export function DashboardWorkspace({ onAPIError }: DashboardWorkspaceProps) {
     const providerCredentialCount = data.providers.reduce((total, channel) => total + Math.max(0, safeDashboardNumber(channel.count ?? channel.entries?.length ?? 0)), 0);
     const providerEnabled = data.providers.reduce((total, channel) => total + (channel.entries ?? []).filter((entry) => !entry.disabled).length, 0);
     const providerDisabled = data.providers.reduce((total, channel) => total + (channel.entries ?? []).filter((entry) => entry.disabled === true).length, 0);
-    const providerIndexes = new Set<string>();
-    for (const channel of data.providers) {
-      for (const entry of channel.entries ?? []) {
-        const topLevel = String(entry.auth_index ?? "").trim();
-        if (topLevel) providerIndexes.add(topLevel);
-        for (const keyEntry of entry.api_key_entries ?? []) {
-          const authIndex = String(keyEntry.auth_index ?? "").trim();
-          if (authIndex) providerIndexes.add(authIndex);
-        }
-      }
-    }
     // Runtime callbacks may include both auth files and API-key channels. Only
-    // snapshots explicitly identified as a configured provider are added here;
+    // snapshots proven to belong to an enabled provider are added here;
     // account usage is already persisted and counted above.
-    const providerSnapshots = (data.runtime?.snapshots ?? []).filter((snapshot) => {
-      const authIndex = String(snapshot.auth_index ?? "").trim();
-      return authIndex !== "" && providerIndexes.has(authIndex);
-    });
+    const providerSnapshots = providerRuntimeSnapshotsForChannels(
+      data.providers,
+      data.runtime?.snapshots ?? [],
+      data.accounts,
+    );
     const providerTokens = providerSnapshots.reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.total_tokens)), 0);
     const providerCost = providerSnapshots.reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.amount_usd)), 0);
     const tokens = accounts.reduce((total, account) => total + Math.max(0, safeDashboardNumber(account.usage?.total_tokens)), 0) + providerTokens;
     const cost = accounts.reduce((total, account) => total + Math.max(0, safeDashboardNumber(account.usage?.credit?.amount_usd)), 0) + providerCost;
-    const active = (data.runtime?.snapshots ?? []).reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.active)), 0);
+    const active = providerSnapshots.reduce((total, snapshot) => total + Math.max(0, safeDashboardNumber(snapshot.active)), 0);
     const providers = providerCount;
     const modelCosts = new Map<string, number>();
     for (const snapshot of providerSnapshots) {

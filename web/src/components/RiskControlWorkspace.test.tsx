@@ -2,10 +2,11 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RiskControlSnapshot } from "../types";
+import { DEFAULT_RISK_SYSTEM_PROMPT } from "../constants/riskAuditPrompt";
 import { _resetSessionForTest, setSession } from "../store/session";
 import { RiskControlWorkspace } from "./RiskControlWorkspace";
 
-const defaultPrompt = { id: "default-security-audit", name: "Default security audit", system_prompt: "Default security prompt", builtin: true };
+const defaultPrompt = { id: "default-security-audit", name: "Default security audit", system_prompt: DEFAULT_RISK_SYSTEM_PROMPT, builtin: true };
 const snapshot: RiskControlSnapshot = {
   config: {
     enabled: false,
@@ -17,7 +18,7 @@ const snapshot: RiskControlSnapshot = {
     block_message: "blocked",
     event_retention_days: 30,
     max_events: 500,
-    audit: { enabled: false, mode: "off", endpoint: "", model: "", api_key: "", api_key_set: false, scanners: [], latest_turn_only: true, store_pass_events: false, timeout_ms: 3000, input_limit: 32768, worker_count: 2, queue_capacity: 128, failure_policy: "fail_open", block_status: 403, block_message: "audit blocked", confidence_threshold: 0.8, prompt_id: defaultPrompt.id },
+    audit: { enabled: false, mode: "off", endpoint: "", model: "", model_source: "external", account_id: "", provider_auth_index: "", provider_name: "", api_key: "", api_key_set: false, scanners: [], latest_turn_only: true, store_pass_events: false, timeout_ms: 3000, input_limit: 32768, worker_count: 2, queue_capacity: 128, failure_policy: "fail_open", block_status: 403, block_message: "audit blocked", confidence_threshold: 0.8, prompt_id: defaultPrompt.id },
     system_prompts: [defaultPrompt],
   },
   status: { active: false, mode: "off", total_events: 0, observed: 0, blocked: 0, keyword_hits: 0, hash_hits: 0, remembered_hashes: 0, audit: { active: false, mode: "off", queue_length: 0, queue_capacity: 128, worker_count: 2, processed: 0, blocked: 0, errors: 0, dropped: 0, api_key_configured: false, api_key_available: false } },
@@ -95,4 +96,38 @@ describe("RiskControlWorkspace", () => {
     expect((list as HTMLSelectElement).value).toMatch(/^custom-/);
     expect(within(workspace).getByRole("button", { name: "删除提示词" })).not.toBeDisabled();
   });
+
+  it("selects an account model and saves native audit credentials by reference", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const account = { id: "account-1", name: "Primary account", email: "primary@example.com", disabled: false, unavailable: false, runtime_only: false, proxy_configured: false, header_count: 0, editable: true, success: 0, failed: 0 };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/accounts/models")) return new Response(JSON.stringify({ models: [{ id: "gpt-5.6-sol", display_name: "GPT 5.6 Sol" }], total: 1, eligible: 1, loaded: 1, failed: 0, read_only: 0, missing: 0 }), { status: 200 });
+      if (url.includes("/accounts?")) return new Response(JSON.stringify({ accounts: [account], total: 1, page: 1, page_size: 1000, pages: 1 }), { status: 200 });
+      if (url.includes("/risk-control") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body));
+        return respond({ ...snapshot, config: { ...snapshot.config, ...body, audit: { ...snapshot.config.audit, ...body.audit } } });
+      }
+      if (url.includes("/risk-control")) return respond();
+      return new Response("unavailable", { status: 503 });
+    });
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    await user.click(within(workspace).getByRole("tab", { name: "提示词审计" }));
+    await user.selectOptions(within(workspace).getByLabelText("审核模型来源"), "account");
+    await user.selectOptions(within(workspace).getByLabelText("CPA 账号"), "account-1");
+    const model = await within(workspace).findByLabelText("审核模型");
+    await waitFor(() => expect(model).not.toBeDisabled());
+    await user.selectOptions(model, "gpt-5.6-sol");
+    await user.click(within(workspace).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ init }) => init?.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ init }) => init?.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init?.body));
+    expect(body.audit).toMatchObject({ model_source: "account", account_id: "account-1", model: "gpt-5.6-sol", endpoint: "", api_key: "" });
+  });
+
 });

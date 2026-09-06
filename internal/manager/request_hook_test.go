@@ -37,6 +37,7 @@ func TestRequestHookWaitsForAccountBeforeObservingProvider(t *testing.T) {
 				"selected_auth_id":    "auth-a",
 				"selected_auth_index": "auth-a",
 				"provider":            "openai",
+				"auth_type":           "api_key",
 			},
 		}
 	}

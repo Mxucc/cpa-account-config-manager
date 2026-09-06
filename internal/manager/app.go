@@ -126,6 +126,9 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		identityTransport = transport
 	}
 	riskControl.SetAuditTransport(identityTransport)
+	if executor, ok := host.(CPAModelExecutor); ok {
+		riskControl.SetModelExecutor(executor)
+	}
 	agentIdentity := NewAgentIdentityExperiment(experiments.AgentIdentityEnabled, identityTransport)
 	modelTests.SetAgentIdentityExperiment(agentIdentity)
 	imports := NewImportService(host, mutations)
@@ -299,6 +302,22 @@ func (a *App) configError() string {
 	return a.configErr
 }
 
+// isAIProviderUsageRecord distinguishes API-key provider traffic from native
+// OAuth account traffic before it reaches the provider-only runtime dashboard.
+// CPA delivers both through the same usage callback.
+func isAIProviderUsageRecord(record cpaapi.UsageRecord) bool {
+	switch strings.ToLower(strings.TrimSpace(record.AuthType)) {
+	case "oauth", "oauth2":
+		return false
+	case "apikey", "api_key", "api-key":
+		return true
+	}
+	// Legacy hosts may omit AuthType. An API key without a selected OAuth
+	// identity is the only safe fallback; records carrying only AuthIndex/AuthID
+	// are treated as account telemetry.
+	return strings.TrimSpace(record.APIKey) != "" && strings.TrimSpace(record.AuthID) == "" && strings.TrimSpace(record.AuthIndex) == ""
+}
+
 func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	if a == nil || a.usage == nil {
 		return
@@ -306,9 +325,16 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	if a.runtimeSuperseded() {
 		return
 	}
-	a.usage.Observe(record)
-	a.providerRuntime.ObserveUsage(record)
-	a.inspection.Observe(record)
+	if isAIProviderUsageRecord(record) {
+		// Provider credentials and native OAuth accounts share CPA's usage
+		// callback. Never put provider traffic into the account usage store: an
+		// API-key channel can expose an auth index, and that index may collide
+		// with an account identity after a provider edit.
+		a.providerRuntime.ObserveUsage(record)
+	} else {
+		a.usage.Observe(record)
+		a.inspection.Observe(record)
+	}
 }
 
 func (a *App) Close() {

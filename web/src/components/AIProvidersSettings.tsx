@@ -26,6 +26,8 @@ interface AIProvidersSettingsProps {
   refreshRevision: number;
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
+  /** Account auth identities are used only to reject ambiguous historical runtime snapshots. */
+  accountIdentities?: string[];
 }
 
 type AddKind = AIProviderChannelKind;
@@ -193,7 +195,7 @@ function parseRequestScopedErrors(text: string): unknown[] | undefined {
   return rows.map((row, index) => {
     const parsed = JSON.parse(row) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error(`request scoped error #${index + 1} must be a JSON object`);
+      throw new Error("request scoped error #" + (index + 1) + " must be a JSON object");
     }
     return parsed;
   });
@@ -209,7 +211,6 @@ function listToArray(text: string): string[] {
 function arrayToList(items: string[] | undefined): string {
   return (items ?? []).join("\n");
 }
-
 type ProviderIdentitySource = Pick<AIProviderChannelEntry, "index" | "name" | "base_url" | "auth_index" | "account_id" | "workspace_id" | "api_key_entries">;
 
 function providerStableIdentity(entry: ProviderIdentitySource): string {
@@ -631,7 +632,7 @@ function channelLabelKey(kind: AIProviderChannelKind): UIMessageKey {
   return (api.AI_PROVIDER_CHANNELS.find((channel) => channel.kind === kind)?.labelKey ?? "ui.ai_provider_channel_openai_compatibility") as UIMessageKey;
 }
 
-export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: AIProvidersSettingsProps) {
+export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, accountIdentities = [] }: AIProvidersSettingsProps) {
   const { locale, tx, formatDateTime } = useI18n();
   const [channels, setChannels] = useState<AIProviderChannelSnapshot[]>([]);
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
@@ -694,7 +695,16 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
   const providerPolicyFor = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry): ProviderQuotaPolicy | undefined => {
     const stableKey = providerPolicyKey(kind, entry);
     const legacyKey = `${kind}:${entry.index}`;
-    return quotaPolicies.providers.find((policy) => policy.key === stableKey || policy.key === legacyKey);
+    const exact = quotaPolicies.providers.find((policy) => policy.key === stableKey || policy.key === legacyKey);
+    if (exact) return exact;
+    // CPA may rewrite the provider prefix while retaining the credential auth
+    // index. Recover a uniquely matching persisted policy so a saved window
+    // (for example 5 seconds) is not silently replaced by the 15-second UI
+    // default after a channel/provider-family rename.
+    const identity = providerStableIdentity(entry).trim().toLowerCase();
+    if (!identity) return undefined;
+    const suffixMatches = quotaPolicies.providers.filter((policy) => policy.key.trim().toLowerCase().endsWith(`:${identity}`));
+    return suffixMatches.length === 1 ? suffixMatches[0] : undefined;
   };
   const openEditor = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry) => {
     const policy = providerPolicyFor(kind, entry);
@@ -795,7 +805,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
     };
   }, [refreshRuntime, refreshRevision]);
 
-  const runtimeForEntry = (entry: AIProviderChannelEntry): AIProviderRuntimeSnapshot | undefined => {
+  const runtimeForEntry = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry): AIProviderRuntimeSnapshot | undefined => {
     // A provider may have one runtime identity per API key. CPA exposes those
     // identities as auth-index metadata on api-key-entries; aggregate all of
     // them for a truthful provider-level view instead of showing only the
@@ -808,9 +818,11 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
       if (authIndex) authIndexes.add(authIndex);
     }
     if (authIndexes.size === 0) return undefined;
+    const blockedAccountIdentities = new Set(accountIdentities.map((identity) => identity.trim()).filter(Boolean));
     const matches = runtimeSnapshots.filter((snapshot) => {
       const authIndex = (snapshot.auth_index ?? "").trim();
-      return authIndex !== "" && authIndexes.has(authIndex);
+      const trustedIdentity = snapshot.credential_backed === true || kind === "opencode-go" || kind === "opencode-zen";
+      return authIndex !== "" && authIndexes.has(authIndex) && !blockedAccountIdentities.has(authIndex) && trustedIdentity;
     });
     if (matches.length === 0) return undefined;
     if (matches.length === 1) return matches[0];
@@ -1488,7 +1500,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
               <div className="ai-provider-detail-row"><span>{tx("ui.headers")}</span><code>{Object.entries(viewing.entry.headers).map(([key, value]) => `${key}: ${maskSecret(value)}`).join("; ")}</code></div>
             ) : null}
             {(() => {
-              const runtime = runtimeForEntry(viewing.entry);
+              const runtime = runtimeForEntry(viewing.kind, viewing.entry);
               const policy = providerPolicyFor(viewing.kind, viewing.entry);
               const budget = (window: ProviderQuotaPolicy["five_hour"], usedAmount: number | undefined) => {
                 if (!window.budget_amount_usd || window.budget_amount_usd <= 0) return window.limit_percent === undefined ? "-" : `— / ${window.limit_percent}%`;
@@ -1500,7 +1512,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                 <div className="ai-provider-runtime-detail">
                   {(runtime?.supported || policy) ? <>
                     <div className="ai-provider-detail-row"><span>{tx("ui.account_concurrency_active")}</span><strong>{Math.max(0, runtime?.active ?? 0)}</strong></div>
-                    <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency_request_short", { seconds: runtime?.request_window_seconds ?? policy?.concurrency_window_seconds ?? 15, value: formatConcurrencyWindow(runtime?.used_requests, policy?.concurrency_15s_limit, runtime?.request_limit, runtime?.supported === true) })}</span></div>
+                    <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency_request_short", { seconds: policy?.concurrency_window_seconds ?? runtime?.request_window_seconds ?? 15, value: formatConcurrencyWindow(runtime?.used_requests, policy?.concurrency_15s_limit, runtime?.request_limit, runtime?.supported === true) })}</span></div>
                     <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency_queue_short", { value: runtime?.waiting ?? 0 })}</span></div>
                   </> : null}
                   {policy ? <>
@@ -1628,7 +1640,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                   <td>{entry.disabled ? <span className="ai-provider-entry-badge is-disabled">{tx("ui.disabled")}</span> : <span className="ai-provider-entry-badge">{tx("ui.enabled")}</span>}</td>
                   <td><strong className="ai-provider-model-count">{entry.models?.length ?? 0}</strong></td>
                   {(() => {
-                    const runtime = runtimeForEntry(entry);
+                    const runtime = runtimeForEntry(channel.kind, entry);
                     return <>
                       {(() => {
                         const policy = providerPolicyFor(channel.kind, entry);
@@ -1644,7 +1656,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice }: A
                             <div className="ai-provider-runtime-concurrency" title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
                               <span>{tx("ui.ai_provider_concurrency")}</span>
                               <strong>{tx("ui.ai_provider_concurrency_active_short", { value: `${Math.max(0, runtime?.active ?? 0)} / ${configuredConcurrencyLimit && configuredConcurrencyLimit > 0 ? configuredConcurrencyLimit : runtime?.limit && runtime.limit > 0 ? runtime.limit : "∞"}` })}</strong>
-                              <small>{tx("ui.ai_provider_concurrency_request_short", { seconds: runtime?.request_window_seconds ?? policy?.concurrency_window_seconds ?? 15, value: formatConcurrencyWindow(runtime?.used_requests, configuredRequestLimit, runtime?.request_limit, runtime?.supported === true) })}</small>
+                              <small>{tx("ui.ai_provider_concurrency_request_short", { seconds: policy?.concurrency_window_seconds ?? runtime?.request_window_seconds ?? 15, value: formatConcurrencyWindow(runtime?.used_requests, configuredRequestLimit, runtime?.request_limit, runtime?.supported === true) })}</small>
                               <small>{tx("ui.ai_provider_concurrency_queue_short", { value: Math.max(0, runtime?.waiting ?? 0) })}</small>
                             </div>
                             <div className="ai-provider-runtime-usage">

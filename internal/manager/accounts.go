@@ -153,6 +153,7 @@ func (s *AccountService) EnsureUsageStorageBindings(ctx context.Context) {
 	if errList != nil {
 		return
 	}
+	entries = filterPluginOwnedAuthEntries(entries)
 	if discoverer, ok := s.usage.(UsageStorageDiscoverer); ok {
 		discoverer.DiscoverAuthStorage(entries)
 	}
@@ -349,6 +350,7 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	if errList != nil {
 		return nil, fmt.Errorf("list host auth records: %w", errList)
 	}
+	entries = filterPluginOwnedAuthEntries(entries)
 	if discoverer, ok := s.usage.(UsageStorageDiscoverer); ok {
 		discoverer.DiscoverAuthStorage(entries)
 	}
@@ -368,6 +370,12 @@ func (s *AccountService) baseAccounts(ctx context.Context) ([]Account, error) {
 	accounts := make([]Account, 0, len(entries))
 	for _, entry := range entries {
 		account := projectHostEntry(entry, pathCounts, indexCounts, s.usage)
+		// Keep a projection-level guard in addition to filtering raw host
+		// entries. This protects the public list if a newer CPA host derives the
+		// plugin-owned path into a different identity field.
+		if isPluginOwnedAccountProjection(account) {
+			continue
+		}
 		if s.concurrency != nil {
 			account.Concurrency = s.concurrency.Summary(account.AuthID)
 		}

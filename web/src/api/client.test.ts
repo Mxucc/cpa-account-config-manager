@@ -1519,6 +1519,22 @@ describe("management API client", () => {
     expect(result.release_url).toBe("https://github.com/Mxucc/cpa-account-config-manager/releases/tag/v0.2.4");
   });
 
+  it("hides CPA plugin runtime state if an older host leaks it as an account", async () => {
+    setSession("https://cpa.example", "management-secret");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      total: 2, page: 1, page_size: 50, pages: 1,
+      accounts: [
+        { id: "real-account", name: "real.json", provider: "codex" },
+        { id: ".cpa-account-config-manager/ai-provider-runtime.json", name: ".cpa-account-config-manager/ai-provider-runtime.json" },
+      ],
+    })));
+
+    const response = await listAccounts(1, 50, {});
+    expect(response.accounts.map((account) => account.id)).toEqual(["real-account"]);
+    expect(response.total).toBe(1);
+    expect(response.pages).toBe(1);
+  });
+
   it("rejects malformed account concurrency payloads instead of showing zero", async () => {
     setSession("https://cpa.example", "management-secret");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({

@@ -195,6 +195,7 @@ func (s *ImportService) previewParsed(ctx context.Context, parsed importParseRes
 	if errList != nil {
 		return ImportPreview{}, fmt.Errorf("%w: list existing Auth files", ErrImportAuthUnavailable)
 	}
+	existingEntries = filterPluginOwnedAuthEntries(existingEntries)
 	reserved := importAuthNameSet(existingEntries)
 
 	now := s.now().UTC()
@@ -308,6 +309,7 @@ func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResu
 	if errList != nil {
 		return ImportResult{}, fmt.Errorf("%w: verify existing Auth files", ErrImportAuthUnavailable)
 	}
+	entries = filterPluginOwnedAuthEntries(entries)
 	preview, errTake := s.store.take(previewID, s.now().UTC())
 	if errTake != nil {
 		return ImportResult{}, errTake
@@ -348,6 +350,7 @@ func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResu
 				result.Results = append(result.Results, entryResult)
 				continue
 			}
+			currentEntries = filterPluginOwnedAuthEntries(currentEntries)
 			for name := range importAuthNameSet(currentEntries) {
 				knownNames[name] = struct{}{}
 			}

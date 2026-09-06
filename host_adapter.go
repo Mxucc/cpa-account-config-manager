@@ -146,3 +146,19 @@ func (hostAdapter) GetAuthRuntime(_ context.Context, authIndex string) (cpaapi.H
 	}
 	return response.Auth, nil
 }
+
+func (hostAdapter) ExecuteModel(_ context.Context, callbackID string, request cpaapi.HostModelExecutionRequest) (cpaapi.HostModelExecutionResponse, error) {
+	request.HostCallbackID = callbackID
+	result, errCall := callHost(cpaapi.MethodHostModelExecute, request)
+	if errCall != nil {
+		return cpaapi.HostModelExecutionResponse{}, errCall
+	}
+	var response cpaapi.HostModelExecutionResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return cpaapi.HostModelExecutionResponse{}, fmt.Errorf("decode host model response: %w", err)
+	}
+	if response.StatusCode < 100 || response.StatusCode > 999 {
+		return cpaapi.HostModelExecutionResponse{}, fmt.Errorf("decode host model response: missing or invalid status code")
+	}
+	return response, nil
+}

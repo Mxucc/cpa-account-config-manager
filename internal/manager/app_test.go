@@ -24,6 +24,46 @@ type runtimeMarkerHost struct {
 
 func (h *runtimeMarkerHost) RuntimeProcessMarker() string { return h.marker }
 
+func TestIsAIProviderUsageRecordSeparatesOAuthAndAPIKeyTraffic(t *testing.T) {
+	tests := []struct {
+		name   string
+		record cpaapi.UsageRecord
+		want   bool
+	}{
+		{name: "oauth", record: cpaapi.UsageRecord{AuthType: "oauth", APIKey: "ignored"}, want: false},
+		{name: "oauth2", record: cpaapi.UsageRecord{AuthType: "oauth2"}, want: false},
+		{name: "api key", record: cpaapi.UsageRecord{AuthType: "api_key"}, want: true},
+		{name: "legacy api key", record: cpaapi.UsageRecord{APIKey: "present"}, want: true},
+		{name: "legacy account identity", record: cpaapi.UsageRecord{APIKey: "present", AuthIndex: "account"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAIProviderUsageRecord(tt.record); got != tt.want {
+				t.Fatalf("isAIProviderUsageRecord() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppRoutesProviderUsageAwayFromAccountUsage(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	app.HandleUsage(cpaapi.UsageRecord{
+		Provider:  "openai",
+		AuthIndex: "shared-auth-index",
+		AuthType:  "api_key",
+		APIKey:    "sk-provider-secret",
+		Model:     "gpt-5",
+		Detail:    cpaapi.UsageDetail{TotalTokens: 25},
+	})
+	if got := app.usage.Snapshot("shared-auth-index"); got != nil {
+		t.Fatalf("provider usage entered account store: %+v", got)
+	}
+	if snapshots := app.providerRuntime.Snapshot(); len(snapshots) != 1 || snapshots[0].TotalTokens != 25 {
+		t.Fatalf("provider usage was not retained: %+v", snapshots)
+	}
+}
+
 func TestNewAppUsesTheHostProcessMarkerForRuntimeOwnership(t *testing.T) {
 	marker := "0123456789abcdef0123456789abcdef"
 	app := NewApp(&runtimeMarkerHost{fakeAuthHost: &fakeAuthHost{}, marker: marker}, []byte("index"))

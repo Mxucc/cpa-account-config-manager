@@ -104,10 +104,11 @@ describe("primary account batch flow", () => {
     // The update widget may read /updates; no settings migration write is allowed.
     expect(settingsRequests).toBeLessThanOrEqual(1);
     expect(settingsPersisted).toBe(false);
-    expect(accountRequests).toHaveLength(1);
-    expect(accountRequests[0]).toContain("page=1");
-    expect(accountRequests[0]).toContain("page_size=50");
-    expect(accountRequests[0]).not.toContain("page_size=1");
+    const primaryAccountRequests = accountRequests.filter((url) => new URL(url, "http://localhost").searchParams.get("page_size") === "50");
+    expect(primaryAccountRequests).toHaveLength(1);
+    expect(primaryAccountRequests[0]).toContain("page=1");
+    expect(primaryAccountRequests[0]).toContain("page_size=50");
+    expect(primaryAccountRequests[0]).not.toContain("page_size=1");
 
   });
 

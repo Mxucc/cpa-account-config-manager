@@ -132,15 +132,19 @@ type legacyCustomAuditConfig struct {
 }
 
 type RiskControlService struct {
-	mu           sync.RWMutex
-	dataDir      string
-	store        string
-	config       RiskControlConfig
-	events       []RiskControlEvent
-	hashes       map[string]struct{}
-	storageError string
-	now          func() time.Time
-	audit        *riskAuditRuntime
+	mu                sync.RWMutex
+	dataDir           string
+	store             string
+	config            RiskControlConfig
+	events            []RiskControlEvent
+	hashes            map[string]struct{}
+	storageError      string
+	credentialsMu     sync.RWMutex
+	managementBaseURL string
+	managementKey     string
+	managementDoer    HTTPDoer
+	now               func() time.Time
+	audit             *riskAuditRuntime
 }
 
 func NewRiskControlService() *RiskControlService {

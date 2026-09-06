@@ -1445,12 +1445,17 @@ export interface RiskControlModelFilter {
 }
 
 export type RiskAuditFailurePolicy = "fail_open" | "fail_closed";
+export type RiskAuditModelSource = "external" | "account" | "ai_provider";
 
 export interface RiskExternalAuditConfig {
   enabled: boolean;
   mode: RiskControlMode;
   endpoint: string;
   model: string;
+  model_source?: RiskAuditModelSource;
+  account_id?: string;
+  provider_auth_index?: string;
+  provider_name?: string;
   api_key: string;
   api_key_set?: boolean;
   api_key_clear?: boolean;

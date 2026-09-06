@@ -842,3 +842,43 @@ func TestAppRejectsMalformedLiveConfigurationWithoutReplacingLastKnownGoodState(
 		t.Fatalf("corrected workers = %d, want 3", got)
 	}
 }
+
+func TestHandleSchedulerPickSkipsQuotaLimitedCredentialBeforeFirstAccountList(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{ID: "credential-limited", AuthIndex: "auth-limited", Provider: "codex", Type: "codex", Email: "limited@example.com", Path: "/auths/limited.json"},
+		{ID: "credential-next", AuthIndex: "auth-next", Provider: "codex", Type: "codex", Email: "next@example.com", Path: "/auths/next.json"},
+	}}
+	app := NewApp(host, []byte("index"))
+	defer app.Close()
+	app.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.SchemaVersion)
+
+	used := 52.0
+	app.usage.ObserveCredentialUsage("auth-limited", &CodexUsageSnapshot{SevenDay: &UsageWindowSnapshot{UsedPercent: used}})
+	limit := 50
+	if err := app.quotaPolicies.SetAccountPolicy("auth-limited", AccountQuotaPolicy{SevenDay: QuotaWindowPolicy{LimitPercent: &limit}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, account := range []Account{
+		{ID: "auth-limited", AuthID: "credential-limited"},
+		{ID: "auth-next", AuthID: "credential-next"},
+	} {
+		concurrencyLimit, requestLimit := 10, 3
+		if err := app.concurrency.SetLimits(account, &concurrencyLimit, &requestLimit); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	response := app.HandleSchedulerPick(cpaapi.SchedulerPickRequest{
+		Provider: "codex",
+		Candidates: []cpaapi.SchedulerAuthCandidate{
+			{ID: "credential-limited", Provider: "codex"},
+			{ID: "credential-next", Provider: "codex"},
+		},
+	})
+	if !response.Handled || response.AuthID != "credential-next" {
+		t.Fatalf("scheduler selected quota-limited credential or declined eligible account: %#v", response)
+	}
+	if got := host.listCalls; got != 1 {
+		t.Fatalf("scheduler should prime auth bindings exactly once, ListAuth calls = %d", got)
+	}
+}

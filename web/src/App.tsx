@@ -112,6 +112,8 @@ import type {
   ModelTestResult,
   ResultExportFormat,
   TargetScope,
+  AIProviderChannelSnapshot,
+  AIProviderRuntimeSnapshot,
 } from "./types";
 import { accountConcurrencyLimitLabel, accountConcurrencyRequestLimitLabel, accountConcurrencySaturated, accountConcurrencyUsedRequests, accountConcurrencyWindowSeconds } from "./accountConcurrency";
 
@@ -241,6 +243,9 @@ function AccountManagerApp() {
   const [pageSize, setPageSize] = useState(readAccountPageSize);
   const [accountSort, setAccountSort] = useState<AccountSort>(readAccountSort);
   const [data, setData] = useState<AccountListResponse>({ accounts: [], total: 0, page: 1, page_size: DEFAULT_ACCOUNT_PAGE_SIZE, pages: 0, account_concurrency: { supported: false, host_schema_version: 1, required_schema_version: 2, reason: "host_schema_v2_required" } });
+  const [sidebarAccounts, setSidebarAccounts] = useState<Account[]>([]);
+  const [sidebarProviderChannels, setSidebarProviderChannels] = useState<AIProviderChannelSnapshot[]>([]);
+  const [sidebarProviderRuntime, setSidebarProviderRuntime] = useState<AIProviderRuntimeSnapshot[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
@@ -364,6 +369,8 @@ function AccountManagerApp() {
     };
   }, []);
 
+
+
   const handleAPIError = useCallback((error: unknown) => {
     if (error instanceof api.APIError && error.status === 401) {
       clearSession();
@@ -374,6 +381,34 @@ function AccountManagerApp() {
     setNotice(errorText(error, locale));
   }, [locale]);
 
+  useEffect(() => {
+    if (authState !== "ready") return;
+    let cancelled = false;
+    let timer = 0;
+    const controller = new AbortController();
+    const refreshSidebarTelemetry = async () => {
+      try {
+        const [accounts, channels, runtime] = await Promise.all([
+          api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, controller.signal),
+          api.listAIProviderChannels(controller.signal),
+          api.getAIProviderRuntime(controller.signal),
+        ]);
+        if (cancelled) return;
+        setSidebarAccounts(accounts.accounts);
+        setSidebarProviderChannels(channels);
+        setSidebarProviderRuntime(runtime.snapshots);
+      } catch (error) {
+        // The sidebar is observability-only. Keep the last good snapshot when a
+        // transient provider/account endpoint fails, rather than disrupting the
+        // authenticated shell or replacing useful values with zeros.
+        if (!cancelled && error instanceof api.APIError && error.status === 401) handleAPIError(error);
+      } finally {
+        if (!cancelled) timer = window.setTimeout(refreshSidebarTelemetry, 10000);
+      }
+    };
+    void refreshSidebarTelemetry();
+    return () => { cancelled = true; controller.abort(); window.clearTimeout(timer); };
+  }, [authState, handleAPIError]);
   const handleExperimentalSettingsChange = useCallback((settings: ExperimentalSettings) => {
     setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);
   }, []);
@@ -1125,6 +1160,19 @@ function AccountManagerApp() {
   const hasActiveFilters = Object.values(filters).some(Boolean) || Boolean(searchDraft);
   const hasCustomAccountSort = !isDefaultAccountSort(accountSort);
   const hasAccountViewPreferences = hasActiveFilters || hasCustomAccountSort;
+  const sidebarStats = useMemo(() => {
+    const enabledAccounts = sidebarAccounts.filter((account) => !account.disabled);
+    const accountActive = enabledAccounts.reduce((sum, account) => sum + Math.max(0, account.concurrency?.active ?? 0), 0);
+    const accountLimit = enabledAccounts.reduce((sum, account) => sum + Math.max(0, account.concurrency?.limit ?? account.concurrency?.request_limit ?? 0), 0);
+    const accountCost = enabledAccounts.reduce((sum, account) => sum + Math.max(0, account.usage?.credit?.amount_usd ?? 0), 0);
+    const providerEntries = sidebarProviderChannels.flatMap((channel) => channel.entries ?? []);
+    const enabledProviders = providerEntries.filter((entry) => !entry.disabled);
+    const providerActive = sidebarProviderRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.active ?? 0), 0);
+    const providerLimit = sidebarProviderRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.limit ?? 0), 0);
+    const providerCost = sidebarProviderRuntime.reduce((sum, snapshot) => sum + Math.max(0, snapshot.amount_usd ?? 0), 0);
+    return { enabledAccounts: enabledAccounts.length, accountActive, accountLimit, accountCost, enabledProviders: enabledProviders.length, providerActive, providerLimit, providerCost };
+  }, [sidebarAccounts, sidebarProviderChannels, sidebarProviderRuntime]);
+
   const panelOpen = Boolean(jobOpen && job || forceJobOpen && forceJob);
 
   return (
@@ -1152,8 +1200,13 @@ function AccountManagerApp() {
           <button type="button" className={activeView === "settings" ? "active" : ""} aria-current={activeView === "settings" ? "page" : undefined} onClick={() => setActiveView("settings")}><Settings2 size={16} /><span>{tx("ui.other_settings")}</span></button>
         </nav>
         <div className="sidebar-telemetry" aria-live="polite">
-          <div className="sidebar-telemetry-row"><span><ShieldCheck size={14} />{tx("ui.accounts")}</span><strong>{data.total}</strong></div>
-          <div className="sidebar-telemetry-row"><span><Wifi size={14} />{tx("ui.system_status")}</span><strong>{job?.running || forceJob?.running ? tx("ui.running") : tx("ui.ready")}</strong></div>
+          <div className="sidebar-telemetry-row"><span><ShieldCheck size={14} />{tx("ui.sidebar_enabled_accounts")}</span><strong>{sidebarStats.enabledAccounts}</strong></div>
+          <div className="sidebar-telemetry-row"><span><Wifi size={14} />{tx("ui.sidebar_account_concurrency")}</span><strong>{sidebarStats.accountActive} / {sidebarStats.accountLimit}</strong></div>
+          <div className="sidebar-telemetry-row"><span>{tx("ui.sidebar_account_cost")}</span><strong>${sidebarStats.accountCost.toFixed(2)}</strong></div>
+          <div className="sidebar-telemetry-row"><span><Boxes size={14} />{tx("ui.sidebar_enabled_providers")}</span><strong>{sidebarStats.enabledProviders}</strong></div>
+          <div className="sidebar-telemetry-row"><span><Wifi size={14} />{tx("ui.sidebar_provider_concurrency")}</span><strong>{sidebarStats.providerActive} / {sidebarStats.providerLimit}</strong></div>
+          <div className="sidebar-telemetry-row"><span>{tx("ui.sidebar_provider_cost")}</span><strong>${sidebarStats.providerCost.toFixed(2)}</strong></div>
+          <div className="sidebar-telemetry-row"><span>{tx("ui.system_status")}</span><strong>{job?.running || forceJob?.running ? tx("ui.running") : tx("ui.ready")}</strong></div>
           {job?.id || forceJob?.id ? <div className="sidebar-job-summary"><span>{tx("ui.current_job")}</span><strong>{job?.running ? `${job.done}/${job.total}` : forceJob?.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel((job ?? forceJob)!.state)}</strong></div> : null}
         </div>
       </aside>

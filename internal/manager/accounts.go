@@ -59,15 +59,16 @@ type AccountLifecycleReader interface {
 }
 
 type AccountService struct {
-	host          AuthHost
-	usage         UsageSnapshotReader
-	storageExtras []UsageStorageDiscoverer
-	concurrency   *AccountConcurrencyService
-	quotaPolicies *QuotaPolicyService
-	codexIdentity *CodexIdentityOverrideService
-	observer      interface{ ObserveAccounts([]Account) }
-	detailCacheMu sync.Mutex
-	detailCache   map[string]accountDetailCacheEntry
+	host           AuthHost
+	usage          UsageSnapshotReader
+	storageExtras  []UsageStorageDiscoverer
+	concurrency    *AccountConcurrencyService
+	quotaPolicies  *QuotaPolicyService
+	codexIdentity  *CodexIdentityOverrideService
+	observer       interface{ ObserveAccounts([]Account) }
+	detailCacheMu  sync.Mutex
+	detailCache    map[string]accountDetailCacheEntry
+	usageBindingMu sync.Mutex
 }
 
 // AddUsageStorageDiscoverer lets other non-secret runtime stores follow the
@@ -126,6 +127,38 @@ func NewAccountService(host AuthHost, usage ...UsageSnapshotReader) *AccountServ
 		service.usage = usage[0]
 	}
 	return service
+}
+
+// EnsureUsageStorageBindings primes the usage tracker with the host's auth
+// identity aliases before scheduler admission. The scheduler may run before
+// the management UI has requested /accounts, but CPA can identify a candidate
+// by credential ID while quota policies are keyed by auth index.
+func (s *AccountService) EnsureUsageStorageBindings(ctx context.Context) {
+	if s == nil || s.host == nil || s.usage == nil {
+		return
+	}
+	ready := false
+	if reader, ok := s.usage.(interface{ UsageBindingsReady() bool }); ok {
+		ready = reader.UsageBindingsReady()
+	}
+	if ready {
+		return
+	}
+	s.usageBindingMu.Lock()
+	defer s.usageBindingMu.Unlock()
+	if reader, ok := s.usage.(interface{ UsageBindingsReady() bool }); ok && reader.UsageBindingsReady() {
+		return
+	}
+	entries, errList := s.host.ListAuth(ctx)
+	if errList != nil {
+		return
+	}
+	if discoverer, ok := s.usage.(UsageStorageDiscoverer); ok {
+		discoverer.DiscoverAuthStorage(entries)
+	}
+	for _, discoverer := range s.storageExtras {
+		discoverer.DiscoverAuthStorage(entries)
+	}
 }
 
 func (s *AccountService) List(ctx context.Context, query ListQuery) (ListResponse, error) {

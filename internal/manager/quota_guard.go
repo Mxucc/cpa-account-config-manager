@@ -58,22 +58,36 @@ func (g *AccountQuotaGuard) schedulerCandidateQuotaLimited(candidate cpaapi.Sche
 			identifiers = append(identifiers, value)
 		}
 	}
-	seen := make(map[string]struct{}, len(identifiers))
+	seen := make(map[string]struct{}, len(identifiers)*2)
 	for _, identifier := range identifiers {
+		identifier = strings.TrimSpace(identifier)
 		if identifier == "" {
 			continue
 		}
-		if _, ok := seen[identifier]; ok {
-			continue
+		resolved := identifier
+		if g.usage != nil {
+			if canonical := g.usage.ResolveAuthIndex(identifier); canonical != "" {
+				resolved = canonical
+			}
 		}
-		seen[identifier] = struct{}{}
-		policy := g.policies.AccountPolicy(identifier)
-		if quotaPolicyEmpty(policy) {
-			continue
-		}
-		usage := g.usage.Snapshot(identifier)
-		if usage != nil && usage.Codex != nil && accountQuotaLimitReached(policy, usage.Codex) {
-			return true
+		for _, policyKey := range []string{identifier, resolved} {
+			policyKey = strings.TrimSpace(policyKey)
+			if policyKey == "" {
+				continue
+			}
+			lookupKey := policyKey + "\x00" + resolved
+			if _, ok := seen[lookupKey]; ok {
+				continue
+			}
+			seen[lookupKey] = struct{}{}
+			policy := g.policies.AccountPolicy(policyKey)
+			if quotaPolicyEmpty(policy) {
+				continue
+			}
+			usage := g.usage.Snapshot(resolved)
+			if usage != nil && usage.Codex != nil && accountQuotaLimitReached(policy, usage.Codex) {
+				return true
+			}
 		}
 	}
 	return false

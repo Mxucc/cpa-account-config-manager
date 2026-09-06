@@ -110,3 +110,30 @@ func TestAccountQuotaGuardFiltersLimitedSchedulerCandidates(t *testing.T) {
 		t.Fatalf("all limited candidates = %#v, changed=%v", filtered, changed)
 	}
 }
+
+func TestAccountQuotaGuardMatchesSchedulerCredentialIDToAccountPolicy(t *testing.T) {
+	usage := NewUsageTracker()
+	t.Cleanup(func() { usage.Close() })
+	usage.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{
+		ID:        "credential-id",
+		AuthIndex: "auth-index",
+		Provider:  "codex",
+		Email:     "hello@example.com",
+	}})
+	used := 52.0
+	usage.ObserveCredentialUsage("auth-index", &CodexUsageSnapshot{SevenDay: &UsageWindowSnapshot{UsedPercent: used}})
+	limit := 50
+	policies := NewQuotaPolicyService()
+	policies.Configure(Config{DataDir: t.TempDir()})
+	if err := policies.SetAccountPolicy("auth-index", AccountQuotaPolicy{SevenDay: QuotaWindowPolicy{LimitPercent: &limit}}); err != nil {
+		t.Fatal(err)
+	}
+	guard := NewAccountQuotaGuard(usage, policies)
+	filtered, changed := guard.FilterSchedulerCandidates(cpaapi.SchedulerPickRequest{Candidates: []cpaapi.SchedulerAuthCandidate{{ID: "credential-id"}, {ID: "next-account"}}})
+	if !changed || len(filtered) != 1 || filtered[0].ID != "next-account" {
+		t.Fatalf("credential-id candidate was not filtered by account policy: %#v, changed=%v", filtered, changed)
+	}
+	if snapshot := usage.Snapshot("credential-id"); snapshot == nil || snapshot.Codex == nil || snapshot.Codex.SevenDay == nil || snapshot.Codex.SevenDay.UsedPercent != used {
+		t.Fatalf("credential-id usage snapshot did not resolve to auth index: %#v", snapshot)
+	}
+}

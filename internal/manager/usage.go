@@ -1028,6 +1028,7 @@ func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
 		return nil
 	}
 	t.mu.RLock()
+	authIndex = t.resolveUsageAuthIndexLocked(authIndex)
 	storageKey, identity := t.usageStorageKeyLocked(authIndex)
 	if t.bindingsReady && identity == (usageIdentityFingerprint{}) {
 		t.mu.RUnlock()
@@ -1039,6 +1040,33 @@ func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
 		return nil
 	}
 	return publicUsageSnapshot(aggregate, t.currentTime())
+}
+
+// ResolveAuthIndex maps the credential ID or auth index exposed by CPA's
+// scheduler back to the canonical auth index used by account policies and
+// durable usage bindings. CPA may identify the same account with either value.
+func (t *UsageTracker) UsageBindingsReady() bool {
+	if t == nil {
+		return false
+	}
+	t.mu.RLock()
+	ready := t.bindingsReady
+	t.mu.RUnlock()
+	return ready
+}
+
+func (t *UsageTracker) ResolveAuthIndex(identifier string) string {
+	if t == nil {
+		return ""
+	}
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return ""
+	}
+	t.mu.RLock()
+	resolved := t.resolveUsageAuthIndexLocked(identifier)
+	t.mu.RUnlock()
+	return resolved
 }
 
 func (t *UsageTracker) UsageIdentity(authIndex string) string {

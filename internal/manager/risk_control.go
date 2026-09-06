@@ -455,6 +455,9 @@ func (s *RiskControlService) UpdateConfig(config RiskControlConfig) (RiskControl
 	}
 	s.storageError = ""
 	s.mu.Unlock()
+	if s.audit != nil {
+		s.audit.restart(s, normalized.Audit.WorkerCount, normalized.Audit.QueueCapacity)
+	}
 	return s.Snapshot(), nil
 }
 

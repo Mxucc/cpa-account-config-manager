@@ -922,3 +922,33 @@ func TestHandleSchedulerPickSkipsQuotaLimitedCredentialBeforeFirstAccountList(t 
 		t.Fatalf("scheduler should prime auth bindings exactly once, ListAuth calls = %d", got)
 	}
 }
+
+func TestHandleSchedulerPickHandlesEmptyQuotaFilteredPool(t *testing.T) {
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{ID: "credential-limited", AuthIndex: "auth-limited", Provider: "codex", Type: "codex", Email: "limited@example.com", Path: "/auths/limited.json"},
+	}}
+	app := NewApp(host, []byte("index"))
+	defer app.Close()
+	app.ConfigureHost([]byte("data_dir: "+t.TempDir()), cpaapi.SchemaVersion)
+
+	used := 52.0
+	app.usage.ObserveCredentialUsage("auth-limited", &CodexUsageSnapshot{SevenDay: &UsageWindowSnapshot{UsedPercent: used}})
+	limit := 50
+	if err := app.quotaPolicies.SetAccountPolicy("auth-limited", AccountQuotaPolicy{SevenDay: QuotaWindowPolicy{LimitPercent: &limit}}); err != nil {
+		t.Fatal(err)
+	}
+	concurrencyLimit, requestLimit := 10, 3
+	if err := app.concurrency.SetLimits(Account{ID: "auth-limited", AuthID: "credential-limited"}, &concurrencyLimit, &requestLimit); err != nil {
+		t.Fatal(err)
+	}
+
+	response := app.HandleSchedulerPick(cpaapi.SchedulerPickRequest{
+		Provider: "codex",
+		Candidates: []cpaapi.SchedulerAuthCandidate{
+			{ID: "credential-limited", Provider: "codex"},
+		},
+	})
+	if !response.Handled || response.AuthID != "" {
+		t.Fatalf("empty quota-filtered pool should be handled without selecting a limited account: %#v", response)
+	}
+}

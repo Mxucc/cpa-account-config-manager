@@ -1836,7 +1836,7 @@ function normalizeAIProviderRuntimeResponse(response: unknown): AIProviderRuntim
       ...raw,
       waiting: raw.waiting ?? 0,
       request_limit: raw.request_limit ?? raw.limit_15s ?? 0,
-      request_window_seconds: raw.request_window_seconds ?? 15,
+      request_window_seconds: raw.request_window_seconds ?? 0,
       used_requests: raw.used_requests ?? raw.used_15s ?? 0,
       limit_15s: raw.limit_15s ?? raw.request_limit ?? 0,
       used_60s: raw.used_60s ?? 0,

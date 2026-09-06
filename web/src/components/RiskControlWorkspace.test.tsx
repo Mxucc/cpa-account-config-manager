@@ -130,4 +130,34 @@ describe("RiskControlWorkspace", () => {
     expect(body.audit).toMatchObject({ model_source: "account", account_id: "account-1", model: "gpt-5.6-sol", endpoint: "", api_key: "" });
   });
 
+  it("renders when model_filter is null without crashing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(respond({
+      ...snapshot,
+      config: { ...snapshot.config, model_filter: null as unknown as typeof snapshot.config.model_filter },
+    }));
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    expect(within(workspace).getByText("暂无风控事件。")).toBeInTheDocument();
+    expect(within(workspace).getByRole("tab", { name: "内容审核" })).toBeInTheDocument();
+  });
+
+  it("shows CPA model status for native audit sources instead of an API key warning", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(respond({
+      ...snapshot,
+      config: { ...snapshot.config, audit: { ...snapshot.config.audit, model_source: "account", account_id: "account-1", model: "gpt-5.6-sol", api_key: "", api_key_set: false } },
+      status: { ...snapshot.status, audit: { ...snapshot.status.audit, api_key_configured: false, api_key_available: false } },
+    }));
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    await user.click(within(workspace).getByRole("tab", { name: "提示词审计" }));
+    const status = workspace.querySelector(".risk-audit-status");
+    expect(status).not.toBeNull();
+    expect(status).toHaveTextContent("CPA 模型");
+    expect(status).toHaveTextContent("未配置");
+    expect(status).not.toHaveTextContent("API Key");
+  });
+
 });

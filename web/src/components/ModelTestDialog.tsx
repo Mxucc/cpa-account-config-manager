@@ -208,7 +208,7 @@ function ModelTestOutcome({ result }: { result: ModelTestResult }) {
       {result.model_policy ? (
         <div className="model-test-experiment-result" role="status">
           <span><ShieldQuestion size={15} />{tx(result.model_policy.status === "applied" ? "ui.model_allow_list_applied" : "ui.model_allow_list_not_applied")}</span>
-          <div><strong>{tx(modelPolicyReasonLabels[result.model_policy.reason_code] || "ui.operation_failed")}</strong><code>{result.model_policy.models.join(", ")}</code></div>
+          <div><strong>{tx(modelPolicyReasonLabels[result.model_policy.reason_code] || "ui.operation_failed")}</strong><code>{result.model_policy.models?.join(", ") ?? "-"}</code></div>
         </div>
       ) : null}
       {showAttemptTimeline ? <ModelTestAttempts attempts={attempts} /> : result.response ? <ModelTestResponse response={result.response} /> : null}

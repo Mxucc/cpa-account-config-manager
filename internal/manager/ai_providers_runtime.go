@@ -1047,7 +1047,10 @@ func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 		}
 		aggregate.RequestEvents = pruneProviderRequestEvents(aggregate.RequestEvents, now)
 		windowSeconds := providerConcurrencyWindowSeconds(policy, configurable)
-		usedRequests := countProviderRequestEvents(aggregate.RequestEvents, now.Add(-time.Duration(windowSeconds)*time.Second), now)
+		usedRequests := 0
+		if windowSeconds > 0 {
+			usedRequests = countProviderRequestEvents(aggregate.RequestEvents, now.Add(-time.Duration(windowSeconds)*time.Second), now)
+		}
 		limit, requestLimit := 0, 0
 		if configurable && policy.Concurrency != nil {
 			limit = *policy.Concurrency
@@ -1198,7 +1201,7 @@ func providerConcurrencyWindowSeconds(policy ProviderQuotaPolicy, configured boo
 	if configured && policy.WindowSeconds != nil && *policy.WindowSeconds >= 1 && *policy.WindowSeconds <= 3600 {
 		return *policy.WindowSeconds
 	}
-	return 15
+	return 0
 }
 
 func countProviderRequestEvents(events []time.Time, cutoff, now time.Time) int {

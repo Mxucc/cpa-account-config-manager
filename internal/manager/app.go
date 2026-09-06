@@ -437,8 +437,13 @@ func (a *App) HandleSchedulerPick(request cpaapi.SchedulerPickRequest) cpaapi.Sc
 		if changed {
 			// The scheduler protocol only returns one selected AuthID; it does not
 			// let a plugin return a rewritten candidate list. When quota filtering
-			// leaves exactly one account, select it explicitly so CPA cannot fall
-			// back to the original, quota-limited sticky candidate.
+			// leaves no eligible accounts, handle the pick with an empty AuthID so
+			// CPA sticky routing cannot fall back to a quota-limited candidate.
+			if len(filtered) == 0 {
+				return cpaapi.SchedulerPickResponse{Handled: true}
+			}
+			// When quota filtering leaves exactly one account, select it explicitly
+			// so CPA cannot fall back to the original, quota-limited sticky candidate.
 			if len(filtered) == 1 {
 				return cpaapi.SchedulerPickResponse{AuthID: filtered[0].ID, Handled: true}
 			}

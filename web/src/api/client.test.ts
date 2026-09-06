@@ -1606,6 +1606,7 @@ describe("management API client", () => {
     const response = await getAIProviderRuntime();
     expect(response.snapshots[0]).toMatchObject({
       limit_15s: 0, used_60s: 0, used_15s: 0,
+      request_window_seconds: 0, used_requests: 0,
       quota: { five_hour_amount_usd: 1.25, seven_day_amount_usd: 4.5, five_hour_percent: 12.5, seven_day_percent: 4.5 },
     });
     await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });

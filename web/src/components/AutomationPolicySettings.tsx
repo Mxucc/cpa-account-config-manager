@@ -356,11 +356,11 @@ function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange
 function GlobalQuotaEditor({ policy, disabled, onChange }: { policy: AccountQuotaPolicy | null; disabled: boolean; onChange: (window: "five_hour" | "seven_day", field: "limit_percent", value: string) => void }) {
   const { tx } = useI18n();
   const value = policy ?? { five_hour: {}, seven_day: {} };
-  return <div className="policy-subsection global-quota-editor"><div className="policy-subsection-heading"><strong>{tx("ui.account_quota_limit")}</strong><span>{tx("ui.account_quota_limit_description")}</span></div><div className="settings-inline-grid"><QuotaInput label={tx("ui.quota_window_five_hour")} value={value.five_hour.limit_percent} disabled={disabled} suffix="%" onChange={(next) => onChange("five_hour", "limit_percent", next)} /><QuotaInput label={tx("ui.quota_window_seven_day")} value={value.seven_day.limit_percent} disabled={disabled} suffix="%" onChange={(next) => onChange("seven_day", "limit_percent", next)} /></div></div>;
+  return <div className="policy-subsection global-quota-editor"><div className="policy-subsection-heading"><strong>{tx("ui.account_quota_limit")}</strong><span>{tx("ui.account_quota_limit_description")}</span></div><div className="settings-inline-grid"><QuotaInput label={`${tx("ui.quota_window_five_hour")} · ${tx("ui.account_quota_limit_percent")}`} value={value.five_hour.limit_percent} disabled={disabled} onChange={(next) => onChange("five_hour", "limit_percent", next)} /><QuotaInput label={`${tx("ui.quota_window_seven_day")} · ${tx("ui.account_quota_limit_percent")}`} value={value.seven_day.limit_percent} disabled={disabled} onChange={(next) => onChange("seven_day", "limit_percent", next)} /></div></div>;
 }
 
-function QuotaInput({ label, value, disabled, suffix, onChange }: { label: string; value?: number; disabled: boolean; suffix: string; onChange: (value: string) => void }) {
-  return <label className="filter-control"><span>{label} · {suffix}</span><input type="number" min="0" max="100" value={value ?? ""} disabled={disabled} placeholder="-" onChange={(event) => onChange(event.target.value)} /></label>;
+function QuotaInput({ label, value, disabled, onChange }: { label: string; value?: number; disabled: boolean; onChange: (value: string) => void }) {
+  return <label className="filter-control"><span>{label}</span><input type="number" min="0" max="100" value={value ?? ""} disabled={disabled} placeholder="-" onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 function GlobalHeadersEditor({ value, disabled, onChange }: { value: HeaderPatch | null; disabled: boolean; onChange: (value: HeaderPatch | null) => void }) {

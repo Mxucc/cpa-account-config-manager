@@ -28,7 +28,7 @@ function snapshot(authIndex: string, amount = 0, active = 0, credentialBacked = 
     waiting: 0,
     limit: 0,
     request_limit: 0,
-    request_window_seconds: 15,
+    request_window_seconds: 0,
     used_requests: 0,
     limit_15s: 0,
     used_60s: 0,

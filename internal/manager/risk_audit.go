@@ -127,55 +127,198 @@ type CPAModelExecutor interface {
 }
 
 type riskAuditRuntime struct {
-	once          sync.Once
+	mu            sync.Mutex
 	queue         chan riskAuditTask
 	stop          chan struct{}
 	stopped       atomic.Bool
+	started       bool
+	workers       int
+	capacity      int
 	audit         riskAuditCounters
 	transport     AgentIdentityTransport
 	modelExecutor CPAModelExecutor
 }
 
 func newRiskAuditRuntime(transport AgentIdentityTransport) *riskAuditRuntime {
-	return &riskAuditRuntime{queue: make(chan riskAuditTask, riskAuditMaxQueueCapacity), stop: make(chan struct{}), transport: transport}
+	return &riskAuditRuntime{transport: transport}
 }
 
 func (r *riskAuditRuntime) setModelExecutor(executor CPAModelExecutor) {
-	if r != nil {
-		r.modelExecutor = executor
+	if r == nil {
+		return
 	}
+	r.mu.Lock()
+	r.modelExecutor = executor
+	r.mu.Unlock()
 }
 
 func (r *riskAuditRuntime) setTransport(transport AgentIdentityTransport) {
-	if r != nil {
-		r.transport = transport
+	if r == nil {
+		return
 	}
+	r.mu.Lock()
+	r.transport = transport
+	r.mu.Unlock()
 }
 
-func (r *riskAuditRuntime) start(service *RiskControlService) {
+func configuredRiskAuditWorkers(count int) int {
+	if count < 1 {
+		return 1
+	}
+	if count > riskAuditMaxWorkers {
+		return riskAuditMaxWorkers
+	}
+	return count
+}
+
+func configuredRiskAuditCapacity(capacity int) int {
+	if capacity < 1 {
+		return 1
+	}
+	if capacity > riskAuditMaxQueueCapacity {
+		return riskAuditMaxQueueCapacity
+	}
+	return capacity
+}
+
+func (r *riskAuditRuntime) start(service *RiskControlService, workerCount, queueCapacity int) {
 	if r == nil || service == nil {
 		return
 	}
-	r.once.Do(func() {
-		for index := 0; index < riskAuditMaxWorkers; index++ {
-			go func() {
-				for {
-					select {
-					case <-r.stop:
-						return
-					case task := <-r.queue:
-						service.processAsyncAudit(task)
-					}
-				}
-			}()
+	workers := configuredRiskAuditWorkers(workerCount)
+	capacity := configuredRiskAuditCapacity(queueCapacity)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped.Load() {
+		return
+	}
+	if r.started && r.workers == workers && r.capacity == capacity && r.queue != nil && r.stop != nil {
+		return
+	}
+	r.stopLocked()
+	queue := make(chan riskAuditTask, capacity)
+	stop := make(chan struct{})
+	r.queue = queue
+	r.stop = stop
+	r.started = true
+	r.workers = workers
+	r.capacity = capacity
+	for index := 0; index < workers; index++ {
+		go r.runWorker(service, queue, stop)
+	}
+}
+
+func (r *riskAuditRuntime) runWorker(service *RiskControlService, queue <-chan riskAuditTask, stop <-chan struct{}) {
+	defer func() {
+		_ = recover()
+	}()
+	if service == nil || queue == nil || stop == nil {
+		return
+	}
+	for {
+		select {
+		case <-stop:
+			return
+		case task, ok := <-queue:
+			if !ok {
+				return
+			}
+			if task.module == "" && task.text == "" {
+				continue
+			}
+			service.processAsyncAudit(task)
 		}
-	})
+	}
+}
+
+func (r *riskAuditRuntime) restart(service *RiskControlService, workerCount, queueCapacity int) {
+	if r == nil || service == nil {
+		return
+	}
+	r.mu.Lock()
+	started := r.started && !r.stopped.Load()
+	r.mu.Unlock()
+	if !started {
+		return
+	}
+	r.start(service, workerCount, queueCapacity)
+}
+
+func (r *riskAuditRuntime) stopLocked() {
+	if r.stop != nil {
+		select {
+		case <-r.stop:
+		default:
+			close(r.stop)
+		}
+	}
+	r.queue = nil
+	r.stop = nil
+	r.started = false
 }
 
 func (r *riskAuditRuntime) shutdown() {
-	if r != nil && r.stopped.CompareAndSwap(false, true) {
-		close(r.stop)
+	if r == nil || !r.stopped.CompareAndSwap(false, true) {
+		return
 	}
+	r.mu.Lock()
+	r.stopLocked()
+	r.mu.Unlock()
+}
+
+func (r *riskAuditRuntime) enqueue(task riskAuditTask) bool {
+	if r == nil || r.stopped.Load() {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped.Load() || r.queue == nil || r.stop == nil {
+		return false
+	}
+	limit := task.config.QueueCapacity
+	if limit <= 0 || limit > r.capacity {
+		limit = r.capacity
+	}
+	if len(r.queue) >= limit {
+		return false
+	}
+	select {
+	case r.queue <- task:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *riskAuditRuntime) queueLength() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	queue := r.queue
+	r.mu.Unlock()
+	if queue == nil {
+		return 0
+	}
+	return len(queue)
+}
+
+func (r *riskAuditRuntime) currentModelExecutor() CPAModelExecutor {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.modelExecutor
+}
+
+func (r *riskAuditRuntime) currentTransport() AgentIdentityTransport {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.transport
 }
 
 func (r *riskAuditRuntime) counters(module string) *riskAuditCounters {
@@ -439,12 +582,16 @@ func (s *RiskControlService) auditExternal(config RiskExternalAuditConfig, promp
 		source = RiskAuditModelSourceExternal
 	}
 	if source == RiskAuditModelSourceAccount || source == RiskAuditModelSourceAIProvider {
-		if s == nil || s.audit == nil || s.audit.modelExecutor == nil {
+		if s == nil || s.audit == nil {
+			return riskAuditDecision{}, fmt.Errorf("CPA model execution is unavailable")
+		}
+		executor := s.audit.currentModelExecutor()
+		if executor == nil {
 			return riskAuditDecision{}, fmt.Errorf("CPA model execution is unavailable")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.TimeoutMS)*time.Millisecond)
 		defer cancel()
-		response, errCall := s.audit.modelExecutor.ExecuteModel(ctx, "", cpaapi.HostModelExecutionRequest{
+		response, errCall := executor.ExecuteModel(ctx, "", cpaapi.HostModelExecutionRequest{
 			EntryProtocol: "openai", ExitProtocol: "openai", Model: config.Model, Stream: false,
 			Body: payload, Headers: http.Header{"Accept": {"application/json"}, "Content-Type": {"application/json"}},
 		})
@@ -462,7 +609,11 @@ func (s *RiskControlService) auditExternal(config RiskExternalAuditConfig, promp
 	if source != RiskAuditModelSourceExternal {
 		return riskAuditDecision{}, fmt.Errorf("unsupported audit model source")
 	}
-	if s == nil || s.audit == nil || s.audit.transport == nil {
+	if s == nil || s.audit == nil {
+		return riskAuditDecision{}, fmt.Errorf("CPA host HTTP transport is unavailable")
+	}
+	transport := s.audit.currentTransport()
+	if transport == nil {
 		return riskAuditDecision{}, fmt.Errorf("CPA host HTTP transport is unavailable")
 	}
 	credential := strings.TrimSpace(config.APIKey)
@@ -475,7 +626,7 @@ func (s *RiskControlService) auditExternal(config RiskExternalAuditConfig, promp
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.TimeoutMS)*time.Millisecond)
 	defer cancel()
-	response, err := s.audit.transport.AgentIdentityDo(ctx, "", cpaapi.HostHTTPRequest{Method: http.MethodPost, URL: config.Endpoint, Headers: headers, Body: payload})
+	response, err := transport.AgentIdentityDo(ctx, "", cpaapi.HostHTTPRequest{Method: http.MethodPost, URL: config.Endpoint, Headers: headers, Body: payload})
 	credential = ""
 	if err != nil {
 		return riskAuditDecision{}, fmt.Errorf("audit request failed: %w", err)
@@ -616,20 +767,17 @@ func (s *RiskControlService) enqueueAudit(task riskAuditTask) {
 	if s == nil || s.audit == nil || s.audit.stopped.Load() {
 		return
 	}
-	s.audit.start(s)
+	s.audit.start(s, task.config.WorkerCount, task.config.QueueCapacity)
 	counters := s.audit.counters(task.module)
-	if len(s.audit.queue) >= task.config.QueueCapacity {
-		counters.dropped.Add(1)
-		return
-	}
-	select {
-	case s.audit.queue <- task:
-	default:
+	if !s.audit.enqueue(task) {
 		counters.dropped.Add(1)
 	}
 }
 
 func (s *RiskControlService) processAsyncAudit(task riskAuditTask) {
+	if task.module == "" && task.text == "" && task.config.Mode == "" {
+		return
+	}
 	_, _ = s.processAudit(task)
 }
 
@@ -719,8 +867,8 @@ func (s *RiskControlService) auditStatus(config RiskExternalAuditConfig, module 
 	apiKeyConfigured := config.APIKey != "" || config.APIKeySet
 	apiKeyAvailable := config.APIKey != ""
 	if config.ModelSource == RiskAuditModelSourceAccount || config.ModelSource == RiskAuditModelSourceAIProvider {
-		apiKeyConfigured = config.Model != ""
-		apiKeyAvailable = s != nil && s.audit != nil && s.audit.modelExecutor != nil
+		apiKeyConfigured = strings.TrimSpace(config.Model) != ""
+		apiKeyAvailable = s != nil && s.audit != nil && s.audit.currentModelExecutor() != nil
 	}
 	status := RiskAuditModuleStatus{
 		Active:           config.Enabled && config.Mode != RiskControlModeOff,
@@ -733,7 +881,7 @@ func (s *RiskControlService) auditStatus(config RiskExternalAuditConfig, module 
 	if s == nil || s.audit == nil {
 		return status
 	}
-	status.QueueLength = len(s.audit.queue)
+	status.QueueLength = s.audit.queueLength()
 	counters := s.audit.counters(module)
 	status.Processed = counters.processed.Load()
 	status.Blocked = counters.blocked.Load()

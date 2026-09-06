@@ -295,7 +295,7 @@ function ProviderPolicyFields({
         </label>
         <label className="field-block">
           <span>{tx("ui.ai_provider_concurrency_window_seconds")}</span>
-          <input type="number" min="1" max="3600" step="1" value={entry.concurrencyWindowSeconds} onChange={(event) => onEntry({ concurrencyWindowSeconds: event.target.value })} placeholder="15" />
+          <input type="number" min="1" max="3600" step="1" value={entry.concurrencyWindowSeconds} onChange={(event) => onEntry({ concurrencyWindowSeconds: event.target.value })} placeholder="1-3600" />
           <small>{tx("ui.account_concurrency_window_seconds_help")}</small>
         </label>
         <label className="field-block">
@@ -745,7 +745,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
       accountID: entry.account_id,
       workspaceID: entry.workspace_id,
       concurrency15sLimit: policy?.concurrency_15s_limit === undefined ? "" : String(policy.concurrency_15s_limit),
-      concurrencyWindowSeconds: policy?.concurrency_window_seconds === undefined ? "15" : String(policy.concurrency_window_seconds),
+      concurrencyWindowSeconds: policy?.concurrency_window_seconds === undefined ? "" : String(policy.concurrency_window_seconds),
       concurrencyLimit: policy?.concurrency_limit === undefined ? "" : String(policy.concurrency_limit),
       fiveHourBudgetAmount: policy?.five_hour.budget_amount_usd === undefined ? "" : String(policy.five_hour.budget_amount_usd),
       fiveHourLimitPercent: policy?.five_hour.limit_percent === undefined ? "" : String(policy.five_hour.limit_percent),
@@ -853,7 +853,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
       : matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.request_limit), 0);
     const latestRuntime = matches.reduce((latestSnapshot, snapshot) =>
       snapshot.updated_at > latestSnapshot.updated_at ? snapshot : latestSnapshot, matches[0]);
-    const requestWindowSeconds = latestRuntime.request_window_seconds || 15;
+    const requestWindowSeconds = latestRuntime.request_window_seconds ?? 0;
     const quota = {
       five_hour_amount_usd: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.quota?.five_hour_amount_usd ?? 0), 0),
       seven_day_amount_usd: matches.reduce((sum, snapshot) => sum + Math.max(0, snapshot.quota?.seven_day_amount_usd ?? 0), 0),
@@ -898,6 +898,15 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
     if (amount < 0.000001) return "<$0.000001";
     return `$${amount.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
   };
+  const providerRequestWindowSeconds = (
+    policyWindow: number | undefined,
+    runtimeWindow: number | undefined,
+  ) => {
+    if (policyWindow !== undefined && policyWindow > 0) return policyWindow;
+    if (runtimeWindow !== undefined && runtimeWindow > 0) return runtimeWindow;
+    return "∞";
+  };
+
   const formatConcurrencyWindow = (
     used: number | undefined,
     configuredLimit: number | undefined,
@@ -1512,7 +1521,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                 <div className="ai-provider-runtime-detail">
                   {(runtime?.supported || policy) ? <>
                     <div className="ai-provider-detail-row"><span>{tx("ui.account_concurrency_active")}</span><strong>{Math.max(0, runtime?.active ?? 0)}</strong></div>
-                    <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency_request_short", { seconds: policy?.concurrency_window_seconds ?? runtime?.request_window_seconds ?? 15, value: formatConcurrencyWindow(runtime?.used_requests, policy?.concurrency_15s_limit, runtime?.request_limit, runtime?.supported === true) })}</span></div>
+                    <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency_request_short", { seconds: providerRequestWindowSeconds(policy?.concurrency_window_seconds, runtime?.request_window_seconds), value: formatConcurrencyWindow(runtime?.used_requests, policy?.concurrency_15s_limit, runtime?.request_limit, runtime?.supported === true) })}</span></div>
                     <div className="ai-provider-detail-row"><span>{tx("ui.ai_provider_concurrency_queue_short", { value: runtime?.waiting ?? 0 })}</span></div>
                   </> : null}
                   {policy ? <>
@@ -1656,7 +1665,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                             <div className="ai-provider-runtime-concurrency" title={runtime?.supported && runtime.concurrency_configurable === true ? (runtimeUpdatedAt ? `${tx("ui.ai_provider_updated_at")}: ${runtimeUpdatedAt}` : tx("ui.ai_provider_concurrency_observable_only")) : tx("ui.ai_provider_concurrency_observable_only")}>
                               <span>{tx("ui.ai_provider_concurrency")}</span>
                               <strong>{tx("ui.ai_provider_concurrency_active_short", { value: `${Math.max(0, runtime?.active ?? 0)} / ${configuredConcurrencyLimit && configuredConcurrencyLimit > 0 ? configuredConcurrencyLimit : runtime?.limit && runtime.limit > 0 ? runtime.limit : "∞"}` })}</strong>
-                              <small>{tx("ui.ai_provider_concurrency_request_short", { seconds: policy?.concurrency_window_seconds ?? runtime?.request_window_seconds ?? 15, value: formatConcurrencyWindow(runtime?.used_requests, configuredRequestLimit, runtime?.request_limit, runtime?.supported === true) })}</small>
+                              <small>{tx("ui.ai_provider_concurrency_request_short", { seconds: providerRequestWindowSeconds(policy?.concurrency_window_seconds, runtime?.request_window_seconds), value: formatConcurrencyWindow(runtime?.used_requests, configuredRequestLimit, runtime?.request_limit, runtime?.supported === true) })}</small>
                               <small>{tx("ui.ai_provider_concurrency_queue_short", { value: Math.max(0, runtime?.waiting ?? 0) })}</small>
                             </div>
                             <div className="ai-provider-runtime-usage">

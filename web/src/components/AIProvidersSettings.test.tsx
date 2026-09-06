@@ -191,7 +191,7 @@ describe("AIProvidersSettings", () => {
     });
     await waitFor(() => expect(Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent)).toContain("并发用量"));
     expect(row.textContent).toContain("并发 2 / 100");
-    expect(row.textContent).toContain("15 秒请求 2 / 3");
+    expect(row.textContent).toContain("∞ 秒请求 2 / 3");
     expect(row.textContent).toContain("队列 0");
     expect(row.textContent).toContain("1,234");
     expect(row.textContent).toContain("$0.0123");

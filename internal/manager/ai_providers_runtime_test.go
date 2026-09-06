@@ -600,3 +600,19 @@ func TestProviderRuntimeAPIKeyWithAuthIndexUsesCredentialIdentity(t *testing.T) 
 		t.Fatalf("provider identity = %+v", snapshots[0])
 	}
 }
+
+func TestProviderRuntimeLeavesUnsetRequestWindowUnlimited(t *testing.T) {
+	tracker := NewProviderRuntimeTracker(nil)
+	tracker.ObserveRequest(cpaapi.RequestInterceptRequest{
+		RequestID: "request-a",
+		ToFormat:  "openai",
+		Metadata:  map[string]any{"selected_auth_index": "auth-a", "provider": "openai", "auth_type": "api_key"},
+	})
+	snapshot := tracker.Snapshot()[0]
+	if snapshot.RequestWindowSeconds != 0 || snapshot.UsedRequests != 0 {
+		t.Fatalf("unset provider window should stay unlimited: %+v", snapshot)
+	}
+	if snapshot.Used15s != 1 {
+		t.Fatalf("legacy 15s counter should still observe the request: %+v", snapshot)
+	}
+}

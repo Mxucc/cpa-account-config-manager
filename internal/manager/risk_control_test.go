@@ -463,3 +463,64 @@ func TestPromptAuditWrapsInputAsUntrustedData(t *testing.T) {
 		t.Fatal("safe audit unexpectedly changed request")
 	}
 }
+
+func TestRiskAuditRuntimeUsesConfiguredWorkersAndQueueCapacity(t *testing.T) {
+	service := NewRiskControlService()
+	service.Configure(Config{DataDir: t.TempDir()})
+	config := defaultRiskControlConfig()
+	config.Audit.Enabled = true
+	config.Audit.Mode = RiskControlModeObserve
+	config.Audit.Endpoint = "https://guard.example.test/v1/chat/completions"
+	config.Audit.Model = "guard-model"
+	config.Audit.WorkerCount = 3
+	config.Audit.QueueCapacity = 4
+	if _, err := service.UpdateConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	service.enqueueAudit(riskAuditTask{module: "audit", config: config.Audit.RiskExternalAuditConfig, text: "queued"})
+	if service.audit == nil {
+		t.Fatal("audit runtime was not created")
+	}
+	service.audit.mu.Lock()
+	workers, capacity := service.audit.workers, service.audit.capacity
+	service.audit.mu.Unlock()
+	if workers != 3 || capacity != 4 {
+		t.Fatalf("runtime workers/capacity = %d/%d, want 3/4", workers, capacity)
+	}
+
+	config.Audit.WorkerCount = 1
+	config.Audit.QueueCapacity = 2
+	if _, err := service.UpdateConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	service.audit.mu.Lock()
+	workers, capacity = service.audit.workers, service.audit.capacity
+	service.audit.mu.Unlock()
+	if workers != 1 || capacity != 2 {
+		t.Fatalf("restarted runtime workers/capacity = %d/%d, want 1/2", workers, capacity)
+	}
+}
+
+func TestRiskAuditStatusUsesCPAModelExecutorAvailability(t *testing.T) {
+	service := NewRiskControlService()
+	config := defaultRiskAuditConfig().RiskExternalAuditConfig
+	config.Enabled = true
+	config.Mode = RiskControlModeObserve
+	config.ModelSource = RiskAuditModelSourceAccount
+	config.Model = "gpt-5.6-sol"
+	status := service.auditStatus(config, "audit")
+	if !status.APIKeyConfigured || status.APIKeyAvailable {
+		t.Fatalf("account source without executor = %#v", status)
+	}
+	service.SetModelExecutor(&fakeCPAModelExecutor{})
+	status = service.auditStatus(config, "audit")
+	if !status.APIKeyConfigured || !status.APIKeyAvailable {
+		t.Fatalf("account source with executor = %#v", status)
+	}
+}
+
+type fakeCPAModelExecutor struct{}
+
+func (fakeCPAModelExecutor) ExecuteModel(context.Context, string, cpaapi.HostModelExecutionRequest) (cpaapi.HostModelExecutionResponse, error) {
+	return cpaapi.HostModelExecutionResponse{}, nil
+}

@@ -2287,10 +2287,9 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .policy-subsection-heading span, .policy-action-help { color: var(--text-muted); font-size: calc(11px * var(--font-size-scale)); line-height: 1.45; }
 .policy-action-help { margin: 0 0 8px; }
 .sidebar-telemetry { margin-top: auto; display: grid; gap: 9px; padding: 13px 11px; border: 1px solid var(--border-color); border-radius: 11px; background: color-mix(in srgb, var(--bg-primary) 76%, transparent); box-shadow: var(--shadow-sm); }
-.sidebar-telemetry-row, .sidebar-job-summary { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 9px; }
-.sidebar-telemetry-row span, .sidebar-job-summary span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); }
-.sidebar-telemetry-row strong, .sidebar-job-summary strong { color: var(--text-primary); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); }
-.sidebar-job-summary { padding-top: 9px; border-top: 1px solid var(--border-color); }
+.sidebar-telemetry-row { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+.sidebar-telemetry-row span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); }
+.sidebar-telemetry-row strong { color: var(--text-primary); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); }
 .app-content { min-width: 0; width: 100%; }
 .app-content .app-header { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
 .page-context { min-width: 0; display: grid; gap: 2px; }

@@ -1207,7 +1207,6 @@ function AccountManagerApp() {
           <div className="sidebar-telemetry-row"><span><Wifi size={14} />{tx("ui.sidebar_provider_concurrency")}</span><strong>{sidebarStats.providerActive} / {sidebarStats.providerLimit}</strong></div>
           <div className="sidebar-telemetry-row"><span>{tx("ui.sidebar_provider_cost")}</span><strong>${sidebarStats.providerCost.toFixed(2)}</strong></div>
           <div className="sidebar-telemetry-row"><span>{tx("ui.system_status")}</span><strong>{job?.running || forceJob?.running ? tx("ui.running") : tx("ui.ready")}</strong></div>
-          {job?.id || forceJob?.id ? <div className="sidebar-job-summary"><span>{tx("ui.current_job")}</span><strong>{job?.running ? `${job.done}/${job.total}` : forceJob?.running ? `${forceJob.done}/${forceJob.total}` : jobStateLabel((job ?? forceJob)!.state)}</strong></div> : null}
         </div>
       </aside>
       <div className="page-frame app-content">

@@ -500,12 +500,15 @@ func normalizeRiskSystemPrompts(prompts []RiskSystemPrompt) ([]RiskSystemPrompt,
 			// The built-in prompt is a stable safety boundary. Older persisted
 			// installations used the short English prompt; transparently migrate
 			// that exact legacy value, while still rejecting all user tampering.
-			if prompt != defaultPrompt {
-				if prompt.BuiltIn && prompt.Name == defaultPrompt.Name && prompt.SystemPrompt == defaultRiskSystemPromptLegacy {
-					prompt = defaultPrompt
-				} else {
-					return nil, fmt.Errorf("system_prompts default prompt is immutable")
-				}
+			// TrimSpace is applied to every catalog entry, so compare against the
+			// trimmed canonical body and then restore the immutable default.
+			switch {
+			case prompt.Name == defaultPrompt.Name && prompt.BuiltIn && prompt.SystemPrompt == strings.TrimSpace(defaultPrompt.SystemPrompt):
+				prompt = defaultPrompt
+			case prompt.Name == defaultPrompt.Name && prompt.BuiltIn && prompt.SystemPrompt == defaultRiskSystemPromptLegacy:
+				prompt = defaultPrompt
+			default:
+				return nil, fmt.Errorf("system_prompts default prompt is immutable")
 			}
 			defaultSeen = true
 		} else if prompt.BuiltIn {

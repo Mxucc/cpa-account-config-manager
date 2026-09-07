@@ -428,6 +428,24 @@ func TestRiskSystemPromptMigratesLegacyBuiltinPrompt(t *testing.T) {
 	}
 }
 
+func TestRiskSystemPromptAcceptsTrimmedCanonicalDefault(t *testing.T) {
+	if !strings.HasSuffix(defaultRiskSystemPrompt, "\n") {
+		t.Fatal("canonical default prompt is expected to keep a trailing newline")
+	}
+	prompts, err := normalizeRiskSystemPrompts([]RiskSystemPrompt{{
+		ID:           defaultRiskSystemPromptID,
+		Name:         "Default security audit",
+		SystemPrompt: strings.TrimSpace(defaultRiskSystemPrompt),
+		BuiltIn:      true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prompts) != 1 || prompts[0] != defaultRiskSystemPrompts()[0] {
+		t.Fatalf("trimmed canonical prompt was not restored: %#v", prompts)
+	}
+}
+
 func TestPromptAuditWrapsInputAsUntrustedData(t *testing.T) {
 	transport := &fakeAgentIdentityTransport{do: func(_ string, request cpaapi.HostHTTPRequest) (cpaapi.HostHTTPResponse, error) {
 		var payload struct {

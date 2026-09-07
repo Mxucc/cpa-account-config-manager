@@ -34,7 +34,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.sidebar_account_cost": "Расход аккаунтов сегодня",
   "ui.sidebar_enabled_providers": "Включенные AI-провайдеры",
   "ui.sidebar_provider_concurrency": "Параллелизм AI-провайдеров",
-  "ui.sidebar_provider_cost": "Расход провайдеров",
+  "ui.sidebar_provider_cost": "Расход провайдеров сегодня",
   "ui.accounts": "Учётные записи",
   "ui.dashboard": "Обзор",
   "ui.dashboard_description": "Сводка состояния учётных записей, расхода, стоимости и активности.",

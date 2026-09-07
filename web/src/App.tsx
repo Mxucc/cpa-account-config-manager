@@ -1238,7 +1238,7 @@ function AccountManagerApp() {
           <div className="sidebar-telemetry-row"><span><CircleDollarSign size={14} />{tx("ui.sidebar_account_cost")}</span><strong>{formatCreditUSD(sidebarStats.accountCost, locale)}</strong></div>
           <div className="sidebar-telemetry-row"><span><Boxes size={14} />{tx("ui.sidebar_enabled_providers")}</span><strong>{sidebarStats.enabledProviders}</strong></div>
           <div className="sidebar-telemetry-row"><span><Wifi size={14} />{tx("ui.sidebar_provider_concurrency")}</span><strong>{sidebarStats.providerActive} / {sidebarStats.providerLimitLabel}</strong></div>
-          <div className="sidebar-telemetry-row"><span><CircleDollarSign size={14} />{tx("ui.sidebar_provider_cost")}</span><strong>{`${formatCreditUSD(sidebarStats.providerCost, locale)} / D`}</strong></div>
+          <div className="sidebar-telemetry-row"><span><CircleDollarSign size={14} />{tx("ui.sidebar_provider_cost")}</span><strong>{formatCreditUSD(sidebarStats.providerCost, locale)}</strong></div>
           <div className="sidebar-telemetry-row"><span><Activity size={14} />{tx("ui.system_status")}</span><strong>{job?.running || forceJob?.running ? tx("ui.running") : tx("ui.ready")}</strong></div>
         </div>
       </aside>

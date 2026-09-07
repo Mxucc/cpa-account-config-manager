@@ -34,7 +34,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.sidebar_account_cost": "今日帳號消耗額度",
   "ui.sidebar_enabled_providers": "已啟用 AI 供應商",
   "ui.sidebar_provider_concurrency": "AI 供應商總並發",
-  "ui.sidebar_provider_cost": "供應商消耗額度",
+  "ui.sidebar_provider_cost": "今日供應商消耗額度",
   "ui.accounts": "帳號",
   "ui.dashboard": "概覽",
   "ui.dashboard_description": "彙總帳號健康、用量、成本與即時執行狀態。",

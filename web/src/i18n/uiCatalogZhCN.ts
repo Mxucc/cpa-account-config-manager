@@ -34,7 +34,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.sidebar_account_cost": "今日账号消耗额度",
   "ui.sidebar_enabled_providers": "AI 供应商已启用",
   "ui.sidebar_provider_concurrency": "AI 供应商总并发",
-  "ui.sidebar_provider_cost": "供应商消耗额度",
+  "ui.sidebar_provider_cost": "今日供应商消耗额度",
   "ui.accounts": "账号",
   "ui.dashboard": "概览",
   "ui.dashboard_description": "汇总账号健康、用量、成本与实时运行状态。",

@@ -87,6 +87,7 @@ func TestAccountServiceListExcludesPluginRuntimeState(t *testing.T) {
 	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
 		{AuthIndex: "account-1", Name: "account-1.json", Provider: "codex", Type: "codex", Source: "file", Path: "/auths/account-1.json"},
 		{AuthIndex: "plugin-state", Name: ".cpa-account-config-manager/ai-provider-runtime.json", Source: "file", Path: "/auths/.cpa-account-config-manager/ai-provider-runtime.json"},
+		{Name: "usage-snapshots.state", Source: "file", Path: "/auths/usage-snapshots.state"},
 	}}
 	response, errList := NewAccountService(host).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
 	if errList != nil {

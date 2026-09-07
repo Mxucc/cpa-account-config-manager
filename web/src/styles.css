@@ -1870,7 +1870,8 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-table .col-provider-name { width: 190px; }
 .ai-provider-table .col-provider-status { width: 110px; }
 .ai-provider-table .col-provider-models { width: 104px; }
-.ai-provider-table .col-provider-runtime { width: 320px; }
+.ai-provider-table .col-provider-concurrency { width: 160px; }
+.ai-provider-table .col-provider-usage { width: 180px; }
 .ai-provider-table .col-provider-base-url { width: 250px; }
 .ai-provider-table .col-provider-api-key { width: 170px; }
 .ai-provider-table .col-provider-actions { width: 232px; }
@@ -1885,7 +1886,7 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .ai-provider-table .actions-cell { z-index: 3; background: var(--bg-primary); }
 .ai-provider-table tbody tr:hover > .actions-cell { background: color-mix(in srgb, var(--bg-hover) 72%, var(--bg-primary)); }
 .ai-provider-table .ai-provider-model-count { font-variant-numeric: tabular-nums; }
-.ai-provider-runtime-cell { min-width: 0; display: grid; grid-template-columns: minmax(120px, .8fr) minmax(160px, 1.2fr); gap: 14px; align-items: center; }
+.ai-provider-runtime-cell { min-width: 0; }
 .ai-provider-runtime-concurrency,
 .ai-provider-runtime-usage { min-width: 0; display: grid; gap: 3px; }
 .ai-provider-runtime-cell span,

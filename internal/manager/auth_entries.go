@@ -10,6 +10,11 @@ import (
 
 const pluginOwnedStateMarker = ".cpa-account-config-manager"
 
+var pluginOwnedStateFileNames = []string{
+	"ai-provider-runtime.json",
+	"usage-snapshots.state",
+}
+
 // filterPluginOwnedAuthEntries removes durable plugin state that a recursive
 // CPA auth-file scan may expose as if it were an account. The dedicated state
 // directory is stored beside auth files only for restart persistence; none of
@@ -60,6 +65,11 @@ func containsPluginOwnedStateMarker(raw string) bool {
 	for _, part := range parts {
 		if strings.EqualFold(part, pluginOwnedStateMarker) {
 			return true
+		}
+		for _, fileName := range pluginOwnedStateFileNames {
+			if strings.EqualFold(part, fileName) {
+				return true
+			}
 		}
 	}
 	// CPA versions have returned a relative path, an absolute path, and an

@@ -364,6 +364,7 @@ function nullableRecordArray(value: unknown): Record<string, unknown>[] | undefi
 }
 
 const pluginOwnedStateMarker = ".cpa-account-config-manager";
+const pluginOwnedStateFileNames = ["ai-provider-runtime.json", "usage-snapshots.state"];
 
 function isPluginOwnedAccount(account: Account): boolean {
   const values = [account.id, account.auth_id, account.name, account.label, account.email, account.source];
@@ -380,7 +381,8 @@ function isPluginOwnedAccount(account: Account): boolean {
       }
     }
     value = value.replaceAll("\\", "/").toLowerCase();
-    return value.split("/").some((part) => part === pluginOwnedStateMarker) || value.includes(pluginOwnedStateMarker);
+    const parts = value.split("/");
+    return parts.some((part) => part === pluginOwnedStateMarker || pluginOwnedStateFileNames.includes(part)) || value.includes(pluginOwnedStateMarker);
   });
 }
 
@@ -2306,6 +2308,7 @@ export interface NewOpenCodeZenProvider {
 }
 
 export interface NewAPIKeyProvider {
+  name?: string;
   api_key: string;
   base_url?: string;
 }
@@ -2357,6 +2360,7 @@ export async function addAIProviderChannel(kind: AIProviderChannelKind, provider
   // Plain API-key channels (gemini / interactions / claude / codex / xai / vertex).
   const apiKeyProvider = provider as NewAPIKeyProvider;
   items.push({
+    ...(apiKeyProvider.name?.trim() ? { name: apiKeyProvider.name.trim() } : {}),
     "api-key": apiKeyProvider.api_key.trim(),
     ...(apiKeyProvider.base_url?.trim() ? { "base-url": apiKeyProvider.base_url.trim() } : {}),
   });

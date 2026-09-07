@@ -24,7 +24,8 @@ func TestIsPluginOwnedAuthEntryMatchesDedicatedStateDirectory(t *testing.T) {
 		{name: "account alias state path", entry: cpaapi.HostAuthFileEntry{Account: `.cpa-account-config-manager/ai-provider-runtime.json`}, want: true},
 		{name: "double escaped state path", entry: cpaapi.HostAuthFileEntry{AuthIndex: "%252Ecpa-account-config-manager%252Fai-provider-runtime.json"}, want: true},
 		{name: "normal auth file", entry: cpaapi.HostAuthFileEntry{Path: "/auths/account.json", Name: "account.json"}, want: false},
-		{name: "same filename outside state directory", entry: cpaapi.HostAuthFileEntry{Path: "/auths/ai-provider-runtime.json", Name: "ai-provider-runtime.json"}, want: false},
+		{name: "same filename outside state directory", entry: cpaapi.HostAuthFileEntry{Path: "/auths/ai-provider-runtime.json", Name: "ai-provider-runtime.json"}, want: true},
+		{name: "usage state filename", entry: cpaapi.HostAuthFileEntry{Name: "usage-snapshots.state"}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

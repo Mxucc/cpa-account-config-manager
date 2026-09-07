@@ -144,7 +144,7 @@ describe("AIProvidersSettings", () => {
     const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
     await waitFor(() => expect(section.querySelector(".ai-provider-table tbody tr")).not.toBeNull());
     const headers = Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent);
-    expect(headers).toEqual(["提供商类型", "提供商名称", "状态", "模型数量", "并发用量", "Base URL", "API Key", "操作"]);
+    expect(headers).toEqual(["提供商类型", "提供商名称", "状态", "模型数量", "并发", "用量", "Base URL", "API Key", "操作"]);
     expect(section.querySelector(".ai-provider-table thead th:last-child")).toHaveClass("actions-header");
     const providerRow = Array.from(section.querySelectorAll(".ai-provider-table tbody tr")).find((row) => row.textContent?.includes("OpenRouter"));
     expect(providerRow?.querySelector("td:last-child")).toHaveClass("actions-cell", "ai-provider-table-actions");
@@ -189,7 +189,11 @@ describe("AIProvidersSettings", () => {
       expect(found).toBeDefined();
       return found as HTMLElement;
     });
-    await waitFor(() => expect(Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent)).toContain("并发用量"));
+    await waitFor(() => {
+      const headers = Array.from(section.querySelectorAll(".ai-provider-table thead th")).map((item) => item.textContent);
+      expect(headers).toContain("并发");
+      expect(headers).toContain("用量");
+    });
     expect(row.textContent).toContain("并发 2 / 100");
     expect(row.textContent).toContain("∞ 秒请求 2 / 3");
     expect(row.textContent).toContain("队列 0");
@@ -527,6 +531,7 @@ describe("AIProvidersSettings", () => {
     await user.click(within(section).getByRole("button", { name: "添加 AI 提供商" }));
     const dialog = await screen.findByRole("dialog", { name: "添加 AI 提供商" });
     await user.click(within(dialog).getByRole("radio", { name: /Gemini/ }));
+    await user.type(within(dialog).getByLabelText("提供商名称"), "Gemini Mirror");
     await user.type(within(dialog).getByLabelText("API Key"), "AIza-new-secret-1234");
     await user.type(within(dialog).getByLabelText("Base URL"), "https://generativelanguage.googleapis.com/v1beta");
     await user.click(within(dialog).getByRole("button", { name: "添加提供商" }));
@@ -535,7 +540,7 @@ describe("AIProvidersSettings", () => {
     const putRequest = requests.find(({ url, init }) => url.endsWith("/gemini-api-key") && init.method === "PUT");
     const body = JSON.parse(String(putRequest?.init.body)) as Array<Record<string, unknown>>;
     expect(body).toHaveLength(2);
-    expect(body[1]).toMatchObject({ "api-key": "AIza-new-secret-1234", "base-url": "https://generativelanguage.googleapis.com/v1beta" });
+    expect(body[1]).toMatchObject({ name: "Gemini Mirror", "api-key": "AIza-new-secret-1234", "base-url": "https://generativelanguage.googleapis.com/v1beta" });
     expect(onNotice).toHaveBeenCalledWith("AI 提供商已添加");
   });
 

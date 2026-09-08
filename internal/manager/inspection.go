@@ -1247,10 +1247,53 @@ func (e *InspectionEngine) RecordModelTest(ctx context.Context, result ModelTest
 	e.generation++
 	e.mu.Unlock()
 	e.persist()
-	if requestEnable || requestDisable && e.inspectionAutoDisableAllowed(remediationResult) {
+	if requestDisable && e.inspectionAutoDisableAllowed(remediationResult) {
+		// Manual model tests must not wait for the background scanner. A 401
+		// credential failure is actionable immediately; perform the same
+		// guarded mutation used by automatic inspection in this request.
+		e.applyImmediateModelTestDisable(ctx, account, accountID)
+	}
+	if requestEnable || requestDisable {
 		e.RequestScan()
 	}
 	return nil
+}
+
+func (e *InspectionEngine) applyImmediateModelTestDisable(ctx context.Context, account Account, accountID string) {
+	if e == nil || e.mutations == nil || !e.mutations.TryAcquire(inspectionMutationOwner) {
+		return
+	}
+	defer e.mutations.Release(inspectionMutationOwner)
+	e.mu.RLock()
+	record, exists := e.records[accountID]
+	policy := e.policy
+	e.mu.RUnlock()
+	if !exists || account.Disabled || !account.Editable || !shouldAutoDisableInspection(policy, account, record) || !e.inspectionAutoDisableAllowed(record.Result) {
+		return
+	}
+	outcome, errMutation := e.setInspectionDisabled(ctx, account, record, true, nil, nil)
+	now := e.currentTime().UTC()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current := e.records[accountID]
+	if errMutation != nil {
+		current.Result.AutoAction = InspectionActionDisable
+		current.Result.AutoActionStatus = InspectionActionFailed
+	} else if outcome.Changed {
+		current.Result.Disabled = true
+		current.Result.OwnedDisable = true
+		current.Result.AutoAction = InspectionActionDisable
+		current.Result.AutoActionStatus = InspectionActionSucceeded
+		current.DisableReason = current.Result.ReasonCode
+		current.DisabledAt = now
+		current.DisabledName = outcome.Name
+		current.DisabledPath = outcome.Path
+		current.DisabledVersion = outcome.Revision
+	}
+	e.records[accountID] = current
+	e.dirty = true
+	e.generation++
+	go e.persist()
 }
 
 func (e *InspectionEngine) Shutdown() {

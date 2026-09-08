@@ -1247,13 +1247,7 @@ func (e *InspectionEngine) RecordModelTest(ctx context.Context, result ModelTest
 	e.generation++
 	e.mu.Unlock()
 	e.persist()
-	if requestDisable && e.inspectionAutoDisableAllowed(remediationResult) {
-		// Manual model tests must not wait for the background scanner. A 401
-		// credential failure is actionable immediately; perform the same
-		// guarded mutation used by automatic inspection in this request.
-		e.applyImmediateModelTestDisable(ctx, account, accountID)
-	}
-	if requestEnable || requestDisable {
+	if requestEnable || (requestDisable && e.inspectionAutoDisableAllowed(remediationResult)) {
 		e.RequestScan()
 	}
 	return nil

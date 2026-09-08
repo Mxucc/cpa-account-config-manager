@@ -220,14 +220,16 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	h.Set("Session-Id", ids.sessionID)
 	h.Set("Session_Id", ids.sessionID)
 	h.Set("Thread-Id", ids.threadID)
-	rewriteCodexTurnMetadataFields(h, map[string]any{
+	fields := map[string]any{
 		"installation_id":         ids.installationID,
 		"session_id":              ids.sessionID,
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-	})
+	}
+	addCodexConvergenceRelationshipFields(fields, ids)
+	rewriteCodexTurnMetadataFields(h, fields)
 }
 
 func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
@@ -281,15 +283,41 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["thread_id"] = ids.threadID
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
-	rewriteEmbeddedTurnMetadata(existing, map[string]any{
+	fields := map[string]any{
 		"installation_id":         ids.installationID,
 		"session_id":              ids.sessionID,
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-	})
+	}
+	addCodexConvergenceRelationshipFields(fields, ids)
+	for key, value := range fields {
+		existing[key] = value
+	}
+	rewriteEmbeddedTurnMetadata(existing, fields)
 	return true
+}
+
+// addCodexConvergenceRelationshipFields mirrors the relationships emitted by
+// the real Codex client. Keeping these fields aligned across headers,
+// client_metadata, and embedded turn metadata avoids a mixed fingerprint where
+// installation/session/thread are converged but parent/root/context identifiers
+// still expose the original client.
+func addCodexConvergenceRelationshipFields(fields map[string]any, ids *codexFingerprintIDs) {
+	if fields == nil || ids == nil || ids.mode == codexFingerprintDevice {
+		return
+	}
+	if ids.threadID != "" {
+		fields["parent_thread_id"] = ids.threadID
+		fields["x-codex-parent-thread-id"] = ids.threadID
+		fields["forked_from_thread_id"] = ids.threadID
+		fields["context_window_id"] = ids.windowID
+	}
+	if ids.turnID != "" {
+		fields["root_turn_id"] = ids.turnID
+		fields["parent_turn_id"] = ids.turnID
+	}
 }
 
 func rewriteEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) {

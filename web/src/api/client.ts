@@ -1705,7 +1705,8 @@ function channelEntriesFromResponse(kind: AIProviderChannelKind, payload: unknow
       throw new APIError(502, "ui.invalid_api_response");
     }
     const source = item as Record<string, unknown>;
-    const entry: AIProviderChannelEntry = { index };
+    const responseIndex = Number(source["index"]);
+    const entry: AIProviderChannelEntry = { index: Number.isSafeInteger(responseIndex) && responseIndex >= 0 ? responseIndex : index };
     if (typeof source["name"] === "string") entry.name = source["name"];
     if (typeof source["api-key"] === "string") entry.api_key = source["api-key"];
     if (source["api-key-entries"] !== undefined) {

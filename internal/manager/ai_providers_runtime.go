@@ -1012,6 +1012,63 @@ func (t *ProviderRuntimeTracker) isKnownAccountIdentity(authIndex, authID string
 	return false
 }
 
+// Reset removes locally persisted runtime usage for the requested provider
+// identity. It never contacts an upstream provider or changes its quota.
+func (t *ProviderRuntimeTracker) Reset(provider, identity string) bool {
+	if t == nil {
+		return false
+	}
+	provider = normalizeRuntimeProvider(provider)
+	identity = strings.TrimSpace(identity)
+	if provider == "" || identity == "" {
+		return false
+	}
+	removed := false
+	t.mu.Lock()
+	matchedKeys := make(map[string]struct{})
+	for key, aggregate := range t.aggregates {
+		if aggregate == nil || normalizeRuntimeProvider(aggregate.Provider) != provider {
+			continue
+		}
+		if strings.TrimSpace(aggregate.Identity) != identity && strings.TrimSpace(aggregate.AuthIndex) != identity {
+			continue
+		}
+		// Keep the aggregate and its Active count so in-flight requests remain
+		// accounted for, but clear all locally accumulated usage history.
+		aggregate.InputTokens = 0
+		aggregate.OutputTokens = 0
+		aggregate.ReasoningTokens = 0
+		aggregate.CachedTokens = 0
+		aggregate.TotalTokens = 0
+		aggregate.AmountNanos = 0
+		aggregate.RatedRequests = 0
+		aggregate.UnratedRequests = 0
+		aggregate.Models = make(map[string]*providerRuntimeModel)
+		aggregate.Events = nil
+		aggregate.RequestEvents = nil
+		aggregate.UpdatedAt = t.now().UTC()
+		matchedKeys[key] = struct{}{}
+		removed = true
+	}
+	for key, target := range t.aliases {
+		if _, matched := matchedKeys[target]; matched {
+			delete(t.aliases, key)
+		}
+	}
+	t.mu.Unlock()
+	if removed {
+		t.storeMu.Lock()
+		if t.loaded && t.store != "" {
+			t.mu.Lock()
+			t.dirty = true
+			t.mu.Unlock()
+			_ = t.persistLocked()
+		}
+		t.storeMu.Unlock()
+	}
+	return removed
+}
+
 func (t *ProviderRuntimeTracker) Snapshot() []ProviderRuntimeSnapshot {
 	if t == nil {
 		return nil

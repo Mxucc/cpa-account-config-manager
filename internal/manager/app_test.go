@@ -153,6 +153,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/zen/probe-account":               {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/ai-providers/test":                        {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/ai-providers/runtime":                      {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/usage/reset":                              {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/quota-policies":                            {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/quota-policies/account":                    {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/quota-policies/provider":                   {},

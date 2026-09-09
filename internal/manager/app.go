@@ -644,6 +644,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/proxy-profiles", Description: "List redacted reusable proxy profiles."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/proxy-profiles", Description: "Create a reusable proxy profile."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/proxy-profiles", Description: "Update a reusable proxy profile."},
@@ -877,6 +878,11 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 		}
 		return a.handleAIProviderRuntime()
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/usage/reset":
+		if resolveManagementKey(req.Headers) == "" {
+			return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+		}
+		return a.handleUsageReset(req)
 	case method == http.MethodGet && path == opencodeStatusResourcePath:
 		return a.handleOpenCodeStatusPage(ctx, req)
 	default:

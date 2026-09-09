@@ -479,6 +479,18 @@ function AccountManagerApp() {
 		}
 	};
 
+	const resetLocalUsage = async (account: Account) => {
+		const label = account.label || account.email || account.name || account.id;
+		if (!window.confirm(tx("ui.confirm_reset_local_usage", { target: label }))) return;
+		try {
+			await api.resetUsage({ scope: "account", account_id: account.id });
+			await refreshAccounts(true);
+			setNotice(tx("ui.local_usage_reset", { target: label }));
+		} catch (error) {
+			handleAPIError(error);
+		}
+	};
+
 	const refreshQuotaMetadata = async (account: Account) => {
 		setQuotaBusy(account.id, "refresh");
 		try {
@@ -1432,6 +1444,8 @@ function AccountManagerApp() {
 												menuLabel={tx("ui.account_more_actions")}
 												refreshLabel={tx("ui.refresh_token")}
 												deleteLabel={tx("ui.delete_account")}
+												resetUsageLabel={tx("ui.reset_local_usage")}
+												onResetUsage={() => void resetLocalUsage(account)}
 												disabled={!account.editable}
 												disabledReason={readOnlyReason}
 												refreshing={Boolean(tokenRefreshBusy[account.id])}

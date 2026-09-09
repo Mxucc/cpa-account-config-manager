@@ -1,6 +1,6 @@
 import { Activity, Eye, EyeOff, LoaderCircle, Plus, Power, PowerOff, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ShieldQuestion, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Pencil, ShieldQuestion, XCircle } from "lucide-react";
 import * as api from "../api/client";
 import { technicalLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
@@ -21,6 +21,7 @@ import type {
 } from "../types";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
+import { ProviderActionsMenu } from "./ProviderActionsMenu";
 
 interface AIProvidersSettingsProps {
   refreshRevision: number;
@@ -1122,6 +1123,11 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
     setBusy(true);
     setError("");
     try {
+      // Deleting a channel must not leave its local runtime totals attached to
+      // a later channel that receives the same CPA auth identity.
+      for (const target of providerResetTargets(kind, entry)) {
+        await api.resetUsage({ scope: "provider", ...target });
+      }
       await api.deleteAIProviderChannelEntry(kind, entry.index, entry.account_id);
       onNotice(tx("ui.ai_provider_deleted"));
       await refresh();
@@ -1140,6 +1146,45 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
       await api.setAIProviderChannelEnabled(kind, entry.index, enabled);
       onNotice(enabled ? tx("ui.ai_provider_enabled") : tx("ui.ai_provider_disabled_notice"));
       await refresh();
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const providerResetTargets = (kind: AIProviderChannelKind, entry: AIProviderChannelEntry): Array<{ provider: string; identity: string }> => {
+    const identities = new Set<string>();
+    if (entry.auth_index?.trim()) identities.add(entry.auth_index.trim());
+    for (const keyEntry of entry.api_key_entries ?? []) {
+      if (keyEntry.auth_index?.trim()) identities.add(keyEntry.auth_index.trim());
+    }
+    const targets: Array<{ provider: string; identity: string }> = [];
+    for (const identity of identities) {
+      const matchingSnapshots = runtimeSnapshots.filter((snapshot) => snapshot.auth_index?.trim() === identity);
+      if (matchingSnapshots.length > 0) {
+        for (const snapshot of matchingSnapshots) targets.push({ provider: snapshot.provider, identity: snapshot.identity });
+      } else {
+        const provider = kind === "openai-compatibility" ? "openai" : kind.replace(/-api-key$/, "");
+        targets.push({ provider, identity });
+      }
+    }
+    return targets;
+  };
+
+  const resetProviderUsage = async (kind: AIProviderChannelKind, entry: AIProviderChannelEntry) => {
+    const targets = providerResetTargets(kind, entry);
+    if (targets.length === 0) {
+      setError(tx("ui.ai_provider_identity_unavailable"));
+      return;
+    }
+    const label = providerDisplayName(entry);
+    if (!window.confirm(tx("ui.confirm_reset_local_usage", { target: label }))) return;
+    setBusy(true);
+    try {
+      for (const target of targets) await api.resetUsage({ scope: "provider", ...target });
+      await refreshRuntime();
+      onNotice(tx("ui.local_usage_reset", { target: label }));
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -1694,7 +1739,14 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                     <div className="row-actions">
                       <IconButton label={tx("ui.view_ai_provider", { name: providerDisplayName(entry) })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                       <IconButton label={tx("ui.test_ai_provider", { name: providerDisplayName(entry) })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
-                      <IconButton label={tx("ui.edit_ai_provider")} onClick={() => openEditor(channel.kind, entry)}><Save size={15} /></IconButton>
+                      <IconButton label={tx("ui.edit_ai_provider")} onClick={() => openEditor(channel.kind, entry)}><Pencil size={15} /></IconButton>
+                      <ProviderActionsMenu
+                        label={tx("ui.more_actions_for_provider", { provider: providerDisplayName(entry) })}
+                        menuLabel={tx("ui.provider_more_actions")}
+                        resetUsageLabel={tx("ui.reset_local_usage")}
+                        resetting={busy}
+                        onResetUsage={() => void resetProviderUsage(channel.kind, entry)}
+                      />
                       {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                         <>
                           <IconButton className="row-enable-action" label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>

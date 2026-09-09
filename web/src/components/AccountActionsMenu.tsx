@@ -1,12 +1,15 @@
 import { Ellipsis, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { RotateCcw } from "lucide-react";
 
 interface AccountActionsMenuProps {
   label: string;
   menuLabel: string;
   refreshLabel: string;
   deleteLabel: string;
+  resetUsageLabel?: string;
+  onResetUsage?: () => void;
   disabled?: boolean;
   disabledReason?: string;
   refreshing?: boolean;
@@ -24,6 +27,8 @@ export function AccountActionsMenu({
   menuLabel,
   refreshLabel,
   deleteLabel,
+  resetUsageLabel,
+  onResetUsage,
   disabled = false,
   disabledReason,
   refreshing = false,
@@ -39,7 +44,7 @@ export function AccountActionsMenu({
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const menuWidth = 196;
-    const menuHeight = 92;
+    const menuHeight = 140;
     const viewportPadding = 8;
     const gap = 5;
     const left = Math.max(viewportPadding, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding));
@@ -106,6 +111,12 @@ export function AccountActionsMenu({
             {refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
             <span>{refreshLabel}</span>
           </button>
+          {onResetUsage && resetUsageLabel ? (
+            <button type="button" role="menuitem" disabled={refreshing} onClick={() => run(onResetUsage)}>
+              <RotateCcw size={15} />
+              <span>{resetUsageLabel}</span>
+            </button>
+          ) : null}
           <button className="danger" type="button" role="menuitem" disabled={refreshing} onClick={() => run(onDelete)}>
             <Trash2 size={15} />
             <span>{deleteLabel}</span>

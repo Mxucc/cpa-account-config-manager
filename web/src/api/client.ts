@@ -527,6 +527,17 @@ export async function loadAccountConfig(accountID: string): Promise<AccountEdita
 	} as AccountEditableConfig;
 }
 
+export type UsageResetTarget =
+  | { scope: "account"; account_id: string }
+  | { scope: "provider"; provider: string; identity: string };
+
+export async function resetUsage(target: UsageResetTarget): Promise<void> {
+  await request("/usage/reset", {
+    method: "POST",
+    body: JSON.stringify({ ...target, confirm: true }),
+  });
+}
+
 export async function getCodexIdentityOverrides(signal?: AbortSignal): Promise<CodexIdentityOverrideSnapshot> {
 	const response = await requestRecord<CodexIdentityOverrideSnapshot>("/codex-identity-overrides", { signal });
 	return {
@@ -2105,13 +2116,17 @@ export async function saveAIProviderChannelEntry(
     throw new Error("saveAIProviderChannelEntry only supports host-managed channels");
   }
   const raw = await getRawAIProviderChannelItems(kind);
-  if (index < 0 || index >= raw.length) throw new Error(kind + " entry #" + (index + 1) + " was not found");
 
-  const items = raw.map((item) => {
+  const items: Record<string, unknown>[] = raw.map((item) => {
     if (typeof item === "string") return { "api-key": item };
     return isRecord(item) ? { ...item } : {};
   });
-  const target = items[index];
+  const rawIndex = items.findIndex((item, position) => {
+    const candidate = Number(item["index"]);
+    return Number.isSafeInteger(candidate) && candidate >= 0 ? candidate === index : position === index;
+  });
+  if (rawIndex < 0) throw new Error(kind + " entry #" + (index + 1) + " was not found");
+  const target = items[rawIndex];
   const patched: Record<string, unknown> = { ...target };
 
   const replacementAPIKey = patch.api_key?.trim() ?? "";
@@ -2130,7 +2145,7 @@ export async function saveAIProviderChannelEntry(
     // rebuilding them from visible fields would otherwise strip metadata and
     // make the saved channel disappear from AI provider runtime views.
     const legacyAPIKey = typeof patched["api-key"] === "string" ? patched["api-key"].trim() : "";
-    const originalHasKeyEntries = Array.isArray((raw[index] as Record<string, unknown>)["api-key-entries"]);
+    const originalHasKeyEntries = Array.isArray(items[rawIndex]["api-key-entries"]);
     if (replacementAPIKey && originalHasKeyEntries) {
       // The editor only exposes the first credential as a simple replacement
       // field. Update that row in place so auth-index and other host metadata
@@ -2226,7 +2241,7 @@ export async function saveAIProviderChannelEntry(
     patched["api-key-entries"] = keyEntriesToJSON(patch.api_key_entries);
   }
 
-  items[index] = patched;
+  items[rawIndex] = patched;
   await putAIProviderChannel(kind, items);
 }
 

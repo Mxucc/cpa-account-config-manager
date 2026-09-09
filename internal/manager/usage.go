@@ -141,7 +141,10 @@ type usageAggregate struct {
 	Lifecycle              *accountLifecycleState   `json:"lifecycle,omitempty"`
 	LastRequestAt          time.Time                `json:"last_request_at,omitempty"`
 	UpdatedAt              time.Time                `json:"updated_at,omitempty"`
-	Codex                  *CodexUsageSnapshot      `json:"codex,omitempty"`
+	// ResetAt is a durable tombstone boundary. It prevents an older snapshot
+	// from being max-merged back after a local reset.
+	ResetAt time.Time           `json:"reset_at,omitempty"`
+	Codex   *CodexUsageSnapshot `json:"codex,omitempty"`
 }
 
 type accountLifecycleState struct {
@@ -1017,6 +1020,52 @@ func applyOverdraftCycleEvidence(cycle **overdraftCycleState, window *UsageWindo
 	current.VerifiedAt = timePointer(testedAt)
 	current.ChangedAt = now
 	return true
+}
+
+// Reset removes the locally persisted usage aggregate for one account. It does
+// not call any upstream quota-reset endpoint.
+func (t *UsageTracker) Reset(identifier string) bool {
+	if t == nil {
+		return false
+	}
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return false
+	}
+	t.mu.Lock()
+	canonical := t.resolveUsageAuthIndexLocked(identifier)
+	storageKey, _ := t.usageStorageKeyLocked(canonical)
+	current, existed := t.accounts[storageKey]
+	now := t.currentTime().UTC()
+	current.InputTokens = 0
+	current.OutputTokens = 0
+	current.ReasoningTokens = 0
+	current.CachedTokens = 0
+	current.CacheReadTokens = 0
+	current.CacheCreationTokens = 0
+	current.TotalTokens = 0
+	current.SuccessfulTokens = 0
+	current.SuccessfulRequests = 0
+	current.CreditAmountNanos = 0
+	current.CreditRatedRequests = 0
+	current.CreditUnratedRequests = 0
+	current.CreditStartedAt = time.Time{}
+	current.CreditPricingUpdatedAt = time.Time{}
+	current.CreditPricingSource = ""
+	current.LastRequestAt = time.Time{}
+	current.FiveHourOverdraft = nil
+	current.SevenDayOverdraft = nil
+	if current.Codex != nil {
+		current.Codex.FiveHour = nil
+		current.Codex.SevenDay = nil
+	}
+	current.ResetAt = now
+	current.UpdatedAt = now
+	t.accounts[storageKey] = current
+	delete(t.overdraftInjected, canonical)
+	t.mu.Unlock()
+	t.requestPersist()
+	return existed
 }
 
 func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {

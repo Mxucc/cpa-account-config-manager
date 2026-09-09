@@ -276,6 +276,14 @@ func mergeUsageAggregates(current, stored map[string]usageAggregate) map[string]
 }
 
 func mergeUsageAggregate(current, stored usageAggregate) usageAggregate {
+	// A reset is a durable boundary. Never max-merge counters, windows, or
+	// request timestamps from a store snapshot that predates the reset.
+	if !current.ResetAt.IsZero() && (stored.ResetAt.IsZero() || !stored.ResetAt.After(current.ResetAt)) {
+		return sanitizeUsageAggregate(current)
+	}
+	if !stored.ResetAt.IsZero() && (current.ResetAt.IsZero() || stored.ResetAt.After(current.ResetAt)) {
+		return sanitizeUsageAggregate(stored)
+	}
 	if usageIdentitiesConflict(current.Identity, stored.Identity) {
 		return sanitizeUsageAggregate(current)
 	}

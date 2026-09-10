@@ -17,6 +17,37 @@ describe("OtherSettingsWorkspace", () => {
     vi.restoreAllMocks();
   });
 
+  it("edits the global Codex identity policy in Other settings and persists it", async () => {
+    const user = userEvent.setup();
+    const saveSpy = vi.spyOn(api, "saveExperimentalSettings").mockImplementation(async (settings) => ({ settings }));
+    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({
+      settings: {
+        weekly_overdraft_enabled: false,
+        agent_identity_enabled: false,
+        auto_model_whitelist_enabled: false,
+        sub2api_credit_usage_enabled: false,
+        codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false },
+      },
+    });
+
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const workspace = await screen.findByRole("region", { name: "其他配置" });
+    await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
+    const panel = await within(workspace).findByRole("tabpanel", { name: "实验性功能" });
+    const identity = within(panel).getByRole("region", { name: "Codex 身份兼容" });
+    await user.click(within(identity).getByRole("checkbox", { name: /出站收敛/ }));
+    await user.selectOptions(within(identity).getByRole("combobox", { name: "收敛模式" }), "session");
+    await user.click(within(panel).getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(saveSpy).toHaveBeenCalled());
+    expect(saveSpy.mock.calls.at(-1)?.[0].codex_identity).toMatchObject({
+      outbound_convergence_enabled: true,
+      convergence_mode: "session",
+      ingress_gate_enabled: false,
+    });
+  });
+
   it("shows CPA server and plugin versions, installs the plugin, and saves update policy", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();

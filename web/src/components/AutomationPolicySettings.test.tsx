@@ -95,7 +95,9 @@ describe("AutomationPolicySettings", () => {
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("路由与传输");
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("额度限制");
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("请求与模型策略");
-    expect(screen.getByRole("region", { name: "全局配置覆盖" })).toHaveTextContent("Codex 身份兼容");
+    // Codex client identity is global-only now: the permanent global policy must
+    // not offer a competing editor for it.
+    expect(screen.getByRole("region", { name: "全局配置覆盖" })).not.toHaveTextContent("Codex 身份兼容");
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).not.toHaveTextContent("代理 URL");
     expect(screen.getByRole("region", { name: "全局配置覆盖" })).not.toHaveTextContent("手动代理地址");
     expect(screen.getByRole("region", { name: "自动策略默认设置" })).toHaveTextContent("自动化运行");

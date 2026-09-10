@@ -461,14 +461,23 @@ func (e *CodexIdentityExperiment) effectiveFingerprintModeForAccount(ctx context
 	return e.effectiveAccountFingerprintMode(gate)
 }
 
+// effectiveAccountIngressGate resolves the plugin-side official-client gate for
+// one account. The global experiment switch is the master control: turning it off
+// must stop plugin-side rejection even while CPA still marks the account with
+// codex_cli_only, because that account flag belongs to the host and is enforced
+// outside this plugin. An explicit per-account override still wins in both
+// directions, which is the supported way to protect or exempt a single account.
 func (e *CodexIdentityExperiment) effectiveAccountIngressGate(gate codexAccountWithMetadata) bool {
 	if override, ok := e.accountOverride(gate.account); ok && override.IngressGateEnabled != nil {
 		return *override.IngressGateEnabled
 	}
+	if e == nil || e.settings == nil || !e.settings.CodexIdentity().IngressGateEnabled {
+		return false
+	}
 	if enabled, ok := metadataCodexBool(gate.metadata, "codex_cli_only"); ok {
 		return enabled
 	}
-	return e != nil && e.settings != nil && e.settings.CodexIdentity().IngressGateEnabled
+	return true
 }
 
 func (e *CodexIdentityExperiment) effectiveAccountAllowAppServer(gate codexAccountWithMetadata) bool {
@@ -548,7 +557,15 @@ func codexExtraBool(value any) bool {
 }
 
 func (e *CodexIdentityExperiment) reject(result codexRestrictionDetectionResult) cpaapi.RequestInterceptResponse {
-	body, _ := json.Marshal(map[string]any{"error": map[string]any{"message": codexRestrictionMessage(result)}})
+	// Keep the stable message clients already match, and add the provenance of
+	// this rejection: an operator who disabled the plugin gate must be able to
+	// tell a plugin-side block from the host's own account restriction.
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{
+		"message": codexRestrictionMessage(result),
+		"code":    "codex_official_clients_only",
+		"source":  "plugin_ingress_gate",
+		"reason":  string(result.Reason),
+	}})
 	return cpaapi.RequestInterceptResponse{
 		Terminate:       true,
 		StatusCode:      http.StatusForbidden,

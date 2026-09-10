@@ -46,11 +46,14 @@ type persistedGlobalPolicy struct {
 }
 
 type GlobalPolicyService struct {
-	mu         sync.RWMutex
-	store      string
-	loaded     bool
-	storageErr string
-	policy     GlobalPolicy
+	mu                     sync.RWMutex
+	store                  string
+	loaded                 bool
+	storageErr             string
+	policy                 GlobalPolicy
+	legacyIdentity         ExperimentalCodexIdentitySettings
+	legacyIdentityEnabled  bool
+	legacyIdentityCaptured bool
 }
 
 func NewGlobalPolicyService() *GlobalPolicyService {
@@ -61,7 +64,12 @@ func globalPolicyStorePath(dataDir string) string {
 	return filepath.Join(dataDir, "global-policy.json")
 }
 
-func (s *GlobalPolicyService) Configure(config Config, legacy ExperimentalCodexIdentitySettings) {
+// Configure loads the permanent global policy. Codex client identity settings are
+// no longer part of this policy: they live in the global experimental settings so
+// that exactly one switch controls outbound convergence and the ingress gate. A
+// stored copy from an earlier release is captured once for migration and then
+// removed, which stops the duplicate from reappearing after a policy save.
+func (s *GlobalPolicyService) Configure(config Config) {
 	if s == nil {
 		return
 	}
@@ -70,31 +78,60 @@ func (s *GlobalPolicyService) Configure(config Config, legacy ExperimentalCodexI
 	defer s.mu.Unlock()
 	if s.loaded && s.store == path {
 		if config.GlobalPolicy != nil {
+			s.captureLegacyIdentity(normalizeGlobalPolicy(*config.GlobalPolicy))
 			s.policy = normalizeGlobalPolicy(*config.GlobalPolicy)
+			s.policy.CodexIdentity = NormalizeExperimentalCodexIdentitySettings(ExperimentalCodexIdentitySettings{})
 		}
 		return
 	}
 	s.store, s.loaded = path, true
 	policy := normalizeGlobalPolicy(GlobalPolicy{})
+	hadLegacyIdentity := false
 	loaded, err := loadGlobalPolicy(path)
 	if err == nil {
+		// Capture the copy stored by an earlier release before normalization
+		// removes it, so the caller can migrate the value that was effective.
+		s.captureLegacyIdentity(loaded)
+		hadLegacyIdentity = !globalIdentityEmpty(loaded.CodexIdentity)
 		policy = normalizeGlobalPolicy(loaded)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		s.storageErr = "global policy state could not be loaded"
 	}
 	if config.GlobalPolicy != nil {
+		s.captureLegacyIdentity(*config.GlobalPolicy)
+		hadLegacyIdentity = hadLegacyIdentity || !globalIdentityEmpty(config.GlobalPolicy.CodexIdentity)
 		policy = normalizeGlobalPolicy(*config.GlobalPolicy)
-		if errSave := saveGlobalPolicy(path, policy); errSave != nil {
-			s.storageErr = "global policy state could not be persisted"
-		}
-	} else if err != nil && errors.Is(err, os.ErrNotExist) && !globalIdentityEmpty(legacy) {
-		// One-time migration from the former experimental location.
-		policy.CodexIdentity = NormalizeExperimentalCodexIdentitySettings(legacy)
+	}
+	if config.GlobalPolicy != nil || hadLegacyIdentity {
 		if errSave := saveGlobalPolicy(path, policy); errSave != nil {
 			s.storageErr = "global policy state could not be persisted"
 		}
 	}
 	s.policy = policy
+}
+
+// captureLegacyIdentity records the Codex identity copy stored by an earlier
+// release so the caller can migrate it into the global experimental settings.
+// Only the first capture wins, so a policy save cannot overwrite the value that
+// was effective at startup.
+func (s *GlobalPolicyService) captureLegacyIdentity(policy GlobalPolicy) {
+	if s.legacyIdentityCaptured || globalIdentityEmpty(policy.CodexIdentity) {
+		return
+	}
+	s.legacyIdentityCaptured = true
+	s.legacyIdentity = normalizeExperimentalSettings(ExperimentalSettings{CodexIdentity: policy.CodexIdentity}).CodexIdentity
+	s.legacyIdentityEnabled = policy.Enabled
+}
+
+// LegacyCodexIdentity returns the identity copy removed from the global policy
+// and whether that policy was enabled, which decides if the copy was effective.
+func (s *GlobalPolicyService) LegacyCodexIdentity() (ExperimentalCodexIdentitySettings, bool) {
+	if s == nil {
+		return ExperimentalCodexIdentitySettings{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.legacyIdentity, s.legacyIdentityEnabled
 }
 
 func (s *GlobalPolicyService) Snapshot() GlobalPolicySnapshot {
@@ -170,7 +207,9 @@ func normalizeGlobalPolicy(policy GlobalPolicy) GlobalPolicy {
 		value := cloneModelPolicyPatch(*clone.ModelPolicy)
 		clone.ModelPolicy = &value
 	}
-	clone.CodexIdentity = NormalizeExperimentalCodexIdentitySettings(clone.CodexIdentity)
+	// Codex client identity settings belong to the global experimental settings;
+	// an incoming copy is dropped instead of being persisted here again.
+	clone.CodexIdentity = NormalizeExperimentalCodexIdentitySettings(ExperimentalCodexIdentitySettings{})
 	return clone
 }
 

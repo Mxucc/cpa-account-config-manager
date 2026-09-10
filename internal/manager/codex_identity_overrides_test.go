@@ -121,6 +121,84 @@ func TestCodexIdentityOverridePrecedence(t *testing.T) {
 	}
 }
 
+// A reported regression: the plugin kept rejecting requests with
+// "This account only allows Codex official clients" after the operator disabled
+// the global ingress gate, because the host-side codex_cli_only account flag
+// outranked the plugin switch.
+func TestCodexIngressGateGlobalSwitchIsTheMasterControl(t *testing.T) {
+	overrides := NewCodexIdentityOverrideService()
+	overrides.Configure(Config{DataDir: t.TempDir()})
+	account := Account{ID: "account-a", AuthID: "auth-a", Provider: "codex"}
+	flagged := codexAccountWithMetadata{
+		account:  &account,
+		metadata: map[string]any{"codex_cli_only": true},
+	}
+
+	disabled := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil)
+	if disabled.effectiveAccountIngressGate(flagged) {
+		t.Fatal("disabled gate still gated an account flagged by the host")
+	}
+	// The account flag is host-owned: with the plugin gate enabled it still wins.
+	enabled := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{IngressGateEnabled: true}}, nil)
+	if !enabled.effectiveAccountIngressGate(flagged) {
+		t.Fatal("enabled gate ignored the host codex_cli_only flag")
+	}
+	exempted := codexAccountWithMetadata{account: &account, metadata: map[string]any{"codex_cli_only": false}}
+	if enabled.effectiveAccountIngressGate(exempted) {
+		t.Fatal("host metadata opt-out did not win")
+	}
+	// An explicit per-account override keeps working in both directions.
+	enabledOverrides := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil)
+	enabledOverrides.SetOverrides(overrides)
+	value := true
+	if err := overrides.SetAccount(account.ID, CodexIdentityOverride{IngressGateEnabled: &value}); err != nil {
+		t.Fatalf("save account override: %v", err)
+	}
+	if !enabledOverrides.effectiveAccountIngressGate(flagged) {
+		t.Fatal("explicit account override did not outrank the disabled global switch")
+	}
+	// The provider path follows the same rule.
+	if NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil).effectiveProviderIngressGate("codex-api-key:provider-a") {
+		t.Fatal("disabled gate gated a provider without an override")
+	}
+	if err := overrides.SetProvider("codex-api-key:provider-a", CodexIdentityOverride{IngressGateEnabled: &value}); err != nil {
+		t.Fatalf("save provider override: %v", err)
+	}
+	if !enabledOverrides.effectiveProviderIngressGate("codex-api-key:provider-a") {
+		t.Fatal("explicit provider override did not outrank the disabled global switch")
+	}
+}
+
+// The rejection body keeps the stable message and now names its source, so a
+// host-side restriction can be told apart from the plugin gate.
+func TestCodexIngressGateRejectionReportsItsSource(t *testing.T) {
+	settings := ExperimentalCodexIdentitySettings{IngressGateEnabled: true, AllowAppServerClients: true}
+	experiment := NewCodexIdentityExperiment(stubCodexSettings{settings}, nil)
+	response, changed := experiment.InterceptRequest(cpaapi.RequestInterceptRequest{
+		Headers: http.Header{"User-Agent": []string{"curl/8"}, "Originator": []string{"custom"}},
+	})
+	if !changed || !response.Terminate || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("gate response = %#v", response)
+	}
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+			Source  string `json:"source"`
+			Reason  string `json:"reason"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.ResponseBody, &decoded); err != nil {
+		t.Fatalf("decode rejection body: %v", err)
+	}
+	if decoded.Error.Message != "This account only allows Codex official clients" ||
+		decoded.Error.Code != "codex_official_clients_only" ||
+		decoded.Error.Source != "plugin_ingress_gate" ||
+		decoded.Error.Reason == "" {
+		t.Fatalf("rejection body = %#v", decoded.Error)
+	}
+}
+
 func TestCodexIdentityOverrideManagementAPI(t *testing.T) {
 	service := NewCodexIdentityOverrideService()
 	service.Configure(Config{DataDir: t.TempDir()})

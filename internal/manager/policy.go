@@ -827,9 +827,10 @@ func mergeGlobalPolicyIntoDefault(policy DefaultPolicy, service *GlobalPolicySer
 		value := cloneModelPolicyPatch(*global.ModelPolicy)
 		policy.ModelPolicy = &value
 	}
-	if policy.CodexIdentity == nil {
-		policy.CodexIdentity = codexIdentityOverrideFromGlobal(global.CodexIdentity)
-	}
+	// Codex client identity is global-only now: it is never copied into an
+	// account policy patch. An automatic copy used to shadow later edits of the
+	// global setting, so an account only carries an identity override when the
+	// operator sets one explicitly.
 	return policy
 }
 

@@ -192,6 +192,22 @@ func (s *ExperimentalSettingsService) Configure(config Config) {
 	s.codexIdentityEnabled.Store(settings.CodexIdentity.OutboundConvergenceEnabled || settings.CodexIdentity.IngressGateEnabled)
 }
 
+// AdoptCodexIdentity persists a Codex identity policy migrated from the former
+// global-policy copy. It intentionally ignores an empty value so a cleared
+// experimental setting is never resurrected.
+func (s *ExperimentalSettingsService) AdoptCodexIdentity(settings ExperimentalCodexIdentitySettings) error {
+	if s == nil || globalIdentityEmpty(settings) {
+		return nil
+	}
+	s.mu.RLock()
+	current := s.settings
+	s.mu.RUnlock()
+	next := current
+	next.CodexIdentity = settings
+	_, errSet := s.Set(next)
+	return errSet
+}
+
 func (s *ExperimentalSettingsService) Snapshot() ExperimentalSettingsSnapshot {
 	if s == nil {
 		return ExperimentalSettingsSnapshot{}

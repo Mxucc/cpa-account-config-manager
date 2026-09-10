@@ -300,8 +300,6 @@ export function AutomationPolicySettings({ refreshRevision, forceLoading, onAPIE
 
 function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange, onSave }: { policy: GlobalPolicy; profiles: ProxyProfileView[]; disabled: boolean; storageError?: string; onChange: (patch: Partial<GlobalPolicy>) => void; onSave: () => void }) {
   const { tx } = useI18n();
-  const identity = policy.codex_identity ?? emptyGlobalIdentity();
-  const updateIdentity = (patch: Partial<ExperimentalCodexIdentitySettings>) => onChange({ codex_identity: { ...identity, ...patch } });
   const updateQuota = (window: "five_hour" | "seven_day", field: "limit_percent", value: string) => {
     const current = policy.quota_policy ?? { five_hour: {}, seven_day: {} };
     const nextWindow = { ...current[window] };
@@ -345,10 +343,6 @@ function GlobalPolicyEditor({ policy, profiles, disabled, storageError, onChange
         <GlobalHeadersEditor value={policy.headers ?? null} disabled={disabled} onChange={(headers) => onChange({ headers })} />
         <GlobalModelPolicyEditor value={policy.model_policy ?? null} disabled={disabled} onChange={(model_policy) => onChange({ model_policy })} />
       </div>
-      <div className="global-policy-group global-policy-wide">
-        <div className="global-policy-group-heading"><strong>{tx("ui.codex_identity_group")}</strong><span>{tx("ui.codex_identity_group_help")}</span></div>
-        <GlobalCodexIdentityEditor value={identity} disabled={disabled} onChange={updateIdentity} />
-      </div>
     </div>
   </section>;
 }
@@ -383,37 +377,11 @@ function GlobalModelPolicyEditor({ value, disabled, onChange }: { value: ModelPo
   return <div className="policy-subsection"><div className="policy-subsection-heading"><strong>{tx("ui.model_policy")}</strong><span>{tx("ui.model_policy_mode")}</span></div><div className="model-policy-modes">{(["all", "allow_only", "deny_only"] as ModelPolicyMode[]).map((item) => <button key={item} type="button" className={mode === item ? "active" : ""} disabled={disabled} onClick={() => onChange(item === "all" ? null : { mode: item, models: value?.models ?? [] })}>{tx(item === "all" ? "ui.all_models" : item === "allow_only" ? "ui.model_allowlist" : "ui.model_blocklist")}</button>)}</div>{mode !== "all" ? <textarea rows={2} disabled={disabled} value={value?.models?.join("\n") ?? ""} placeholder="gpt-5.5" onChange={(event) => onChange({ mode, models: parseModels(event.target.value) })} aria-label={tx("ui.model_ids")} /> : null}</div>;
 }
 
-function GlobalCodexIdentityEditor({ value, disabled, onChange }: { value: ExperimentalCodexIdentitySettings; disabled: boolean; onChange: (patch: Partial<ExperimentalCodexIdentitySettings>) => void }) {
-  const { tx } = useI18n();
-  return <div className="policy-subsection codex-identity-global-editor">
-    <div className="policy-subsection-heading"><strong>{tx("ui.codex_identity_target_policy")}</strong><span>{tx("ui.codex_identity_convergence_description")}</span></div>
-    <div className="codex-identity-toggle-grid">
-      <label className="switch-control"><input type="checkbox" checked={value.outbound_convergence_enabled} disabled={disabled} onChange={(event) => onChange({ outbound_convergence_enabled: event.target.checked })} /><span><b>{tx(value.outbound_convergence_enabled ? "ui.on_2" : "ui.off_2")}</b><small>{tx("ui.codex_outbound_convergence")}</small></span></label>
-      <label className="switch-control"><input type="checkbox" checked={value.ingress_gate_enabled} disabled={disabled} onChange={(event) => onChange({ ingress_gate_enabled: event.target.checked })} /><span><b>{tx(value.ingress_gate_enabled ? "ui.on_2" : "ui.off_2")}</b><small>{tx("ui.codex_ingress_gate")}</small></span></label>
-      <label className="switch-control"><input type="checkbox" checked={value.allow_app_server_clients} disabled={disabled} onChange={(event) => onChange({ allow_app_server_clients: event.target.checked })} /><span><b>{tx(value.allow_app_server_clients ? "ui.on_2" : "ui.off_2")}</b><small>{tx("ui.codex_allow_app_server")}</small></span></label>
-    </div>
-    <div className="codex-identity-runtime-grid">
-      <label className="filter-control"><span>{tx("ui.codex_convergence_mode")}</span><select value={value.convergence_mode ?? ""} disabled={disabled} onChange={(event) => onChange({ convergence_mode: event.target.value })}><option value="">{tx("ui.codex_convergence_legacy_full")}</option><option value="off">{tx("ui.codex_convergence_off")}</option><option value="device">{tx("ui.codex_convergence_device")}</option><option value="session">{tx("ui.codex_convergence_session")}</option><option value="full">{tx("ui.codex_convergence_full")}</option></select></label>
-      <label className="filter-control"><span>{tx("ui.codex_min_version")}</span><input value={value.min_version ?? ""} disabled={disabled} onChange={(event) => onChange({ min_version: event.target.value })} /></label>
-      <label className="filter-control"><span>{tx("ui.codex_max_version")}</span><input value={value.max_version ?? ""} disabled={disabled} onChange={(event) => onChange({ max_version: event.target.value })} /></label>
-    </div>
-    <div className="codex-identity-json-grid">
-      <label className="codex-policy-field"><span>{tx("ui.codex_whitelist_json")}</span><textarea rows={2} disabled={disabled} value={value.whitelist ?? ""} onChange={(event) => onChange({ whitelist: event.target.value })} /></label>
-      <label className="codex-policy-field"><span>{tx("ui.codex_blacklist_json")}</span><textarea rows={2} disabled={disabled} value={value.blacklist ?? ""} onChange={(event) => onChange({ blacklist: event.target.value })} /></label>
-      <label className="codex-policy-field"><span>{tx("ui.codex_fingerprint_json")}</span><textarea rows={2} disabled={disabled} value={value.fingerprint_signals ?? ""} onChange={(event) => onChange({ fingerprint_signals: event.target.value })} /></label>
-    </div>
-  </div>;
-}
-
 function headersToRows(value: HeaderPatch | null): Array<{ id: number; action: "set" | "remove"; name: string; value: string }> {
   const rows: Array<{ id: number; action: "set" | "remove"; name: string; value: string }> = [];
   Object.entries(value?.set ?? {}).forEach(([name, headerValue], index) => rows.push({ id: index + 1, action: "set", name, value: headerValue }));
   (value?.remove ?? []).forEach((name, index) => rows.push({ id: rows.length + index + 1, action: "remove", name, value: "" }));
   return rows.length ? rows : [{ id: 1, action: "set", name: "", value: "" }];
-}
-
-function emptyGlobalIdentity(): ExperimentalCodexIdentitySettings {
-  return { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false };
 }
 
 function ConditionalRuleEditor({ rule, index, total, disabled, profiles, onChange, onMove, onDelete }: { rule: ConditionalPolicyRule; index: number; total: number; disabled: boolean; profiles: ProxyProfileView[]; onChange: (rule: ConditionalPolicyRule) => void; onMove: (offset: number) => void; onDelete: () => void }) {
@@ -538,11 +506,11 @@ function clonePolicy(policy: DefaultPolicy): DefaultPolicy {
 }
 
 function emptyGlobalPolicy(): GlobalPolicy {
-  return { enabled: false, disabled: null, priority: null, concurrency_limit: null, concurrency_15s_limit: null, concurrency_window_seconds: null, quota_policy: null, note: null, prefix: null, proxy_url: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null, websockets: null, headers: null, model_policy: null, codex_identity: emptyGlobalIdentity() };
+  return { enabled: false, disabled: null, priority: null, concurrency_limit: null, concurrency_15s_limit: null, concurrency_window_seconds: null, quota_policy: null, note: null, prefix: null, proxy_url: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null, websockets: null, headers: null, model_policy: null };
 }
 
 function cloneGlobalPolicy(policy: GlobalPolicy): GlobalPolicy {
-  return JSON.parse(JSON.stringify({ ...emptyGlobalPolicy(), ...(policy ?? {}), codex_identity: { ...emptyGlobalIdentity(), ...(policy?.codex_identity ?? {}) } })) as GlobalPolicy;
+  return JSON.parse(JSON.stringify({ ...emptyGlobalPolicy(), ...(policy ?? {}) })) as GlobalPolicy;
 }
 
 function newConditionalRule(index: number): ConditionalPolicyRule {

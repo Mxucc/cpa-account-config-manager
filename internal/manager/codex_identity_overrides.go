@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -173,6 +174,39 @@ func (s *CodexIdentityOverrideService) set(account bool, key string, value Codex
 	}
 	s.storageErr = ""
 	return nil
+}
+
+// DropMatchingAccounts removes every account override identical to value and
+// reports how many were removed. It only cleans up copies this plugin derived
+// automatically from the former global-policy identity: an operator-authored
+// override that differs in any field is left untouched.
+func (s *CodexIdentityOverrideService) DropMatchingAccounts(value CodexIdentityOverride) int {
+	if s == nil || codexIdentityOverrideEmpty(value) {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := make(map[string]CodexIdentityOverride)
+	for key, current := range s.accounts {
+		if reflect.DeepEqual(current, value) {
+			removed[key] = current
+		}
+	}
+	if len(removed) == 0 || strings.TrimSpace(s.store) == "" {
+		return 0
+	}
+	for key := range removed {
+		delete(s.accounts, key)
+	}
+	if errSave := s.persistLocked(); errSave != nil {
+		for key, value := range removed {
+			s.accounts[key] = value
+		}
+		s.storageErr = "Codex identity override state could not be persisted"
+		return 0
+	}
+	s.storageErr = ""
+	return len(removed)
 }
 
 func (s *CodexIdentityOverrideService) persistLocked() error {

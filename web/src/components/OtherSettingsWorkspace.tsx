@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   Network,
   PackageCheck,
+  Radar,
   RefreshCw,
   RotateCcw,
   Save,
@@ -20,7 +21,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
-import type { CPAServerVersionSnapshot, ExperimentalSettings, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
+import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
+import type { CPAServerVersionSnapshot, ExperimentalCodexIdentitySettings, ExperimentalSettings, ExperimentalSettingsSnapshot, UpdateSnapshot } from "../types";
 import {
   readFontSize,
   readTypographyDistinction,
@@ -55,6 +57,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [server, setServer] = useState<CPAServerVersionSnapshot | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettingsSnapshot | null>(null);
+  const [codexIdentity, setCodexIdentity] = useState<ExperimentalCodexIdentitySettings>(EMPTY_CODEX_IDENTITY);
   const [activeSection, setActiveSection] = useState<OtherSettingsSection>(initialSection);
   const sections = visibleSections ?? ["automation", "proxy_profiles", "notifications", "updates", "experimental"];
   const [fontSize, setFontSize] = useState<FontSizePreset>(readFontSize);
@@ -145,6 +148,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     if (!experiments?.settings) return;
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
+    setCodexIdentity(experiments.settings.codex_identity ?? EMPTY_CODEX_IDENTITY);
   }, [experiments]);
 
   const installUpdate = useCallback(async () => {
@@ -234,13 +238,9 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
         // Kept in the request for older runtimes; credit pricing is now a
         // permanent built-in behavior and is always normalized to true.
         sub2api_credit_usage_enabled: true,
-        // Keep the legacy field intact for older CPA plugin runtimes. The
-        // editable source of truth now lives in the permanent global policy.
-        codex_identity: experiments?.settings.codex_identity ?? {
-          outbound_convergence_enabled: false,
-          ingress_gate_enabled: false,
-          allow_app_server_clients: false,
-        },
+        // Codex client identity is global-only and edited here, so it stays the
+        // single source for outbound convergence and the ingress gate.
+        codex_identity: codexIdentity,
       });
       setExperiments(next);
       onExperimentalSettingsChange(next.settings);
@@ -453,6 +453,22 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
               <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.agent_identity_security_notice")}</span></div>
             </div>
           </div>
+          <div className="experimental-feature-block" role="region" aria-label={tx("ui.codex_identity_group")}>
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><Radar size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_identity_group")}</strong>
+                  <span>{tx("ui.codex_identity_group_help")}</span>
+                </div>
+              </div>
+            </div>
+            <CodexIdentityPolicyEditor
+              value={codexIdentity}
+              disabled={loading || savingExperiment || !experiments}
+              onChange={(patch) => setCodexIdentity((current) => ({ ...current, ...patch }))}
+            />
+          </div>
           <div className="settings-section-actions experimental-actions">
             <button className="button button-primary" type="button" disabled={loading || savingExperiment || !experiments} onClick={() => void saveExperimentalSettings()}>
               {savingExperiment ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}
@@ -463,6 +479,12 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     </section>
   );
 }
+
+const EMPTY_CODEX_IDENTITY: ExperimentalCodexIdentitySettings = {
+  outbound_convergence_enabled: false,
+  ingress_gate_enabled: false,
+  allow_app_server_clients: false,
+};
 
 function serverStatusLabel(snapshot: CPAServerVersionSnapshot | null, tx: ReturnType<typeof useI18n>["tx"]): string {
   if (!snapshot) return tx("ui.checking");

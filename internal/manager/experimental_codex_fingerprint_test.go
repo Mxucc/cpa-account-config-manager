@@ -3,6 +3,7 @@ package manager
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +137,68 @@ func TestApplyCodexFingerprintHeadersAndBodyStayConsistent(t *testing.T) {
 		}
 		if body["prompt_cache_key"] != ids.sessionID {
 			t.Fatalf("prompt cache key = %#v, want %q", body["prompt_cache_key"], ids.sessionID)
+		}
+	}
+}
+
+// The Responses API validates client_metadata.turn_started_at_unix_ms as a
+// string. Emitting the raw int64 made converged requests fail with
+// invalid_type, so every converged surface must carry the decimal string.
+func TestCodexFingerprintTurnStartedAtIsEncodedAsString(t *testing.T) {
+	for _, mode := range []codexFingerprintMode{codexFingerprintSession, codexFingerprintFull} {
+		ids := fingerprintIDsForTest(t, mode, "client-session")
+		want := strconv.FormatInt(ids.turnStartedAtUnixMs, 10)
+
+		header := http.Header{}
+		header.Set(codexFingerprintHeader, `{"turn_id":"old-turn"}`)
+		body := map[string]any{
+			"client_metadata": map[string]any{
+				codexFingerprintHeader: `{"turn_id":"old-turn"}`,
+			},
+		}
+		applyCodexFingerprintHeaders(header, ids)
+		if !applyCodexFingerprintClientMetadata(body, ids) {
+			t.Fatalf("mode %q did not modify body", mode)
+		}
+
+		clientMetadata, ok := body["client_metadata"].(map[string]any)
+		if !ok {
+			t.Fatalf("mode %q did not retain client metadata", mode)
+		}
+		if got := clientMetadata["turn_started_at_unix_ms"]; got != want {
+			t.Fatalf("mode %q client_metadata turn_started_at_unix_ms = %#v, want string %q", mode, got, want)
+		}
+
+		embedded, _ := clientMetadata[codexFingerprintHeader].(string)
+		if embedded == "" {
+			t.Fatalf("mode %q removed embedded turn metadata", mode)
+		}
+		for name, raw := range map[string]string{
+			"header":   header.Get(codexFingerprintHeader),
+			"embedded": embedded,
+		} {
+			var decoded map[string]any
+			if errDecode := json.Unmarshal([]byte(raw), &decoded); errDecode != nil {
+				t.Fatalf("mode %q %s metadata could not be decoded: %v", mode, name, errDecode)
+			}
+			if got := decoded["turn_started_at_unix_ms"]; got != want {
+				t.Fatalf("mode %q %s turn_started_at_unix_ms = %#v, want string %q", mode, name, got, want)
+			}
+		}
+
+		encoded, errEncode := json.Marshal(body)
+		if errEncode != nil {
+			t.Fatalf("mode %q body could not be encoded: %v", mode, errEncode)
+		}
+		var raw struct {
+			ClientMetadata map[string]json.RawMessage `json:"client_metadata"`
+		}
+		if errDecode := json.Unmarshal(encoded, &raw); errDecode != nil {
+			t.Fatalf("mode %q encoded body could not be decoded: %v", mode, errDecode)
+		}
+		value := strings.TrimSpace(string(raw.ClientMetadata["turn_started_at_unix_ms"]))
+		if !strings.HasPrefix(value, `"`) || !strings.HasSuffix(value, `"`) {
+			t.Fatalf("mode %q raw JSON value = %s, want a quoted string", mode, value)
 		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -226,7 +227,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
+		"turn_started_at_unix_ms": strconv.FormatInt(ids.turnStartedAtUnixMs, 10),
 	}
 	addCodexConvergenceRelationshipFields(fields, ids)
 	rewriteCodexTurnMetadataFields(h, fields)
@@ -289,7 +290,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
+		"turn_started_at_unix_ms": strconv.FormatInt(ids.turnStartedAtUnixMs, 10),
 	}
 	addCodexConvergenceRelationshipFields(fields, ids)
 	for key, value := range fields {

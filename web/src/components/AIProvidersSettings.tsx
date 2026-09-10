@@ -374,8 +374,8 @@ function ProviderCodexIdentityFields({
           <span>{tx("ui.codex_ingress_gate")}</span>
           <select value={entry.codexIngressGate} onChange={(event) => onEntry({ codexIngressGate: event.target.value as IdentityBooleanValue })}>
             <option value="">{tx("ui.inherit_global_setting")}</option>
-            <option value="true">{tx("ui.explicitly_enabled")}</option>
-            <option value="false">{tx("ui.explicitly_disabled")}</option>
+            <option value="true">{tx("ui.codex_ingress_gate_option_follows_global")}</option>
+            <option value="false">{tx("ui.codex_ingress_gate_option_exempt")}</option>
           </select>
         </label>
         <label className="field-block">

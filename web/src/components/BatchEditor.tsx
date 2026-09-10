@@ -390,7 +390,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 									<option value="full">{tx("ui.codex_convergence_full")}</option>
 								</select>
 							</label>
-							<IdentityBooleanSelect label={tx("ui.codex_ingress_gate")} value={codexIngressGate} onChange={setCodexIngressGate} disabled={!enabled.codex_identity} />
+							<IdentityBooleanSelect label={tx("ui.codex_ingress_gate")} value={codexIngressGate} onChange={setCodexIngressGate} disabled={!enabled.codex_identity} trueLabelKey="ui.codex_ingress_gate_option_follows_global" falseLabelKey="ui.codex_ingress_gate_option_exempt" />
 							<IdentityBooleanSelect label={tx("ui.codex_app_server_clients")} value={codexAllowAppServer} onChange={setCodexAllowAppServer} disabled={!enabled.codex_identity} />
 						</div>
 						<p className="model-policy-help">{tx("ui.codex_identity_clear_override_help")}</p>
@@ -531,15 +531,15 @@ function formatIdentityBoolean(value: boolean | undefined, tx: (key: UIMessageKe
 	return value === undefined ? tx("ui.inherit_global_setting") : tx(value ? "ui.explicitly_enabled" : "ui.explicitly_disabled");
 }
 
-function IdentityBooleanSelect({ label, value, onChange, disabled }: { label: string; value: IdentityBooleanValue; onChange: (value: IdentityBooleanValue) => void; disabled: boolean }) {
+function IdentityBooleanSelect({ label, value, onChange, disabled, trueLabelKey = "ui.explicitly_enabled", falseLabelKey = "ui.explicitly_disabled" }: { label: string; value: IdentityBooleanValue; onChange: (value: IdentityBooleanValue) => void; disabled: boolean; trueLabelKey?: UIMessageKey; falseLabelKey?: UIMessageKey }) {
 	const { tx } = useI18n();
 	return (
 		<label className="field-block">
 			<span>{label}</span>
 			<select value={value} onChange={(event) => onChange(event.target.value as IdentityBooleanValue)} disabled={disabled} aria-label={label}>
 				<option value="">{tx("ui.inherit_global_setting")}</option>
-				<option value="true">{tx("ui.explicitly_enabled")}</option>
-				<option value="false">{tx("ui.explicitly_disabled")}</option>
+				<option value="true">{tx(trueLabelKey)}</option>
+				<option value="false">{tx(falseLabelKey)}</option>
 			</select>
 		</label>
 	);

@@ -462,14 +462,14 @@ func (e *CodexIdentityExperiment) effectiveFingerprintModeForAccount(ctx context
 }
 
 // effectiveAccountIngressGate resolves the plugin-side official-client gate for
-// one account. The global experiment switch is the master control: turning it off
-// must stop plugin-side rejection even while CPA still marks the account with
-// codex_cli_only, because that account flag belongs to the host and is enforced
-// outside this plugin. An explicit per-account override still wins in both
-// directions, which is the supported way to protect or exempt a single account.
+// one account. Only the global experiment switch enables it: a stored per-account
+// policy can exempt an account, never re-enable the gate while the switch is off.
+// Copies this plugin derived automatically from the former global-policy identity
+// used to keep rejecting requests long after the operator disabled the gate, and a
+// host codex_cli_only flag is still honoured only while the gate is enabled.
 func (e *CodexIdentityExperiment) effectiveAccountIngressGate(gate codexAccountWithMetadata) bool {
-	if override, ok := e.accountOverride(gate.account); ok && override.IngressGateEnabled != nil {
-		return *override.IngressGateEnabled
+	if override, ok := e.accountOverride(gate.account); ok && override.IngressGateEnabled != nil && !*override.IngressGateEnabled {
+		return false
 	}
 	if e == nil || e.settings == nil || !e.settings.CodexIdentity().IngressGateEnabled {
 		return false
@@ -506,10 +506,12 @@ func (e *CodexIdentityExperiment) effectiveProviderFingerprintMode(providerKey s
 	return effectiveCodexFingerprintMode(settings.ConvergenceMode)
 }
 
+// effectiveProviderIngressGate follows the same rule as the account path: the
+// global switch enables the gate and a provider policy can only exempt it.
 func (e *CodexIdentityExperiment) effectiveProviderIngressGate(providerKey string) bool {
 	if e != nil && e.overrides != nil {
-		if override, ok := e.overrides.Provider(providerKey); ok && override.IngressGateEnabled != nil {
-			return *override.IngressGateEnabled
+		if override, ok := e.overrides.Provider(providerKey); ok && override.IngressGateEnabled != nil && !*override.IngressGateEnabled {
+			return false
 		}
 	}
 	return e != nil && e.settings != nil && e.settings.CodexIdentity().IngressGateEnabled

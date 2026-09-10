@@ -231,11 +231,9 @@ func validateGlobalPolicy(policy GlobalPolicy) error {
 			return err
 		}
 	}
-	if policy.CodexIdentity.OutboundConvergenceEnabled || policy.CodexIdentity.IngressGateEnabled || !globalIdentityEmpty(policy.CodexIdentity) {
-		if err := ValidateExperimentalCodexIdentitySettings(policy.CodexIdentity); err != nil {
-			return err
-		}
-	}
+	// Codex client identity is not part of this policy: an incoming copy is
+	// dropped by normalizeGlobalPolicy and validated by the experimental
+	// settings endpoint instead.
 	return nil
 }
 

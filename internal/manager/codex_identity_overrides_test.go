@@ -147,25 +147,48 @@ func TestCodexIngressGateGlobalSwitchIsTheMasterControl(t *testing.T) {
 	if enabled.effectiveAccountIngressGate(exempted) {
 		t.Fatal("host metadata opt-out did not win")
 	}
-	// An explicit per-account override keeps working in both directions.
-	enabledOverrides := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil)
-	enabledOverrides.SetOverrides(overrides)
+	// A stored per-target policy can only exempt a target. A leftover explicit
+	// "enabled" copy must not keep the gate alive while the global switch is off.
+	disabledOverrides := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil)
+	disabledOverrides.SetOverrides(overrides)
 	value := true
 	if err := overrides.SetAccount(account.ID, CodexIdentityOverride{IngressGateEnabled: &value}); err != nil {
 		t.Fatalf("save account override: %v", err)
 	}
-	if !enabledOverrides.effectiveAccountIngressGate(flagged) {
-		t.Fatal("explicit account override did not outrank the disabled global switch")
+	if disabledOverrides.effectiveAccountIngressGate(flagged) {
+		t.Fatal("stored enabled override gated an account with the global switch off")
 	}
-	// The provider path follows the same rule.
-	if NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil).effectiveProviderIngressGate("codex-api-key:provider-a") {
-		t.Fatal("disabled gate gated a provider without an override")
+	exemptedValue := false
+	if err := overrides.SetAccount(account.ID, CodexIdentityOverride{IngressGateEnabled: &exemptedValue}); err != nil {
+		t.Fatalf("save exemption override: %v", err)
 	}
-	if err := overrides.SetProvider("codex-api-key:provider-a", CodexIdentityOverride{IngressGateEnabled: &value}); err != nil {
+	if disabledOverrides.effectiveAccountIngressGate(flagged) {
+		t.Fatal("account exemption did not disable the gate")
+	}
+	// With the global switch on, an explicit exemption still wins.
+	enabledWithExemption := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{IngressGateEnabled: true}}, nil)
+	enabledWithExemption.SetOverrides(overrides)
+	if enabledWithExemption.effectiveAccountIngressGate(flagged) {
+		t.Fatal("exemption did not win with the global switch on")
+	}
+	// The provider path follows the same rule in both directions.
+	providerOverrides := NewCodexIdentityOverrideService()
+	providerOverrides.Configure(Config{DataDir: t.TempDir()})
+	if err := providerOverrides.SetProvider("codex-api-key:provider-a", CodexIdentityOverride{IngressGateEnabled: &value}); err != nil {
 		t.Fatalf("save provider override: %v", err)
 	}
-	if !enabledOverrides.effectiveProviderIngressGate("codex-api-key:provider-a") {
-		t.Fatal("explicit provider override did not outrank the disabled global switch")
+	providerExperiment := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{}}, nil)
+	providerExperiment.SetOverrides(providerOverrides)
+	if providerExperiment.effectiveProviderIngressGate("codex-api-key:provider-a") {
+		t.Fatal("stored enabled provider override gated with the global switch off")
+	}
+	if err := providerOverrides.SetProvider("codex-api-key:provider-a", CodexIdentityOverride{IngressGateEnabled: &exemptedValue}); err != nil {
+		t.Fatalf("save provider exemption: %v", err)
+	}
+	enabledProvider := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{IngressGateEnabled: true}}, nil)
+	enabledProvider.SetOverrides(providerOverrides)
+	if enabledProvider.effectiveProviderIngressGate("codex-api-key:provider-a") {
+		t.Fatal("provider exemption did not win with the global switch on")
 	}
 }
 
@@ -265,23 +288,33 @@ func TestCodexIdentityProviderIngressOverrideWinsOverGlobalSetting(t *testing.T)
 	}
 }
 
-func TestCodexIdentityProviderIngressOverrideRejectsUnofficialClient(t *testing.T) {
-	overrides := NewCodexIdentityOverrideService()
-	overrides.Configure(Config{DataDir: t.TempDir()})
-	enabled := true
-	if err := overrides.SetProvider("codex-api-key:provider-auth", CodexIdentityOverride{IngressGateEnabled: &enabled}); err != nil {
-		t.Fatalf("save provider override: %v", err)
-	}
-	experiment := NewCodexIdentityExperiment(stubCodexSettings{}, NewAccountService(&fakeAuthHost{}))
-	experiment.SetOverrides(overrides)
-
-	response, changed := experiment.InterceptRequest(cpaapi.RequestInterceptRequest{
+// A provider request is gated by the global switch, exactly like an account
+// request: the gate is not a per-provider capability.
+func TestCodexIdentityProviderIngressGateFollowsTheGlobalSwitch(t *testing.T) {
+	request := cpaapi.RequestInterceptRequest{
 		ToFormat: "codex",
 		Headers:  http.Header{"User-Agent": []string{"unofficial-client/1.0"}},
 		Metadata: map[string]any{"selected_auth_id": "provider-auth"},
-	})
-	if !changed || !response.Terminate || response.StatusCode != http.StatusForbidden {
-		t.Fatalf("provider ingress override did not reject unofficial client: changed=%t response=%#v", changed, response)
+	}
+
+	enabled := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{IngressGateEnabled: true}}, NewAccountService(&fakeAuthHost{}))
+	enabled.SetOverrides(NewCodexIdentityOverrideService())
+	if response, changed := enabled.InterceptRequest(request); !changed || !response.Terminate || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("enabled gate did not reject an unofficial provider client: changed=%t response=%#v", changed, response)
+	}
+
+	// Regression: a stored "enabled" copy must not gate provider traffic after the
+	// operator turned the global switch off.
+	overrides := NewCodexIdentityOverrideService()
+	overrides.Configure(Config{DataDir: t.TempDir()})
+	staleEnabled := true
+	if err := overrides.SetProvider("codex-api-key:provider-auth", CodexIdentityOverride{IngressGateEnabled: &staleEnabled}); err != nil {
+		t.Fatalf("save provider override: %v", err)
+	}
+	disabled := NewCodexIdentityExperiment(stubCodexSettings{}, NewAccountService(&fakeAuthHost{}))
+	disabled.SetOverrides(overrides)
+	if response, changed := disabled.InterceptRequest(request); !changed || response.Terminate {
+		t.Fatalf("stale enabled override gated a provider with the global switch off: changed=%t response=%#v", changed, response)
 	}
 }
 
@@ -296,7 +329,9 @@ func TestCodexIdentityProviderAppServerOverrideAllowsAndDenies(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save provider override: %v", err)
 	}
-	experiment := NewCodexIdentityExperiment(stubCodexSettings{}, NewAccountService(&fakeAuthHost{}))
+	// The gate itself is enabled globally; the provider policy only decides the
+	// App Server question.
+	experiment := NewCodexIdentityExperiment(stubCodexSettings{ExperimentalCodexIdentitySettings{IngressGateEnabled: true}}, NewAccountService(&fakeAuthHost{}))
 	experiment.SetOverrides(overrides)
 	request := cpaapi.RequestInterceptRequest{
 		ToFormat: "codex",

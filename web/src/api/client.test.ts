@@ -14,6 +14,7 @@ import {
   getEffectiveUpdateStatus,
   getImportStatus,
   getOperationRetentionSettings,
+  getAIProviderNames,
   getAIProviderRuntime,
   getLiveInspection,
   getPluginStore,
@@ -50,6 +51,7 @@ import {
   probeOpenCodeQuota,
   patchAIProviderChannelEntry,
   saveAIProviderChannelEntry,
+  saveAIProviderName,
   setAIProviderChannelEnabled,
   testAIProviderChannelForKind,
 } from "./client";
@@ -1611,6 +1613,36 @@ describe("management API client", () => {
     });
     await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
     await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
+  });
+
+  it("round-trips verified AI provider names without exposing credentials", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        names: [
+          { kind: "codex-api-key", index: 1, base_url: "https://gateway.example/v1", name: "Beta gateway" },
+          { kind: "codex-api-key", index: 2, name: "" },
+          { index: 3, name: "missing kind" },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ resolved: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const snapshot = await getAIProviderNames();
+    expect(snapshot.names).toEqual([
+      { kind: "codex-api-key", index: 1, base_url: "https://gateway.example/v1", name: "Beta gateway" },
+    ]);
+
+    await saveAIProviderName({ kind: "codex-api-key", index: 1, base_url: "https://gateway.example/v1", name: "Beta gateway" });
+    const [putURL, putInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(String(putURL)).toContain("/ai-provider-names");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(String(putInit.body))).toEqual({
+      kind: "codex-api-key",
+      index: 1,
+      base_url: "https://gateway.example/v1",
+      name: "Beta gateway",
+    });
   });
 
   it("rejects fractional model catalog counters and model rows without ids", async () => {

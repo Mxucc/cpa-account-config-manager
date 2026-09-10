@@ -1402,6 +1402,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_deleted": "渠道已删除",
   "ui.add_ai_provider_confirm": "添加提供商",
   "ui.ai_provider_name": "提供商名称",
+  "ui.ai_provider_name_plugin_note": "CPA 不保存该名称。插件按渠道 Base URL 与 API Key 的不可逆摘要保存，并在每次读取时重新校验，因此仅 Base URL 相同或仅 Key 相同的渠道不会被认错。",
   "ui.reset_local_usage": "重置本地用量",
   "ui.confirm_reset_local_usage": "确定要重置 {target} 的本地用量记录吗？此操作不会改变上游额度。",
   "ui.local_usage_reset": "已重置 {target} 的本地用量",

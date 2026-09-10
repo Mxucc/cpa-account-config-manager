@@ -160,6 +160,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodGet + " /plugins/cpa-account-config-manager/codex-identity-overrides":                  {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/codex-identity-overrides/account":          {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/codex-identity-overrides/provider":         {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/ai-provider-names":                         {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/ai-provider-names":                         {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/proxy-profiles":                            {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/proxy-profiles":                           {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/proxy-profiles":                            {},

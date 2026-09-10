@@ -538,6 +538,71 @@ export async function resetUsage(target: UsageResetTarget): Promise<void> {
   });
 }
 
+export interface AIProviderNameAssignment {
+  kind: AIProviderChannelKind;
+  index: number;
+  base_url?: string;
+  name: string;
+}
+
+export interface AIProviderNameSnapshot {
+  names: AIProviderNameAssignment[];
+  storage_error?: string;
+}
+
+/**
+ * Read plugin-stored AI provider display names. CPA returns every channel kind
+ * as one positional array and drops an unknown `name` field, so the plugin
+ * stores the label under a salted digest of the channel base URL and
+ * credential, and re-resolves it against the live channel list on every read.
+ * `index` and `base_url` let the caller verify the label before rendering it.
+ */
+export async function getAIProviderNames(signal?: AbortSignal): Promise<AIProviderNameSnapshot> {
+  const response = await requestRecord<AIProviderNameSnapshot>("/ai-provider-names", { signal });
+  const names: AIProviderNameAssignment[] = [];
+  if (Array.isArray(response.names)) {
+    for (const item of response.names) {
+      if (!isRecord(item)) continue;
+      const kind = typeof item.kind === "string" ? item.kind : "";
+      const index = Number(item.index);
+      const name = typeof item.name === "string" ? item.name.trim() : "";
+      if (!kind || !Number.isSafeInteger(index) || index < 0 || !name) continue;
+      names.push({
+        kind: kind as AIProviderChannelKind,
+        index,
+        ...(typeof item.base_url === "string" ? { base_url: item.base_url } : {}),
+        name,
+      });
+    }
+  }
+  return {
+    names,
+    ...(typeof response.storage_error === "string" && response.storage_error ? { storage_error: response.storage_error } : {}),
+  };
+}
+
+/**
+ * Save (or, with an empty name, clear) the label for one channel entry. The
+ * base URL is submitted only for staleness checking; credentials never leave
+ * CPA because the plugin recomputes the digest from its own channel read.
+ */
+export async function saveAIProviderName(assignment: {
+  kind: AIProviderChannelKind;
+  index: number;
+  base_url?: string;
+  name: string;
+}): Promise<void> {
+  await request("/ai-provider-names", {
+    method: "PUT",
+    body: JSON.stringify({
+      kind: assignment.kind,
+      index: assignment.index,
+      base_url: assignment.base_url ?? "",
+      name: assignment.name,
+    }),
+  });
+}
+
 export async function getCodexIdentityOverrides(signal?: AbortSignal): Promise<CodexIdentityOverrideSnapshot> {
 	const response = await requestRecord<CodexIdentityOverrideSnapshot>("/codex-identity-overrides", { signal });
 	return {

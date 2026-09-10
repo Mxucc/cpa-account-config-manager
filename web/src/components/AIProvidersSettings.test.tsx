@@ -61,6 +61,9 @@ describe("AIProvidersSettings", () => {
 			if (url.endsWith("/codex-identity-overrides")) {
 				return jsonResponse(overrides["codex-identity-overrides"] ?? { accounts: {}, providers: {} });
 			}
+      if (url.endsWith("/ai-provider-names")) {
+        return jsonResponse(overrides["ai-provider-names"] ?? { names: [] });
+      }
       if (url.includes("/ai-providers/runtime")) {
         const runtime = overrides["ai-providers-runtime"] ?? { snapshots: [], updated_at: new Date().toISOString() };
         return jsonResponse(runtime);
@@ -643,6 +646,57 @@ describe("AIProvidersSettings", () => {
     const body = JSON.parse(String(probeRequest?.init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({ base_url: "https://openrouter.ai/api/v1" });
   });
+
+	it("stores a channel label through the plugin name API and renders only verified labels", async () => {
+		const user = userEvent.setup();
+		const requests = providerFetchMock({
+			"codex-api-key": [
+				{
+					"api-key": "sk-codex-alpha",
+					"auth-index": "provider-alpha",
+					"base-url": "https://gateway.example/v1",
+					models: [{ name: "gpt-5.6-sol", alias: "gpt-5.6-sol" }],
+				},
+				{
+					"api-key": "sk-codex-beta",
+					"auth-index": "provider-beta",
+					"base-url": "https://gateway.example/v1",
+					models: [{ name: "gpt-5.6-sol", alias: "gpt-5.6-sol" }],
+				},
+			],
+			// Only the first channel carries a stored label, and it is verified
+			// against both the row index and the base URL.
+			"ai-provider-names": {
+				names: [{ kind: "codex-api-key", index: 0, base_url: "https://gateway.example/v1", name: "Alpha gateway" }],
+			},
+		});
+
+		render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+		const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+		const codexRows = Array.from(section.querySelectorAll(".ai-provider-table tbody tr"))
+			.filter((row) => row.textContent?.includes("https://gateway.example/v1"));
+		expect(codexRows).toHaveLength(2);
+		expect(codexRows[0].textContent).toContain("Alpha gateway");
+		expect(codexRows[1].textContent).toContain("#2");
+
+		await user.click(within(codexRows[1] as HTMLElement).getByRole("button", { name: "编辑渠道" }));
+		const dialog = await screen.findByRole("dialog", { name: "编辑渠道" });
+		await user.clear(within(dialog).getByLabelText("提供商名称"));
+		await user.type(within(dialog).getByLabelText("提供商名称"), "Beta gateway");
+		await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+		await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/ai-provider-names") && init.method === "PUT")).toBe(true));
+		const nameRequest = requests.find(({ url, init }) => url.endsWith("/ai-provider-names") && init.method === "PUT");
+		expect(JSON.parse(String(nameRequest?.init.body))).toEqual({
+			kind: "codex-api-key",
+			index: 1,
+			base_url: "https://gateway.example/v1",
+			name: "Beta gateway",
+		});
+		// The credential itself must never be submitted to the name store.
+		expect(String(nameRequest?.init.body)).not.toContain("sk-codex-beta");
+	});
 
 	it("loads, saves, clears, and probes a stable Codex provider identity override", async () => {
 		const user = userEvent.setup();

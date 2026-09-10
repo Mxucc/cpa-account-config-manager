@@ -1400,6 +1400,7 @@ export const enUI = {
   "ui.ai_provider_deleted": "Channel deleted",
   "ui.add_ai_provider_confirm": "Add provider",
   "ui.ai_provider_name": "Provider name",
+  "ui.ai_provider_name_plugin_note": "CPA does not store this name. The plugin saves it under an irreversible digest of the channel base URL and API key, and re-verifies it on every read, so two channels sharing only a URL or only a key stay apart.",
   "ui.reset_local_usage": "Reset local usage",
   "ui.confirm_reset_local_usage": "Reset locally recorded usage for {target}? This does not change upstream quota.",
   "ui.local_usage_reset": "Local usage reset for {target}",

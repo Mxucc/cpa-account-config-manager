@@ -1402,6 +1402,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.ai_provider_deleted": "Канал удалён",
   "ui.add_ai_provider_confirm": "Добавить провайдера",
   "ui.ai_provider_name": "Имя провайдера",
+  "ui.ai_provider_name_plugin_note": "CPA не хранит это имя. Плагин сохраняет его под необратимым дайджестом base URL канала и API-ключа и перепроверяет при каждом чтении, поэтому каналы с одинаковым URL или одинаковым ключом не путаются.",
   "ui.reset_local_usage": "Сбросить локальное использование",
   "ui.confirm_reset_local_usage": "Сбросить локально записанное использование для {target}? Квота провайдера не изменится.",
   "ui.local_usage_reset": "Локальное использование сброшено для {target}",

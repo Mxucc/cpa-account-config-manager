@@ -368,8 +368,26 @@ func (e *WeeklyOverdraftExperiment) AllowInspectionAutoDisable(result Inspection
 	if !codexQuotaWindowSupportsOverdraftProbe(result.QuotaWindow) {
 		return true
 	}
-	return result.AutoDisableProbeStatus == InspectionAutoDisableProbeFailed &&
-		result.AutoDisableProbeAttempts >= weeklyOverdraftProbeAttempts
+	// The veto exists to give an overdraft probe a chance to prove the account is
+	// still usable. Without a probe for this result there is nothing to wait for:
+	// vetoing anyway left quota-limited accounts enabled forever, because only a
+	// planned probe can ever reach the failed state that releases the veto.
+	if strings.TrimSpace(result.AutoDisableProbeName) == "" {
+		return true
+	}
+	if result.AutoDisableProbeStatus == InspectionAutoDisableProbeFailed &&
+		result.AutoDisableProbeAttempts >= weeklyOverdraftProbeAttempts {
+		return true
+	}
+	// A probe that could not run at all reports a local configuration problem
+	// (missing management credential, experiment not applied upstream). That is
+	// not evidence of usable capacity either, so it must not block the disable
+	// indefinitely; the operator still gets the probe diagnostics on the result.
+	switch result.AutoDisableProbeReasonCode {
+	case "management_auth_unavailable", "experimental_probe_unavailable":
+		return true
+	}
+	return false
 }
 
 func (e *WeeklyOverdraftExperiment) AutomaticDisableProbePlan(account Account, result InspectionResult, preferredModel string) (AutomaticDisableProbePlan, bool) {

@@ -126,6 +126,18 @@ func classifyUsageFailure(record cpaapi.UsageRecord, now time.Time) inspectionEv
 			AutoDisableEligible: true,
 		}
 	}
+	if status == http.StatusUnauthorized {
+		// A bare 401 whose body carries no extra marker still means the upstream
+		// rejected these credentials. Classifying it as an ambiguous review made
+		// the account ineligible for automatic disable, so repeated 401s never
+		// disabled anything. The status code itself is the evidence here.
+		return inspectionEvidence{
+			ReasonCode:          "invalid_credentials",
+			Confidence:          InspectionConfidenceHigh,
+			StatusCode:          status,
+			AutoDisableEligible: true,
+		}
+	}
 	return inspectionEvidence{
 		ReasonCode: "authentication_review",
 		Confidence: InspectionConfidenceMedium,

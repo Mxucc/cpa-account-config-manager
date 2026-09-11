@@ -138,7 +138,10 @@ func TestWeeklyOverdraftExperimentProtectsEveryCodexQuotaWindowWithoutWeakeningO
 		InspectionQuotaWindowSevenDay,
 		InspectionQuotaWindowMultiple,
 	} {
-		result := InspectionResult{ReasonCode: "quota_exhausted", QuotaWindow: quotaWindow}
+		// The gate stage records the planned probe on the result before the guard
+		// is consulted, so a planned-but-unfinished probe is what holds the
+		// disable back.
+		result := InspectionResult{ReasonCode: "quota_exhausted", QuotaWindow: quotaWindow, AutoDisableProbeName: "weekly_overdraft"}
 		if experiment.AllowInspectionAutoDisable(result) {
 			t.Fatalf("quota window %q was allowed to auto-disable before probing", quotaWindow)
 		}
@@ -150,6 +153,19 @@ func TestWeeklyOverdraftExperimentProtectsEveryCodexQuotaWindowWithoutWeakeningO
 		result.AutoDisableProbeAttempts = weeklyOverdraftProbeAttempts
 		if !experiment.AllowInspectionAutoDisable(result) {
 			t.Fatalf("quota window %q remained blocked after all probes failed", quotaWindow)
+		}
+	}
+	// The veto must never outlive the possibility of a probe: without a planned
+	// probe (another provider, or no model-test service), or when the probe could
+	// not run for a local configuration reason, the account is disabled instead of
+	// waiting forever while it reports quota_exhausted.
+	for _, result := range []InspectionResult{
+		{ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowFiveHour},
+		{ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowSevenDay, AutoDisableProbeName: "weekly_overdraft", AutoDisableProbeStatus: InspectionAutoDisableProbeInconclusive, AutoDisableProbeReasonCode: "management_auth_unavailable"},
+		{ReasonCode: "quota_exhausted", QuotaWindow: InspectionQuotaWindowSevenDay, AutoDisableProbeName: "weekly_overdraft", AutoDisableProbeStatus: InspectionAutoDisableProbeInconclusive, AutoDisableProbeReasonCode: "experimental_probe_unavailable"},
+	} {
+		if !experiment.AllowInspectionAutoDisable(result) {
+			t.Fatalf("result %#v stayed blocked without a runnable probe", result)
 		}
 	}
 	for _, result := range []InspectionResult{
@@ -470,11 +486,15 @@ func TestFiveHourOverdraftBackgroundInspectionRunsGateBeforeDisable(t *testing.T
 			wantStatus: InspectionAutoDisableProbeFailed, wantAttempts: weeklyOverdraftProbeAttempts, wantDisabled: true, wantReason: "quota_limited",
 		},
 		{
-			name: "missing authenticated probe path is inconclusive and never disables", managementKey: "",
+			// The probe cannot run without the management credential, but the account
+			// reports an exhausted window. Waiting for a probe that can never run left
+			// quota-limited accounts enabled forever, so the disable now proceeds and
+			// the probe diagnostics stay on the result.
+			name: "missing authenticated probe path is inconclusive and still disables", managementKey: "",
 			configure: func(engine *InspectionEngine, accounts *AccountService) {
 				engine.SetModelTestService(NewModelTestService(accounts))
 			},
-			wantStatus: InspectionAutoDisableProbeInconclusive, wantAttempts: 0, wantDisabled: false, wantReason: "management_auth_unavailable",
+			wantStatus: InspectionAutoDisableProbeInconclusive, wantAttempts: 0, wantDisabled: true, wantReason: "management_auth_unavailable",
 		},
 	}
 	for _, test := range tests {

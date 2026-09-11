@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -141,11 +142,20 @@ func TestPassiveFailureWindowAndManualDisableAreConservative(t *testing.T) {
 	policy := passiveCircuitPolicy()
 	now := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.UTC)
 	record := inspectionRecord{}
-	failure := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusUnauthorized, Body: "request failed"}}
+	// 403 without credential markers is the ambiguous case: review-only evidence.
+	failure := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusForbidden, Body: "request failed"}}
 	applyUsageRecordToInspection(&record, failure, policy, now)
 	applyUsageRecordToInspection(&record, failure, policy, now.Add(31*time.Minute))
 	if record.Signal.ConsecutiveFailures != 1 || record.Signal.ReasonCode != "authentication_review" {
 		t.Fatalf("failure window did not reset: %#v", record.Signal)
+	}
+	// A bare 401 is definitive, so it is actionable on its own. Use a separate
+	// record so this assertion does not change the streak sequence above.
+	bareRecord := inspectionRecord{}
+	bareUnauthorized := cpaapi.UsageRecord{Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusUnauthorized, Body: "request failed"}}
+	applyUsageRecordToInspection(&bareRecord, bareUnauthorized, policy, now)
+	if bareRecord.Signal.ReasonCode != "invalid_credentials" || !bareRecord.Signal.AutoDisableEligible {
+		t.Fatalf("bare 401 was not actionable: %#v", bareRecord.Signal)
 	}
 	applyUsageRecordToInspection(&record, cpaapi.UsageRecord{
 		Failed: true, Failure: cpaapi.UsageFailure{StatusCode: http.StatusUnauthorized, Body: `{"error":{"code":"invalid_token"}}`},
@@ -409,5 +419,69 @@ func TestPassiveCircuitPersistsAcrossRestartAndFreshSuccessRecovers(t *testing.T
 	restarted.scan(context.Background())
 	if got := restarted.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]; got.OwnedDisable || got.Disabled || got.CircuitOpen || got.AutoAction != InspectionActionEnable {
 		t.Fatalf("fresh success evidence did not recover circuit: %#v", got)
+	}
+}
+
+// Regression for the reported "401 is never auto-disabled" behaviour. A 401 whose
+// body carries no credential marker used to be classified as an ambiguous review,
+// which made the account ineligible for automatic disable, so a dead credential
+// stayed enabled forever. The status code is the evidence: repeated 401s must
+// disable the account through the same path an operator's policy asks for.
+func TestBareUnauthorizedFailuresAutoDisableAccount(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 9, 0, 0, 0, time.UTC)
+	host := inspectionEditableHost(false)
+	engine := NewInspectionEngine(NewAccountService(host), host, NewMutationCoordinator())
+	engine.now = func() time.Time { return now }
+	engine.Configure(Config{DataDir: t.TempDir()})
+	defer engine.Shutdown()
+	engine.mu.Lock()
+	policy := defaultInspectionPolicy()
+	policy.Enabled = true
+	policy.AutoDisable = true
+	policy.FailureThreshold = 2
+	engine.policy = policy
+	engine.started = false
+	engine.mu.Unlock()
+
+	failure := cpaapi.UsageRecord{
+		Provider: "codex", AuthIndex: "inspection-account", Failed: true,
+		Failure: cpaapi.UsageFailure{StatusCode: http.StatusUnauthorized, Body: "bad response status code 401"},
+	}
+	for attempt := 1; attempt < policy.FailureThreshold; attempt++ {
+		engine.Observe(failure)
+		engine.scan(context.Background())
+		result := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]
+		if result.Disabled || result.OwnedDisable {
+			t.Fatalf("attempt %d disabled the account before the threshold: %#v", attempt, result)
+		}
+	}
+	engine.Observe(failure)
+	engine.scan(context.Background())
+
+	result := engine.ListResults(InspectionResultQuery{Page: 1, PageSize: 50}).Results[0]
+	// The analysis recommendation stays "reauth" (the operator must replace the
+	// credential); the automatic action is what disables the account.
+	if !result.Disabled || !result.OwnedDisable || result.ReasonCode != "invalid_credentials" ||
+		result.Recommendation != InspectionRecommendationReauth || result.AutoAction != InspectionActionDisable ||
+		result.AutoActionStatus != InspectionActionSucceeded || result.FailureStreak < policy.FailureThreshold {
+		t.Fatalf("bare 401 result = %#v", result)
+	}
+	record := engine.records["inspection-account"]
+	if record.DisableReason != "invalid_credentials" || record.DisabledName != "inspection.json" {
+		t.Fatalf("disable record = %#v", record)
+	}
+	// The credential failure must also be eligible for the invalid-credential
+	// delete policy, since the account cannot authenticate at all.
+	if !inspectionDeleteReasonAllowed(InspectionPolicy{AutoDisable: true, AutoDelete: true, AutoDeleteInvalidCredentials: true, FailureThreshold: 2}, record) {
+		t.Fatalf("invalid credentials are not delete eligible: %#v", record)
+	}
+	// The host file must really carry disabled=true.
+	detail := host.details["inspection-account"]
+	var document map[string]any
+	if errDecode := json.Unmarshal(detail.JSON, &document); errDecode != nil {
+		t.Fatalf("decode saved auth file: %v", errDecode)
+	}
+	if disabled, _ := document["disabled"].(bool); !disabled {
+		t.Fatalf("auth file was not disabled: %s", detail.JSON)
 	}
 }

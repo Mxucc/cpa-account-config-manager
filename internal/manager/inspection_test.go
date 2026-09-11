@@ -212,11 +212,26 @@ func TestClassifyUsageFailureRequiresCredentialSemantics(t *testing.T) {
 		wantEligible bool
 	}{
 		{
-			name: "bare unauthorized remains review only",
+			// A 401 without an extra marker still means the upstream rejected the
+			// credentials. Treating it as review-only made repeated 401s ineligible
+			// for automatic disable, so a dead account was never disabled.
+			name: "bare unauthorized is a definitive credential failure",
 			record: cpaapi.UsageRecord{
 				Provider: "codex",
 				Failed:   true,
 				Failure:  cpaapi.UsageFailure{StatusCode: http.StatusUnauthorized, Body: `Bearer upstream-secret`},
+			},
+			wantReason:   "invalid_credentials",
+			wantEligible: true,
+		},
+		{
+			// 403 stays ambiguous: it usually reports authorization or permission
+			// scope, not a dead credential.
+			name: "bare forbidden remains review only",
+			record: cpaapi.UsageRecord{
+				Provider: "codex",
+				Failed:   true,
+				Failure:  cpaapi.UsageFailure{StatusCode: http.StatusForbidden, Body: `Bearer upstream-secret`},
 			},
 			wantReason: "authentication_review",
 		},

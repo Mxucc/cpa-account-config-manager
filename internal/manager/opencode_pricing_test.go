@@ -128,6 +128,14 @@ func TestOpenCodePricingRefreshRevalidatesAndCaches(t *testing.T) {
 	requests := 0
 	service := &OpenCodePricingService{
 		client: &http.Client{Transport: creditPricingRoundTripper(func(request *http.Request) (*http.Response, error) {
+			// Documentation pages are served alongside the mirror so the test
+			// exercises both sync paths.
+			if strings.HasPrefix(request.URL.String(), "https://opencode.ai/docs/") {
+				if strings.Contains(request.URL.Path, "/go") {
+					return jsonHTTPResponse(http.StatusOK, openCodeDocsFixture), nil
+				}
+				return jsonHTTPResponse(http.StatusOK, openCodeZenDocsFixture), nil
+			}
 			if requests == 1 && request.Header.Get("If-None-Match") == "" {
 				t.Fatalf("revalidation did not send an ETag")
 			}
@@ -144,8 +152,20 @@ func TestOpenCodePricingRefreshRevalidatesAndCaches(t *testing.T) {
 	if errRefresh != nil || !changed {
 		t.Fatalf("first refresh: changed=%v err=%v", changed, errRefresh)
 	}
-	if snapshot := service.Snapshot(); len(snapshot.Zen) != 3 || len(snapshot.Go) != 2 {
-		t.Fatalf("refreshed snapshot: zen=%d go=%d", len(snapshot.Zen), len(snapshot.Go))
+	// The mirror rows survive and the documentation tables extend the catalog
+	// with the official ids they publish.
+	snapshot := service.Snapshot()
+	if len(snapshot.Zen) < 3 || len(snapshot.Go) < 2 {
+		t.Fatalf("refreshed snapshot lost mirror models: zen=%d go=%d", len(snapshot.Zen), len(snapshot.Go))
+	}
+	if _, ok := service.Price("go", "glm-5.3-flash"); !ok {
+		t.Fatalf("the documentation models were not merged: %#v", service.ModelIDs("go"))
+	}
+	if _, ok := service.Price("zen", "claude-opus-5"); !ok {
+		t.Fatalf("the Zen documentation models were not merged: %#v", service.ModelIDs("zen"))
+	}
+	if docs := snapshot.DocsUpdatedAt; docs.IsZero() {
+		t.Fatalf("the documentation sync did not record its time")
 	}
 	cached, errRead := os.ReadFile(filepath.Join(dataDir, openCodePricingStoreFile))
 	if errRead != nil {

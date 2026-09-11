@@ -41,6 +41,62 @@ function zenAccountView(overrides: Record<string, unknown> = {}): Record<string,
   };
 }
 
+/** Pricing snapshot with the official-docs billing block and per-model Go allowances. */
+function billingPricingFixture(): Record<string, unknown> {
+  return {
+    source: "models.dev (OpenCode Zen and OpenCode Go)",
+    updated_at: "2026-09-11T00:00:00Z",
+    docs_updated_at: "2026-09-12T00:00:00Z",
+    billing: [
+      {
+        kind: "zen",
+        metered: true,
+        docs_url: "https://opencode.ai/docs/zen/",
+        summary: "Pay-as-you-go per 1M tokens; balance auto-reloads below $5 (default $20) and a monthly workspace limit can cap spend.",
+      },
+      {
+        kind: "go",
+        metered: false,
+        subscription_usd_per_month: 10,
+        five_hour_fraction: 0.2,
+        weekly_fraction: 0.5,
+        docs_url: "https://opencode.ai/docs/go/",
+        summary: "$10/month subscription; each model has a monthly USD allowance split 20% / 50% / 100%.",
+      },
+    ],
+    go: [
+      {
+        id: "longcat-2.0",
+        name: "LongCat-2.0",
+        input_usd_per_million: 0.3,
+        output_usd_per_million: 1.2,
+        context_tokens: 1000000,
+        monthly_limit_usd: 60,
+        estimated_requests: { five_hour: 1830, weekly: 4580, monthly: 9150 },
+      },
+      {
+        id: "legacy-mini",
+        name: "Legacy Mini",
+        input_usd_per_million: 1,
+        output_usd_per_million: 2,
+        context_tokens: 200000,
+        monthly_limit_usd: 20,
+        deprecated_at: "January 2026",
+      },
+    ],
+    zen: [
+      {
+        id: "gemini-3.1-pro",
+        name: "Gemini 3.1 Pro",
+        input_usd_per_million: 2,
+        output_usd_per_million: 12,
+        cache_read_usd_per_million: 0.2,
+        tiers: [{ min_context_tokens: 200000, input_usd_per_million: 4 }],
+      },
+    ],
+  };
+}
+
 interface OpenCodeFetchMockOptions {
   accounts?: Array<Record<string, unknown>>;
   accountsStatus?: number;
@@ -306,12 +362,7 @@ describe("OpenCodeWorkspace", () => {
   it("renders the official OpenCode price catalog and syncs it on demand", async () => {
     const user = userEvent.setup();
     const requests = openCodeFetchMock({
-      pricing: {
-        source: "models.dev (OpenCode Zen and OpenCode Go)",
-        updated_at: "2026-09-11T00:00:00Z",
-        go: [{ id: "longcat-2.0", name: "LongCat-2.0", input_usd_per_million: 0.3, output_usd_per_million: 1.2, context_tokens: 1000000 }],
-        zen: [{ id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", input_usd_per_million: 2, output_usd_per_million: 12, cache_read_usd_per_million: 0.2, tiers: [{ min_context_tokens: 200000, input_usd_per_million: 4 }] }],
-      },
+      pricing: billingPricingFixture(),
     });
     const onNotice = vi.fn();
 
@@ -345,5 +396,86 @@ describe("OpenCodeWorkspace", () => {
     expect(within(section).getByText("7")).toBeInTheDocument();
     expect(within(section).getByText("2")).toBeInTheDocument();
     expect(within(section).getByRole("link", { name: "OpenCode Go 客户端要求" })).toHaveAttribute("href", "https://opencode.ai/docs/go/#where-can-i-use-it");
+  });
+
+  it("renders the Go monthly allowance with its derived 5-hour and weekly budgets", async () => {
+    openCodeFetchMock({ pricing: billingPricingFixture() });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
+    expect(await within(section).findByText("LongCat-2.0")).toBeInTheDocument();
+    expect(within(section).getByText("每月额度")).toBeInTheDocument();
+    expect(within(section).getByText("$60")).toBeInTheDocument();
+    expect(within(section).getByText("5 小时 $12 · 每周 $30")).toBeInTheDocument();
+    expect(within(section).getByText("$20")).toBeInTheDocument();
+    expect(within(section).getByText("5 小时 $4 · 每周 $10")).toBeInTheDocument();
+  });
+
+  it("renders the documented request estimates with the three window labels", async () => {
+    openCodeFetchMock({ pricing: billingPricingFixture() });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
+    const estimates = await within(section).findByText("1,830 / 4,580 / 9,150");
+    expect(estimates.getAttribute("title")).toContain("预估请求数");
+    expect(estimates.getAttribute("title")).toContain("5 小时额度");
+    expect(estimates.getAttribute("title")).toContain("7 天额度");
+    expect(estimates.getAttribute("title")).toContain("30 天额度");
+    expect(estimates).toHaveAttribute("aria-label", expect.stringContaining("30 天额度"));
+
+    // A model without documented estimates keeps the dash fallback instead of NaN.
+    const legacyRow = within(section).getByText("Legacy Mini").closest("tr");
+    expect(legacyRow).not.toBeNull();
+    expect(within(legacyRow as HTMLElement).getAllByText("-").length).toBeGreaterThan(0);
+  });
+
+  it("warns about Go models the official docs mark as deprecated", async () => {
+    openCodeFetchMock({ pricing: billingPricingFixture() });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
+    const warning = await within(section).findByText("已弃用 January 2026");
+    expect(warning).toHaveClass("opencode-model-error");
+  });
+
+  it("hides the Go allowance columns when the Zen catalog is selected", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({ pricing: billingPricingFixture() });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
+    expect(await within(section).findByText("每月额度")).toBeInTheDocument();
+
+    await user.click(within(section).getByRole("button", { name: "OpenCode Zen" }));
+
+    expect(await within(section).findByText("Gemini 3.1 Pro")).toBeInTheDocument();
+    expect(within(section).queryByText("每月额度")).not.toBeInTheDocument();
+    expect(within(section).queryByText("预估请求数")).not.toBeInTheDocument();
+    expect(within(section).queryByText("$60")).not.toBeInTheDocument();
+  });
+
+  it("summarizes metered Zen and subscription Go billing with the docs links and sync time", async () => {
+    openCodeFetchMock({ pricing: billingPricingFixture() });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
+    const billing = await within(section).findByRole("group", { name: "计费" });
+    expect(billing).toHaveTextContent("OpenCode Zen");
+    expect(billing).toHaveTextContent("按量计费");
+    expect(billing).toHaveTextContent("Pay-as-you-go per 1M tokens");
+    expect(billing).toHaveTextContent("$10/月订阅");
+    expect(billing).toHaveTextContent("5 小时 20% · 每周 50% · 每月 100%");
+
+    const docsLinks = within(billing).getAllByRole("link", { name: "价格文档" });
+    expect(docsLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "https://opencode.ai/docs/zen/",
+      "https://opencode.ai/docs/go/",
+    ]);
+    expect(within(section).getByText(/官方文档同步/)).toBeInTheDocument();
   });
 });

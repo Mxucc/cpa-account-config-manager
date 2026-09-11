@@ -29,6 +29,22 @@ function formatPriceUSD(value: number | undefined): string {
   return `$${value.toFixed(2)}`;
 }
 
+/**
+ * Allowances and subscription amounts are USD figures that are normally whole
+ * dollars, so they reuse the locale number formatter instead of formatPriceUSD.
+ */
+function formatAllowanceUSD(value: number | undefined, formatNumber: (value: number) => string): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "-";
+  return `$${formatNumber(value)}`;
+}
+
+/** Compact 5-hour / weekly / monthly request estimate; undefined when the docs have none. */
+function formatEstimatedRequests(requests: OpenCodeModelPrice["estimated_requests"], formatNumber: (value: number) => string): string | undefined {
+  const windows = [requests?.five_hour, requests?.weekly, requests?.monthly];
+  if (!windows.some((value) => typeof value === "number" && !Number.isNaN(value))) return undefined;
+  return windows.map((value) => (typeof value === "number" && !Number.isNaN(value) ? formatNumber(value) : "-")).join(" / ");
+}
+
 /** Mirrors the backend lookup: vendor prefixes and "_-" drift are tolerated. */
 function normalizePriceKey(model: string): string {
   const trimmed = model.trim().toLowerCase();
@@ -214,6 +230,12 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   });
   const visiblePrices = filteredPrices.slice(0, PRICE_ROWS_LIMIT);
   const selectedPrice = target ? priceFor(target.kind === "go" ? pricing.go : pricing.zen, testModel) : undefined;
+  const billingModes = pricing.billing ?? [];
+  const goBilling = billingModes.find((mode) => mode.kind === "go");
+  // Documented Go split: the 5-hour window is 20% and the week is 50% of the
+  // monthly allowance. The API carries the fractions; the constants are the fallback.
+  const goFiveHourFraction = goBilling?.five_hour_fraction ?? 0.2;
+  const goWeeklyFraction = goBilling?.weekly_fraction ?? 0.5;
 
   const statusLabel = (status: OpenCodeModelTestResult["status"]): string => {
     switch (status) {
@@ -449,8 +471,45 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
         <div className="opencode-price-meta">
           <span>{tx("ui.opencode_pricing_source")}: {pricing.source || "-"}</span>
           <span>{tx("ui.opencode_pricing_updated")}: {pricing.updated_at ? formatDateTime(pricing.updated_at) : "-"}</span>
+          <span>{tx("ui.opencode_docs_synced")}: {pricing.docs_updated_at ? formatDateTime(pricing.docs_updated_at) : "-"}</span>
           <span>{tx("ui.opencode_price_per_million")}</span>
         </div>
+        {billingModes.length ? (
+          <div className="opencode-billing" role="group" aria-label={tx("ui.opencode_billing")}>
+            {billingModes.map((mode) => {
+              const label = mode.kind === "go"
+                ? tx("ui.opencode_billing_go")
+                : mode.kind === "zen"
+                  ? tx("ui.opencode_billing_zen")
+                  : mode.kind;
+              const split = !mode.metered && (typeof mode.five_hour_fraction === "number" || typeof mode.weekly_fraction === "number")
+                ? tx("ui.opencode_billing_split", {
+                  five_hour: `${formatNumber((mode.five_hour_fraction ?? 0) * 100)}%`,
+                  weekly: `${formatNumber((mode.weekly_fraction ?? 0) * 100)}%`,
+                  monthly: "100%",
+                })
+                : "";
+              return (
+                <div className="opencode-billing-row" key={mode.kind}>
+                  <span className="opencode-billing-kind">{label}</span>
+                  {mode.metered ? <span className="opencode-billing-badge">{tx("ui.opencode_billing_metered")}</span> : null}
+                  {!mode.metered && typeof mode.subscription_usd_per_month === "number" ? (
+                    <span className="opencode-billing-amount">
+                      {tx("ui.opencode_billing_subscription", { amount: formatAllowanceUSD(mode.subscription_usd_per_month, formatNumber) })}
+                    </span>
+                  ) : null}
+                  {split ? <span className="opencode-billing-split">{split}</span> : null}
+                  {mode.summary ? <span className="opencode-billing-summary">{mode.summary}</span> : null}
+                  {mode.docs_url ? (
+                    <a className="opencode-billing-docs" href={mode.docs_url} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink size={13} />{tx("ui.opencode_billing_docs")}
+                    </a>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
         <div className="opencode-price-controls">
           <div className="scope-segment" aria-label={tx("ui.opencode_pricing")}>
             <button type="button" className={priceKind === "go" ? "active" : ""} onClick={() => setPriceKind("go")}>{tx("ui.ai_provider_channel_opencode")}</button>
@@ -471,27 +530,55 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                 <th>{tx("ui.opencode_price_output")}</th>
                 <th>{tx("ui.opencode_price_cache_read")}</th>
                 <th>{tx("ui.opencode_price_cache_write")}</th>
+                {priceKind === "go" ? <th>{tx("ui.opencode_monthly_allowance")}</th> : null}
+                {priceKind === "go" ? <th>{tx("ui.opencode_estimated_requests")}</th> : null}
                 <th>{tx("ui.opencode_context")}</th>
               </tr>
             </thead>
             <tbody>
-              {visiblePrices.map((price) => (
-                <tr key={price.id}>
-                  <td>
-                    <div className="opencode-models-cell">
-                      <strong>{price.name || price.id}</strong>
-                      <small>{price.id}</small>
-                      {price.tiers?.length ? <small className="opencode-model-error">{tx("ui.opencode_price_tier_note", { tokens: formatNumber(price.tiers[0].min_context_tokens) })}</small> : null}
-                    </div>
-                  </td>
-                  <td>{formatPriceUSD(price.input_usd_per_million)}</td>
-                  <td>{formatPriceUSD(price.output_usd_per_million)}</td>
-                  <td>{formatPriceUSD(price.cache_read_usd_per_million)}</td>
-                  <td>{formatPriceUSD(price.cache_write_usd_per_million)}</td>
-                  <td>{price.context_tokens ? formatNumber(price.context_tokens) : "-"}</td>
-                </tr>
-              ))}
-              {!loading && visiblePrices.length === 0 ? <tr><td colSpan={6}>{tx("ui.no_data")}</td></tr> : null}
+              {visiblePrices.map((price) => {
+                const estimated = formatEstimatedRequests(price.estimated_requests, formatNumber);
+                const estimatedLabel = `${tx("ui.opencode_estimated_requests")}: ${tx("ui.opencode_rolling")} / ${tx("ui.opencode_weekly")} / ${tx("ui.opencode_monthly")}`;
+                const monthlyLimit = typeof price.monthly_limit_usd === "number" && !Number.isNaN(price.monthly_limit_usd) ? price.monthly_limit_usd : undefined;
+                return (
+                  <tr key={price.id}>
+                    <td>
+                      <div className="opencode-models-cell">
+                        <strong>{price.name || price.id}</strong>
+                        <small>{price.id}</small>
+                        {price.tiers?.length ? <small className="opencode-model-error">{tx("ui.opencode_price_tier_note", { tokens: formatNumber(price.tiers[0].min_context_tokens) })}</small> : null}
+                        {price.deprecated_at ? <small className="opencode-model-error">{tx("ui.opencode_deprecated_at", { date: price.deprecated_at })}</small> : null}
+                      </div>
+                    </td>
+                    <td>{formatPriceUSD(price.input_usd_per_million)}</td>
+                    <td>{formatPriceUSD(price.output_usd_per_million)}</td>
+                    <td>{formatPriceUSD(price.cache_read_usd_per_million)}</td>
+                    <td>{formatPriceUSD(price.cache_write_usd_per_million)}</td>
+                    {priceKind === "go" ? (
+                      <td>
+                        <div className="opencode-allowance-cell">
+                          <strong>{formatAllowanceUSD(monthlyLimit, formatNumber)}</strong>
+                          {monthlyLimit === undefined ? null : (
+                            <small>
+                              {tx("ui.opencode_window_budget", {
+                                five_hour: formatAllowanceUSD(monthlyLimit * goFiveHourFraction, formatNumber),
+                                weekly: formatAllowanceUSD(monthlyLimit * goWeeklyFraction, formatNumber),
+                              })}
+                            </small>
+                          )}
+                        </div>
+                      </td>
+                    ) : null}
+                    {priceKind === "go" ? (
+                      <td>
+                        {estimated ? <span className="opencode-estimates" title={estimatedLabel} aria-label={estimatedLabel}>{estimated}</span> : "-"}
+                      </td>
+                    ) : null}
+                    <td>{price.context_tokens ? formatNumber(price.context_tokens) : "-"}</td>
+                  </tr>
+                );
+              })}
+              {!loading && visiblePrices.length === 0 ? <tr><td colSpan={priceKind === "go" ? 8 : 6}>{tx("ui.no_data")}</td></tr> : null}
             </tbody>
           </table>
         </div>

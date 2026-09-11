@@ -1,0 +1,1458 @@
+{
+ "source": "opencode.ai official pricing docs (embedded)",
+ "go": {
+  "deepseek-v4-1-flash-off-peak": {
+   "id": "deepseek-v4-1-flash-off-peak",
+   "name": "DeepSeek V4.1 Flash (Off-Peak)",
+   "prices": {
+    "cache_read": 0.003,
+    "input": 0.15,
+    "output": 0.6
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-1-flash-peak": {
+   "id": "deepseek-v4-1-flash-peak",
+   "name": "DeepSeek V4.1 Flash (Peak)",
+   "prices": {
+    "cache_read": 0.006,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-flash": {
+   "id": "deepseek-v4-flash",
+   "name": "DeepSeek V4 Flash",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "estimated_requests": {
+    "five_hour": 13000,
+    "weekly": 32500,
+    "monthly": 65000
+   }
+  },
+  "deepseek-v4-flash-off-peak": {
+   "id": "deepseek-v4-flash-off-peak",
+   "name": "DeepSeek V4 Flash (Off-Peak)",
+   "prices": {
+    "cache_read": 0.003,
+    "input": 0.15,
+    "output": 0.6
+   },
+   "monthly_limit_usd": 30,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-flash-peak": {
+   "id": "deepseek-v4-flash-peak",
+   "name": "DeepSeek V4 Flash (Peak)",
+   "prices": {
+    "cache_read": 0.006,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 30,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-flash-vision-exp": {
+   "id": "deepseek-v4-flash-vision-exp",
+   "name": "DeepSeek V4 Flash Vision Exp",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "estimated_requests": {
+    "five_hour": 6500,
+    "weekly": 16250,
+    "monthly": 32500
+   }
+  },
+  "deepseek-v4-flash-vision-exp-off-peak": {
+   "id": "deepseek-v4-flash-vision-exp-off-peak",
+   "name": "DeepSeek V4 Flash Vision Exp (Off-Peak)",
+   "prices": {
+    "cache_read": 0.003,
+    "input": 0.15,
+    "output": 0.6
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-flash-vision-exp-peak": {
+   "id": "deepseek-v4-flash-vision-exp-peak",
+   "name": "DeepSeek V4 Flash Vision Exp (Peak)",
+   "prices": {
+    "cache_read": 0.006,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-pro": {
+   "id": "deepseek-v4-pro",
+   "name": "DeepSeek V4 Pro",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "estimated_requests": {
+    "five_hour": 1050,
+    "weekly": 2600,
+    "monthly": 5200
+   }
+  },
+  "deepseek-v4-pro-off-peak": {
+   "id": "deepseek-v4-pro-off-peak",
+   "name": "DeepSeek V4 Pro (Off-Peak)",
+   "prices": {
+    "cache_read": 0.022,
+    "input": 0.66,
+    "output": 1.98
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "deepseek-v4-pro-peak": {
+   "id": "deepseek-v4-pro-peak",
+   "name": "DeepSeek V4 Pro (Peak)",
+   "prices": {
+    "cache_read": 0.044,
+    "input": 1.32,
+    "output": 3.96
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "deepseek-v4.1-flash": {
+   "id": "deepseek-v4.1-flash",
+   "name": "DeepSeek V4.1 Flash",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "estimated_requests": {
+    "five_hour": 6500,
+    "weekly": 16250,
+    "monthly": 32500
+   }
+  },
+  "glm-5.1": {
+   "id": "glm-5.1",
+   "name": "GLM-5.1",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.26,
+    "input": 1.4,
+    "output": 4.4
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 880,
+    "weekly": 2150,
+    "monthly": 4300
+   }
+  },
+  "glm-5.2": {
+   "id": "glm-5.2",
+   "name": "GLM-5.2",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.26,
+    "input": 1.4,
+    "output": 4.4
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 880,
+    "weekly": 2150,
+    "monthly": 4300
+   }
+  },
+  "glm-5.3": {
+   "id": "glm-5.3",
+   "name": "GLM-5.3",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.26,
+    "input": 1.4,
+    "output": 4.4
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {
+    "five_hour": 220,
+    "weekly": 540,
+    "monthly": 1080
+   }
+  },
+  "glm-5.3-flash": {
+   "id": "glm-5.3-flash",
+   "name": "GLM-5.3-Flash",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.03,
+    "input": 0.15,
+    "output": 0.5
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 6320,
+    "weekly": 15790,
+    "monthly": 31580
+   }
+  },
+  "gpt-5-6-luna-272k-tokens": {
+   "id": "gpt-5-6-luna-272k-tokens",
+   "name": "GPT 5.6 Luna (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 0.04,
+    "cache_write": 0.5,
+    "input": 0.4,
+    "output": 1.8
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "gpt-5.6-luna": {
+   "id": "gpt-5.6-luna",
+   "name": "GPT 5.6 Luna",
+   "endpoint": "https://opencode.ai/zen/go/v1/responses",
+   "estimated_requests": {
+    "five_hour": 2050,
+    "weekly": 5100,
+    "monthly": 10250
+   }
+  },
+  "grok-4-6-200k-tokens": {
+   "id": "grok-4-6-200k-tokens",
+   "name": "Grok 4.6 (≤ 200K tokens)",
+   "prices": {
+    "cache_read": 1,
+    "input": 4,
+    "output": 12
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {}
+  },
+  "grok-4.6": {
+   "id": "grok-4.6",
+   "name": "Grok 4.6",
+   "endpoint": "https://opencode.ai/zen/go/v1/responses",
+   "estimated_requests": {
+    "five_hour": 169,
+    "weekly": 423,
+    "monthly": 845
+   }
+  },
+  "hy3": {
+   "id": "hy3",
+   "name": "Hy3",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.035,
+    "input": 0.14,
+    "output": 0.58
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 4300,
+    "weekly": 10750,
+    "monthly": 21500
+   }
+  },
+  "hy4-preview": {
+   "id": "hy4-preview",
+   "name": "Hy4 preview",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.042,
+    "input": 0.834,
+    "output": 2.501
+   },
+   "monthly_limit_usd": 30,
+   "estimated_requests": {
+    "five_hour": 1350,
+    "weekly": 3380,
+    "monthly": 6770
+   }
+  },
+  "kimi-k2.6": {
+   "id": "kimi-k2.6",
+   "name": "Kimi K2.6",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.16,
+    "input": 0.95,
+    "output": 4
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 1150,
+    "weekly": 2880,
+    "monthly": 5750
+   }
+  },
+  "kimi-k2.7-code": {
+   "id": "kimi-k2.7-code",
+   "name": "Kimi K2.7 Code",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.19,
+    "input": 0.95,
+    "output": 4
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 1350,
+    "weekly": 3380,
+    "monthly": 6750
+   }
+  },
+  "kimi-k3": {
+   "id": "kimi-k3",
+   "name": "Kimi K3",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.3,
+    "input": 3,
+    "output": 15
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {
+    "five_hour": 110,
+    "weekly": 250,
+    "monthly": 490
+   }
+  },
+  "longcat-2.0": {
+   "id": "longcat-2.0",
+   "name": "LongCat-2.0",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.006,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 11400,
+    "weekly": 28600,
+    "monthly": 57200
+   }
+  },
+  "mimo-v2.5": {
+   "id": "mimo-v2.5",
+   "name": "MiMo V2.5",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.0028,
+    "input": 0.14,
+    "output": 0.28
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 30100,
+    "weekly": 75200,
+    "monthly": 150400
+   }
+  },
+  "mimo-v2.5-pro": {
+   "id": "mimo-v2.5-pro",
+   "name": "MiMo V2.5 Pro",
+   "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.003625,
+    "input": 0.435,
+    "output": 0.87
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {
+    "five_hour": 3250,
+    "weekly": 8150,
+    "monthly": 16300
+   }
+  },
+  "minimax-m2.5": {
+   "id": "minimax-m2.5",
+   "name": "MiniMax M2.5",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "prices": {
+    "cache_read": 0.06,
+    "cache_write": 0.375,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {}
+  },
+  "minimax-m2.7": {
+   "id": "minimax-m2.7",
+   "name": "MiniMax M2.7",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "prices": {
+    "cache_read": 0.06,
+    "cache_write": 0.375,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 3400,
+    "weekly": 8500,
+    "monthly": 17000
+   }
+  },
+  "minimax-m3": {
+   "id": "minimax-m3",
+   "name": "MiniMax M3",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "prices": {
+    "cache_read": 0.06,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 3200,
+    "weekly": 8000,
+    "monthly": 16000
+   }
+  },
+  "muse-spark-1.2-contributor": {
+   "id": "muse-spark-1.2-contributor",
+   "name": "Muse Spark 1.2 Contributor",
+   "endpoint": "https://opencode.ai/zen/go/v1/responses",
+   "prices": {
+    "cache_read": 0.002,
+    "input": 0.1,
+    "output": 0.2
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 45300,
+    "weekly": 113300,
+    "monthly": 226600
+   }
+  },
+  "muse-spark-1.3-contributor": {
+   "id": "muse-spark-1.3-contributor",
+   "name": "Muse Spark 1.3 Contributor",
+   "endpoint": "https://opencode.ai/zen/go/v1/responses",
+   "prices": {
+    "cache_read": 0.002,
+    "input": 0.1,
+    "output": 0.2
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {
+    "five_hour": 45300,
+    "weekly": 113300,
+    "monthly": 226600
+   }
+  },
+  "qwen3-6-plus-256k-tokens": {
+   "id": "qwen3-6-plus-256k-tokens",
+   "name": "Qwen3.6 Plus (≤ 256K tokens)",
+   "prices": {
+    "cache_read": 0.2,
+    "cache_write": 2.5,
+    "input": 2,
+    "output": 6
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {}
+  },
+  "qwen3-7-plus-256k-tokens": {
+   "id": "qwen3-7-plus-256k-tokens",
+   "name": "Qwen3.7 Plus (≤ 256K tokens)",
+   "prices": {
+    "cache_read": 0.12,
+    "cache_write": 1.5,
+    "input": 1.2,
+    "output": 4.8
+   },
+   "monthly_limit_usd": 60,
+   "estimated_requests": {}
+  },
+  "qwen3.6-plus": {
+   "id": "qwen3.6-plus",
+   "name": "Qwen3.6 Plus",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "estimated_requests": {
+    "five_hour": 3300,
+    "weekly": 8200,
+    "monthly": 16300
+   }
+  },
+  "qwen3.7-max": {
+   "id": "qwen3.7-max",
+   "name": "Qwen3.7 Max",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 3.125,
+    "input": 2.5,
+    "output": 7.5
+   },
+   "monthly_limit_usd": 30,
+   "estimated_requests": {
+    "five_hour": 170,
+    "weekly": 420,
+    "monthly": 840
+   }
+  },
+  "qwen3.7-plus": {
+   "id": "qwen3.7-plus",
+   "name": "Qwen3.7 Plus",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "estimated_requests": {
+    "five_hour": 4300,
+    "weekly": 10800,
+    "monthly": 21600
+   }
+  },
+  "qwen3.8-flash": {
+   "id": "qwen3.8-flash",
+   "name": "Qwen3.8 Flash",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "prices": {
+    "cache_read": 0.016,
+    "cache_write": 0.2,
+    "input": 0.15,
+    "output": 0.47
+   },
+   "monthly_limit_usd": 30,
+   "estimated_requests": {
+    "five_hour": 5400,
+    "weekly": 13500,
+    "monthly": 27000
+   }
+  },
+  "qwen3.8-max": {
+   "id": "qwen3.8-max",
+   "name": "Qwen3.8 Max",
+   "endpoint": "https://opencode.ai/zen/go/v1/messages",
+   "prices": {
+    "cache_read": 0.25,
+    "cache_write": 2.5,
+    "input": 2,
+    "output": 6
+   },
+   "monthly_limit_usd": 15,
+   "estimated_requests": {
+    "five_hour": 160,
+    "weekly": 400,
+    "monthly": 810
+   }
+  }
+ },
+ "zen": {
+  "big-pickle": {
+   "id": "big-pickle",
+   "name": "Big Pickle",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0,
+    "input": 0,
+    "output": 0
+   },
+   "estimated_requests": {}
+  },
+  "claude-fable-5": {
+   "id": "claude-fable-5",
+   "name": "Claude Fable 5",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 1,
+    "cache_write": 12.5,
+    "input": 10,
+    "output": 50
+   },
+   "estimated_requests": {}
+  },
+  "claude-fable-5-1": {
+   "id": "claude-fable-5-1",
+   "name": "Claude Fable 5.1",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.25,
+    "cache_write": 12.5,
+    "input": 10,
+    "output": 50
+   },
+   "estimated_requests": {}
+  },
+  "claude-haiku-3-5": {
+   "id": "claude-haiku-3-5",
+   "name": "Claude Haiku 3.5",
+   "deprecated_at": "February 16, 2026",
+   "estimated_requests": {}
+  },
+  "claude-haiku-4-5": {
+   "id": "claude-haiku-4-5",
+   "name": "Claude Haiku 4.5",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.1,
+    "cache_write": 1.25,
+    "input": 1,
+    "output": 5
+   },
+   "estimated_requests": {}
+  },
+  "claude-opus-4-1": {
+   "id": "claude-opus-4-1",
+   "name": "Claude Opus 4.1",
+   "deprecated_at": "August 5, 2026",
+   "estimated_requests": {}
+  },
+  "claude-opus-4-5": {
+   "id": "claude-opus-4-5",
+   "name": "Claude Opus 4.5",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 6.25,
+    "input": 5,
+    "output": 25
+   },
+   "estimated_requests": {}
+  },
+  "claude-opus-4-6": {
+   "id": "claude-opus-4-6",
+   "name": "Claude Opus 4.6",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 6.25,
+    "input": 5,
+    "output": 25
+   },
+   "estimated_requests": {}
+  },
+  "claude-opus-4-7": {
+   "id": "claude-opus-4-7",
+   "name": "Claude Opus 4.7",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 6.25,
+    "input": 5,
+    "output": 25
+   },
+   "estimated_requests": {}
+  },
+  "claude-opus-4-8": {
+   "id": "claude-opus-4-8",
+   "name": "Claude Opus 4.8",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 6.25,
+    "input": 5,
+    "output": 25
+   },
+   "estimated_requests": {}
+  },
+  "claude-opus-5": {
+   "id": "claude-opus-5",
+   "name": "Claude Opus 5",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 6.25,
+    "input": 5,
+    "output": 25
+   },
+   "estimated_requests": {}
+  },
+  "claude-sonnet-4": {
+   "id": "claude-sonnet-4",
+   "name": "Claude Sonnet 4",
+   "deprecated_at": "June 15, 2026",
+   "estimated_requests": {}
+  },
+  "claude-sonnet-4-5": {
+   "id": "claude-sonnet-4-5",
+   "name": "Claude Sonnet 4.5",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "estimated_requests": {}
+  },
+  "claude-sonnet-4-5-200k-tokens": {
+   "id": "claude-sonnet-4-5-200k-tokens",
+   "name": "Claude Sonnet 4.5 (≤ 200K tokens)",
+   "prices": {
+    "cache_read": 0.6,
+    "cache_write": 7.5,
+    "input": 6,
+    "output": 22.5
+   },
+   "estimated_requests": {}
+  },
+  "claude-sonnet-4-6": {
+   "id": "claude-sonnet-4-6",
+   "name": "Claude Sonnet 4.6",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.3,
+    "cache_write": 3.75,
+    "input": 3,
+    "output": 15
+   },
+   "estimated_requests": {}
+  },
+  "claude-sonnet-5": {
+   "id": "claude-sonnet-5",
+   "name": "Claude Sonnet 5",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.2,
+    "cache_write": 2.5,
+    "input": 2,
+    "output": 10
+   },
+   "estimated_requests": {}
+  },
+  "deepseek-v4-flash": {
+   "id": "deepseek-v4-flash",
+   "name": "DeepSeek V4 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.028,
+    "input": 0.14,
+    "output": 0.28
+   },
+   "estimated_requests": {}
+  },
+  "deepseek-v4-flash-vision-exp": {
+   "id": "deepseek-v4-flash-vision-exp",
+   "name": "DeepSeek V4 Flash Vision Exp",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.028,
+    "input": 0.14,
+    "output": 0.28
+   },
+   "estimated_requests": {}
+  },
+  "deepseek-v4-pro": {
+   "id": "deepseek-v4-pro",
+   "name": "DeepSeek V4 Pro",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.145,
+    "input": 1.74,
+    "output": 3.48
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3-1-pro-200k-tokens": {
+   "id": "gemini-3-1-pro-200k-tokens",
+   "name": "Gemini 3.1 Pro (≤ 200K tokens)",
+   "prices": {
+    "cache_read": 0.4,
+    "input": 4,
+    "output": 18
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3-flash": {
+   "id": "gemini-3-flash",
+   "name": "Gemini 3 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3-flash",
+   "prices": {
+    "cache_read": 0.05,
+    "input": 0.5,
+    "output": 3
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3-pro": {
+   "id": "gemini-3-pro",
+   "name": "Gemini 3 Pro",
+   "deprecated_at": "March 9, 2026",
+   "estimated_requests": {}
+  },
+  "gemini-3.1-pro": {
+   "id": "gemini-3.1-pro",
+   "name": "Gemini 3.1 Pro",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3.1-pro",
+   "estimated_requests": {}
+  },
+  "gemini-3.5-flash": {
+   "id": "gemini-3.5-flash",
+   "name": "Gemini 3.5 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3.5-flash",
+   "prices": {
+    "cache_read": 0.15,
+    "input": 1.5,
+    "output": 9
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3.5-flash-lite": {
+   "id": "gemini-3.5-flash-lite",
+   "name": "Gemini 3.5 Flash Lite",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3.5-flash-lite",
+   "prices": {
+    "cache_read": 0.03,
+    "input": 0.3,
+    "output": 2.5
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3.6-flash": {
+   "id": "gemini-3.6-flash",
+   "name": "Gemini 3.6 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3.6-flash",
+   "prices": {
+    "cache_read": 0.15,
+    "input": 1.5,
+    "output": 7.5
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3.7-flash": {
+   "id": "gemini-3.7-flash",
+   "name": "Gemini 3.7 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3.7-flash",
+   "prices": {
+    "cache_read": 0.15,
+    "input": 1.5,
+    "output": 7.5
+   },
+   "estimated_requests": {}
+  },
+  "gemini-3.8-flash": {
+   "id": "gemini-3.8-flash",
+   "name": "Gemini 3.8 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/models/gemini-3.8-flash",
+   "prices": {
+    "cache_read": 0.15,
+    "input": 1.5,
+    "output": 7.5
+   },
+   "estimated_requests": {}
+  },
+  "glm-4-6": {
+   "id": "glm-4-6",
+   "name": "GLM 4.6",
+   "deprecated_at": "March 15, 2026",
+   "estimated_requests": {}
+  },
+  "glm-4-7": {
+   "id": "glm-4-7",
+   "name": "GLM 4.7",
+   "deprecated_at": "March 15, 2026",
+   "estimated_requests": {}
+  },
+  "glm-5": {
+   "id": "glm-5",
+   "name": "GLM 5",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "deprecated_at": "May 14, 2026",
+   "prices": {
+    "cache_read": 0.2,
+    "input": 1,
+    "output": 3.2
+   },
+   "estimated_requests": {}
+  },
+  "glm-5.1": {
+   "id": "glm-5.1",
+   "name": "GLM 5.1",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.26,
+    "input": 1.4,
+    "output": 4.4
+   },
+   "estimated_requests": {}
+  },
+  "glm-5.2": {
+   "id": "glm-5.2",
+   "name": "GLM 5.2",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.26,
+    "input": 1.4,
+    "output": 4.4
+   },
+   "estimated_requests": {}
+  },
+  "glm-5.3": {
+   "id": "glm-5.3",
+   "name": "GLM 5.3",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.26,
+    "input": 1.4,
+    "output": 4.4
+   },
+   "estimated_requests": {}
+  },
+  "glm-5.3-flash": {
+   "id": "glm-5.3-flash",
+   "name": "GLM 5.3 Flash",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.03,
+    "input": 0.15,
+    "output": 0.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5": {
+   "id": "gpt-5",
+   "name": "GPT 5",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.107,
+    "input": 1.07,
+    "output": 8.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-4-272k-tokens": {
+   "id": "gpt-5-4-272k-tokens",
+   "name": "GPT 5.4 (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 0.5,
+    "input": 5,
+    "output": 22.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-5-272k-tokens": {
+   "id": "gpt-5-5-272k-tokens",
+   "name": "GPT 5.5 (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 1,
+    "input": 10,
+    "output": 45
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-6-luna-272k-tokens": {
+   "id": "gpt-5-6-luna-272k-tokens",
+   "name": "GPT 5.6 Luna (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 0.04,
+    "cache_write": 0.5,
+    "input": 0.4,
+    "output": 1.8
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-6-sol-272k-tokens": {
+   "id": "gpt-5-6-sol-272k-tokens",
+   "name": "GPT 5.6 Sol (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 0.4,
+    "cache_write": 5,
+    "input": 4,
+    "output": 15
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-6-terra-272k-tokens": {
+   "id": "gpt-5-6-terra-272k-tokens",
+   "name": "GPT 5.6 Terra (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 0.4,
+    "cache_write": 5,
+    "input": 4,
+    "output": 18
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-codex": {
+   "id": "gpt-5-codex",
+   "name": "GPT 5 Codex",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "deprecated_at": "July 23, 2026",
+   "prices": {
+    "cache_read": 0.107,
+    "input": 1.07,
+    "output": 8.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5-nano": {
+   "id": "gpt-5-nano",
+   "name": "GPT 5 Nano",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.005,
+    "input": 0.05,
+    "output": 0.4
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.1": {
+   "id": "gpt-5.1",
+   "name": "GPT 5.1",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.107,
+    "input": 1.07,
+    "output": 8.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.1-codex": {
+   "id": "gpt-5.1-codex",
+   "name": "GPT 5.1 Codex",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "deprecated_at": "July 23, 2026",
+   "prices": {
+    "cache_read": 0.107,
+    "input": 1.07,
+    "output": 8.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.1-codex-max": {
+   "id": "gpt-5.1-codex-max",
+   "name": "GPT 5.1 Codex Max",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "deprecated_at": "July 23, 2026",
+   "prices": {
+    "cache_read": 0.125,
+    "input": 1.25,
+    "output": 10
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.1-codex-mini": {
+   "id": "gpt-5.1-codex-mini",
+   "name": "GPT 5.1 Codex Mini",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "deprecated_at": "July 23, 2026",
+   "prices": {
+    "cache_read": 0.025,
+    "input": 0.25,
+    "output": 2
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.2": {
+   "id": "gpt-5.2",
+   "name": "GPT 5.2",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.175,
+    "input": 1.75,
+    "output": 14
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.2-codex": {
+   "id": "gpt-5.2-codex",
+   "name": "GPT 5.2 Codex",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "deprecated_at": "July 23, 2026",
+   "prices": {
+    "cache_read": 0.175,
+    "input": 1.75,
+    "output": 14
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.3-codex": {
+   "id": "gpt-5.3-codex",
+   "name": "GPT 5.3 Codex",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.175,
+    "input": 1.75,
+    "output": 14
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.3-codex-spark": {
+   "id": "gpt-5.3-codex-spark",
+   "name": "GPT 5.3 Codex Spark",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.175,
+    "input": 1.75,
+    "output": 14
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.4": {
+   "id": "gpt-5.4",
+   "name": "GPT 5.4",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "gpt-5.4-mini": {
+   "id": "gpt-5.4-mini",
+   "name": "GPT 5.4 Mini",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.075,
+    "input": 0.75,
+    "output": 4.5
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.4-nano": {
+   "id": "gpt-5.4-nano",
+   "name": "GPT 5.4 Nano",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.02,
+    "input": 0.2,
+    "output": 1.25
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.4-pro": {
+   "id": "gpt-5.4-pro",
+   "name": "GPT 5.4 Pro",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 30,
+    "input": 30,
+    "output": 180
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.5": {
+   "id": "gpt-5.5",
+   "name": "GPT 5.5",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "gpt-5.5-pro": {
+   "id": "gpt-5.5-pro",
+   "name": "GPT 5.5 Pro",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 30,
+    "input": 30,
+    "output": 180
+   },
+   "estimated_requests": {}
+  },
+  "gpt-5.6-luna": {
+   "id": "gpt-5.6-luna",
+   "name": "GPT 5.6 Luna",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "gpt-5.6-sol": {
+   "id": "gpt-5.6-sol",
+   "name": "GPT 5.6 Sol",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "gpt-5.6-terra": {
+   "id": "gpt-5.6-terra",
+   "name": "GPT 5.6 Terra",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "gpt-6-astra": {
+   "id": "gpt-6-astra",
+   "name": "GPT 6 Astra",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "gpt-6-astra-272k-tokens": {
+   "id": "gpt-6-astra-272k-tokens",
+   "name": "GPT 6 Astra (≤ 272K tokens)",
+   "prices": {
+    "cache_read": 2,
+    "cache_write": 25,
+    "input": 20,
+    "output": 75
+   },
+   "estimated_requests": {}
+  },
+  "grok-4-5-200k-tokens": {
+   "id": "grok-4-5-200k-tokens",
+   "name": "Grok 4.5 (≤ 200K tokens)",
+   "prices": {
+    "cache_read": 0.6,
+    "input": 4,
+    "output": 12
+   },
+   "estimated_requests": {}
+  },
+  "grok-4-6-200k-tokens": {
+   "id": "grok-4-6-200k-tokens",
+   "name": "Grok 4.6 (≤ 200K tokens)",
+   "prices": {
+    "cache_read": 1,
+    "input": 4,
+    "output": 12
+   },
+   "estimated_requests": {}
+  },
+  "grok-4.5": {
+   "id": "grok-4.5",
+   "name": "Grok 4.5",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "grok-4.6": {
+   "id": "grok-4.6",
+   "name": "Grok 4.6",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "estimated_requests": {}
+  },
+  "grok-build-0.1": {
+   "id": "grok-build-0.1",
+   "name": "Grok Build 0.1",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.2,
+    "input": 1,
+    "output": 2
+   },
+   "estimated_requests": {}
+  },
+  "kimi-k2": {
+   "id": "kimi-k2",
+   "name": "Kimi K2",
+   "deprecated_at": "March 6, 2026",
+   "estimated_requests": {}
+  },
+  "kimi-k2-thinking": {
+   "id": "kimi-k2-thinking",
+   "name": "Kimi K2 Thinking",
+   "deprecated_at": "March 6, 2026",
+   "estimated_requests": {}
+  },
+  "kimi-k2.5": {
+   "id": "kimi-k2.5",
+   "name": "Kimi K2.5",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "deprecated_at": "August 5, 2026",
+   "prices": {
+    "cache_read": 0.1,
+    "input": 0.6,
+    "output": 3
+   },
+   "estimated_requests": {}
+  },
+  "kimi-k2.6": {
+   "id": "kimi-k2.6",
+   "name": "Kimi K2.6",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.16,
+    "input": 0.95,
+    "output": 4
+   },
+   "estimated_requests": {}
+  },
+  "kimi-k2.7-code": {
+   "id": "kimi-k2.7-code",
+   "name": "Kimi K2.7 Code",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.19,
+    "input": 0.95,
+    "output": 4
+   },
+   "estimated_requests": {}
+  },
+  "kimi-k3": {
+   "id": "kimi-k3",
+   "name": "Kimi K3",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.3,
+    "input": 3,
+    "output": 15
+   },
+   "estimated_requests": {}
+  },
+  "ling-3.0-flash-fin-free": {
+   "id": "ling-3.0-flash-fin-free",
+   "name": "Ling 3.0 Flash Fin Free",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0,
+    "input": 0,
+    "output": 0
+   },
+   "estimated_requests": {}
+  },
+  "mimo-v2.5-free": {
+   "id": "mimo-v2.5-free",
+   "name": "MiMo-V2.5 Free",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0,
+    "input": 0,
+    "output": 0
+   },
+   "estimated_requests": {}
+  },
+  "minimax-m2-1": {
+   "id": "minimax-m2-1",
+   "name": "MiniMax M2.1",
+   "deprecated_at": "March 15, 2026",
+   "estimated_requests": {}
+  },
+  "minimax-m2.5": {
+   "id": "minimax-m2.5",
+   "name": "MiniMax M2.5",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "deprecated_at": "August 5, 2026",
+   "prices": {
+    "cache_read": 0.06,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "estimated_requests": {}
+  },
+  "minimax-m2.7": {
+   "id": "minimax-m2.7",
+   "name": "MiniMax M2.7",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.06,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "estimated_requests": {}
+  },
+  "minimax-m3": {
+   "id": "minimax-m3",
+   "name": "MiniMax M3",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0.06,
+    "input": 0.3,
+    "output": 1.2
+   },
+   "estimated_requests": {}
+  },
+  "muse-spark-1.2": {
+   "id": "muse-spark-1.2",
+   "name": "Muse Spark 1.2",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.15,
+    "input": 1.25,
+    "output": 4.25
+   },
+   "estimated_requests": {}
+  },
+  "muse-spark-1.3": {
+   "id": "muse-spark-1.3",
+   "name": "Muse Spark 1.3",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0.15,
+    "input": 1.25,
+    "output": 4.25
+   },
+   "estimated_requests": {}
+  },
+  "muse-spark-1.3-contributor-free": {
+   "id": "muse-spark-1.3-contributor-free",
+   "name": "Muse Spark 1.3 Contributor Free",
+   "endpoint": "https://opencode.ai/zen/v1/responses",
+   "prices": {
+    "cache_read": 0,
+    "input": 0,
+    "output": 0
+   },
+   "estimated_requests": {}
+  },
+  "nemotron-3-ultra-free": {
+   "id": "nemotron-3-ultra-free",
+   "name": "Nemotron 3 Ultra Free",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0,
+    "input": 0,
+    "output": 0
+   },
+   "estimated_requests": {}
+  },
+  "nemotron-3.5-lightning-free": {
+   "id": "nemotron-3.5-lightning-free",
+   "name": "Nemotron 3.5 Lightning Free",
+   "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+   "prices": {
+    "cache_read": 0,
+    "input": 0,
+    "output": 0
+   },
+   "estimated_requests": {}
+  },
+  "qwen3-coder-480b": {
+   "id": "qwen3-coder-480b",
+   "name": "Qwen3 Coder 480B",
+   "deprecated_at": "February 6, 2026",
+   "estimated_requests": {}
+  },
+  "qwen3.5-plus": {
+   "id": "qwen3.5-plus",
+   "name": "Qwen3.5 Plus",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.02,
+    "cache_write": 0.25,
+    "input": 0.2,
+    "output": 1.2
+   },
+   "estimated_requests": {}
+  },
+  "qwen3.6-plus": {
+   "id": "qwen3.6-plus",
+   "name": "Qwen3.6 Plus",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.05,
+    "cache_write": 0.625,
+    "input": 0.5,
+    "output": 3
+   },
+   "estimated_requests": {}
+  },
+  "qwen3.7-max": {
+   "id": "qwen3.7-max",
+   "name": "Qwen3.7 Max",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.5,
+    "cache_write": 3.125,
+    "input": 2.5,
+    "output": 7.5
+   },
+   "estimated_requests": {}
+  },
+  "qwen3.7-plus": {
+   "id": "qwen3.7-plus",
+   "name": "Qwen3.7 Plus",
+   "endpoint": "https://opencode.ai/zen/v1/messages",
+   "prices": {
+    "cache_read": 0.04,
+    "cache_write": 0.5,
+    "input": 0.4,
+    "output": 1.6
+   },
+   "estimated_requests": {}
+  }
+ },
+ "go_billing": {
+  "kind": "go",
+  "metered": false,
+  "subscription_usd_per_month": 10,
+  "five_hour_fraction": 0.2,
+  "weekly_fraction": 0.5,
+  "docs_url": "https://opencode.ai/docs/go/",
+  "summary": "$10/month subscription; each model has a monthly USD allowance split 20% / 50% / 100% across 5-hour, weekly and monthly windows.",
+  "parsed_from_docs": true
+ },
+ "zen_billing": {
+  "kind": "zen",
+  "metered": true,
+  "docs_url": "https://opencode.ai/docs/zen/",
+  "summary": "Pay-as-you-go per 1M tokens; balance auto-reloads when it drops below a threshold and a monthly workspace limit can cap spend.",
+  "auto_reload_below_usd": 5,
+  "auto_reload_usd": 20,
+  "parsed_from_docs": true
+ }
+}

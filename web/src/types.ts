@@ -1295,12 +1295,43 @@ export interface OpenCodeModelPrice {
   context_tokens?: number;
   output_tokens?: number;
   tiers?: OpenCodePriceTier[];
+  /** Go-only monthly USD allowance taken from the official pricing docs. */
+  monthly_limit_usd?: number;
+  /** Documented request estimates for the Go 5-hour, weekly and monthly windows. */
+  estimated_requests?: { five_hour?: number; weekly?: number; monthly?: number };
+  /** Official API endpoint published for the model. */
+  endpoint?: string;
+  /** Deprecation notice from the official pricing docs. */
+  deprecated_at?: string;
+  /** True when the row comes from the official pricing tables, not the mirror. */
+  official_prices?: boolean;
+}
+
+/**
+ * How one OpenCode gateway charges for usage. The values are contractual
+ * rather than measured: Zen is metered pay-as-you-go, Go is a $10/month
+ * subscription whose per-model USD allowance is split across three windows.
+ */
+export interface OpenCodeBillingMode {
+  kind: string;
+  metered: boolean;
+  subscription_usd_per_month?: number;
+  /** Share of the monthly allowance available in the 5-hour window (0.2). */
+  five_hour_fraction?: number;
+  /** Share of the monthly allowance available in the weekly window (0.5). */
+  weekly_fraction?: number;
+  docs_url?: string;
+  summary?: string;
 }
 
 /** Synced official price catalog for the whole OpenCode catalog. */
 export interface OpenCodePricingSnapshot {
   updated_at?: string;
+  /** When the official pricing docs were last parsed, next to the mirror sync. */
+  docs_updated_at?: string;
   source?: string;
+  /** Contractual billing descriptors for Zen and Go. */
+  billing?: OpenCodeBillingMode[];
   zen?: OpenCodeModelPrice[];
   go?: OpenCodeModelPrice[];
   storage_error?: string;

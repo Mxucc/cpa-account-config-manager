@@ -73,15 +73,23 @@ type OpenCodeModelPrice struct {
 	ContextTokens           int64               `json:"context_tokens,omitempty"`
 	OutputTokens            int64               `json:"output_tokens,omitempty"`
 	Tiers                   []OpenCodePriceTier `json:"tiers,omitempty"`
+	// Fields below come from the official pricing docs rather than the mirror.
+	MonthlyLimitUSD   float64                    `json:"monthly_limit_usd,omitempty"`
+	EstimatedRequests *openCodeEstimatedRequests `json:"estimated_requests,omitempty"`
+	Endpoint          string                     `json:"endpoint,omitempty"`
+	DeprecatedAt      string                     `json:"deprecated_at,omitempty"`
+	OfficialPrices    bool                       `json:"official_prices,omitempty"`
 }
 
 // OpenCodePricingSnapshot is the redacted pricing state exposed to the UI.
 type OpenCodePricingSnapshot struct {
-	UpdatedAt    time.Time            `json:"updated_at,omitempty"`
-	Source       string               `json:"source,omitempty"`
-	Zen          []OpenCodeModelPrice `json:"zen,omitempty"`
-	Go           []OpenCodeModelPrice `json:"go,omitempty"`
-	StorageError string               `json:"storage_error,omitempty"`
+	UpdatedAt     time.Time             `json:"updated_at,omitempty"`
+	DocsUpdatedAt time.Time             `json:"docs_updated_at,omitempty"`
+	Source        string                `json:"source,omitempty"`
+	Billing       []OpenCodeBillingMode `json:"billing,omitempty"`
+	Zen           []OpenCodeModelPrice  `json:"zen,omitempty"`
+	Go            []OpenCodeModelPrice  `json:"go,omitempty"`
+	StorageError  string                `json:"storage_error,omitempty"`
 }
 
 // openCodePricingTable is the parsed catalog plus the revalidation state.
@@ -91,6 +99,11 @@ type openCodePricingTable struct {
 	ETag      string
 	Zen       map[string]OpenCodeModelPrice
 	Go        map[string]OpenCodeModelPrice
+	// Docs is the official documentation catalog per kind, used for the Go
+	// allowance and request estimates and as the authoritative price source.
+	Docs map[string]openCodeDocsCatalog
+	// DocsUpdatedAt records when the documentation tables were last parsed.
+	DocsUpdatedAt time.Time
 }
 
 func (t *openCodePricingTable) modelsFor(kind string) map[string]OpenCodeModelPrice {
@@ -192,6 +205,13 @@ func NewOpenCodePricingService() *OpenCodePricingService {
 		now:  func() time.Time { return time.Now().UTC() },
 	}
 	if table, errParse := parseOpenCodePricing(embeddedOpenCodePricingJSON, time.Time{}, openCodePricingSource+" (embedded)"); errParse == nil {
+		docsGo, docsZen, errDocs := parseEmbeddedOpenCodeDocs()
+		if errDocs == nil {
+			table.Docs = map[string]openCodeDocsCatalog{openCodeKindGoValue: docsGo, openCodeKindZenValue: docsZen}
+			table.DocsUpdatedAt = service.now()
+			applyOpenCodeDocsPricing(table.Go, docsGo)
+			applyOpenCodeDocsPricing(table.Zen, docsZen)
+		}
 		service.table.Store(table)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -294,12 +314,55 @@ func (s *OpenCodePricingService) run(ctx context.Context) {
 
 // Refresh revalidates the catalog against models.dev. A 304 keeps the current
 // table and is reported as "not changed".
+// refreshOpenCodeDocs re-parses the official pricing documentation for both
+// gateways. A documentation failure never clears the previous tables, because a
+// transient docs outage must not stop usage from being priced.
+func (s *OpenCodePricingService) refreshOpenCodeDocs(ctx context.Context) (map[string]openCodeDocsCatalog, time.Time, bool, error) {
+	fetcher := newOpenCodeDocsFetcher(s.client)
+	catalogs := map[string]openCodeDocsCatalog{}
+	changed := false
+	var firstErr error
+	for _, target := range []struct {
+		kind string
+		url  string
+	}{
+		{openCodeKindGoValue, openCodeGoDocsURL},
+		{openCodeKindZenValue, openCodeZenDocsURL},
+	} {
+		body, errFetch := fetcher.fetch(ctx, target.url)
+		if errFetch != nil {
+			if firstErr == nil {
+				firstErr = errFetch
+			}
+			continue
+		}
+		catalog := parseOpenCodeDocsCatalogFor(body, target.kind)
+		if len(catalog.Models) == 0 {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("OpenCode pricing docs carried no %s models", target.kind)
+			}
+			continue
+		}
+		catalogs[target.kind] = catalog
+		changed = true
+	}
+	if len(catalogs) == 0 {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("OpenCode pricing docs are unavailable")
+		}
+		return nil, time.Time{}, false, firstErr
+	}
+	return catalogs, s.now(), changed, nil
+}
+
 func (s *OpenCodePricingService) Refresh(ctx context.Context) (bool, error) {
 	if s == nil {
 		return false, errors.New("OpenCode pricing service is unavailable")
 	}
 	s.refreshing.Lock()
 	defer s.refreshing.Unlock()
+
+	docs, docsUpdatedAt, docsChanged, docsErr := s.refreshOpenCodeDocs(ctx)
 
 	current := s.table.Load()
 	request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, openCodePricingURL, nil)
@@ -325,8 +388,32 @@ func (s *OpenCodePricingService) Refresh(ctx context.Context) (bool, error) {
 		s.mu.Unlock()
 		if current != nil {
 			current.UpdatedAt = s.now()
+			// A documentation re-parse only counts as a change when the tables
+			// actually differ, so a daily revalidation stays quiet.
+			changed := false
+			if len(docs) > 0 {
+				if current.Docs == nil {
+					current.Docs = map[string]openCodeDocsCatalog{}
+				}
+				for kind, catalog := range docs {
+					if !openCodeDocsEqual(current.Docs[kind], catalog) {
+						changed = true
+					}
+					current.Docs[kind] = catalog
+				}
+				if changed {
+					current.DocsUpdatedAt = docsUpdatedAt
+				}
+				applyOpenCodeDocsPricing(current.Go, current.Docs[openCodeKindGoValue])
+				applyOpenCodeDocsPricing(current.Zen, current.Docs[openCodeKindZenValue])
+			}
+			s.persistOpenCodePricing(current)
+			if docsErr != nil {
+				return changed, docsErr
+			}
+			return changed, nil
 		}
-		return false, nil
+		return docsChanged, docsErr
 	case http.StatusOK:
 	default:
 		return false, fmt.Errorf("OpenCode pricing returned HTTP status %d", response.StatusCode)
@@ -343,44 +430,79 @@ func (s *OpenCodePricingService) Refresh(ctx context.Context) (bool, error) {
 		return false, errParse
 	}
 	table.ETag = strings.TrimSpace(response.Header.Get("ETag"))
+	if current != nil {
+		// Carry the official documentation state across a mirror refresh: the
+		// allowance and estimates only exist in the docs.
+		table.Docs = current.Docs
+		table.DocsUpdatedAt = current.DocsUpdatedAt
+	}
+	if len(docs) > 0 {
+		if table.Docs == nil {
+			table.Docs = map[string]openCodeDocsCatalog{}
+		}
+		for kind, catalog := range docs {
+			table.Docs[kind] = catalog
+		}
+		table.DocsUpdatedAt = docsUpdatedAt
+	}
+	if docsCatalog, ok := table.Docs[openCodeKindGoValue]; ok {
+		applyOpenCodeDocsPricing(table.Go, docsCatalog)
+	}
+	if docsCatalog, ok := table.Docs[openCodeKindZenValue]; ok {
+		applyOpenCodeDocsPricing(table.Zen, docsCatalog)
+	}
 	s.table.Store(table)
 
+	s.persistOpenCodePricing(table)
+	if docsErr != nil {
+		return true, docsErr
+	}
+	return true, nil
+}
+
+// persistOpenCodePricing writes the catalog to the plugin data directory. A
+// failed write reports a storage error but never fails the sync: the in-memory
+// catalog is already updated and usable.
+func (s *OpenCodePricingService) persistOpenCodePricing(table *openCodePricingTable) {
+	if s == nil || table == nil {
+		return
+	}
 	s.mu.Lock()
 	storePath := s.storePath
 	configured := s.configured
 	s.mu.Unlock()
-	if configured && strings.TrimSpace(storePath) != "" {
-		persisted := persistedOpenCodePricing{
-			Version:   openCodePricingStoreVersion,
-			UpdatedAt: table.UpdatedAt,
-			Source:    table.Source,
-			ETag:      table.ETag,
-			Providers: map[string]persistedOpenCodePricingProvider{
-				openCodePricingProviderZen: {Models: table.Zen},
-				openCodePricingProviderGo:  {Models: table.Go},
-			},
-		}
-		encoded, errEncode := json.Marshal(persisted)
-		if errEncode != nil {
-			return true, nil
-		}
-		if errMkdir := os.MkdirAll(filepath.Dir(storePath), 0o700); errMkdir != nil {
-			s.mu.Lock()
-			s.storageErr = "OpenCode price cache could not be written"
-			s.mu.Unlock()
-			return true, nil
-		}
-		if errWrite := writePrivateFileAtomically(storePath, encoded); errWrite != nil {
-			s.mu.Lock()
-			s.storageErr = "OpenCode price cache could not be written"
-			s.mu.Unlock()
-			return true, nil
-		}
+	if !configured || strings.TrimSpace(storePath) == "" {
+		return
+	}
+	persisted := persistedOpenCodePricing{
+		Version:   openCodePricingStoreVersion,
+		UpdatedAt: table.UpdatedAt,
+		Source:    table.Source,
+		ETag:      table.ETag,
+		Providers: map[string]persistedOpenCodePricingProvider{
+			openCodePricingProviderZen: {Models: table.Zen},
+			openCodePricingProviderGo:  {Models: table.Go},
+		},
+	}
+	encoded, errEncode := json.Marshal(persisted)
+	if errEncode != nil {
+		return
+	}
+	if errMkdir := os.MkdirAll(filepath.Dir(storePath), 0o700); errMkdir != nil {
+		s.mu.Lock()
+		s.storageErr = "OpenCode price cache could not be written"
+		s.mu.Unlock()
+		return
+	}
+	if errWrite := writePrivateFileAtomically(storePath, encoded); errWrite != nil {
+		s.mu.Lock()
+		s.storageErr = "OpenCode price cache could not be written"
+		s.mu.Unlock()
+		return
 	}
 	s.mu.Lock()
 	s.storageErr = ""
 	s.mu.Unlock()
-	return true, nil
 }
 
 // Snapshot reports the catalog plus its provenance.
@@ -396,11 +518,13 @@ func (s *OpenCodePricingService) Snapshot() OpenCodePricingSnapshot {
 		return OpenCodePricingSnapshot{StorageError: storageErr}
 	}
 	return OpenCodePricingSnapshot{
-		UpdatedAt:    table.UpdatedAt,
-		Source:       table.Source,
-		Zen:          sortedOpenCodePrices(table.Zen),
-		Go:           sortedOpenCodePrices(table.Go),
-		StorageError: storageErr,
+		UpdatedAt:     table.UpdatedAt,
+		DocsUpdatedAt: table.DocsUpdatedAt,
+		Source:        table.Source,
+		Billing:       openCodeDocsBillingOrDefaults(table.Docs[openCodeKindGoValue], table.Docs[openCodeKindZenValue]),
+		Zen:           sortedOpenCodePrices(table.Zen),
+		Go:            sortedOpenCodePrices(table.Go),
+		StorageError:  storageErr,
 	}
 }
 
@@ -479,6 +603,68 @@ func (s *OpenCodePricingService) Estimate(kind, model string, usage OpenCodeToke
 		return 0, true
 	}
 	return int64(math.Round(usd * creditNanosPerUSD)), true
+}
+
+// applyOpenCodeDocsPricing merges the official documentation tables into a price
+// catalog. Documentation values win because they are the contractual prices, and
+// a model the mirror has not picked up yet is added so a newly published model is
+// priced immediately. The Go monthly allowance, the per-window request estimates
+// and the endpoint only exist in the documentation.
+func applyOpenCodeDocsPricing(models map[string]OpenCodeModelPrice, docs openCodeDocsCatalog) {
+	if models == nil || len(docs.Models) == 0 {
+		return
+	}
+	for id, doc := range docs.Models {
+		key := strings.ToLower(strings.TrimSpace(id))
+		if key == "" {
+			continue
+		}
+		price, exists := models[key]
+		if !exists {
+			price = OpenCodeModelPrice{ID: strings.TrimSpace(id), Name: firstNonEmpty(doc.Name, id)}
+		}
+		if len(doc.Prices) > 0 {
+			price.InputUSDPerMillion = doc.Prices["input"]
+			price.OutputUSDPerMillion = doc.Prices["output"]
+			price.CacheReadUSDPerMillion = doc.Prices["cache_read"]
+			price.CacheWriteUSDPerMillion = doc.Prices["cache_write"]
+			price.OfficialPrices = true
+		}
+		if doc.HasMonthly {
+			price.MonthlyLimitUSD = doc.MonthlyUSD
+		}
+		if doc.HasEstimate {
+			estimates := doc.Estimates
+			price.EstimatedRequests = &estimates
+		}
+		if doc.Endpoint != "" {
+			price.Endpoint = doc.Endpoint
+		}
+		if doc.Deprecated != "" {
+			price.DeprecatedAt = doc.Deprecated
+		}
+		if doc.Name != "" && (price.Name == "" || price.Name == price.ID) {
+			price.Name = doc.Name
+		}
+		models[key] = price
+	}
+}
+
+// openCodeDocsCatalogFor returns the parsed official documentation catalog for a
+// gateway, or an empty catalog when it was never loaded.
+func (t *openCodePricingTable) openCodeDocsCatalogFor(kind string) openCodeDocsCatalog {
+	if t == nil || len(t.Docs) == 0 {
+		return openCodeDocsCatalog{}
+	}
+	return t.Docs[openCodePricingProviderForKindKind(kind)]
+}
+
+// openCodePricingProviderForKindKind maps a billing kind to the docs catalog key.
+func openCodePricingProviderForKindKind(kind string) string {
+	if strings.EqualFold(strings.TrimSpace(kind), openCodeKindZenValue) {
+		return openCodeKindZenValue
+	}
+	return openCodeKindGoValue
 }
 
 // Provenance reports where the current catalog came from without copying it,

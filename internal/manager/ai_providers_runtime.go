@@ -198,7 +198,10 @@ func (t *ProviderRuntimeTracker) Configure(config Config) {
 		t.persistTimer.Stop()
 		t.persistTimer = nil
 	}
-	if t.loaded && t.dirty && t.store != "" {
+	t.mu.Lock()
+	pendingDirty := t.dirty
+	t.mu.Unlock()
+	if t.loaded && pendingDirty && t.store != "" {
 		if errPersist := t.persistLocked(); errPersist != nil {
 			return
 		}
@@ -297,7 +300,10 @@ func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFi
 		t.persistTimer.Stop()
 		t.persistTimer = nil
 	}
-	if t.loaded && t.dirty && t.store != "" {
+	t.mu.Lock()
+	pendingDirty := t.dirty
+	t.mu.Unlock()
+	if t.loaded && pendingDirty && t.store != "" {
 		if errPersist := t.persistLocked(); errPersist != nil {
 			return
 		}
@@ -345,8 +351,9 @@ func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFi
 	t.storageErr = ""
 	t.storageBlocked = false
 	t.dirty = len(currentAggregates) > 0 || recovered || pruned || removed
+	needsPersist := t.dirty
 	t.mu.Unlock()
-	if t.dirty {
+	if needsPersist {
 		_ = t.persistLocked()
 	}
 }
@@ -1207,7 +1214,9 @@ func (t *ProviderRuntimeTracker) Shutdown() {
 	// instead of returning early for the same data directory.
 	t.loaded = false
 	t.store = ""
+	t.mu.Lock()
 	t.dirty = false
+	t.mu.Unlock()
 	t.storeMu.Unlock()
 	t.mu.Lock()
 	t.requests = make(map[string]providerRuntimeRequest)

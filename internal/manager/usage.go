@@ -370,6 +370,7 @@ func (t *UsageTracker) AccountLifecycle(authIndex string) AccountLifecycleSnapsh
 		return AccountLifecycleSnapshot{}
 	}
 	aggregate, exists := t.accounts[storageKey]
+	aggregate = cloneUsageAggregate(aggregate)
 	t.mu.RUnlock()
 	if !exists || usageIdentitiesConflict(aggregate.Identity, identity) || aggregate.Lifecycle == nil {
 		return AccountLifecycleSnapshot{}
@@ -1036,6 +1037,15 @@ func (t *UsageTracker) Reset(identifier string) bool {
 	canonical := t.resolveUsageAuthIndexLocked(identifier)
 	storageKey, _ := t.usageStorageKeyLocked(canonical)
 	current, existed := t.accounts[storageKey]
+	if !existed {
+		// Nothing was recorded for this target, so there is nothing to clear.
+		// Creating a tombstone here would let an unknown identifier grow the map
+		// without bound, and the tracker already caps the observed accounts.
+		delete(t.overdraftInjected, canonical)
+		delete(t.overdraftInjected, storageKey)
+		t.mu.Unlock()
+		return false
+	}
 	now := t.currentTime().UTC()
 	current.InputTokens = 0
 	current.OutputTokens = 0
@@ -1062,7 +1072,12 @@ func (t *UsageTracker) Reset(identifier string) bool {
 	current.ResetAt = now
 	current.UpdatedAt = now
 	t.accounts[storageKey] = current
+	// Injection evidence is recorded under the resolved storage key, so clearing
+	// only the canonical identifier would leave the pre-reset overdraft proof in
+	// place and let a later cycle count it as evidence again.
+	delete(t.overdraftInjected, storageKey)
 	delete(t.overdraftInjected, canonical)
+	delete(t.overdraftInjected, usagePendingKey(canonical))
 	t.mu.Unlock()
 	t.requestPersist()
 	return existed
@@ -1084,6 +1099,7 @@ func (t *UsageTracker) Snapshot(authIndex string) *AccountUsageSnapshot {
 		return nil
 	}
 	aggregate, exists := t.accounts[storageKey]
+	aggregate = cloneUsageAggregate(aggregate)
 	t.mu.RUnlock()
 	if !exists || usageIdentitiesConflict(aggregate.Identity, identity) {
 		return nil
@@ -1440,6 +1456,7 @@ func (t *UsageTracker) OverdraftGateState(identifier string) overdraftGateState 
 		return state
 	}
 	aggregate, exists := t.accounts[storageKey]
+	aggregate = cloneUsageAggregate(aggregate)
 	t.mu.RUnlock()
 	if !exists || usageIdentitiesConflict(aggregate.Identity, identity) {
 		return state
@@ -1708,14 +1725,22 @@ func saturatingAdd(left, right int64) int64 {
 	return left + right
 }
 
+// cloneUsageAggregate deep-copies the pointer fields of one aggregate. Callers
+// that publish a snapshot to another goroutine must clone while still holding the
+// tracker lock: the write paths update these pointers in place, so reading them
+// after unlocking would race with Observe and the overdraft bookkeeping.
+func cloneUsageAggregate(aggregate usageAggregate) usageAggregate {
+	aggregate.Codex = cloneCodexUsage(aggregate.Codex)
+	aggregate.FiveHourOverdraft = cloneOverdraftCycle(aggregate.FiveHourOverdraft)
+	aggregate.SevenDayOverdraft = cloneOverdraftCycle(aggregate.SevenDayOverdraft)
+	aggregate.Lifecycle = cloneAccountLifecycle(aggregate.Lifecycle)
+	return aggregate
+}
+
 func cloneUsageAggregates(accounts map[string]usageAggregate) map[string]usageAggregate {
 	cloned := make(map[string]usageAggregate, len(accounts))
 	for storageKey, aggregate := range accounts {
-		aggregate.Codex = cloneCodexUsage(aggregate.Codex)
-		aggregate.FiveHourOverdraft = cloneOverdraftCycle(aggregate.FiveHourOverdraft)
-		aggregate.SevenDayOverdraft = cloneOverdraftCycle(aggregate.SevenDayOverdraft)
-		aggregate.Lifecycle = cloneAccountLifecycle(aggregate.Lifecycle)
-		cloned[storageKey] = aggregate
+		cloned[storageKey] = cloneUsageAggregate(aggregate)
 	}
 	return cloned
 }

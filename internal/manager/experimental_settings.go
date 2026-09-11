@@ -208,6 +208,18 @@ func (s *ExperimentalSettingsService) AdoptCodexIdentity(settings ExperimentalCo
 	return errSet
 }
 
+// noteStorageError records a sanitized persistence failure under the service
+// lock. Callers outside this file must not write storageErr directly because
+// Snapshot reads it concurrently.
+func (s *ExperimentalSettingsService) noteStorageError(message string) {
+	if s == nil || strings.TrimSpace(message) == "" {
+		return
+	}
+	s.mu.Lock()
+	s.storageErr = message
+	s.mu.Unlock()
+}
+
 func (s *ExperimentalSettingsService) Snapshot() ExperimentalSettingsSnapshot {
 	if s == nil {
 		return ExperimentalSettingsSnapshot{}

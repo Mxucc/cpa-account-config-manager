@@ -141,6 +141,17 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 	state.ProbeSweepSource = normalizeInspectionSweepSource(state.ProbeSweepSource)
 	state.ProbeSweepStatus = normalizeInspectionSweepStatus(state.ProbeSweepStatus)
 	state.ProbeSweepTargets = sanitizeInspectionSweepTargets(state.ProbeSweepTargets)
+	// The sanitized target list can be shorter than the persisted counters (dedupe,
+	// length filter, or a hand-edited state file), and the sweep executor slices the
+	// list by the completed cursor. Restore the invariant against the list it will
+	// actually index. A state without targets keeps its counters untouched: the
+	// executor rebuilds the target list and resets the cursor in that case, and
+	// preserving the counters keeps an interrupted sweep resumable.
+	if targetCount := len(state.ProbeSweepTargets); targetCount > 0 {
+		state.ProbeSweepTotal = targetCount
+		state.ProbeSweepCompleted = clampInspectionSweepCursor(state.ProbeSweepCompleted, targetCount)
+		state.ProbeSweepRemaining = targetCount - state.ProbeSweepCompleted
+	}
 	state.RunMode = normalizeInspectionRunMode(state.RunMode)
 	state.RunHealth = normalizeInspectionRunHealth(state.RunHealth)
 	state.RunSelected = sanitizeInspectionSweepTargets(state.RunSelected)

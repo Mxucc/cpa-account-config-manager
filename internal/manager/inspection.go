@@ -1332,6 +1332,16 @@ func (e *InspectionEngine) Shutdown() {
 
 func (e *InspectionEngine) scanLoop(ctx context.Context) {
 	defer e.wait.Done()
+	// This goroutine runs inside the host process: an unexpected panic in a scan
+	// pass must not take down CPA. Record a bounded, redacted storage error and
+	// keep the loop alive so the next interval can retry.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			e.mu.Lock()
+			e.storageErr = "inspection scan aborted unexpectedly"
+			e.mu.Unlock()
+		}
+	}()
 	initialDelay := e.scanInterval()
 	if e.scanPending() {
 		initialDelay = inspectionStartupDelay
@@ -1374,6 +1384,18 @@ func (e *InspectionEngine) scanLoop(ctx context.Context) {
 		}
 		resetInspectionTimer(timer, nextInterval)
 	}
+}
+
+// clampInspectionSweepCursor keeps a persisted sweep cursor inside the target
+// list it indexes.
+func clampInspectionSweepCursor(completed, total int) int {
+	if completed < 0 {
+		return 0
+	}
+	if completed > total {
+		return total
+	}
+	return completed
 }
 
 func (e *InspectionEngine) scanPending() bool {
@@ -1534,6 +1556,12 @@ func (e *InspectionEngine) scanWithMode(ctx context.Context, scheduled, manualPr
 		probeAccounts := accounts
 		probeCursorForRun := probeCursor
 		if probeSweep {
+			// A persisted sweep can outlive the target list it was created from: the
+			// store sanitizes targets (dedupe and length filter) while the completed
+			// counter is stored verbatim, and a truncated or hand-edited state file
+			// can disagree as well. Clamp before slicing so a stale cursor degrades
+			// into a short batch instead of panicking the background scan loop.
+			probeSweepCompleted = clampInspectionSweepCursor(probeSweepCompleted, len(probeSweepTargets))
 			batchEnd := min(probeSweepCompleted+probePolicy.ModelProbeBatchSize, len(probeSweepTargets))
 			batchTargets := probeSweepTargets[probeSweepCompleted:batchEnd]
 			probeProcessed = len(batchTargets)

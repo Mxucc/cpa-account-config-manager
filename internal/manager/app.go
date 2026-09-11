@@ -280,7 +280,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	if legacyIdentity, legacyEnabled := a.globalPolicy.LegacyCodexIdentity(); !globalIdentityEmpty(legacyIdentity) {
 		if legacyEnabled {
 			if errAdopt := a.experiments.AdoptCodexIdentity(legacyIdentity); errAdopt != nil {
-				a.experiments.storageErr = "experimental settings could not be persisted"
+				a.experiments.noteStorageError("experimental settings could not be persisted")
 			}
 			a.mergeLegacyCodexIdentityOverrides(legacyIdentity)
 		}

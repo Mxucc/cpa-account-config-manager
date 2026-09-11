@@ -215,14 +215,19 @@ func (s *AIProviderNameService) Assign(keys []string, name string) (string, erro
 		}
 		s.names[key] = aiProviderNameEntry{Name: normalizedName, UpdatedAt: now}
 	}
-	s.evictOldestLocked()
+	evicted := s.evictOldestLocked()
 	if errSave := s.persistLocked(); errSave != nil {
+		// Restore both this assignment and anything the cap evicted: a failed write
+		// must not drop labels that were already stored.
 		for key, entry := range previous {
 			if entry == nil {
 				delete(s.names, key)
 				continue
 			}
 			s.names[key] = *entry
+		}
+		for key, entry := range evicted {
+			s.names[key] = entry
 		}
 		s.storageErr = "AI provider name state could not be persisted"
 		return "", fmt.Errorf("%w: %v", ErrAIProviderNameStorageUnavailable, errSave)
@@ -241,21 +246,26 @@ func (s *AIProviderNameService) PruneKind(kind string, keep map[string]struct{})
 	prefix := strings.TrimSpace(kind) + ":"
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	removed := false
-	for key := range s.names {
+	removed := make(map[string]aiProviderNameEntry)
+	for key, entry := range s.names {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
 		if _, exists := keep[key]; exists {
 			continue
 		}
+		removed[key] = entry
 		delete(s.names, key)
-		removed = true
 	}
-	if !removed {
+	if len(removed) == 0 {
 		return nil
 	}
 	if errSave := s.persistLocked(); errSave != nil {
+		// The prune is best effort: keep the labels in memory when the state could
+		// not be persisted, so a failed write cannot silently discard them.
+		for key, entry := range removed {
+			s.names[key] = entry
+		}
 		s.storageErr = "AI provider name state could not be persisted"
 		return fmt.Errorf("%w: %v", ErrAIProviderNameStorageUnavailable, errSave)
 	}
@@ -263,9 +273,12 @@ func (s *AIProviderNameService) PruneKind(kind string, keep map[string]struct{})
 	return nil
 }
 
-func (s *AIProviderNameService) evictOldestLocked() {
+// evictOldestLocked trims the store back to its cap and returns the dropped
+// entries so the caller can restore them when persistence fails.
+func (s *AIProviderNameService) evictOldestLocked() map[string]aiProviderNameEntry {
+	evicted := make(map[string]aiProviderNameEntry)
 	if len(s.names) <= aiProviderNameMaxEntries {
-		return
+		return evicted
 	}
 	type keyedEntry struct {
 		key string
@@ -282,8 +295,12 @@ func (s *AIProviderNameService) evictOldestLocked() {
 		return ordered[i].at.Before(ordered[j].at)
 	})
 	for _, entry := range ordered[:len(ordered)-aiProviderNameMaxEntries] {
+		if current, exists := s.names[entry.key]; exists {
+			evicted[entry.key] = current
+		}
 		delete(s.names, entry.key)
 	}
+	return evicted
 }
 
 func (s *AIProviderNameService) persistLocked() error {

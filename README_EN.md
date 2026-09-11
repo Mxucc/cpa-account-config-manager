@@ -55,8 +55,9 @@ Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, and Codex Manage
 - Results include model, HTTP status, latency, and a sanitized upstream response. Primary, fallback, and compatibility models are supported, and completed `200` responses are recognized as success.
 - The UI persists the last manually selected model and tested-model history; allowlisted accounts load an allowed model first.
 - Model routing supports all models, allowlists, and blocklists. Manual tests, automatic probes, and inspection honor the policy. New Codex accounts can detect restricted compatibility and receive an automatic allowlist. Compatibility allowlisting is permanent and no longer requires an experimental toggle.
-- Codex client identity policy is a standard configuration surface. It supports outbound identity convergence, an official-client ingress gate, App Server allowance, minimum/maximum versions, allowlists, blocklists, engine-fingerprint signals, and pass-through, device, session, or fully converged modes.
-- Identity settings can be inherited or overridden at global, default-policy, conditional-policy, account, and AI-provider levels. Codex OAuth, `codex-api-key` health checks, and internal model, quota, token, PAT, and Agent Identity probes use a consistent compatible identity.
+- Codex client identity policy is the single global configuration under Other settings → Experimental features. It supports outbound identity convergence, an official-client ingress gate, App Server allowance, minimum/maximum versions, allowlists, blocklists, engine-fingerprint signals, and pass-through, device, session, or fully converged modes.
+- Only that global switch can enable the official-client ingress gate: an account or AI-provider policy can exempt a single target but never enable the gate on its own, so requests are not rejected after the master switch is turned off. A rejection reports its provenance (`source`, `reason`) so a plugin block can be told apart from an upstream restriction.
+- Convergence and the ingress gate are independent: enabling convergence never rejects a request. Codex OAuth, `codex-api-key` health checks, and internal model, quota, token, PAT, and Agent Identity probes use a consistent compatible identity.
 
 ### Inspection, Automated Remediation, And Policies
 
@@ -83,9 +84,9 @@ The dedicated AI Providers workspace manages:
 - OpenCode Go.
 - OpenCode Zen and self-hosted `opencode-cc` through a custom Base URL. OpenCode Zen defaults to `https://opencode.ai/zen` when no Base URL is provided.
 
-Provider fields include type, name, state, model count, concurrency, Base URL, API Key, model mappings, Priority, Weight, prefix, headers, proxy, and channel-specific options. API keys are always masked, and an empty key during editing preserves the stored value. Supported operations include view, test, edit, enable, disable, delete, model catalogs, real model probes, token/cost accounting, 15-second/60-second concurrency, 5h/7d custom budgets, proxy profiles, and Codex identity policy. Capabilities that the current CPA cannot edit are shown as compatibility-limited instead of pretending to work.
+Provider fields include type, name, state, model count, concurrency, Base URL, API Key, model mappings, Priority, Weight, prefix, headers, proxy, and channel-specific options. CPA channel entries have no name field of their own, so the plugin stores the label keyed by a salted, irreversible digest of the channel base URL and API key, revalidated against the live channel list on every read: channels that share only a URL or only a key stay apart. API keys are always masked, and an empty key during editing preserves the stored value. Supported operations include view, test, edit, enable, disable, delete, model catalogs, real model probes, token/cost accounting, 15-second/60-second concurrency, 5h/7d custom budgets, proxy profiles, and Codex identity policy. Capabilities that the current CPA cannot edit are shown as compatibility-limited instead of pretending to work.
 
-OpenCode Go additionally supports Workspace ID plus auth Cookie, 5h/7d/30d quotas, reset times, manual refresh, and deletion.
+OpenCode Go additionally supports Workspace ID plus auth Cookie, 5h/7d/30d quotas, reset times, manual refresh, and deletion. Configuration and refresh live in the authenticated UI: the standalone OpenCode status page is served without authentication, so it only renders cached state, masks workspace identifiers, and never accepts credentials.
 
 ### Audit Log, UI, And Updates
 

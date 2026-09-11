@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -176,63 +175,19 @@ func (a *App) handleOpenCodeProbe(_ context.Context, req cpaapi.ManagementReques
 	return jsonResponse(status, openCodeProbeResponse{Result: result})
 }
 
-// handleOpenCodeStatusPage serves the standalone OpenCode Go status page. All
-// form actions use GET so CPA renders the response as a full HTML page.
-func (a *App) handleOpenCodeStatusPage(_ context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+// handleOpenCodeStatusPage serves the standalone OpenCode Go status page.
+//
+// This is an unauthenticated resource route, so it is deliberately read-only:
+// it never accepts credentials from the query string and never mutates state.
+// Credential writes and refreshes belong to the authenticated Management routes
+// (/opencode/accounts, /opencode/refresh) or to the plugin UI, because a GET that
+// carries a credential would leak it through browser history, referrers, and
+// server access logs, and could be triggered cross-site.
+func (a *App) handleOpenCodeStatusPage(_ context.Context, _ cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	if a == nil || a.opencode == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "OpenCode quota service is unavailable"})
 	}
-	var workspace, cookie, action, removeID string
-	timeout := openCodeQuotaDefaultTimeout
-	if value := strings.TrimSpace(firstQueryValue(req.Query, "workspace_id")); value != "" {
-		workspace = value
-	}
-	if value := strings.TrimSpace(firstQueryValue(req.Query, "auth_cookie")); value != "" {
-		cookie = value
-	}
-	if value := strings.TrimSpace(firstQueryValue(req.Query, "action")); value != "" {
-		action = value
-	}
-	if value := strings.TrimSpace(firstQueryValue(req.Query, "account_id")); value != "" {
-		removeID = value
-	}
-	if value := strings.TrimSpace(firstQueryValue(req.Query, "timeout_seconds")); value != "" {
-		if parsed, errParse := strconv.Atoi(value); errParse == nil && parsed >= 1 && parsed <= openCodeQuotaMaxTimeoutSeconds {
-			timeout = parsed
-		}
-	}
-
-	var message string
-	switch action {
-	case "save":
-		if workspace != "" && cookie != "" {
-			if _, errSave := a.opencode.SaveAccount(workspace, cookie); errSave != nil {
-				message = "Save failed: " + errSave.Error()
-			} else {
-				message = "Account saved and queried."
-			}
-		} else {
-			message = "Save failed: workspace_id and auth_cookie are both required."
-		}
-	case "remove":
-		if removeID != "" {
-			if errRemove := a.opencode.RemoveAccount(removeID); errRemove != nil {
-				message = "Remove failed: " + errRemove.Error()
-			} else {
-				message = "Account removed."
-			}
-		}
-	case "refresh":
-		a.opencode.RefreshAll(true)
-		message = "All accounts refreshed."
-	case "query":
-		if workspace != "" && cookie != "" {
-			_ = a.opencode.Probe(workspace, cookie, timeout)
-		}
-	}
-
-	snapshot := a.opencode.Snapshot()
-	body := renderOpenCodeStatusPage(snapshot, message)
+	body := renderOpenCodeStatusPage(a.opencode.Snapshot(), "")
 	return cpaapi.ManagementResponse{
 		StatusCode: http.StatusOK,
 		Headers: http.Header{

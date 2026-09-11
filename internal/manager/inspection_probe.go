@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -77,11 +78,7 @@ func runInspectionModelProbesObserved(
 				model := inspectionProbeModel(account, policy.ModelProbeModels)
 				result, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true, SelectPolicyFallback: true}, managementBaseURL, managementKey)
 				if errRun != nil {
-					result = ModelTestResult{
-						AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
-						Status: "review", ProbeKind: InspectionProbeKindModel,
-						ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
-					}
+					result = inspectionProbeFailureResult(account, model, errRun, service.currentTime())
 				}
 				select {
 				case results <- result:
@@ -220,11 +217,7 @@ func retryInspectionProbeResultsObserved(ctx context.Context, service *ModelTest
 		completed++
 		next, errRun := service.Run(ctx, ModelTestRequest{AccountID: account.ID, Model: model, Inspection: true, SelectPolicyFallback: true}, managementBaseURL, managementKey)
 		if errRun != nil {
-			next = ModelTestResult{
-				AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
-				Status: "review", ProbeKind: InspectionProbeKindModel,
-				ReasonCode: "upstream_unavailable", TestedAt: service.currentTime(),
-			}
+			next = inspectionProbeFailureResult(account, model, errRun, service.currentTime())
 		}
 		if observe != nil {
 			observe(next)
@@ -235,6 +228,27 @@ func retryInspectionProbeResultsObserved(ctx context.Context, service *ModelTest
 		retry = append(retry, next)
 	}
 	return retry, completed
+}
+
+// inspectionProbeReasonManagementUnavailable marks a probe that could not run
+// because the local model-test service was saturated. It is not upstream
+// evidence about the account, so the signal layer ignores it instead of
+// counting a failure streak or opening a circuit.
+const inspectionProbeReasonManagementUnavailable = "management_unavailable"
+
+// inspectionProbeFailureResult converts a model-test error into a probe result.
+// A busy local service is classified separately from an upstream failure so a
+// concurrent manual model test cannot look like a broken account.
+func inspectionProbeFailureResult(account Account, model string, errRun error, now time.Time) ModelTestResult {
+	reason := "upstream_unavailable"
+	if errors.Is(errRun, ErrModelTestBusy) {
+		reason = inspectionProbeReasonManagementUnavailable
+	}
+	return ModelTestResult{
+		AccountID: account.ID, Provider: inspectionProbeProvider(account), Model: model,
+		Status: "review", ProbeKind: InspectionProbeKindModel,
+		ReasonCode: reason, TestedAt: now,
+	}
 }
 
 func inspectionProbeRetryCount(results []ModelTestResult) int {
@@ -312,7 +326,9 @@ func applyModelProbeToInspectionWithSource(record *inspectionRecord, result Mode
 	if record == nil || strings.TrimSpace(result.AccountID) == "" {
 		return
 	}
-	if result.ReasonCode == "model_blocked_by_account_policy" {
+	// Neither of these is evidence about the account: a model blocked by policy was
+	// never reachable, and a saturated local model-test service never ran the probe.
+	if result.ReasonCode == "model_blocked_by_account_policy" || result.ReasonCode == inspectionProbeReasonManagementUnavailable {
 		return
 	}
 	previous := record.Probe

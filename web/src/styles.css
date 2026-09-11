@@ -2985,3 +2985,42 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .risk-audit-status strong { overflow: hidden; color: var(--text-primary); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(11px * var(--font-size-scale)); text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) { .risk-audit-intro { grid-template-columns: 1fr; } .risk-audit-status { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .risk-tabs { margin-inline: 13px; } .risk-tabs button { font-size: calc(9px * var(--font-size-scale)); } }
+
+/* OpenCode controller: one workspace for Go workspaces, Zen keys, the model catalog, and CPA binding. */
+.opencode-workspace { min-width: 0; display: grid; gap: 16px; padding: 18px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-primary); box-shadow: var(--shadow-md); }
+.opencode-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.opencode-header h2 { margin: 4px 0; font-size: calc(20px * var(--font-size-scale)); letter-spacing: -.02em; }
+.opencode-header p { max-width: 720px; margin: 0; color: var(--text-secondary); font-size: calc(12px * var(--font-size-scale)); line-height: 1.5; }
+.opencode-workspace .eyebrow { display: inline-flex; align-items: center; gap: 7px; color: var(--primary-active); font-family: var(--font-mono, ui-monospace, monospace); font-size: calc(10px * var(--font-size-scale)); font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+.opencode-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.opencode-header-actions a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.opencode-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.opencode-links a { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-secondary); background: var(--bg-tertiary); font-size: calc(11px * var(--font-size-scale)); font-weight: 700; text-decoration: none; }
+.opencode-links a:hover { color: var(--text-primary); border-color: var(--line-strong); }
+.opencode-section { min-width: 0; display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.opencode-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.opencode-section-heading > div { min-width: 0; display: grid; gap: 3px; }
+.opencode-section-heading strong { color: var(--text-primary); font-size: calc(13px * var(--font-size-scale)); }
+.opencode-section-heading span { max-width: 680px; color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); line-height: 1.45; }
+.opencode-section-heading .button { display: inline-flex; align-items: center; gap: 6px; }
+.opencode-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; align-items: end; }
+.opencode-form-actions { display: flex; align-items: center; gap: 8px; }
+.opencode-form-actions .button { display: inline-flex; align-items: center; gap: 6px; }
+.opencode-note { grid-column: 1 / -1; margin: 0; color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); line-height: 1.45; }
+.opencode-table-wrap { min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+.opencode-table td { vertical-align: top; }
+.opencode-table-url { max-width: 280px; overflow-wrap: anywhere; color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); }
+.opencode-key-cell { min-width: 180px; display: grid; gap: 6px; }
+.opencode-key-cell > span { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); font-weight: 700; }
+.opencode-key-cell input { min-height: 30px; }
+.opencode-key-cell .button { justify-self: start; display: inline-flex; align-items: center; gap: 6px; }
+.opencode-quota-cell, .opencode-models-cell { min-width: 150px; display: grid; gap: 3px; }
+.opencode-quota-cell small, .opencode-models-cell small { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); overflow-wrap: anywhere; }
+.opencode-model-error { color: var(--warning); }
+.opencode-model-tester { border-color: color-mix(in srgb, var(--primary-active) 24%, var(--border-color)); }
+.opencode-test-result { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 0; }
+.opencode-test-result > div { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-tertiary); }
+.opencode-test-result dt { color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.opencode-test-result dd { margin: 0; color: var(--text-primary); font-size: calc(12px * var(--font-size-scale)); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .opencode-header { flex-direction: column; } .opencode-section-heading { align-items: flex-start; } }
+@media (max-width: 480px) { .opencode-workspace { padding: 12px; } .opencode-section { padding: 11px; } }

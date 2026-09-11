@@ -1240,6 +1240,39 @@ export interface AgentIdentitySessionLoginResponse {
 export interface OpenCodeAccountView {
   id: string;
   workspace_id: string;
+  base_url?: string;
+  /** Whether a Go API key is stored. The key itself is never returned. */
+  key_set?: boolean;
+  /** Model catalog read from the upstream; ids are not secret. */
+  models?: string[];
+  models_error?: string;
+  models_fetched_at?: string;
+}
+
+/**
+ * Outcome of one OpenCode model probe. The result is sanitized: it carries the
+ * status and a bounded detail, never the credential.
+ */
+export interface OpenCodeModelTestResult {
+  reachable: boolean;
+  status: "available" | "unavailable" | "unsupported" | "review";
+  status_code?: number;
+  reason_code?: string;
+  model?: string;
+  detail?: string;
+  latency_ms?: number;
+  tested_at?: string;
+}
+
+/** CPA channel written by the bind action so the models become routable. */
+export interface OpenCodeBindingResult {
+  kind: string;
+  base_url: string;
+  index: number;
+  created: boolean;
+  channel_key: string;
+  /** Number of model rows published on the CPA channel. */
+  models: number;
 }
 
 export interface OpenCodeWindowUsage {
@@ -1275,6 +1308,9 @@ export interface OpenCodeZenAccountView {
   name?: string;
   base_url: string;
   key_set: boolean;
+  models?: string[];
+  models_error?: string;
+  models_fetched_at?: string;
 }
 
 export interface OpenCodeZenAccountsResponse {

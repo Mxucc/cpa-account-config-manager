@@ -650,6 +650,47 @@ describe("AIProvidersSettings", () => {
     expect(body).toMatchObject({ base_url: "https://openrouter.ai/api/v1" });
   });
 
+  it("tests an OpenCode Go workspace through the plugin catalog and model probe", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/opencode/accounts")) return jsonResponse({ accounts: [{ id: "acc_go_1", workspace_id: "wrk_go_test", key_set: true, models: [] }] });
+      if (url.endsWith("/opencode/zen/accounts")) return jsonResponse({ accounts: [] });
+      if (url.endsWith("/opencode/models")) return jsonResponse({ account: { id: "acc_go_1", workspace_id: "wrk_go_test", key_set: true, models: ["deepseek-chat", "kimi-k2"] } });
+      if (url.endsWith("/opencode/model-test")) {
+        return jsonResponse({ result: { reachable: true, status: "available", reason_code: "model_response_ok", status_code: 200, latency_ms: 42, tested_at: "2026-09-01T00:00:00Z" } });
+      }
+      return jsonResponse({ "openai-compatibility": [], "gemini-api-key": [], "interactions-api-key": [], "claude-api-key": [], "codex-api-key": [], "xai-api-key": [], "vertex-api-key": [], "api-keys": [] });
+    }));
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const rows = section.querySelectorAll(".ai-provider-table tbody tr");
+    const openCodeRow = Array.from(rows).find((row) => row.textContent?.includes("wrk_go_test"));
+    expect(openCodeRow).toBeDefined();
+    const testButton = Array.from((openCodeRow as HTMLElement).querySelectorAll("button"))
+      .find((button) => (button.getAttribute("aria-label") ?? "").startsWith("测试"));
+    expect(testButton).toBeDefined();
+    const rowLabel = (testButton?.getAttribute("aria-label") ?? "").replace(/^测试 /, "");
+    expect(rowLabel).not.toBe("");
+    await user.click(testButton as HTMLButtonElement);
+
+    const dialog = await screen.findByRole("dialog", { name: `测试渠道：${rowLabel}` });
+    expect(await within(dialog).findByText("模型可用")).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: "测试模型" })).toHaveValue("deepseek-chat");
+    expect(within(openCodeRow as HTMLElement).getByText("2")).toBeInTheDocument();
+
+    const catalogRequest = requests.find(({ url }) => url.endsWith("/opencode/models"));
+    expect(catalogRequest).toBeDefined();
+    expect(JSON.parse(String(catalogRequest?.init.body))).toEqual({ kind: "go", account_id: "acc_go_1" });
+    const probeRequest = requests.find(({ url }) => url.endsWith("/opencode/model-test"));
+    expect(probeRequest).toBeDefined();
+    expect(JSON.parse(String(probeRequest?.init.body))).toEqual({ kind: "go", account_id: "acc_go_1", model: "deepseek-chat", timeout_seconds: 30 });
+  });
+
 	it("stores a channel label through the plugin name API and renders only verified labels", async () => {
 		const user = userEvent.setup();
 		const requests = providerFetchMock({

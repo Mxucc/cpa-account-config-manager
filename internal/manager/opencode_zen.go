@@ -35,15 +35,23 @@ type OpenCodeZenAccount struct {
 	Name      string `json:"name,omitempty"`
 	BaseURL   string `json:"base_url"`
 	ZenAPIKey string `json:"zen_api_key,omitempty"`
+	// Models caches the last catalog read from the upstream. Model ids are not
+	// secret, so the redacted view exposes them.
+	Models          []string  `json:"models,omitempty"`
+	ModelsError     string    `json:"models_error,omitempty"`
+	ModelsFetchedAt time.Time `json:"models_fetched_at,omitempty"`
 }
 
 // OpenCodeZenAccountView is the redacted public shape of a bound Zen account.
 // The API key itself is never exposed; KeySet reports whether one is stored.
 type OpenCodeZenAccountView struct {
-	ID      string `json:"id"`
-	Name    string `json:"name,omitempty"`
-	BaseURL string `json:"base_url"`
-	KeySet  bool   `json:"key_set"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name,omitempty"`
+	BaseURL         string    `json:"base_url"`
+	KeySet          bool      `json:"key_set"`
+	Models          []string  `json:"models,omitempty"`
+	ModelsError     string    `json:"models_error,omitempty"`
+	ModelsFetchedAt time.Time `json:"models_fetched_at,omitempty"`
 }
 
 type openCodeZenPersisted struct {
@@ -193,11 +201,18 @@ func (s *OpenCodeZenService) ListAccounts() []OpenCodeZenAccountView {
 }
 
 func openCodeZenViewOf(account OpenCodeZenAccount) OpenCodeZenAccountView {
+	baseURL := strings.TrimSpace(account.BaseURL)
+	if baseURL == "" {
+		baseURL = openCodeZenDefaultBaseURL
+	}
 	return OpenCodeZenAccountView{
-		ID:      account.ID,
-		Name:    account.Name,
-		BaseURL: account.BaseURL,
-		KeySet:  strings.TrimSpace(account.ZenAPIKey) != "",
+		ID:              account.ID,
+		Name:            account.Name,
+		BaseURL:         baseURL,
+		KeySet:          strings.TrimSpace(account.ZenAPIKey) != "",
+		Models:          append([]string(nil), account.Models...),
+		ModelsError:     account.ModelsError,
+		ModelsFetchedAt: account.ModelsFetchedAt,
 	}
 }
 
@@ -280,6 +295,79 @@ func (s *OpenCodeZenService) RemoveAccount(id string) error {
 }
 
 // Probe queries one Zen/bridge endpoint without saving any credential.
+// credential returns a copy of one stored account for the model paths.
+func (s *OpenCodeZenService) credential(id string) (OpenCodeGoCredential, error) {
+	if s == nil {
+		return OpenCodeGoCredential{}, fmt.Errorf("OpenCode Zen service is unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return OpenCodeGoCredential{}, fmt.Errorf("account_id is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID != id {
+			continue
+		}
+		baseURL := strings.TrimSpace(account.BaseURL)
+		if baseURL == "" {
+			baseURL = openCodeZenDefaultBaseURL
+		}
+		return OpenCodeGoCredential{
+			ID:      account.ID,
+			BaseURL: baseURL,
+			APIKey:  strings.TrimSpace(account.ZenAPIKey),
+			Models:  append([]string(nil), account.Models...),
+		}, nil
+	}
+	return OpenCodeGoCredential{}, fmt.Errorf("OpenCode Zen account was not found")
+}
+
+// RefreshModels reads the upstream model catalog for one Zen credential.
+func (s *OpenCodeZenService) RefreshModels(ctx context.Context, id string, timeoutSeconds int) (OpenCodeZenAccountView, error) {
+	credential, errCredential := s.credential(id)
+	if errCredential != nil {
+		return OpenCodeZenAccountView{}, errCredential
+	}
+	models, _, errFetch := fetchOpenCodeModels(ctx, credential.BaseURL, credential.APIKey, openCodeModelTimeout(timeoutSeconds))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != credential.ID {
+			continue
+		}
+		s.accounts[index].ModelsFetchedAt = s.now().UTC()
+		if errFetch != nil {
+			s.accounts[index].ModelsError = sanitizeOpenCodeError(errFetch.Error())
+		} else {
+			s.accounts[index].Models = models
+			s.accounts[index].ModelsError = ""
+		}
+		_ = s.persistLocked()
+		if errFetch != nil {
+			return openCodeZenViewOf(s.accounts[index]), errFetch
+		}
+		return openCodeZenViewOf(s.accounts[index]), nil
+	}
+	return OpenCodeZenAccountView{}, fmt.Errorf("OpenCode Zen account was not found")
+}
+
+// ProbeModel sends one minimal chat completion through the stored Zen key.
+func (s *OpenCodeZenService) ProbeModel(ctx context.Context, id, model string, timeoutSeconds int) (OpenCodeModelTestResult, error) {
+	credential, errCredential := s.credential(id)
+	if errCredential != nil {
+		return OpenCodeModelTestResult{}, errCredential
+	}
+	if credential.APIKey == "" {
+		return OpenCodeModelTestResult{
+			Status: "unsupported", ReasonCode: "credential_incomplete", Model: strings.TrimSpace(model),
+			Detail: "store the OpenCode Zen API key to test or route models", TestedAt: s.now().UTC(),
+		}, nil
+	}
+	return probeOpenCodeModel(ctx, credential.BaseURL, credential.APIKey, model, openCodeModelTimeout(timeoutSeconds)), nil
+}
+
 func (s *OpenCodeZenService) Probe(ctx context.Context, baseURL, apiKey string, timeout time.Duration) OpenCodeZenProbeResult {
 	return probeOpenCodeZenEndpoint(ctx, baseURL, apiKey, timeout)
 }

@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,12 +36,43 @@ type OpenCodeAccount struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
 	AuthCookie  string `json:"auth_cookie"`
+	// APIKey is the OpenCode Zen Go API key used for model requests. It is stored
+	// only in the plugin private data directory: the quota dashboard needs the
+	// session cookie, while model routing and the model catalog need this key.
+	APIKey string `json:"api_key,omitempty"`
+	// BaseURL overrides the Go gateway base (default https://opencode.ai/zen/go).
+	BaseURL string `json:"base_url,omitempty"`
+	// Models caches the last catalog read from the upstream. Model ids are not
+	// secret, so the redacted view exposes them.
+	Models          []string  `json:"models,omitempty"`
+	ModelsError     string    `json:"models_error,omitempty"`
+	ModelsFetchedAt time.Time `json:"models_fetched_at,omitempty"`
 }
 
 // OpenCodeAccountView is the redacted public shape of a bound account.
 type OpenCodeAccountView struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
+	BaseURL     string `json:"base_url,omitempty"`
+	// KeySet reports whether a Go API key is stored. The key itself is never
+	// returned by the management API.
+	KeySet          bool      `json:"key_set"`
+	Models          []string  `json:"models,omitempty"`
+	ModelsError     string    `json:"models_error,omitempty"`
+	ModelsFetchedAt time.Time `json:"models_fetched_at,omitempty"`
+}
+
+// accountView projects one stored account into its redacted public shape.
+func openCodeAccountView(account OpenCodeAccount) OpenCodeAccountView {
+	return OpenCodeAccountView{
+		ID:              account.ID,
+		WorkspaceID:     account.WorkspaceID,
+		BaseURL:         strings.TrimSpace(account.BaseURL),
+		KeySet:          strings.TrimSpace(account.APIKey) != "",
+		Models:          append([]string(nil), account.Models...),
+		ModelsError:     account.ModelsError,
+		ModelsFetchedAt: account.ModelsFetchedAt,
+	}
 }
 
 type openCodeQuotaPersisted struct {
@@ -194,20 +226,27 @@ func (s *OpenCodeQuotaService) ListAccounts() []OpenCodeAccountView {
 	defer s.mu.RUnlock()
 	views := make([]OpenCodeAccountView, 0, len(s.accounts))
 	for _, account := range s.accounts {
-		views = append(views, OpenCodeAccountView{ID: account.ID, WorkspaceID: account.WorkspaceID})
+		views = append(views, openCodeAccountView(account))
 	}
 	return views
 }
 
-// SaveAccount adds or replaces a workspace credential and persists it.
-func (s *OpenCodeQuotaService) SaveAccount(workspaceID, authCookie string) (string, error) {
+// SaveAccount adds or replaces a workspace credential and persists it. The Go
+// API key is optional: the quota dashboard works with the session cookie alone,
+// while model routing and the model catalog need the key. An empty key keeps the
+// stored key so re-saving a workspace does not silently drop routing.
+func (s *OpenCodeQuotaService) SaveAccount(workspaceID, authCookie, apiKey string) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("OpenCode quota service is unavailable")
 	}
 	workspaceID = strings.TrimSpace(workspaceID)
 	authCookie = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(authCookie), "auth="))
+	apiKey = strings.TrimSpace(apiKey)
 	if workspaceID == "" || authCookie == "" {
 		return "", fmt.Errorf("workspace_id and auth_cookie are both required")
+	}
+	if apiKey != "" && len(apiKey) > maxAccountConfigIDLength {
+		return "", fmt.Errorf("api_key is too long")
 	}
 	id := fmt.Sprintf("%s_%d", workspaceID, s.now().UnixNano())
 	s.mu.Lock()
@@ -215,6 +254,9 @@ func (s *OpenCodeQuotaService) SaveAccount(workspaceID, authCookie string) (stri
 	for index := range s.accounts {
 		if s.accounts[index].WorkspaceID == workspaceID {
 			s.accounts[index].AuthCookie = authCookie
+			if apiKey != "" {
+				s.accounts[index].APIKey = apiKey
+			}
 			id = s.accounts[index].ID
 			if errPersist := s.persistLocked(); errPersist != nil {
 				return "", errPersist
@@ -222,12 +264,148 @@ func (s *OpenCodeQuotaService) SaveAccount(workspaceID, authCookie string) (stri
 			return id, nil
 		}
 	}
-	s.accounts = append(s.accounts, OpenCodeAccount{ID: id, WorkspaceID: workspaceID, AuthCookie: authCookie})
+	s.accounts = append(s.accounts, OpenCodeAccount{ID: id, WorkspaceID: workspaceID, AuthCookie: authCookie, APIKey: apiKey})
 	if errPersist := s.persistLocked(); errPersist != nil {
 		s.accounts = s.accounts[:len(s.accounts)-1]
 		return "", errPersist
 	}
 	return id, nil
+}
+
+// Account credentials describes one stored account for the model and bind paths.
+type OpenCodeGoCredential struct {
+	ID          string
+	WorkspaceID string
+	BaseURL     string
+	APIKey      string
+	Models      []string
+}
+
+// accountCredential returns a copy of one stored account, or an error when the
+// id is unknown. The caller receives the credential, which must not be logged.
+func (s *OpenCodeQuotaService) accountCredential(id string) (OpenCodeGoCredential, error) {
+	if s == nil {
+		return OpenCodeGoCredential{}, fmt.Errorf("OpenCode quota service is unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return OpenCodeGoCredential{}, fmt.Errorf("account_id is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID != id {
+			continue
+		}
+		baseURL := strings.TrimSpace(account.BaseURL)
+		if baseURL == "" {
+			baseURL = openCodeGoDefaultBaseURL
+		}
+		return OpenCodeGoCredential{
+			ID:          account.ID,
+			WorkspaceID: account.WorkspaceID,
+			BaseURL:     baseURL,
+			APIKey:      strings.TrimSpace(account.APIKey),
+			Models:      append([]string(nil), account.Models...),
+		}, nil
+	}
+	return OpenCodeGoCredential{}, fmt.Errorf("OpenCode account was not found")
+}
+
+// SetAPIKey stores or clears the Go API key for one account.
+func (s *OpenCodeQuotaService) SetAPIKey(id, apiKey string) (OpenCodeAccountView, error) {
+	if s == nil {
+		return OpenCodeAccountView{}, fmt.Errorf("OpenCode quota service is unavailable")
+	}
+	id = strings.TrimSpace(id)
+	apiKey = strings.TrimSpace(apiKey)
+	if id == "" {
+		return OpenCodeAccountView{}, fmt.Errorf("account_id is required")
+	}
+	if len(apiKey) > maxAccountConfigIDLength {
+		return OpenCodeAccountView{}, fmt.Errorf("api_key is too long")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != id {
+			continue
+		}
+		previous := s.accounts[index].APIKey
+		s.accounts[index].APIKey = apiKey
+		// A changed credential invalidates the cached catalog.
+		s.accounts[index].Models = nil
+		s.accounts[index].ModelsError = ""
+		s.accounts[index].ModelsFetchedAt = time.Time{}
+		if errPersist := s.persistLocked(); errPersist != nil {
+			s.accounts[index].APIKey = previous
+			return OpenCodeAccountView{}, errPersist
+		}
+		return openCodeAccountView(s.accounts[index]), nil
+	}
+	return OpenCodeAccountView{}, fmt.Errorf("OpenCode account was not found")
+}
+
+// accountView returns the redacted view for one account.
+func (s *OpenCodeQuotaService) accountView(id string) (OpenCodeAccountView, error) {
+	if s == nil {
+		return OpenCodeAccountView{}, fmt.Errorf("OpenCode quota service is unavailable")
+	}
+	id = strings.TrimSpace(id)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID == id {
+			return openCodeAccountView(account), nil
+		}
+	}
+	return OpenCodeAccountView{}, fmt.Errorf("OpenCode account was not found")
+}
+
+// RefreshModels reads the upstream model catalog for one account and caches it.
+func (s *OpenCodeQuotaService) RefreshModels(ctx context.Context, id string, timeoutSeconds int) (OpenCodeAccountView, error) {
+	credential, errCredential := s.accountCredential(id)
+	if errCredential != nil {
+		return OpenCodeAccountView{}, errCredential
+	}
+	timeout := openCodeModelTimeout(timeoutSeconds)
+	models, _, errFetch := fetchOpenCodeModels(ctx, credential.BaseURL, credential.APIKey, timeout)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != credential.ID {
+			continue
+		}
+		s.accounts[index].ModelsFetchedAt = s.now().UTC()
+		if errFetch != nil {
+			s.accounts[index].ModelsError = sanitizeOpenCodeError(errFetch.Error())
+		} else {
+			s.accounts[index].Models = models
+			s.accounts[index].ModelsError = ""
+		}
+		_ = s.persistLocked()
+		if errFetch != nil {
+			return openCodeAccountView(s.accounts[index]), errFetch
+		}
+		return openCodeAccountView(s.accounts[index]), nil
+	}
+	return OpenCodeAccountView{}, fmt.Errorf("OpenCode account was not found")
+}
+
+// ProbeModel sends one minimal chat completion through the stored credential.
+func (s *OpenCodeQuotaService) ProbeModel(ctx context.Context, id, model string, timeoutSeconds int) (OpenCodeModelTestResult, error) {
+	credential, errCredential := s.accountCredential(id)
+	if errCredential != nil {
+		return OpenCodeModelTestResult{}, errCredential
+	}
+	if credential.APIKey == "" {
+		return OpenCodeModelTestResult{
+			Status: "unsupported", ReasonCode: "credential_incomplete", Model: strings.TrimSpace(model),
+			Detail: "store the OpenCode Go API key to test or route models", TestedAt: s.now().UTC(),
+		}, nil
+	}
+	result := probeOpenCodeModel(ctx, credential.BaseURL, credential.APIKey, model, openCodeModelTimeout(timeoutSeconds))
+	return result, nil
 }
 
 // RemoveAccount removes one bound account and persists the change.
@@ -300,7 +478,7 @@ func (s *OpenCodeQuotaService) Snapshot() OpenCodeQuotaSnapshot {
 		StorageError: s.storageErr,
 	}
 	for _, account := range s.accounts {
-		snapshot.Accounts = append(snapshot.Accounts, OpenCodeAccountView{ID: account.ID, WorkspaceID: account.WorkspaceID})
+		snapshot.Accounts = append(snapshot.Accounts, openCodeAccountView(account))
 	}
 	for id, result := range s.cache {
 		cloned := *result

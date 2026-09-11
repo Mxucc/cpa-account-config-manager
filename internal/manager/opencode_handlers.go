@@ -14,6 +14,12 @@ const opencodeStatusResourcePath = resourceRoutePrefix + "/opencode-status"
 type openCodeAccountSaveRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 	AuthCookie  string `json:"auth_cookie"`
+	// APIKey is the OpenCode Zen Go API key. It is required for the model catalog,
+	// model tests, and routing this workspace through CPA.
+	APIKey string `json:"api_key"`
+	// AccountID targets one stored account for a key-only update: the UI can rotate
+	// the API key without re-entering the session cookie.
+	AccountID string `json:"account_id"`
 }
 
 type openCodeProbeRequest struct {
@@ -52,7 +58,24 @@ func (a *App) handleOpenCodeAccounts(_ context.Context, req cpaapi.ManagementReq
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid OpenCode account request"})
 		}
 		startedAt := time.Now().UTC()
-		accountID, errSave := a.opencode.SaveAccount(request.WorkspaceID, request.AuthCookie)
+		if strings.TrimSpace(request.WorkspaceID) == "" {
+			// Key-only update: keep the existing session cookie and catalog rules.
+			if strings.TrimSpace(request.AccountID) == "" {
+				return jsonResponse(http.StatusBadRequest, map[string]any{"error": "workspace_id or account_id is required"})
+			}
+			view, errKey := a.opencode.SetAPIKey(request.AccountID, request.APIKey)
+			if errKey != nil {
+				return jsonResponse(http.StatusNotFound, map[string]any{"error": "OpenCode account was not found"})
+			}
+			if strings.TrimSpace(request.APIKey) != "" {
+				// A new key should immediately show which models it can reach.
+				if refreshed, errRefresh := a.opencode.RefreshModels(context.Background(), request.AccountID, 0); errRefresh == nil {
+					view = refreshed
+				}
+			}
+			return jsonResponse(http.StatusOK, map[string]any{"account": view})
+		}
+		accountID, errSave := a.opencode.SaveAccount(request.WorkspaceID, request.AuthCookie, request.APIKey)
 		if errSave != nil {
 			a.operations.Record(OperationEntry{
 				Category: OperationCategoryOpenCode, Action: OperationActionOpenCodeSave,
@@ -67,8 +90,12 @@ func (a *App) handleOpenCodeAccounts(_ context.Context, req cpaapi.ManagementReq
 			Status: OperationStatusSucceeded, Source: OperationSourceManual, Scope: OperationScopeSingle,
 			TargetCount: 1, Succeeded: 1, StartedAt: startedAt, FinishedAt: time.Now().UTC(), ReasonCode: "account_saved",
 		})
+		account := OpenCodeAccountView{ID: accountID, WorkspaceID: strings.TrimSpace(request.WorkspaceID), BaseURL: openCodeGoDefaultBaseURL}
+		if view, errView := a.opencode.accountView(accountID); errView == nil {
+			account = view
+		}
 		return jsonResponse(http.StatusOK, map[string]any{
-			"account": OpenCodeAccountView{ID: accountID, WorkspaceID: request.WorkspaceID},
+			"account": account,
 			"result":  result,
 		})
 	case http.MethodDelete:

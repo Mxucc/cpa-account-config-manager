@@ -1,0 +1,429 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, AlertTriangle, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import * as api from "../api/client";
+import { operatorMessage } from "../format/operatorMessage";
+import { useI18n } from "../i18n";
+import type { OpenCodeAccountView, OpenCodeModelTestResult, OpenCodeQuotaResult, OpenCodeZenAccountView } from "../types";
+import { IconButton } from "./IconButton";
+
+interface OpenCodeWorkspaceProps {
+  refreshRevision: number;
+  onAPIError: (error: unknown) => void;
+  onNotice: (message: string) => void;
+}
+
+type OpenCodeKind = "go" | "zen";
+
+interface ModelTarget {
+  kind: OpenCodeKind;
+  accountID: string;
+  label: string;
+  models: string[];
+}
+
+function formatWindow(window: { usage_percent: number; reset_in_sec: number } | undefined, tx: ReturnType<typeof useI18n>["tx"]): string {
+  if (!window) return tx("ui.no_data");
+  const resets = window.reset_in_sec > 0 ? `${Math.ceil(window.reset_in_sec / 60)} ${tx("ui.minutes_short")}` : "-";
+  return `${window.usage_percent.toFixed(1)}% · ${resets}`;
+}
+
+/**
+ * OpenCode workspace: the single place that manages OpenCode Go workspaces and
+ * Zen credentials, including the model catalog, a real model test, and the action
+ * that makes the models routable through CPA.
+ */
+export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: OpenCodeWorkspaceProps) {
+  const { locale, tx, formatDateTime } = useI18n();
+  const [goAccounts, setGoAccounts] = useState<OpenCodeAccountView[]>([]);
+  const [zenAccounts, setZenAccounts] = useState<OpenCodeZenAccountView[]>([]);
+  const [quota, setQuota] = useState<Record<string, OpenCodeQuotaResult>>({});
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [storageError, setStorageError] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [newWorkspace, setNewWorkspace] = useState("");
+  const [newCookie, setNewCookie] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [newZenName, setNewZenName] = useState("");
+  const [newZenBase, setNewZenBase] = useState("");
+  const [newZenKey, setNewZenKey] = useState("");
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  const [target, setTarget] = useState<ModelTarget | null>(null);
+  const [testModel, setTestModel] = useState("");
+  const [testResult, setTestResult] = useState<OpenCodeModelTestResult | null>(null);
+  const request = useRef(0);
+
+  const handleError = useCallback((caught: unknown) => {
+    if (caught instanceof api.APIError && caught.status === 401) {
+      onAPIError(caught);
+      return;
+    }
+    setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+  }, [locale, onAPIError, tx]);
+
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const requestID = request.current + 1;
+    request.current = requestID;
+    setLoading(true);
+    setError("");
+    try {
+      const [go, zen, quotaSnapshot] = await Promise.all([
+        api.listOpenCodeAccounts(signal),
+        api.listOpenCodeZenAccounts(signal),
+        api.getOpenCodeQuota(signal),
+      ]);
+      if (requestID !== request.current) return;
+      setGoAccounts(go.accounts);
+      setZenAccounts(zen.accounts);
+      setQuota(quotaSnapshot.results ?? {});
+      setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || "");
+    } catch (caught) {
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+      if (requestID === request.current) handleError(caught);
+    } finally {
+      if (requestID === request.current) setLoading(false);
+    }
+  }, [handleError]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => {
+      controller.abort();
+      request.current += 1;
+    };
+  }, [refresh, refreshRevision]);
+
+  const withBusy = async (key: string, action: () => Promise<void>) => {
+    setBusy(key);
+    setError("");
+    try {
+      await action();
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const addGoAccount = () => void withBusy("add-go", async () => {
+    if (!newWorkspace.trim() || !newCookie.trim()) return;
+    await api.saveOpenCodeAccount(newWorkspace.trim(), newCookie.trim(), newKey.trim() || undefined);
+    setNewWorkspace("");
+    setNewCookie("");
+    setNewKey("");
+    setAdding(false);
+    setGoAccounts((await api.listOpenCodeAccounts()).accounts);
+    onNotice(tx("ui.opencode_account_saved"));
+  });
+
+  const addZenAccount = () => void withBusy("add-zen", async () => {
+    if (!newZenKey.trim()) return;
+    await api.saveOpenCodeZenAccount({ name: newZenName.trim(), base_url: newZenBase.trim(), zen_api_key: newZenKey.trim() });
+    setNewZenName("");
+    setNewZenBase("");
+    setNewZenKey("");
+    setZenAccounts((await api.listOpenCodeZenAccounts()).accounts);
+    onNotice(tx("ui.opencode_account_saved"));
+  });
+
+  const refreshCatalog = (kind: OpenCodeKind, accountID: string) => void withBusy(`models-${accountID}`, async () => {
+    const response = await api.refreshOpenCodeModels(kind, accountID);
+    if (kind === "go") {
+      setGoAccounts((current) => current.map((account) => (account.id === accountID ? { ...account, ...(response.account as OpenCodeAccountView) } : account)));
+    } else {
+      setZenAccounts((current) => current.map((account) => (account.id === accountID ? { ...account, ...(response.account as OpenCodeZenAccountView) } : account)));
+    }
+    const models = response.account.models ?? [];
+    onNotice(tx("ui.opencode_models_loaded", { count: String(models.length) }));
+  });
+
+  const refreshQuota = (accountID: string) => void withBusy(`quota-${accountID}`, async () => {
+    const response = await api.refreshOpenCodeAccountQuota(accountID);
+    setQuota((current) => ({ ...current, [accountID]: response.result }));
+  });
+
+  const bind = (kind: OpenCodeKind, accountID: string) => void withBusy(`bind-${accountID}`, async () => {
+    const response = await api.bindOpenCodeChannel(kind, accountID);
+    const binding = response.binding;
+    onNotice(`${tx(binding.created ? "ui.opencode_channel_created" : "ui.opencode_channel_updated", { url: binding.base_url })} · ${tx("ui.opencode_channel_models", { count: String(binding.models ?? 0) })}`);
+  });
+
+  const saveKey = (accountID: string) => void withBusy(`key-${accountID}`, async () => {
+    await api.saveOpenCodeAccountKey(accountID, (keyDraft[accountID] ?? "").trim());
+    setKeyDraft((current) => ({ ...current, [accountID]: "" }));
+    setGoAccounts((await api.listOpenCodeAccounts()).accounts);
+    onNotice(tx("ui.opencode_key_saved"));
+  });
+
+  const openModels = (kind: OpenCodeKind, accountID: string, label: string, models: string[]) => {
+    setTarget({ kind, accountID, label, models });
+    setTestModel(models[0] ?? "");
+    setTestResult(null);
+  };
+
+  const runModelTest = () => void withBusy("model-test", async () => {
+    if (!target || !testModel.trim()) return;
+    const response = await api.testOpenCodeModel(target.kind, target.accountID, testModel.trim());
+    setTestResult(response.result);
+  });
+
+  const statusLabel = (status: OpenCodeModelTestResult["status"]): string => {
+    switch (status) {
+      case "available": return tx("ui.model_available");
+      case "unavailable": return tx("ui.model_unavailable");
+      case "unsupported": return tx("ui.testing_unsupported");
+      default: return tx("ui.manual_confirmation_required");
+    }
+  };
+
+  return (
+    <section className="opencode-workspace" role="tabpanel" aria-label={tx("ui.opencode_menu")}>
+      <header className="opencode-header">
+        <div>
+          <div className="eyebrow"><Link2 size={15} />{tx("ui.opencode")}</div>
+          <h2>{tx("ui.opencode_title")}</h2>
+          <p>{tx("ui.opencode_description")}</p>
+        </div>
+        <div className="opencode-header-actions">
+          <a className="button button-quiet" href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={15} />{tx("ui.opencode_open_auth")}
+          </a>
+          <button className="button button-quiet" type="button" disabled={loading} onClick={() => void refresh()}>
+            <RefreshCw className={loading ? "spin" : ""} size={15} />{tx("ui.refresh")}
+          </button>
+        </div>
+      </header>
+
+      {storageError ? <div className="notice-bar warning-notice" role="status"><AlertTriangle size={16} />{storageError}</div> : null}
+      {error ? <div className="notice-bar" role="alert"><AlertTriangle size={16} />{error}</div> : null}
+
+      <div className="opencode-links">
+        <a href="https://opencode.ai/workspace" target="_blank" rel="noopener noreferrer">OpenCode Go · {tx("ui.opencode_open_workspace")}</a>
+        <a href="https://opencode.ai/zen" target="_blank" rel="noopener noreferrer">OpenCode Zen · {tx("ui.opencode_open_zen")}</a>
+        <a href="/v0/resource/plugins/cpa-account-config-manager/opencode-status" target="_blank" rel="noopener noreferrer">{tx("ui.opencode_open_status_page")}</a>
+      </div>
+
+      <section className="opencode-section" aria-label={tx("ui.opencode_go_accounts")}>
+        <div className="opencode-section-heading">
+          <div>
+            <strong>{tx("ui.opencode_go_accounts")}</strong>
+            <span>{tx("ui.opencode_go_accounts_description")}</span>
+          </div>
+          <button className="button button-quiet" type="button" onClick={() => setAdding((value) => !value)}>
+            <Plus size={15} />{tx("ui.opencode_add_go")}
+          </button>
+        </div>
+        {adding ? (
+          <div className="opencode-form">
+            <label className="field-block"><span>{tx("ui.opencode_workspace_id")}</span><input value={newWorkspace} onChange={(event) => setNewWorkspace(event.target.value)} autoComplete="off" /></label>
+            <label className="field-block"><span>{tx("ui.opencode_auth_cookie")}</span><input type="password" value={newCookie} onChange={(event) => setNewCookie(event.target.value)} autoComplete="off" /></label>
+            <label className="field-block"><span>{tx("ui.opencode_api_key")}</span><input type="password" value={newKey} onChange={(event) => setNewKey(event.target.value)} autoComplete="off" /></label>
+            <div className="opencode-form-actions">
+              <button className="button button-primary" type="button" disabled={busy === "add-go" || !newWorkspace.trim() || !newCookie.trim()} onClick={addGoAccount}>
+                {busy === "add-go" ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}{tx("ui.save")}
+              </button>
+            </div>
+            <p className="opencode-note">{tx("ui.opencode_credentials_note")}</p>
+          </div>
+        ) : null}
+        <div className="opencode-table-wrap">
+          <table className="account-table opencode-table">
+            <thead>
+              <tr>
+                <th>{tx("ui.opencode_workspace_id")}</th>
+                <th>{tx("ui.opencode_api_key")}</th>
+                <th>{tx("ui.opencode_quota")}</th>
+                <th>{tx("ui.models")}</th>
+                <th className="actions-header">{tx("ui.actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {goAccounts.map((account) => {
+                const result = quota[account.id];
+                return (
+                  <tr key={account.id}>
+                    <td><strong>{account.workspace_id}</strong></td>
+                    <td>
+                      <div className="opencode-key-cell">
+                        <span>{account.key_set ? tx("ui.opencode_key_stored") : tx("ui.opencode_key_missing")}</span>
+                        <input
+                          type="password"
+                          aria-label={tx("ui.opencode_api_key_for", { account: account.workspace_id })}
+                          value={keyDraft[account.id] ?? ""}
+                          placeholder={tx("ui.opencode_key_placeholder")}
+                          autoComplete="off"
+                          onChange={(event) => setKeyDraft((current) => ({ ...current, [account.id]: event.target.value }))}
+                        />
+                        <button className="button button-quiet button-small" type="button" disabled={busy === `key-${account.id}` || !(keyDraft[account.id] ?? "").trim()} onClick={() => saveKey(account.id)}>
+                          {busy === `key-${account.id}` ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{tx("ui.save")}
+                        </button>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="opencode-quota-cell">
+                        {result?.success ? (
+                          <>
+                            <small>{tx("ui.opencode_rolling")}: {formatWindow(result.rolling, tx)}</small>
+                            <small>{tx("ui.opencode_weekly")}: {formatWindow(result.weekly, tx)}</small>
+                            <small>{tx("ui.opencode_monthly")}: {formatWindow(result.monthly, tx)}</small>
+                          </>
+                        ) : (
+                          <small>{result?.error ? operatorMessage(result.error, locale) : tx("ui.no_data")}</small>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      {account.models?.length ? (
+                        <div className="opencode-models-cell">
+                          <strong>{account.models.length}</strong>
+                          <small>{account.models.slice(0, 3).join(", ")}{account.models.length > 3 ? " …" : ""}</small>
+                          {account.models_error ? <small className="opencode-model-error">{account.models_error}</small> : null}
+                        </div>
+                      ) : (
+                        <div className="opencode-models-cell">
+                          <strong>-</strong>
+                          <small>{account.models_error ? account.models_error : tx("ui.opencode_models_not_loaded")}</small>
+                        </div>
+                      )}
+                    </td>
+                    <td className="actions-cell">
+                      <div className="row-actions">
+                        <IconButton label={tx("ui.opencode_load_models_for", { account: account.workspace_id })} disabled={busy === `models-${account.id}`} onClick={() => refreshCatalog("go", account.id)}>
+                          {busy === `models-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+                        </IconButton>
+                        <IconButton label={tx("ui.opencode_refresh_action")} disabled={busy === `quota-${account.id}`} onClick={() => refreshQuota(account.id)}>
+                          {busy === `quota-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
+                        </IconButton>
+                        <IconButton label={tx("ui.opencode_test_models_for", { account: account.workspace_id })} disabled={!account.models?.length} onClick={() => openModels("go", account.id, account.workspace_id, account.models ?? [])}>
+                          <Activity size={15} />
+                        </IconButton>
+                        <IconButton label={tx("ui.opencode_bind_for", { account: account.workspace_id })} disabled={busy === `bind-${account.id}` || !account.key_set} onClick={() => bind("go", account.id)}>
+                          {busy === `bind-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <Link2 size={15} />}
+                        </IconButton>
+                        <IconButton className="button-danger" label={tx("ui.opencode_remove_for", { account: account.workspace_id })} onClick={() => void withBusy(`remove-${account.id}`, async () => {
+                          await api.removeOpenCodeAccount(account.id);
+                          setGoAccounts((await api.listOpenCodeAccounts()).accounts);
+                          onNotice(tx("ui.opencode_account_removed"));
+                        })}><Trash2 size={15} /></IconButton>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!loading && goAccounts.length === 0 ? <tr><td colSpan={5}>{tx("ui.opencode_no_accounts")}</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="opencode-section" aria-label={tx("ui.opencode_zen_accounts")}>
+        <div className="opencode-section-heading">
+          <div>
+            <strong>{tx("ui.opencode_zen_accounts")}</strong>
+            <span>{tx("ui.opencode_zen_accounts_description")}</span>
+          </div>
+        </div>
+        <div className="opencode-form">
+          <label className="field-block"><span>{tx("ui.name")}</span><input value={newZenName} onChange={(event) => setNewZenName(event.target.value)} autoComplete="off" /></label>
+          <label className="field-block"><span>{tx("ui.ai_provider_base_url")}</span><input value={newZenBase} onChange={(event) => setNewZenBase(event.target.value)} placeholder="https://opencode.ai/zen" autoComplete="off" /></label>
+          <label className="field-block"><span>{tx("ui.opencode_api_key")}</span><input type="password" value={newZenKey} onChange={(event) => setNewZenKey(event.target.value)} autoComplete="off" /></label>
+          <div className="opencode-form-actions">
+            <button className="button button-primary" type="button" disabled={busy === "add-zen" || !newZenKey.trim()} onClick={addZenAccount}>
+              {busy === "add-zen" ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}{tx("ui.save")}
+            </button>
+          </div>
+        </div>
+        <div className="opencode-table-wrap">
+          <table className="account-table opencode-table">
+            <thead>
+              <tr>
+                <th>{tx("ui.name")}</th>
+                <th>{tx("ui.ai_provider_base_url")}</th>
+                <th>{tx("ui.models")}</th>
+                <th className="actions-header">{tx("ui.actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {zenAccounts.map((account) => (
+                <tr key={account.id}>
+                  <td><strong>{account.name || account.id}</strong></td>
+                  <td className="opencode-table-url">{account.base_url}</td>
+                  <td>
+                    {account.models?.length ? (
+                      <div className="opencode-models-cell">
+                        <strong>{account.models.length}</strong>
+                        <small>{account.models.slice(0, 3).join(", ")}{account.models.length > 3 ? " …" : ""}</small>
+                        {account.models_error ? <small className="opencode-model-error">{account.models_error}</small> : null}
+                      </div>
+                    ) : (
+                      <div className="opencode-models-cell">
+                        <strong>-</strong>
+                        <small>{account.models_error ? account.models_error : tx("ui.opencode_models_not_loaded")}</small>
+                      </div>
+                    )}
+                  </td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <IconButton label={tx("ui.opencode_load_models_for", { account: account.name || account.id })} disabled={busy === `models-${account.id}`} onClick={() => refreshCatalog("zen", account.id)}>
+                        {busy === `models-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+                      </IconButton>
+                      <IconButton label={tx("ui.opencode_test_models_for", { account: account.name || account.id })} disabled={!account.models?.length} onClick={() => openModels("zen", account.id, account.name || account.id, account.models ?? [])}>
+                        <Activity size={15} />
+                      </IconButton>
+                      <IconButton label={tx("ui.opencode_bind_for", { account: account.name || account.id })} disabled={busy === `bind-${account.id}` || !account.key_set} onClick={() => bind("zen", account.id)}>
+                        {busy === `bind-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <Link2 size={15} />}
+                      </IconButton>
+                      <IconButton className="button-danger" label={tx("ui.opencode_remove_for", { account: account.name || account.id })} onClick={() => void withBusy(`remove-${account.id}`, async () => {
+                        await api.removeOpenCodeZenAccount(account.id);
+                        setZenAccounts((await api.listOpenCodeZenAccounts()).accounts);
+                        onNotice(tx("ui.opencode_account_removed"));
+                      })}><Trash2 size={15} /></IconButton>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!loading && zenAccounts.length === 0 ? <tr><td colSpan={4}>{tx("ui.opencode_no_accounts")}</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {target ? (
+        <section className="opencode-section opencode-model-tester" aria-label={tx("ui.opencode_model_test")}>
+          <div className="opencode-section-heading">
+            <div>
+              <strong>{tx("ui.opencode_model_test")}</strong>
+              <span>{tx("ui.opencode_model_test_description", { account: target.label })}</span>
+            </div>
+            <button className="button button-quiet" type="button" onClick={() => { setTarget(null); setTestResult(null); }}>{tx("ui.close")}</button>
+          </div>
+          <div className="opencode-form">
+            <label className="field-block">
+              <span>{tx("ui.model")}</span>
+              <select value={testModel} onChange={(event) => setTestModel(event.target.value)}>
+                {target.models.map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
+            </label>
+            <div className="opencode-form-actions">
+              <button className="button button-primary" type="button" disabled={busy === "model-test" || !testModel} onClick={runModelTest}>
+                {busy === "model-test" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}{tx("ui.test")}
+              </button>
+            </div>
+          </div>
+          {testResult ? (
+            <dl className="opencode-test-result">
+              <div><dt>{tx("ui.status")}</dt><dd>{statusLabel(testResult.status)}</dd></div>
+              <div><dt>{tx("ui.reason")}</dt><dd>{testResult.reason_code || "-"}</dd></div>
+              <div><dt>{tx("ui.http_status")}</dt><dd>{testResult.status_code || "-"}</dd></div>
+              {typeof testResult.latency_ms === "number" ? <div><dt>{tx("ui.latency")}</dt><dd>{testResult.latency_ms} ms</dd></div> : null}
+              {testResult.tested_at ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(testResult.tested_at)}</dd></div> : null}
+              {testResult.detail ? <div><dt>{tx("ui.detail")}</dt><dd>{operatorMessage(testResult.detail, locale)}</dd></div> : null}
+            </dl>
+          ) : null}
+        </section>
+      ) : null}
+    </section>
+  );
+}

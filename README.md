@@ -88,6 +88,19 @@ AI 提供商是独立工作区，当前可管理：
 
 OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置时间、手动刷新和删除（配置与刷新在鉴权界面中进行；独立的 OpenCode 状态页无需鉴权，因此只读取缓存状态、掩码工作区 ID，且不接收任何凭据）。
 
+### OpenCode
+
+侧边菜单在「AI 提供商」之后新增独立的 **OpenCode** 工作区：
+
+- 以 Workspace ID 和 auth Cookie（用于抓取额度）添加 OpenCode Go 工作区，并可选择保存 OpenCode Go API Key；每个工作区展示已保存的 5h/7d/30d 配额。
+- 以名称、Base URL（默认 `https://opencode.ai/zen`）和 API Key 添加 OpenCode Zen 凭据。
+- “加载模型”会从 OpenAI 兼容端点 `GET {base}/v1/models` 获取模型列表，请求携带 `x-opencode-client: cli` 请求头和 `opencode/<version>` User-Agent，并按账号缓存结果。
+- 模型测试会使用所选模型发起真实 `POST {base}/v1/chat/completions` 探测，返回状态、原因码、HTTP 状态和延迟；原因码包括 `authentication_failed`、`model_not_found`、`quota_limited` 和 `upstream_unavailable`。
+- 一键绑定会 upsert 一个 `openai-compatibility` CPA 渠道，把模型发布到 CPA 路由：Base URL 为 `{base}/v1`，以已保存的 API Key 作为 key 条目并携带 OpenCode 请求头，同时把已验证的模型目录写入渠道的模型列表；重复绑定同一账号只会更新已有渠道、保留既有别名，不会创建重复渠道。
+- 快捷入口提供 `https://opencode.ai/auth`、`https://opencode.ai/workspace`、`https://opencode.ai/zen` 和只读的 OpenCode 状态页。
+- auth Cookie 和 API Key 只在经过鉴权的 Management 连接中写入一次，保存在插件私有数据目录；不会返回给浏览器（只有 `key_set` 布尔标记），也不会写入日志。
+- 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`POST /opencode/models` 携带 `{kind: "go"|"zen", account_id}`，返回带模型列表的脱敏账号视图；`POST /opencode/model-test` 携带 `{kind, account_id, model, timeout_seconds?}`，返回状态、原因码、HTTP 状态、延迟、测试时间和详情；`POST /opencode/bind` 携带 `{kind, account_id}`，返回绑定信息（类型、Base URL、索引、是否新建、渠道 key）；`POST /opencode/accounts` 还接受 `{account_id, api_key}` 做仅更新密钥操作，`api_key` 为空时保留已保存的密钥，传入新密钥会使缓存的模型目录失效。
+
 ### 操作日志、界面与更新
 
 - 操作日志覆盖导入、导出、批量修改、模型测试、策略扫描、巡检、自动处置、通知和插件更新，记录成功/失败/部分完成、失败依据、数量、脱敏样本、来源和时间。

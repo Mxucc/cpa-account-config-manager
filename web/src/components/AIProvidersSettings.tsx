@@ -35,6 +35,21 @@ type AddKind = AIProviderChannelKind;
 type IdentityBooleanValue = "" | "true" | "false";
 type IdentityConvergenceValue = "" | "off" | "device" | "session" | "full";
 
+
+/** Adapt the plugin-side OpenCode model probe to the AI Providers probe result shape. */
+function openCodeProbeResult(result: import("../types").OpenCodeModelTestResult): api.AIProviderProbeResult {
+  return {
+    reachable: result.reachable,
+    status: result.status,
+    probe_kind: "model",
+    reason_code: result.reason_code,
+    status_code: result.status_code,
+    latency_ms: result.latency_ms,
+    detail: result.detail,
+    model: result.model,
+    tested_at: result.tested_at,
+  };
+}
 const providerTestStatusLabels: Record<api.AIProviderProbeResult["status"] & NonNullable<api.AIProviderProbeResult["status"]>, UIMessageKey> = {
   available: "ui.model_available",
   unavailable: "ui.model_unavailable",
@@ -1283,7 +1298,37 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
 
   const testChannel = async (entry: AIProviderChannelEntry, kind: AIProviderChannelKind) => {
     if (busy) return;
-    if (kind === "opencode-go") return;
+    if (kind === "opencode-go") {
+      const accountID = entry.account_id ?? "";
+      if (!accountID) return;
+      setBusy(true);
+      setError("");
+      setTestResult(null);
+      setTestModels([]);
+      setTestModel("");
+      setTesting({ kind, index: entry.index, label: providerLabel(kind, entry) });
+      try {
+        const loaded = await api.refreshOpenCodeModels("go", accountID);
+        const models = loaded.account.models ?? [];
+        setChannels((current) => current.map((channel) => channel.kind !== "opencode-go" ? channel : {
+          ...channel,
+          entries: channel.entries.map((item) => item.index === entry.index ? { ...item, models: models.map((model) => ({ name: model })) } : item),
+        }));
+        setTestModels(models);
+        const selected = models[0] ?? "";
+        setTestModel(selected);
+        if (!selected) {
+          setTestResult({ reachable: false, status: "unsupported", probe_kind: "model", reason_code: "no_models_available", detail: tx("ui.ai_provider_no_models_available"), tested_at: new Date().toISOString() });
+        } else {
+          setTestResult(openCodeProbeResult((await api.testOpenCodeModel("go", accountID, selected)).result));
+        }
+      } catch (caught) {
+        handleError(caught);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const unsupported = kind === "vertex-api-key" || kind === "api-keys"
       ? tx("ui.ai_provider_model_catalog_unavailable")
       : "";
@@ -1356,7 +1401,11 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
     if (!entry || testing.kind === "opencode-zen") return;
     setBusy(true);
     try {
-      setTestResult(await api.testAIProviderChannelForKind(testing.kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, testModel, providerPolicyKey(testing.kind, entry)));
+      if (testing.kind === "opencode-go") {
+        setTestResult(openCodeProbeResult((await api.testOpenCodeModel("go", entry.account_id ?? "", testModel)).result));
+      } else {
+        setTestResult(await api.testAIProviderChannelForKind(testing.kind, entry.base_url ?? "", entry.api_key ?? "", 15, entry.headers, entry.auth_index || entry.account_id, testModel, providerPolicyKey(testing.kind, entry)));
+      }
     } catch (caught) { handleError(caught); } finally { setBusy(false); }
   };
 
@@ -1827,7 +1876,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                   <td className="actions-cell ai-provider-table-actions">
                     <div className="row-actions">
                       <IconButton label={tx("ui.view_ai_provider", { name: providerLabel(channel.kind, entry) })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
-                      <IconButton label={tx("ui.test_ai_provider", { name: providerLabel(channel.kind, entry) })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
+                      <IconButton label={tx("ui.test_ai_provider", { name: providerLabel(channel.kind, entry) })} disabled={busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
                       <IconButton label={tx("ui.edit_ai_provider")} onClick={() => openEditor(channel.kind, entry)}><Pencil size={15} /></IconButton>
                       {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                         <>

@@ -88,6 +88,19 @@ Provider fields include type, name, state, model count, concurrency, Base URL, A
 
 OpenCode Go additionally supports Workspace ID plus auth Cookie, 5h/7d/30d quotas, reset times, manual refresh, and deletion. Configuration and refresh live in the authenticated UI: the standalone OpenCode status page is served without authentication, so it only renders cached state, masks workspace identifiers, and never accepts credentials.
 
+### OpenCode
+
+A dedicated **OpenCode** workspace is added to the side menu directly after **AI Providers**:
+
+- OpenCode Go workspaces are added with a Workspace ID and auth Cookie (used for quota scraping), plus an optional OpenCode Go API Key; each workspace shows the stored 5-hour/7-day/30-day quota.
+- OpenCode Zen credentials are added with a name, a Base URL (default `https://opencode.ai/zen`), and an API Key.
+- “Load models” fetches the model list from the OpenAI-compatible endpoint `GET {base}/v1/models` with the `x-opencode-client: cli` header and an `opencode/<version>` User-Agent, and caches it per account.
+- Model testing sends a real `POST {base}/v1/chat/completions` probe with the selected model and reports the status, reason code, HTTP status, and latency; reason codes are `authentication_failed`, `model_not_found`, `quota_limited`, and `upstream_unavailable`.
+- One-click binding (“publish models to CPA routing”) upserts an `openai-compatibility` CPA channel with Base URL `{base}/v1`, the stored API Key as the key entry, and the OpenCode headers, and publishes the verified model catalog into the channel model list, so CPA routes OpenCode models natively; binding the same account again updates the existing channel instead of creating a duplicate and keeps operator-defined aliases.
+- Quick links open `https://opencode.ai/auth`, `https://opencode.ai/workspace`, `https://opencode.ai/zen`, and the read-only OpenCode status page.
+- The auth Cookie and API Key are written once over the authenticated Management connection and stored in the plugin private data directory; they are never returned to the browser (only a `key_set` boolean) and never written to logs.
+- All routes are exact paths that require the Management Key, under `/v0/management/plugins/cpa-account-config-manager`: `POST /opencode/models` with `{kind: "go"|"zen", account_id}` returns the redacted account view with models; `POST /opencode/model-test` with `{kind, account_id, model, timeout_seconds?}` returns the status, reason code, HTTP status, latency, tested time, and detail; `POST /opencode/bind` with `{kind, account_id}` returns the binding (kind, Base URL, index, created, channel key); `POST /opencode/accounts` also accepts `{account_id, api_key}` for a key-only update, where an empty `api_key` preserves the stored key and a new key invalidates the cached model catalog.
+
 ### Audit Log, UI, And Updates
 
 - The persistent audit log covers import, export, batch changes, model tests, policy scans, inspection, automatic remediation, notifications, and plugin updates. It records success, failure, partial completion, failure basis, counts, sanitized samples, source, and time.

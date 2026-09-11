@@ -1085,19 +1085,76 @@ function normalizeOpenCodeAccountsResponse(response: unknown): OpenCodeAccountsR
 		throw new APIError(502, "ui.invalid_api_response");
 	}
 	return {
-		accounts: accounts.map((account) => ({ id: (account.id as string).trim(), workspace_id: (account.workspace_id as string).trim() })),
+		accounts: accounts.map((account) => {
+			const view: import("../types").OpenCodeAccountView = {
+				id: (account.id as string).trim(),
+				workspace_id: (account.workspace_id as string).trim(),
+			};
+			if (typeof account.base_url === "string" && account.base_url.trim()) view.base_url = account.base_url.trim();
+			if (typeof account.key_set === "boolean") view.key_set = account.key_set;
+			const models = stringArrayOrUndefined(account.models);
+			if (models) view.models = models;
+			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
+			if (typeof account.models_fetched_at === "string" && account.models_fetched_at) view.models_fetched_at = account.models_fetched_at;
+			return view;
+		}),
 		...(typeof response.storage_error === "string" ? { storage_error: response.storage_error } : {}),
 	};
+}
+
+/** Parse an optional string array without rejecting the whole response. */
+function stringArrayOrUndefined(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	return value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
 }
 
 export async function listOpenCodeAccounts(signal?: AbortSignal): Promise<OpenCodeAccountsResponse> {
 	return normalizeOpenCodeAccountsResponse(await requestRecord<unknown>("/opencode/accounts", { signal }));
 }
 
-export async function saveOpenCodeAccount(workspaceID: string, authCookie: string): Promise<OpenCodeAccountSaveResponse> {
+export async function saveOpenCodeAccount(workspaceID: string, authCookie: string, apiKey?: string): Promise<OpenCodeAccountSaveResponse> {
 	return requestRecord<OpenCodeAccountSaveResponse>("/opencode/accounts", {
 		method: "POST",
-		body: JSON.stringify({ workspace_id: workspaceID, auth_cookie: authCookie }),
+		body: JSON.stringify({ workspace_id: workspaceID, auth_cookie: authCookie, ...(apiKey ? { api_key: apiKey } : {}) }),
+	});
+}
+
+/**
+ * Read the upstream model catalog for one OpenCode credential. The catalog is
+ * cached by the plugin, so the AI providers view can show the model count without
+ * a round trip.
+ */
+export async function refreshOpenCodeModels(kind: "go" | "zen", accountID: string): Promise<{ account: import("../types").OpenCodeAccountView | import("../types").OpenCodeZenAccountView }> {
+	return requestRecord<{ account: import("../types").OpenCodeAccountView | import("../types").OpenCodeZenAccountView }>("/opencode/models", {
+		method: "POST",
+		body: JSON.stringify({ kind, account_id: accountID }),
+	});
+}
+
+/** Probe one OpenCode model through the stored credential. */
+export async function testOpenCodeModel(kind: "go" | "zen", accountID: string, model: string, timeoutSeconds = 30): Promise<{ result: import("../types").OpenCodeModelTestResult }> {
+	return requestRecord<{ result: import("../types").OpenCodeModelTestResult }>("/opencode/model-test", {
+		method: "POST",
+		body: JSON.stringify({ kind, account_id: accountID, model, timeout_seconds: timeoutSeconds }),
+	});
+}
+
+/**
+ * Create or update the CPA OpenAI-compatible channel that routes one OpenCode
+ * credential, so its models become reachable through CPA.
+ */
+export async function bindOpenCodeChannel(kind: "go" | "zen", accountID: string): Promise<{ binding: import("../types").OpenCodeBindingResult }> {
+	return requestRecord<{ binding: import("../types").OpenCodeBindingResult }>("/opencode/bind", {
+		method: "POST",
+		body: JSON.stringify({ kind, account_id: accountID }),
+	});
+}
+
+/** Store or clear the Go API key for one account without touching other fields. */
+export async function saveOpenCodeAccountKey(accountID: string, apiKey: string): Promise<{ account: import("../types").OpenCodeAccountView }> {
+	return requestRecord<{ account: import("../types").OpenCodeAccountView }>("/opencode/accounts", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID, api_key: apiKey }),
 	});
 }
 
@@ -1105,6 +1162,15 @@ export async function removeOpenCodeAccount(accountID: string): Promise<void> {
 	await request<{ removed: boolean }>("/opencode/accounts?account_id=" + encodeURIComponent(accountID), {
 		method: "DELETE",
 	});
+}
+
+export async function getOpenCodeQuota(signal?: AbortSignal): Promise<{ results?: Record<string, import("../types").OpenCodeQuotaResult>; fetched_at?: string; storage_error?: string }> {
+	return requestRecord<{ results?: Record<string, import("../types").OpenCodeQuotaResult>; fetched_at?: string; storage_error?: string }>("/opencode/quota", { signal });
+}
+
+/** Refresh one workspace quota through its stored cookie, without touching other accounts. */
+export async function refreshOpenCodeAccountQuota(accountID: string): Promise<{ result: import("../types").OpenCodeQuotaResult }> {
+	return requestRecord<{ result: import("../types").OpenCodeQuotaResult }>("/opencode/refresh-account?account_id=" + encodeURIComponent(accountID), { method: "POST" });
 }
 
 export async function refreshOpenCodeQuota(): Promise<{ results: Record<string, import("../types").OpenCodeQuotaResult> }> {
@@ -1135,12 +1201,19 @@ function normalizeOpenCodeZenAccountsResponse(response: unknown): OpenCodeZenAcc
 		throw new APIError(502, "ui.invalid_api_response");
 	}
 	return {
-		accounts: accounts.map((account) => ({
-			id: (account.id as string).trim(),
-			base_url: (account.base_url as string).trim(),
-			key_set: account.key_set as boolean,
-			...(typeof account.name === "string" ? { name: account.name } : {}),
-		})),
+		accounts: accounts.map((account) => {
+			const view: import("../types").OpenCodeZenAccountView = {
+				id: (account.id as string).trim(),
+				base_url: (account.base_url as string).trim(),
+				key_set: account.key_set as boolean,
+			};
+			if (typeof account.name === "string") view.name = account.name;
+			const models = stringArrayOrUndefined(account.models);
+			if (models) view.models = models;
+			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
+			if (typeof account.models_fetched_at === "string" && account.models_fetched_at) view.models_fetched_at = account.models_fetched_at;
+			return view;
+		}),
 		...(typeof response.storage_error === "string" ? { storage_error: response.storage_error } : {}),
 	};
 }
@@ -1978,6 +2051,9 @@ async function loadAIProviderChannel(
           account_id: account.id,
           workspace_id: account.workspace_id,
           name: account.workspace_id,
+          key_set: account.key_set,
+          base_url: account.base_url,
+          models: (account.models ?? []).map((model) => ({ name: model })),
         })),
         ...(listed.storage_error ? { storage_error: "provider_storage_unavailable" } : {}),
       };
@@ -1993,6 +2069,7 @@ async function loadAIProviderChannel(
           name: account.name ?? account.base_url,
           base_url: account.base_url,
           key_set: account.key_set,
+          models: (account.models ?? []).map((model) => ({ name: model })),
         })),
         ...(listed.storage_error ? { storage_error: "provider_storage_unavailable" } : {}),
       };

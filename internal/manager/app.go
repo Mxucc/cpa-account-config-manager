@@ -671,6 +671,9 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodDelete, Path: managementRoutePrefix + "/opencode/zen/accounts", Description: "Remove one bound OpenCode Zen credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe", Description: "Probe one OpenCode Zen or opencode-cc bridge endpoint without saving its credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/zen/probe-account", Description: "Probe one saved OpenCode Zen account with its stored key."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/models", Description: "Read the upstream model catalog for one OpenCode Go workspace or Zen credential."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/model-test", Description: "Probe one OpenCode model through a stored Go or Zen credential."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/bind", Description: "Create or update the OpenAI-compatible CPA channel that routes one OpenCode credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
@@ -898,6 +901,12 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeZenAccounts(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe":
 		return a.handleOpenCodeZenProbe(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/models":
+		return a.handleOpenCodeModels(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/model-test":
+		return a.handleOpenCodeModelTest(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/bind":
+		return a.handleOpenCodeBind(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe-account":
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":

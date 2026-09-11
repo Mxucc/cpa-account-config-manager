@@ -107,11 +107,11 @@ func TestOpenCodeQuotaServicePersistsAccounts(t *testing.T) {
 	dataDir := t.TempDir()
 	service := NewOpenCodeQuotaService()
 	service.Configure(Config{DataDir: dataDir})
-	firstID, errSave := service.SaveAccount("wrk_one", "cookie-secret-1")
+	firstID, errSave := service.SaveAccount("wrk_one", "cookie-secret-1", "")
 	if errSave != nil {
 		t.Fatalf("SaveAccount() error = %v", errSave)
 	}
-	if _, errSave := service.SaveAccount("wrk_two", "cookie-secret-2"); errSave != nil {
+	if _, errSave := service.SaveAccount("wrk_two", "cookie-secret-2", ""); errSave != nil {
 		t.Fatalf("SaveAccount() error = %v", errSave)
 	}
 
@@ -260,7 +260,7 @@ func TestOpenCodeProbeRequiresCredentialAndRejectsEmpty(t *testing.T) {
 func TestOpenCodeQuotaSnapshotNeverLeaksCookies(t *testing.T) {
 	service := NewOpenCodeQuotaService()
 	service.Configure(Config{DataDir: t.TempDir()})
-	if _, errSave := service.SaveAccount("wrk_leak", "cookie-leak-test"); errSave != nil {
+	if _, errSave := service.SaveAccount("wrk_leak", "cookie-leak-test", ""); errSave != nil {
 		t.Fatalf("SaveAccount() error = %v", errSave)
 	}
 	raw, errMarshal := json.Marshal(service.Snapshot())
@@ -276,7 +276,7 @@ func TestOpenCodeStorePathIsPrivate(t *testing.T) {
 	dataDir := t.TempDir()
 	service := NewOpenCodeQuotaService()
 	service.Configure(Config{DataDir: dataDir})
-	if _, errSave := service.SaveAccount("wrk_perm", "cookie"); errSave != nil {
+	if _, errSave := service.SaveAccount("wrk_perm", "cookie", ""); errSave != nil {
 		t.Fatalf("SaveAccount() error = %v", errSave)
 	}
 	info, errStat := os.Stat(filepath.Join(dataDir, "opencode-quota.json"))
@@ -312,7 +312,7 @@ func TestOpenCodeQuotaConfigureRetriesCorruptStoreWithoutDroppingAccounts(t *tes
 	firstDir := t.TempDir()
 	service := NewOpenCodeQuotaService()
 	service.Configure(Config{DataDir: firstDir})
-	if _, errSave := service.SaveAccount("wrk_existing", "cookie-existing"); errSave != nil {
+	if _, errSave := service.SaveAccount("wrk_existing", "cookie-existing", ""); errSave != nil {
 		t.Fatalf("SaveAccount() error = %v", errSave)
 	}
 
@@ -353,7 +353,7 @@ func TestOpenCodeQuotaPersistenceFailureIsSanitized(t *testing.T) {
 	}
 	service := NewOpenCodeQuotaService()
 	service.Configure(Config{DataDir: blockingPath})
-	_, errSave := service.SaveAccount("wrk_secret", "cookie-super-secret")
+	_, errSave := service.SaveAccount("wrk_secret", "cookie-super-secret", "")
 	if errSave == nil {
 		t.Fatal("SaveAccount() error = nil")
 	}

@@ -543,6 +543,12 @@ export interface AIProviderNameAssignment {
   index: number;
   base_url?: string;
   name: string;
+  /**
+   * Runtime usage identities CPA reported for this channel. The server resolves
+   * them from the channel base URL and credential digest, so the usage history
+   * still matches after an auth-index change or an API key rotation.
+   */
+  identities?: string[];
 }
 
 export interface AIProviderNameSnapshot {
@@ -567,11 +573,15 @@ export async function getAIProviderNames(signal?: AbortSignal): Promise<AIProvid
       const index = Number(item.index);
       const name = typeof item.name === "string" ? item.name.trim() : "";
       if (!kind || !Number.isSafeInteger(index) || index < 0 || !name) continue;
+      const identities = Array.isArray(item.identities)
+        ? item.identities.filter((value): value is string => typeof value === "string" && value.trim() !== "")
+        : [];
       names.push({
         kind: kind as AIProviderChannelKind,
         index,
         ...(typeof item.base_url === "string" ? { base_url: item.base_url } : {}),
         name,
+        ...(identities.length > 0 ? { identities } : {}),
       });
     }
   }

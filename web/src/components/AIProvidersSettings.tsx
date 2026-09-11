@@ -237,13 +237,16 @@ function normalizeProviderURL(value: string | undefined): string {
 // stores the operator label under a salted digest of the channel base URL and
 // credential. The browser never computes that digest: it only verifies that the
 // resolved label still belongs to the entry it renders.
-function storedProviderName(assignments: api.AIProviderNameAssignment[], kind: AIProviderChannelKind, entry: AIProviderChannelEntry): string {
-  const match = assignments.find((assignment) =>
+function providerAssignment(assignments: api.AIProviderNameAssignment[], kind: AIProviderChannelKind, entry: AIProviderChannelEntry): api.AIProviderNameAssignment | undefined {
+  return assignments.find((assignment) =>
     assignment.kind === kind &&
     assignment.index === entry.index &&
     normalizeProviderURL(assignment.base_url) === normalizeProviderURL(entry.base_url),
   );
-  return match?.name ?? "";
+}
+
+function storedProviderName(assignments: api.AIProviderNameAssignment[], kind: AIProviderChannelKind, entry: AIProviderChannelEntry): string {
+  return providerAssignment(assignments, kind, entry)?.name?.trim() ?? "";
 }
 
 function providerDisplayName(entry: Pick<AIProviderChannelEntry, "index" | "name" | "workspace_id">): string {
@@ -857,10 +860,20 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
     }
     if (authIndexes.size === 0) return undefined;
     const blockedAccountIdentities = new Set(accountIdentities.map((identity) => identity.trim()).filter(Boolean));
+    // The channel record carries the usage identities resolved from the base URL
+    // and credential digest, so history keeps matching after an auth-index change
+    // or an API key rotation; the auth-index match stays as a fallback for
+    // channels the plugin cannot identify (for example OpenCode entries).
+    const channelIdentities = new Set(
+      (providerAssignment(providerNames, kind, entry)?.identities ?? []).map((identity) => identity.trim()).filter(Boolean),
+    );
     const matches = runtimeSnapshots.filter((snapshot) => {
       const authIndex = (snapshot.auth_index ?? "").trim();
       const trustedIdentity = snapshot.credential_backed === true || kind === "opencode-go" || kind === "opencode-zen";
-      return authIndex !== "" && authIndexes.has(authIndex) && !blockedAccountIdentities.has(authIndex) && trustedIdentity;
+      if (!trustedIdentity || blockedAccountIdentities.has(authIndex)) return false;
+      const identity = (snapshot.identity ?? "").trim();
+      if (identity !== "" && channelIdentities.has(identity)) return true;
+      return authIndex !== "" && authIndexes.has(authIndex);
     });
     if (matches.length === 0) return undefined;
     if (matches.length === 1) return matches[0];
@@ -1816,20 +1829,22 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                       <IconButton label={tx("ui.view_ai_provider", { name: providerLabel(channel.kind, entry) })} onClick={() => { setError(""); setViewing({ kind: channel.kind, entry }); }}><Eye size={15} /></IconButton>
                       <IconButton label={tx("ui.test_ai_provider", { name: providerLabel(channel.kind, entry) })} disabled={channel.kind === "opencode-go" || busy} onClick={() => void testChannel(entry, channel.kind)}><Activity size={15} /></IconButton>
                       <IconButton label={tx("ui.edit_ai_provider")} onClick={() => openEditor(channel.kind, entry)}><Pencil size={15} /></IconButton>
-                      <ProviderActionsMenu
-                        label={tx("ui.more_actions_for_provider", { provider: providerLabel(channel.kind, entry) })}
-                        menuLabel={tx("ui.provider_more_actions")}
-                        resetUsageLabel={tx("ui.reset_local_usage")}
-                        resetting={busy}
-                        onResetUsage={() => void resetProviderUsage(channel.kind, entry)}
-                      />
                       {channel.kind !== "opencode-go" && channel.kind !== "opencode-zen" ? (
                         <>
                           <IconButton className="row-enable-action" label={tx("ui.enable_ai_provider")} disabled={busy || !entry.disabled} onClick={() => void toggleEnabled(entry, channel.kind, true)}><Power size={15} /></IconButton>
                           <IconButton className="row-disable-action" label={tx("ui.disable_ai_provider")} disabled={busy || entry.disabled === true} onClick={() => void toggleEnabled(entry, channel.kind, false)}><PowerOff size={15} /></IconButton>
                         </>
                       ) : null}
-                      <IconButton className="button-danger" label={tx("ui.delete_ai_provider")} onClick={() => void deleteEntry(entry, channel.kind)}><Trash2 size={15} /></IconButton>
+                      <ProviderActionsMenu
+                        label={tx("ui.more_actions_for_provider", { provider: providerLabel(channel.kind, entry) })}
+                        menuLabel={tx("ui.provider_more_actions")}
+                        resetUsageLabel={tx("ui.reset_local_usage")}
+                        deleteLabel={tx("ui.delete_ai_provider")}
+                        resetting={busy}
+                        deleting={busy}
+                        onResetUsage={() => void resetProviderUsage(channel.kind, entry)}
+                        onDelete={() => void deleteEntry(entry, channel.kind)}
+                      />
                     </div>
                   </td>
                 </tr>

@@ -579,10 +579,13 @@ describe("AIProvidersSettings", () => {
     const rows = section.querySelectorAll(".ai-provider-table tbody tr");
     expect(rows.length).toBeGreaterThanOrEqual(2);
 
-    // Delete the OpenAI-compatible (OpenRouter) row.
+    // Delete lives in the row's more menu, after reset usage.
     const openaiRow = Array.from(rows).find((row) => row.textContent?.includes("OpenRouter"));
     expect(openaiRow).toBeDefined();
-    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: "删除该渠道" }));
+    await user.click(within(openaiRow as HTMLElement).getByRole("button", { name: /OpenRouter 的更多操作/ }));
+    const menu = await screen.findByRole("menu", { name: "供应商更多操作" });
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["重置本地用量", "删除该渠道"]);
+    await user.click(within(menu).getByRole("menuitem", { name: /删除该渠道/ }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/openai-compatibility?index=0") && init.method === "DELETE")).toBe(true));
     await waitFor(() => expect(requests.filter(({ url, init }) => url.endsWith("/openai-compatibility") && !init.method)).toHaveLength(2));
     expect(onNotice).toHaveBeenCalledWith("渠道已删除");
@@ -797,4 +800,66 @@ describe("AIProvidersSettings", () => {
     expect(JSON.parse(String(patchRequest?.init.body))).toEqual({ index: 0, value: { disabled: true } });
     expect(onNotice).toHaveBeenCalledWith("渠道已禁用");
   });
+  it("matches provider usage by channel digest even when CPA regenerated the auth index", async () => {
+    providerFetchMock({
+      "codex-api-key": [
+        {
+          "api-key": "sk-codex-alpha",
+          "auth-index": "provider-auth-current",
+          "base-url": "https://gateway.example/v1",
+          models: [{ name: "gpt-5.6-sol", alias: "gpt-5.6-sol" }],
+        },
+      ],
+      // The plugin resolved this channel's usage history from its base URL and
+      // credential digest, so it survives an auth-index change.
+      "ai-provider-names": {
+        names: [{
+          kind: "codex-api-key",
+          index: 0,
+          base_url: "https://gateway.example/v1",
+          name: "Alpha gateway",
+          identities: ["credential:historical-digest"],
+        }],
+      },
+      "ai-providers-runtime": {
+        snapshots: [{
+          provider: "codex",
+          // A regenerated index that the entry no longer reports.
+          auth_index: "provider-auth-stale",
+          identity: "credential:historical-digest",
+          credential_backed: true,
+          supported: true,
+          concurrency_configurable: true,
+          active: 0,
+          limit: 4,
+          limit_15s: 5,
+          used_60s: 0,
+          used_15s: 0,
+          input_tokens: 900000,
+          output_tokens: 100000,
+          reasoning_tokens: 0,
+          cached_tokens: 0,
+          total_tokens: 1000000,
+          amount_usd: 12.5,
+          rated_requests: 3,
+          unrated_requests: 0,
+          quota: { five_hour_amount_usd: 1.5, seven_day_amount_usd: 3.5, five_hour_percent: 10, seven_day_percent: 20 },
+          models: [],
+          updated_at: new Date().toISOString(),
+        }],
+        updated_at: new Date().toISOString(),
+      },
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = Array.from(section.querySelectorAll(".ai-provider-table tbody tr"))
+      .find((candidate) => candidate.textContent?.includes("https://gateway.example/v1"));
+    expect(row).toBeDefined();
+    // Token totals are locale formatted (zh-CN groups thousands).
+    await waitFor(() => expect(row?.textContent).toContain("1,000,000"));
+    expect(row?.textContent).toContain("Alpha gateway");
+  });
+
 });

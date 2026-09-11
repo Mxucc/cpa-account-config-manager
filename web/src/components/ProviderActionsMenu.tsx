@@ -1,18 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Ellipsis, LoaderCircle, RotateCcw } from "lucide-react";
+import { Ellipsis, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
 
 interface ProviderActionsMenuProps {
   label: string;
   menuLabel: string;
   resetUsageLabel: string;
+  deleteLabel: string;
   resetting?: boolean;
+  deleting?: boolean;
   onResetUsage: () => void;
+  onDelete: () => void;
 }
 
 interface MenuPosition { left: number; top: number }
 
-export function ProviderActionsMenu({ label, menuLabel, resetUsageLabel, resetting = false, onResetUsage }: ProviderActionsMenuProps) {
+export function ProviderActionsMenu({ label, menuLabel, resetUsageLabel, deleteLabel, resetting = false, deleting = false, onResetUsage, onDelete }: ProviderActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<MenuPosition>({ left: 0, top: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -22,7 +25,7 @@ export function ProviderActionsMenu({ label, menuLabel, resetUsageLabel, resetti
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const width = 196;
-    const height = 48;
+    const height = 96;
     setPosition({
       left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
       top: window.innerHeight - rect.bottom >= height + 5 ? rect.bottom + 5 : Math.max(8, rect.top - height - 5),
@@ -45,14 +48,18 @@ export function ProviderActionsMenu({ label, menuLabel, resetUsageLabel, resetti
   }, [open]);
 
   return <>
-    <button ref={triggerRef} className="icon-button row-more-action" type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-      {resetting ? <LoaderCircle className="spin" size={15} /> : <Ellipsis size={16} />}
+    <button ref={triggerRef} className="icon-button row-more-action" type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} disabled={deleting} onClick={() => setOpen((value) => !value)}>
+      {resetting || deleting ? <LoaderCircle className="spin" size={15} /> : <Ellipsis size={16} />}
     </button>
     {open ? createPortal(
       <div ref={menuRef} className="account-actions-menu" role="menu" aria-label={menuLabel} style={{ left: position.left, top: position.top }}>
-        <button type="button" role="menuitem" disabled={resetting} onClick={() => { setOpen(false); onResetUsage(); }}>
+        <button type="button" role="menuitem" disabled={resetting || deleting} onClick={() => { setOpen(false); onResetUsage(); }}>
           {resetting ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
           <span>{resetUsageLabel}</span>
+        </button>
+        <button className="danger" type="button" role="menuitem" disabled={resetting || deleting} onClick={() => { setOpen(false); onDelete(); }}>
+          {deleting ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+          <span>{deleteLabel}</span>
         </button>
       </div>,
       document.body,

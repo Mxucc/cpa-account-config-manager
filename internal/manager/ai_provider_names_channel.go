@@ -7,18 +7,68 @@ import (
 	"sync"
 )
 
-// AIProviderNameAssignment is one resolved operator label. Index and BaseURL
-// let the caller verify the label against the entry it currently renders, so a
-// stale browser list cannot attach a name to the wrong provider.
+// AIProviderNameAssignment is one resolved channel record. Index and BaseURL let
+// the caller verify the record against the entry it currently renders, Name is
+// the plugin-stored label, and Identities lists the runtime usage identities that
+// CPA has reported for this channel (including identities kept across a
+// credential rotation), so usage history follows the channel instead of the
+// volatile auth index.
 type AIProviderNameAssignment struct {
-	Kind    string `json:"kind"`
-	Index   int    `json:"index"`
-	BaseURL string `json:"base_url,omitempty"`
-	Name    string `json:"name"`
+	Kind       string   `json:"kind"`
+	Index      int      `json:"index"`
+	BaseURL    string   `json:"base_url,omitempty"`
+	Name       string   `json:"name,omitempty"`
+	Identities []string `json:"identities,omitempty"`
+}
+
+// aiProviderChannelIdentity is the precomputed identity of one live channel
+// entry: the plugin digest keys plus the runtime identity CPA reports for it.
+type aiProviderChannelIdentity struct {
+	credentialKey string
+	urlKey        string
+	runtimeID     string
+	baseURL       string
+	provider      string
+}
+
+func (a *App) channelIdentityFor(kind string, entry map[string]any) aiProviderChannelIdentity {
+	identity := aiProviderChannelIdentity{}
+	if a == nil || a.aiProviderNames == nil {
+		return identity
+	}
+	identity.baseURL = aiProviderChannelBaseURL(entry)
+	identity.provider = aiProviderRuntimeProviderName(kind)
+	identity.credentialKey = a.aiProviderNames.CredentialKey(kind, identity.baseURL, aiProviderChannelCredential(entry))
+	identity.urlKey = a.aiProviderNames.URLKey(kind, identity.baseURL)
+	identity.runtimeID = aiProviderRuntimeCredentialIdentity(identity.provider, aiProviderChannelCredential(entry))
+	return identity
+}
+
+// aiProviderRuntimeProviderName maps a CPA channel kind to the provider name CPA
+// reports in usage callbacks, which is the namespace the runtime tracker uses.
+func aiProviderRuntimeProviderName(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "openai-compatibility", "openai-compatible":
+		return "openai"
+	case "gemini-api-key":
+		return "gemini"
+	case "interactions-api-key":
+		return "interactions"
+	case "claude-api-key":
+		return "claude"
+	case "codex-api-key":
+		return "codex"
+	case "xai-api-key":
+		return "xai"
+	case "vertex-api-key":
+		return "vertex"
+	default:
+		return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(kind)), "-api-key")
+	}
 }
 
 // aiProviderChannelCredential extracts the channel credential used for the
-// name digest. It never leaves this process: only the keyed digest is stored.
+// channel digest. It never leaves this process: only the keyed digest is stored.
 func aiProviderChannelCredential(entry map[string]any) string {
 	if entry == nil {
 		return ""
@@ -50,20 +100,6 @@ func aiProviderChannelBaseURL(entry map[string]any) string {
 	return strings.TrimSpace(value)
 }
 
-// nameKeysForEntry returns the digest keys that identify one live channel
-// entry. The credential key is primary; the URL-only key is the fallback for
-// entries that carry no credential at all.
-func (a *App) nameKeysForEntry(kind string, entry map[string]any) []string {
-	if a == nil || a.aiProviderNames == nil {
-		return nil
-	}
-	baseURL := aiProviderChannelBaseURL(entry)
-	if credential := aiProviderChannelCredential(entry); credential != "" {
-		return []string{a.aiProviderNames.CredentialKey(kind, baseURL, credential)}
-	}
-	return []string{a.aiProviderNames.URLKey(kind, baseURL)}
-}
-
 func (a *App) aiProviderChannelEntries(ctx context.Context, managementKey, kind string) ([]map[string]any, error) {
 	if a == nil {
 		return nil, fmt.Errorf("AI provider channel client is unavailable")
@@ -86,10 +122,92 @@ func (a *App) aiProviderChannelEntries(ctx context.Context, managementKey, kind 
 	return entries, nil
 }
 
-// resolveAIProviderChannelNames revalidates every stored label against the live
-// channel list: a label is returned only when the recomputed digest of the
-// entry's base URL and credential matches, and a URL-only label is dropped when
-// more than one entry shares that base URL.
+// syncAIProviderChannelBindings reconciles the stored channel records with one
+// live channel list and returns the resolved assignments.
+//
+// Resolution rules:
+//   - The credential digest (kind + base URL + API key) is the primary identity,
+//     so changing the key produces a new binding instead of a stale match.
+//   - When the new binding does not exist yet and exactly one live entry uses
+//     that base URL, the previous record is adopted, which carries the label and
+//     the usage history across the credential change.
+//   - A base URL shared by several entries never adopts, so two channels cannot
+//     trade identities.
+func (a *App) syncAIProviderChannelBindings(kind string, entries []map[string]any) []AIProviderNameAssignment {
+	if a == nil || a.aiProviderNames == nil {
+		return nil
+	}
+	identities := make([]aiProviderChannelIdentity, len(entries))
+	urlOwners := make(map[string]int, len(entries))
+	runtimeOwners := make(map[string]int, len(entries))
+	for index, entry := range entries {
+		identities[index] = a.channelIdentityFor(kind, entry)
+		urlOwners[identities[index].urlKey]++
+		if identities[index].runtimeID != "" {
+			runtimeOwners[identities[index].runtimeID]++
+		}
+	}
+
+	assignments := make([]AIProviderNameAssignment, 0, len(entries))
+	keep := make(map[string]struct{}, len(entries)*2)
+	for index, entry := range entries {
+		identity := identities[index]
+		bindingKey := identity.credentialKey
+		if aiProviderChannelCredential(entry) == "" {
+			// A channel without a credential can only be identified by its URL.
+			bindingKey = identity.urlKey
+		}
+		if _, exists := a.aiProviderNames.Binding(bindingKey); !exists && bindingKey != identity.urlKey && urlOwners[identity.urlKey] == 1 {
+			// Adopt the URL-level record so a rotated credential keeps its label
+			// and the usage identities observed before the change.
+			_ = a.aiProviderNames.AdoptBinding(identity.urlKey, bindingKey)
+		}
+		// A usage identity is only attributed when exactly one live entry claims
+		// it; otherwise the same credential would appear on several channels.
+		runtimeID := identity.runtimeID
+		if runtimeOwners[runtimeID] != 1 {
+			runtimeID = ""
+		}
+		_ = a.aiProviderNames.UpsertBinding(bindingKey, identity.baseURL, identity.provider, runtimeID)
+		// Keep the URL-level alias in step so a later rotation can adopt again.
+		if identity.urlKey != bindingKey {
+			_ = a.aiProviderNames.UpsertBinding(identity.urlKey, identity.baseURL, identity.provider, runtimeID)
+		}
+		keep[bindingKey] = struct{}{}
+		keep[identity.urlKey] = struct{}{}
+
+		binding, _ := a.aiProviderNames.Binding(bindingKey)
+		list := normalizeAIProviderIdentities(binding.Identities)
+		if runtimeID != "" && !containsAIProviderIdentity(list, runtimeID) {
+			list = append(list, runtimeID)
+		}
+		assignments = append(assignments, AIProviderNameAssignment{
+			Kind:       kind,
+			Index:      index,
+			BaseURL:    identity.baseURL,
+			Name:       strings.TrimSpace(binding.Name),
+			Identities: list,
+		})
+	}
+	// Drop records whose channel no longer exists, so a deleted channel cannot
+	// hand its label or usage history to a future entry.
+	if errPrune := a.aiProviderNames.PruneKind(kind, keep); errPrune != nil {
+		a.aiProviderNames.noteStorageError("AI provider name state could not be persisted")
+	}
+	return assignments
+}
+
+func containsAIProviderIdentity(values []string, identity string) bool {
+	for _, value := range values {
+		if value == identity {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveAIProviderChannelNames revalidates every stored channel record against
+// the live channel list and returns one assignment per live entry.
 func (a *App) resolveAIProviderChannelNames(ctx context.Context, managementKey string) ([]AIProviderNameAssignment, string) {
 	if a == nil || a.aiProviderNames == nil {
 		return nil, ""
@@ -109,41 +227,7 @@ func (a *App) resolveAIProviderChannelNames(ctx context.Context, managementKey s
 				results[position] = kindResult{failed: true}
 				return
 			}
-			assignments := make([]AIProviderNameAssignment, 0, len(entries))
-			urlOwners := make(map[string]int, len(entries))
-			entryKeys := make([][]string, len(entries))
-			for index, entry := range entries {
-				keys := a.nameKeysForEntry(kind, entry)
-				entryKeys[index] = keys
-				for _, key := range keys {
-					if strings.Contains(key, ":url:") {
-						urlOwners[key]++
-					}
-				}
-			}
-			for index, entry := range entries {
-				name := ""
-				for _, key := range entryKeys[index] {
-					if strings.Contains(key, ":url:") && urlOwners[key] != 1 {
-						// An ambiguous base URL must never claim a label.
-						continue
-					}
-					if value, ok := a.aiProviderNames.Name(key); ok {
-						name = value
-						break
-					}
-				}
-				if name == "" {
-					continue
-				}
-				assignments = append(assignments, AIProviderNameAssignment{
-					Kind:    kind,
-					Index:   index,
-					BaseURL: aiProviderChannelBaseURL(entry),
-					Name:    name,
-				})
-			}
-			results[position] = kindResult{assignments: assignments}
+			results[position] = kindResult{assignments: a.syncAIProviderChannelBindings(kind, entries)}
 		}(position, kind)
 	}
 	wait.Wait()
@@ -187,15 +271,16 @@ func (a *App) assignAIProviderChannelName(ctx context.Context, managementKey, ki
 	if current := canonicalProviderBaseURL(aiProviderChannelBaseURL(entry)); current != canonicalProviderBaseURL(baseURL) {
 		return errAIProviderNameEntryStale
 	}
-	keys := a.nameKeysForEntry(kind, entry)
-	if _, errAssign := a.aiProviderNames.Assign(keys, name); errAssign != nil {
-		return errAssign
+	// Reconcile first so the binding exists with its current identity, then write
+	// the label onto both the credential and URL records.
+	a.syncAIProviderChannelBindings(kind, entries)
+	identity := a.channelIdentityFor(kind, entry)
+	keys := []string{identity.credentialKey}
+	if aiProviderChannelCredential(entry) == "" {
+		keys = []string{identity.urlKey}
+	} else {
+		keys = append(keys, identity.urlKey)
 	}
-	keep := make(map[string]struct{}, len(entries))
-	for _, candidate := range entries {
-		for _, key := range a.nameKeysForEntry(kind, candidate) {
-			keep[key] = struct{}{}
-		}
-	}
-	return a.aiProviderNames.PruneKind(kind, keep)
+	_, errAssign := a.aiProviderNames.Assign(keys, name)
+	return errAssign
 }

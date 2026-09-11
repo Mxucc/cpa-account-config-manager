@@ -1466,13 +1466,21 @@ func runtimeIdentityFromUsage(record cpaapi.UsageRecord) (string, string) {
 	return "", ""
 }
 
-func runtimeCredentialIdentity(record cpaapi.UsageRecord) string {
-	provider, key := normalizeRuntimeProvider(record.Provider), strings.TrimSpace(record.APIKey)
+// aiProviderRuntimeCredentialIdentity derives the runtime aggregate identity CPA
+// reports for a provider credential. It is the durable usage key: it survives an
+// auth-index regeneration, so usage history follows the channel rather than the
+// volatile index, and it never exposes the credential itself.
+func aiProviderRuntimeCredentialIdentity(provider, apiKey string) string {
+	provider, key := normalizeRuntimeProvider(provider), strings.TrimSpace(apiKey)
 	if provider == "" || key == "" {
 		return ""
 	}
 	digest := sha256.Sum256([]byte(provider + "\x00" + key))
 	return "credential:" + hex.EncodeToString(digest[:])
+}
+
+func runtimeCredentialIdentity(record cpaapi.UsageRecord) string {
+	return aiProviderRuntimeCredentialIdentity(record.Provider, record.APIKey)
 }
 
 func (a *App) handleAIProviderRuntime() cpaapi.ManagementResponse {

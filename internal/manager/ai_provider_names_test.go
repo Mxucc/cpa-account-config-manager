@@ -221,8 +221,14 @@ func TestAIProviderNameManagementAPIRevalidatesAfterReorderAndKeyChange(t *testi
 	if got := aiProviderNameForIndex(snapshot, "codex-api-key", 0); got != "" {
 		t.Fatalf("label leaked onto a rotated credential: %q", got)
 	}
-	if len(snapshot.Names) != 1 {
-		t.Fatalf("assignments = %#v, want exactly one", snapshot.Names)
+	labeled := 0
+	for _, assignment := range snapshot.Names {
+		if strings.TrimSpace(assignment.Name) != "" {
+			labeled++
+		}
+	}
+	if labeled != 1 {
+		t.Fatalf("assignments = %#v, want exactly one labeled entry", snapshot.Names)
 	}
 }
 
@@ -254,7 +260,116 @@ func TestAIProviderNameManagementAPIClearsLabelOnRequest(t *testing.T) {
 	if response := putAIProviderName(t, app, `{"kind":"codex-api-key","index":0,"base_url":"https://shared.example/v1","name":""}`); response.StatusCode != http.StatusOK {
 		t.Fatalf("clear status = %d, body=%s", response.StatusCode, response.Body)
 	}
-	if snapshot := getAIProviderNames(t, app); len(snapshot.Names) != 0 {
-		t.Fatalf("cleared label still resolved: %#v", snapshot.Names)
+	// Every live entry now reports a record (it also carries the channel's usage
+	// identities); a cleared label simply has an empty name.
+	for _, assignment := range getAIProviderNames(t, app).Names {
+		if strings.TrimSpace(assignment.Name) != "" {
+			t.Fatalf("cleared label still resolved: %#v", assignment)
+		}
+	}
+}
+
+// A rotated API key produces a new digest. When the base URL still identifies
+// exactly one live channel, the previous record is adopted so the label and the
+// usage identities observed before the change survive.
+func TestAIProviderChannelBindingAdoptsHistoryOnKeyRotation(t *testing.T) {
+	app := aiProviderNameTestApp(t, `{"codex-api-key":[{"base-url":"https://shared.example/v1","api-key":"sk-alpha"}]}`)
+
+	// The first read binds the channel and records its usage identity.
+	first := getAIProviderNames(t, app)
+	if len(first.Names) != 1 {
+		t.Fatalf("initial assignments = %#v", first.Names)
+	}
+	recorded := first.Names[0].Identities
+	wantIdentity := aiProviderRuntimeCredentialIdentity("codex", "sk-alpha")
+	if len(recorded) != 1 || recorded[0] != wantIdentity {
+		t.Fatalf("identities = %#v, want the live credential identity %q", recorded, wantIdentity)
+	}
+	if response := putAIProviderName(t, app, `{"kind":"codex-api-key","index":0,"base_url":"https://shared.example/v1","name":"Alpha gateway"}`); response.StatusCode != http.StatusOK {
+		t.Fatalf("put status = %d, body=%s", response.StatusCode, response.Body)
+	}
+
+	// The operator rotates the key outside the plugin.
+	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+		return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[{"base-url":"https://shared.example/v1","api-key":"sk-rotated"}]}`), nil
+	})
+	after := getAIProviderNames(t, app)
+	if len(after.Names) != 1 {
+		t.Fatalf("assignments after rotation = %#v", after.Names)
+	}
+	if after.Names[0].Name != "Alpha gateway" {
+		t.Fatalf("label after rotation = %q, want the adopted label", after.Names[0].Name)
+	}
+	if !containsAIProviderIdentity(after.Names[0].Identities, wantIdentity) {
+		t.Fatalf("history identity was dropped after rotation: %#v", after.Names[0].Identities)
+	}
+	if !containsAIProviderIdentity(after.Names[0].Identities, aiProviderRuntimeCredentialIdentity("codex", "sk-rotated")) {
+		t.Fatalf("rotated credential identity is missing: %#v", after.Names[0].Identities)
+	}
+}
+
+// Two channels sharing a base URL must never adopt each other's record, otherwise
+// one channel would inherit the other's label and usage history.
+func TestAIProviderChannelBindingDoesNotAdoptAmbiguousBaseURL(t *testing.T) {
+	app := aiProviderNameTestApp(t, `{"codex-api-key":[
+		{"base-url":"https://shared.example/v1","api-key":"sk-alpha"},
+		{"base-url":"https://shared.example/v1","api-key":"sk-beta"}
+	]}`)
+	if response := putAIProviderName(t, app, `{"kind":"codex-api-key","index":0,"base_url":"https://shared.example/v1","name":"Alpha gateway"}`); response.StatusCode != http.StatusOK {
+		t.Fatalf("put status = %d, body=%s", response.StatusCode, response.Body)
+	}
+
+	// Rotate only the second channel's key. Its base URL is shared, so nothing may
+	// be inherited; the labelled channel keeps its own record.
+	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+		return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[
+			{"base-url":"https://shared.example/v1","api-key":"sk-alpha"},
+			{"base-url":"https://shared.example/v1","api-key":"sk-beta-rotated"}
+		]}`), nil
+	})
+	assignments := getAIProviderNames(t, app).Names
+	if len(assignments) != 2 {
+		t.Fatalf("assignments = %#v", assignments)
+	}
+	roleByIndex := map[int]string{}
+	for _, assignment := range assignments {
+		roleByIndex[assignment.Index] = assignment.Name
+	}
+	if roleByIndex[0] != "Alpha gateway" {
+		t.Fatalf("labelled channel lost its label: %#v", roleByIndex)
+	}
+	if roleByIndex[1] != "" {
+		t.Fatalf("rotated channel inherited a label: %#v", roleByIndex)
+	}
+}
+
+// The version 1 store kept bare labels; loading it must migrate them into channel
+// records instead of discarding the operator's names.
+func TestAIProviderNameStoreMigratesVersionOne(t *testing.T) {
+	dir := t.TempDir()
+	writeJSONFile(t, aiProviderNameStorePath(dir), map[string]any{
+		"version": aiProviderNameStoreLegacyVersion,
+		"pepper":  strings.Repeat("ab", aiProviderNamePepperBytes),
+		"names": map[string]any{
+			"codex-api-key:cred:deadbeef": map[string]any{"name": "Legacy gateway", "updated_at": "2026-01-01T00:00:00Z"},
+		},
+	})
+
+	service := NewAIProviderNameService()
+	service.Configure(Config{DataDir: dir})
+	binding, exists := service.Binding("codex-api-key:cred:deadbeef")
+	if !exists || binding.Name != "Legacy gateway" {
+		t.Fatalf("migrated binding = %#v, exists=%t", binding, exists)
+	}
+
+	// The migrated state is persisted in the version 2 layout.
+	reloaded := NewAIProviderNameService()
+	reloaded.Configure(Config{DataDir: dir})
+	if binding, exists := reloaded.Binding("codex-api-key:cred:deadbeef"); !exists || binding.Name != "Legacy gateway" {
+		t.Fatalf("reloaded binding = %#v, exists=%t", binding, exists)
+	}
+	loaded, errLoad := loadAIProviderNames(aiProviderNameStorePath(dir))
+	if errLoad != nil || loaded.Version != aiProviderNameStoreVersion {
+		t.Fatalf("store version = %d, err=%v", loaded.Version, errLoad)
 	}
 }

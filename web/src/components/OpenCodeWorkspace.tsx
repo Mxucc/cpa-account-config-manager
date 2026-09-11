@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, Coins, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Radio, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
-import type { OpenCodeAccountView, OpenCodeModelTestResult, OpenCodeQuotaResult, OpenCodeZenAccountView } from "../types";
+import type { OpenCodeAccountView, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 
 interface OpenCodeWorkspaceProps {
@@ -21,6 +21,29 @@ interface ModelTarget {
   models: string[];
 }
 
+/** Prices are USD per million tokens; tiny values keep four decimals. */
+function formatPriceUSD(value: number | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "-";
+  if (value === 0) return "$0";
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+/** Mirrors the backend lookup: vendor prefixes and "_-" drift are tolerated. */
+function normalizePriceKey(model: string): string {
+  const trimmed = model.trim().toLowerCase();
+  const tail = trimmed.includes("/") ? trimmed.slice(trimmed.lastIndexOf("/") + 1) : trimmed;
+  return tail.replace(/_/g, "-");
+}
+
+function priceFor(prices: OpenCodeModelPrice[] | undefined, model: string): OpenCodeModelPrice | undefined {
+  const key = normalizePriceKey(model);
+  if (!key) return undefined;
+  return (prices ?? []).find((price) => normalizePriceKey(price.id) === key);
+}
+
+const PRICE_ROWS_LIMIT = 40;
+
 function formatWindow(window: { usage_percent: number; reset_in_sec: number } | undefined, tx: ReturnType<typeof useI18n>["tx"]): string {
   if (!window) return tx("ui.no_data");
   const resets = window.reset_in_sec > 0 ? `${Math.ceil(window.reset_in_sec / 60)} ${tx("ui.minutes_short")}` : "-";
@@ -33,7 +56,7 @@ function formatWindow(window: { usage_percent: number; reset_in_sec: number } | 
  * that makes the models routable through CPA.
  */
 export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: OpenCodeWorkspaceProps) {
-  const { locale, tx, formatDateTime } = useI18n();
+  const { locale, tx, formatDateTime, formatNumber } = useI18n();
   const [goAccounts, setGoAccounts] = useState<OpenCodeAccountView[]>([]);
   const [zenAccounts, setZenAccounts] = useState<OpenCodeZenAccountView[]>([]);
   const [quota, setQuota] = useState<Record<string, OpenCodeQuotaResult>>({});
@@ -52,6 +75,10 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [target, setTarget] = useState<ModelTarget | null>(null);
   const [testModel, setTestModel] = useState("");
   const [testResult, setTestResult] = useState<OpenCodeModelTestResult | null>(null);
+  const [pricing, setPricing] = useState<OpenCodePricingSnapshot>({});
+  const [session, setSession] = useState<OpenCodeSessionSnapshot | null>(null);
+  const [priceKind, setPriceKind] = useState<OpenCodeKind>("go");
+  const [priceQuery, setPriceQuery] = useState("");
   const request = useRef(0);
 
   const handleError = useCallback((caught: unknown) => {
@@ -68,16 +95,20 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     setLoading(true);
     setError("");
     try {
-      const [go, zen, quotaSnapshot] = await Promise.all([
+      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot] = await Promise.all([
         api.listOpenCodeAccounts(signal),
         api.listOpenCodeZenAccounts(signal),
         api.getOpenCodeQuota(signal),
+        api.getOpenCodePricing(signal),
+        api.getOpenCodeSession(signal),
       ]);
       if (requestID !== request.current) return;
       setGoAccounts(go.accounts);
       setZenAccounts(zen.accounts);
       setQuota(quotaSnapshot.results ?? {});
-      setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || "");
+      setPricing(pricingSnapshot.pricing ?? {});
+      setSession(sessionSnapshot.session ?? null);
+      setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || pricingSnapshot.pricing?.storage_error || "");
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       if (requestID === request.current) handleError(caught);
@@ -128,6 +159,12 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     onNotice(tx("ui.opencode_account_saved"));
   });
 
+  const syncPrices = () => void withBusy("pricing", async () => {
+    const response = await api.refreshOpenCodePricing();
+    setPricing(response.pricing ?? {});
+    onNotice(tx(response.changed ? "ui.opencode_pricing_changed" : "ui.opencode_pricing_unchanged"));
+  });
+
   const refreshCatalog = (kind: OpenCodeKind, accountID: string) => void withBusy(`models-${accountID}`, async () => {
     const response = await api.refreshOpenCodeModels(kind, accountID);
     if (kind === "go") {
@@ -168,6 +205,15 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     const response = await api.testOpenCodeModel(target.kind, target.accountID, testModel.trim());
     setTestResult(response.result);
   });
+
+  const catalogPrices = (priceKind === "go" ? pricing.go : pricing.zen) ?? [];
+  const filteredPrices = catalogPrices.filter((price) => {
+    const query = priceQuery.trim().toLowerCase();
+    if (!query) return true;
+    return price.id.toLowerCase().includes(query) || (price.name ?? "").toLowerCase().includes(query);
+  });
+  const visiblePrices = filteredPrices.slice(0, PRICE_ROWS_LIMIT);
+  const selectedPrice = target ? priceFor(target.kind === "go" ? pricing.go : pricing.zen, testModel) : undefined;
 
   const statusLabel = (status: OpenCodeModelTestResult["status"]): string => {
     switch (status) {
@@ -390,6 +436,85 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
         </div>
       </section>
 
+      <section className="opencode-section opencode-pricing" aria-label={tx("ui.opencode_pricing")}>
+        <div className="opencode-section-heading">
+          <div>
+            <strong><Coins size={14} /> {tx("ui.opencode_pricing")}</strong>
+            <span>{tx("ui.opencode_pricing_description")}</span>
+          </div>
+          <button className="button button-quiet" type="button" disabled={busy === "pricing"} onClick={syncPrices}>
+            {busy === "pricing" ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{tx("ui.opencode_pricing_sync")}
+          </button>
+        </div>
+        <div className="opencode-price-meta">
+          <span>{tx("ui.opencode_pricing_source")}: {pricing.source || "-"}</span>
+          <span>{tx("ui.opencode_pricing_updated")}: {pricing.updated_at ? formatDateTime(pricing.updated_at) : "-"}</span>
+          <span>{tx("ui.opencode_price_per_million")}</span>
+        </div>
+        <div className="opencode-price-controls">
+          <div className="scope-segment" aria-label={tx("ui.opencode_pricing")}>
+            <button type="button" className={priceKind === "go" ? "active" : ""} onClick={() => setPriceKind("go")}>{tx("ui.ai_provider_channel_opencode")}</button>
+            <button type="button" className={priceKind === "zen" ? "active" : ""} onClick={() => setPriceKind("zen")}>{tx("ui.ai_provider_channel_opencode_zen")}</button>
+          </div>
+          <label className="opencode-price-search">
+            <Search size={14} />
+            <input value={priceQuery} onChange={(event) => setPriceQuery(event.target.value)} placeholder={tx("ui.opencode_prices_filter")} aria-label={tx("ui.opencode_prices_filter")} />
+          </label>
+          <span className="opencode-price-count">{tx("ui.opencode_prices_shown", { shown: String(visiblePrices.length), total: String(filteredPrices.length) })}</span>
+        </div>
+        <div className="opencode-table-wrap">
+          <table className="account-table opencode-table opencode-price-table">
+            <thead>
+              <tr>
+                <th>{tx("ui.model")}</th>
+                <th>{tx("ui.opencode_price_input")}</th>
+                <th>{tx("ui.opencode_price_output")}</th>
+                <th>{tx("ui.opencode_price_cache_read")}</th>
+                <th>{tx("ui.opencode_price_cache_write")}</th>
+                <th>{tx("ui.opencode_context")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visiblePrices.map((price) => (
+                <tr key={price.id}>
+                  <td>
+                    <div className="opencode-models-cell">
+                      <strong>{price.name || price.id}</strong>
+                      <small>{price.id}</small>
+                      {price.tiers?.length ? <small className="opencode-model-error">{tx("ui.opencode_price_tier_note", { tokens: formatNumber(price.tiers[0].min_context_tokens) })}</small> : null}
+                    </div>
+                  </td>
+                  <td>{formatPriceUSD(price.input_usd_per_million)}</td>
+                  <td>{formatPriceUSD(price.output_usd_per_million)}</td>
+                  <td>{formatPriceUSD(price.cache_read_usd_per_million)}</td>
+                  <td>{formatPriceUSD(price.cache_write_usd_per_million)}</td>
+                  <td>{price.context_tokens ? formatNumber(price.context_tokens) : "-"}</td>
+                </tr>
+              ))}
+              {!loading && visiblePrices.length === 0 ? <tr><td colSpan={6}>{tx("ui.no_data")}</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="opencode-section opencode-session" aria-label={tx("ui.opencode_session")}>
+        <div className="opencode-section-heading">
+          <div>
+            <strong><Radio size={14} /> {tx("ui.opencode_session")}</strong>
+            <span>{tx("ui.opencode_session_description")}</span>
+          </div>
+          <a className="button button-quiet" href="https://opencode.ai/docs/go/#where-can-i-use-it" target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={15} />{tx("ui.opencode_session_docs")}
+          </a>
+        </div>
+        <dl className="opencode-test-result">
+          <div><dt>{tx("ui.status")}</dt><dd>{session?.enabled && session?.salt_ready ? tx("ui.opencode_session_active") : tx("ui.opencode_session_inactive")}</dd></div>
+          <div><dt>{tx("ui.opencode_session_targets")}</dt><dd>{session?.target_models?.length ?? 0} · {session?.target_auth_indexes ?? 0} {tx("ui.opencode_session_channels")}</dd></div>
+          <div><dt>{tx("ui.opencode_session_injected")}</dt><dd>{session?.injected_requests ?? 0}</dd></div>
+          <div><dt>{tx("ui.opencode_session_distinct")}</dt><dd>{session?.distinct_sessions ?? 0}</dd></div>
+        </dl>
+      </section>
+
       {target ? (
         <section className="opencode-section opencode-model-tester" aria-label={tx("ui.opencode_model_test")}>
           <div className="opencode-section-heading">
@@ -412,6 +537,11 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
               </button>
             </div>
           </div>
+          <p className="opencode-note">
+            {tx("ui.opencode_model_price")}: {selectedPrice
+              ? `${formatPriceUSD(selectedPrice.input_usd_per_million)} / ${formatPriceUSD(selectedPrice.output_usd_per_million)} · ${tx("ui.opencode_price_per_million")}`
+              : tx("ui.opencode_no_price")}
+          </p>
           {testResult ? (
             <dl className="opencode-test-result">
               <div><dt>{tx("ui.status")}</dt><dd>{statusLabel(testResult.status)}</dd></div>

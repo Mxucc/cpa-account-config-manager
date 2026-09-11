@@ -51,6 +51,9 @@ interface OpenCodeFetchMockOptions {
   modelsResponse?: Record<string, unknown>;
   modelTestResponse?: Record<string, unknown>;
   bindResponse?: Record<string, unknown>;
+  pricing?: Record<string, unknown>;
+  pricingRefresh?: Record<string, unknown>;
+  session?: Record<string, unknown>;
 }
 
 describe("OpenCodeWorkspace", () => {
@@ -87,6 +90,11 @@ describe("OpenCodeWorkspace", () => {
       if (url.endsWith("/opencode/models")) return jsonResponse(options.modelsResponse ?? { account: goAccountView() });
       if (url.endsWith("/opencode/model-test")) return jsonResponse(options.modelTestResponse ?? {});
       if (url.endsWith("/opencode/bind")) return jsonResponse(options.bindResponse ?? {});
+      if (url.endsWith("/opencode/pricing/refresh") && init.method === "POST") {
+        return jsonResponse({ changed: true, pricing: options.pricingRefresh ?? options.pricing ?? {} });
+      }
+      if (url.endsWith("/opencode/pricing")) return jsonResponse({ pricing: options.pricing ?? {} });
+      if (url.endsWith("/opencode/session")) return jsonResponse({ session: options.session ?? {} });
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -293,5 +301,49 @@ describe("OpenCodeWorkspace", () => {
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.includes(`/opencode/refresh-account?account_id=${GO_ACCOUNT_ID}`) && init.method === "POST")).toBe(true));
     expect(await within(row).findByText(/5 小时额度: 5\.0% · 5 分钟/)).toBeInTheDocument();
+  });
+
+  it("renders the official OpenCode price catalog and syncs it on demand", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({
+      pricing: {
+        source: "models.dev (OpenCode Zen and OpenCode Go)",
+        updated_at: "2026-09-11T00:00:00Z",
+        go: [{ id: "longcat-2.0", name: "LongCat-2.0", input_usd_per_million: 0.3, output_usd_per_million: 1.2, context_tokens: 1000000 }],
+        zen: [{ id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", input_usd_per_million: 2, output_usd_per_million: 12, cache_read_usd_per_million: 0.2, tiers: [{ min_context_tokens: 200000, input_usd_per_million: 4 }] }],
+      },
+    });
+    const onNotice = vi.fn();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
+    expect(within(section).getByText(/^来源: models\.dev/)).toBeInTheDocument();
+    expect(await within(section).findByText("LongCat-2.0")).toBeInTheDocument();
+    expect(within(section).getByText("$0.30")).toBeInTheDocument();
+    expect(within(section).getByText("$1.20")).toBeInTheDocument();
+
+    // Switch to the Zen catalog: tiered pricing is announced, not hidden.
+    await user.click(within(section).getByRole("button", { name: "OpenCode Zen" }));
+    expect(await within(section).findByText("Gemini 3.1 Pro")).toBeInTheDocument();
+    expect(within(section).getByText(/超过 200,000 token/)).toBeInTheDocument();
+
+    await user.click(within(section).getByRole("button", { name: "同步价格" }));
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/pricing/refresh") && init.method === "POST")).toBe(true));
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("价格已更新"));
+  });
+
+  it("shows the per-conversation session routing status", async () => {
+    openCodeFetchMock({
+      session: { enabled: true, salt_ready: true, target_models: ["a", "b", "c"], injected_requests: 7, distinct_sessions: 2 },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("region", { name: "对话会话" });
+    expect(await within(section).findByText("已启用")).toBeInTheDocument();
+    expect(within(section).getByText("7")).toBeInTheDocument();
+    expect(within(section).getByText("2")).toBeInTheDocument();
+    expect(within(section).getByRole("link", { name: "OpenCode Go 客户端要求" })).toHaveAttribute("href", "https://opencode.ai/docs/go/#where-can-i-use-it");
   });
 });

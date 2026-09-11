@@ -95,17 +95,18 @@ type creditPricingRaw struct {
 }
 
 type Sub2APICreditUsage struct {
-	enabled    atomic.Bool
-	table      atomic.Pointer[creditPricingTable]
-	client     *http.Client
-	mu         sync.Mutex
-	cachePath  string
-	configured bool
-	wake       chan struct{}
-	stop       chan struct{}
-	done       chan struct{}
-	cancel     context.CancelFunc
-	closeOnce  sync.Once
+	enabled       atomic.Bool
+	table         atomic.Pointer[creditPricingTable]
+	openCodeWires atomic.Pointer[openCodePriceWiring]
+	client        *http.Client
+	mu            sync.Mutex
+	cachePath     string
+	configured    bool
+	wake          chan struct{}
+	stop          chan struct{}
+	done          chan struct{}
+	cancel        context.CancelFunc
+	closeOnce     sync.Once
 }
 
 func NewSub2APICreditUsage() *Sub2APICreditUsage {
@@ -180,12 +181,90 @@ func (s *Sub2APICreditUsage) Snapshot() CreditPricingSnapshot {
 	return CreditPricingSnapshot{UpdatedAt: table.UpdatedAt, Source: table.Source}
 }
 
+// openCodePriceWiring binds the OpenCode price catalog to the channel lookup that
+// proves a request was routed to an OpenCode gateway. It is replaced atomically so
+// the per-request path stays lock-free.
+type openCodePriceWiring struct {
+	pricing        *OpenCodePricingService
+	resolveBaseURL func(identity string) (string, bool)
+}
+
+// SetOpenCodePricing gives OpenCode-routed usage precedence over the generic
+// vendor table. resolveBaseURL maps a runtime credential identity to the channel
+// base URL the plugin recorded for it; a nil resolver or a non-OpenCode channel
+// keeps the previous behavior.
+func (s *Sub2APICreditUsage) SetOpenCodePricing(pricing *OpenCodePricingService, resolveBaseURL func(identity string) (string, bool)) {
+	if s == nil {
+		return
+	}
+	if pricing == nil || resolveBaseURL == nil {
+		return
+	}
+	s.openCodeWires.Store(&openCodePriceWiring{pricing: pricing, resolveBaseURL: resolveBaseURL})
+}
+
+// openCodeCharge prices one request with OpenCode's own rates when the request
+// was routed to an OpenCode channel. OpenCode resells Zen models and bundles Go
+// models at its own prices, so the generic vendor table would misprice both.
+func (s *Sub2APICreditUsage) openCodeCharge(record cpaapi.UsageRecord) (CreditCharge, bool) {
+	if s == nil {
+		return CreditCharge{}, false
+	}
+	wiring := s.openCodeWires.Load()
+	if wiring == nil || wiring.pricing == nil || wiring.resolveBaseURL == nil {
+		return CreditCharge{}, false
+	}
+	pricing := wiring.pricing
+	resolve := wiring.resolveBaseURL
+	identity := runtimeCredentialIdentity(record)
+	if identity == "" {
+		return CreditCharge{}, false
+	}
+	baseURL, ok := resolve(identity)
+	if !ok || !isOpenCodeGatewayBaseURL(baseURL) {
+		return CreditCharge{}, false
+	}
+	detail := record.Detail
+	input := nonNegative(detail.InputTokens)
+	cacheRead := nonNegative(detail.CacheReadTokens)
+	if cacheRead == 0 {
+		cacheRead = nonNegative(detail.CachedTokens)
+	}
+	cacheCreation := nonNegative(detail.CacheCreationTokens)
+	uncachedInput := input - cacheRead - cacheCreation
+	if uncachedInput < 0 {
+		uncachedInput = 0
+	}
+	amount, priced := pricing.Estimate(openCodeGatewayKind(baseURL), firstNonEmpty(record.Model, record.Alias), OpenCodeTokenUsage{
+		UncachedInputTokens: uncachedInput,
+		OutputTokens:        nonNegative(detail.OutputTokens),
+		CacheReadTokens:     cacheRead,
+		CacheWriteTokens:    cacheCreation,
+		ContextTokens:       input,
+	})
+	if !priced {
+		return CreditCharge{}, false
+	}
+	updatedAt, source := pricing.Provenance()
+	return CreditCharge{
+		Enabled:          true,
+		Rated:            true,
+		AmountNanos:      amount,
+		ObservedAt:       record.RequestedAt.UTC(),
+		PricingUpdatedAt: updatedAt,
+		PricingSource:    source,
+	}, true
+}
+
 func (s *Sub2APICreditUsage) Calculate(record cpaapi.UsageRecord) CreditCharge {
 	charge := CreditCharge{ObservedAt: record.RequestedAt.UTC()}
 	if s == nil || !s.enabled.Load() || record.Failed {
 		return charge
 	}
 	charge.Enabled = true
+	if openCodeCharge, ok := s.openCodeCharge(record); ok {
+		return openCodeCharge
+	}
 	table := s.table.Load()
 	if table == nil {
 		return charge

@@ -109,6 +109,11 @@ func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, a
 	if errWrite := writer.putAIProviderChannel(ctx, listKind, items); errWrite != nil {
 		return result, fmt.Errorf("CPA channel could not be saved")
 	}
+	// Re-read the channel list so the newly written channel's CPA auth index is
+	// recorded for session attribution immediately after binding.
+	if entries, errEntries := a.aiProviderChannelEntries(ctx, managementKey, listKind); errEntries == nil {
+		_ = a.syncAIProviderChannelBindings(listKind, entries)
+	}
 	result.Index = target
 	result.ChannelKey = fmt.Sprintf("%s:%d", listKind, target)
 	return result, nil

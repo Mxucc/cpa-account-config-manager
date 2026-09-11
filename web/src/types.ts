@@ -1275,6 +1275,49 @@ export interface OpenCodeBindingResult {
   models: number;
 }
 
+/** One context-length price tier; Zen charges more above the threshold. */
+export interface OpenCodePriceTier {
+  min_context_tokens: number;
+  input_usd_per_million?: number;
+  output_usd_per_million?: number;
+  cache_read_usd_per_million?: number;
+  cache_write_usd_per_million?: number;
+}
+
+/** Official OpenCode price for one model, in USD per million tokens. */
+export interface OpenCodeModelPrice {
+  id: string;
+  name?: string;
+  input_usd_per_million?: number;
+  output_usd_per_million?: number;
+  cache_read_usd_per_million?: number;
+  cache_write_usd_per_million?: number;
+  context_tokens?: number;
+  output_tokens?: number;
+  tiers?: OpenCodePriceTier[];
+}
+
+/** Synced official price catalog for the whole OpenCode catalog. */
+export interface OpenCodePricingSnapshot {
+  updated_at?: string;
+  source?: string;
+  zen?: OpenCodeModelPrice[];
+  go?: OpenCodeModelPrice[];
+  storage_error?: string;
+}
+
+/** Per-conversation x-opencode-session routing state. */
+export interface OpenCodeSessionSnapshot {
+  enabled: boolean;
+  salt_ready: boolean;
+  target_models?: string[];
+  /** Number of CPA auth indexes attributed to OpenCode channels. */
+  target_auth_indexes?: number;
+  injected_requests: number;
+  distinct_sessions: number;
+  last_injected_at?: string;
+}
+
 export interface OpenCodeWindowUsage {
   usage_percent: number;
   percent_remaining: number;

@@ -87,6 +87,71 @@ func aiProviderNameStorePath(dataDir string) string {
 	return filepath.Join(dataDir, aiProviderNameStoreFile)
 }
 
+// BaseURLForRuntimeIdentity resolves the channel base URL recorded for one usage
+// or request identity. Ambiguous identities resolve to nothing so a price table
+// is never chosen from an uncertain channel match.
+func (s *AIProviderNameService) BaseURLForRuntimeIdentity(identity string) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	matches := 0
+	baseURL := ""
+	for _, binding := range s.bindings {
+		matched := false
+		for _, candidate := range binding.Identities {
+			if candidate == identity {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return "", false
+		}
+		baseURL = binding.BaseURL
+	}
+	if matches != 1 || strings.TrimSpace(baseURL) == "" {
+		return "", false
+	}
+	return baseURL, true
+}
+
+// OpenCodeAuthIndexes lists the CPA auth indexes recorded for channels whose
+// base URL is an OpenCode gateway. The session router only acts on requests that
+// name one of these indexes.
+func (s *AIProviderNameService) OpenCodeAuthIndexes() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	indexes := make([]string, 0, 8)
+	for _, binding := range s.bindings {
+		if !isOpenCodeGatewayBaseURL(binding.BaseURL) {
+			continue
+		}
+		for _, identity := range binding.Identities {
+			trimmed := strings.TrimSpace(identity)
+			if !strings.HasPrefix(trimmed, "auth-index:") {
+				continue
+			}
+			if index := strings.TrimSpace(strings.TrimPrefix(trimmed, "auth-index:")); index != "" {
+				indexes = append(indexes, index)
+			}
+		}
+	}
+	return indexes
+}
+
 func (s *AIProviderNameService) Configure(config Config) {
 	if s == nil {
 		return

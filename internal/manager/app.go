@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
@@ -53,46 +54,50 @@ type RegistrationCapabilities struct {
 }
 
 type App struct {
-	mu                     sync.RWMutex
-	config                 Config
-	configErr              string
-	accounts               *AccountService
-	deduplication          *AccountDeduplicationService
-	deletions              *AccountDeleteService
-	tokenRefresh           *AccountTokenRefreshService
-	previews               *PreviewService
-	jobs                   *JobEngine
-	policies               *PolicyEngine
-	inspection             *InspectionEngine
-	updates                *UpdateChecker
-	force                  *ForceSyncEngine
-	imports                *ImportService
-	usage                  *UsageTracker
-	creditUsage            *Sub2APICreditUsage
-	operations             *OperationJournal
-	modelTests             *ModelTestService
-	newAccountProbe        *newAccountModelProbeEngine
-	quotaBootstrap         *accountQuotaMetadataBootstrap
-	managementDoer         HTTPDoer
-	requestHooks           *RequestHook
-	quotaGuard             *AccountQuotaGuard
-	concurrency            *AccountConcurrencyService
-	providerRuntime        *ProviderRuntimeTracker
-	hostSchema             uint32
-	runtime                *RuntimeOwnership
-	experiments            *ExperimentalSettingsService
-	agentIdentity          *AgentIdentityExperiment
-	opencode               *OpenCodeQuotaService
-	opencodeZen            *OpenCodeZenService
-	proxyProfiles          *ProxyProfileService
-	quotaPolicies          *QuotaPolicyService
-	aiProviderNames        *AIProviderNameService
-	codexIdentityOverrides *CodexIdentityOverrideService
-	globalPolicy           *GlobalPolicyService
-	riskControl            *RiskControlService
-	indexHTML              []byte
-	quiesceOnce            sync.Once
-	quotaResetLocks        [64]sync.Mutex
+	mu                      sync.RWMutex
+	config                  Config
+	configErr               string
+	accounts                *AccountService
+	deduplication           *AccountDeduplicationService
+	deletions               *AccountDeleteService
+	tokenRefresh            *AccountTokenRefreshService
+	previews                *PreviewService
+	jobs                    *JobEngine
+	policies                *PolicyEngine
+	inspection              *InspectionEngine
+	updates                 *UpdateChecker
+	force                   *ForceSyncEngine
+	imports                 *ImportService
+	usage                   *UsageTracker
+	creditUsage             *Sub2APICreditUsage
+	operations              *OperationJournal
+	modelTests              *ModelTestService
+	newAccountProbe         *newAccountModelProbeEngine
+	quotaBootstrap          *accountQuotaMetadataBootstrap
+	managementDoer          HTTPDoer
+	requestHooks            *RequestHook
+	quotaGuard              *AccountQuotaGuard
+	concurrency             *AccountConcurrencyService
+	providerRuntime         *ProviderRuntimeTracker
+	hostSchema              uint32
+	runtime                 *RuntimeOwnership
+	experiments             *ExperimentalSettingsService
+	agentIdentity           *AgentIdentityExperiment
+	opencode                *OpenCodeQuotaService
+	opencodeZen             *OpenCodeZenService
+	opencodePricing         *OpenCodePricingService
+	opencodeSession         *OpenCodeSessionRouter
+	opencodeSessionSyncedAt atomic.Int64
+	opencodeSessionPrimedAt atomic.Int64
+	proxyProfiles           *ProxyProfileService
+	quotaPolicies           *QuotaPolicyService
+	aiProviderNames         *AIProviderNameService
+	codexIdentityOverrides  *CodexIdentityOverrideService
+	globalPolicy            *GlobalPolicyService
+	riskControl             *RiskControlService
+	indexHTML               []byte
+	quiesceOnce             sync.Once
+	quotaResetLocks         [64]sync.Mutex
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -117,6 +122,9 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	quotaBootstrap := NewAccountQuotaMetadataBootstrap()
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
+	opencodePricing := NewOpenCodePricingService()
+	opencodeSession := NewOpenCodeSessionRouter()
+	opencodeSession.SetEnabled(true)
 	proxyProfiles := NewProxyProfileService()
 	quotaPolicies := NewQuotaPolicyService()
 	aiProviderNames := NewAIProviderNameService()
@@ -152,7 +160,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	// Admission must run before observational trackers. A saturated account can
 	// block in the concurrency transformer; recording it as active before that
 	// wait would skew provider runtime metrics and rolling request windows.
-	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity)
+	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity, opencodeSession)
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -196,6 +204,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		agentIdentity:          agentIdentity,
 		opencode:               opencode,
 		opencodeZen:            opencodeZen,
+		opencodePricing:        opencodePricing,
+		opencodeSession:        opencodeSession,
 		proxyProfiles:          proxyProfiles,
 		quotaPolicies:          quotaPolicies,
 		aiProviderNames:        aiProviderNames,
@@ -204,6 +214,12 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		riskControl:            riskControl,
 		indexHTML:              append([]byte(nil), indexHTML...),
 	}
+	// OpenCode traffic is valued with OpenCode's own published prices, and the
+	// periodic catalog sync only runs for installations that use OpenCode.
+	creditUsage.SetOpenCodePricing(opencodePricing, aiProviderNames.BaseURLForRuntimeIdentity)
+	opencodePricing.SetActivityCheck(func() bool {
+		return len(opencode.ListAccounts()) > 0 || len(opencodeZen.ListAccounts()) > 0
+	})
 	app.previews.SetAccountConcurrency(concurrency)
 	app.previews.SetProxyProfiles(proxyProfiles)
 	jobs.SetProxyProfiles(proxyProfiles)
@@ -267,6 +283,9 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.operations.Configure(config)
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
+	a.opencodePricing.Configure(config)
+	a.opencodeSession.Configure(config)
+	a.refreshOpenCodeSessionTargets()
 	a.proxyProfiles.Configure(config)
 	a.quotaPolicies.Configure(config)
 	a.aiProviderNames.Configure(config)
@@ -387,6 +406,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.inspection.Shutdown()
 		a.newAccountProbe.Shutdown()
 		a.quotaBootstrap.Shutdown()
+		a.opencodePricing.Close()
 		a.updates.Shutdown()
 		a.policies.Shutdown()
 		a.jobs.Shutdown()
@@ -487,6 +507,52 @@ func (a *App) HandleRequestBefore(request cpaapi.RequestInterceptRequest) cpaapi
 	return a.requestHooks.InterceptBefore(request)
 }
 
+// openCodeSessionTargetTTL keeps the session router's model set current without
+// rebuilding it on every request.
+const openCodeSessionTargetTTL = 30 * time.Second
+
+// refreshOpenCodeSessionTargetsIfStale rebuilds the OpenCode model set at most
+// once per TTL, so a newly loaded catalog becomes session-targeted quickly.
+func (a *App) refreshOpenCodeSessionTargetsIfStale() {
+	if a == nil || a.opencodeSession == nil {
+		return
+	}
+	last := a.opencodeSessionSyncedAt.Load()
+	if last != 0 && time.Since(time.Unix(0, last)) < openCodeSessionTargetTTL {
+		return
+	}
+	a.opencodeSessionSyncedAt.Store(time.Now().UnixNano())
+	a.refreshOpenCodeSessionTargets()
+}
+
+// refreshOpenCodeSessionTargets publishes the union of the official OpenCode
+// model ids and every account's cached catalog to the session router, so
+// x-opencode-session is only ever sent for OpenCode models.
+func (a *App) refreshOpenCodeSessionTargets() {
+	if a == nil || a.opencodeSession == nil {
+		return
+	}
+	if a.aiProviderNames != nil {
+		a.opencodeSession.SetAuthIndexes(a.aiProviderNames.OpenCodeAuthIndexes())
+	}
+	targets := make([]string, 0, 256)
+	if a.opencodePricing != nil {
+		targets = append(targets, a.opencodePricing.ModelIDs(openCodeKindGoValue)...)
+		targets = append(targets, a.opencodePricing.ModelIDs(openCodeKindZenValue)...)
+	}
+	if a.opencode != nil {
+		for _, account := range a.opencode.ListAccounts() {
+			targets = append(targets, account.Models...)
+		}
+	}
+	if a.opencodeZen != nil {
+		for _, account := range a.opencodeZen.ListAccounts() {
+			targets = append(targets, account.Models...)
+		}
+	}
+	a.opencodeSession.SetTargets(targets)
+}
+
 func (a *App) RequestInterceptionActive() bool {
 	return a != nil && !a.runtimeSuperseded() && a.requestLifecycleAvailable() && a.requestHooks != nil && a.requestHooks.Active()
 }
@@ -503,6 +569,9 @@ func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.
 	if a == nil || a.requestHooks == nil || a.runtimeSuperseded() {
 		return cpaapi.RequestInterceptResponse{}
 	}
+	// This is the interception path the host actually invokes, so the session
+	// router's OpenCode model set is refreshed here.
+	a.refreshOpenCodeSessionTargetsIfStale()
 	return a.requestHooks.InterceptAfter(request)
 }
 
@@ -674,6 +743,9 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/models", Description: "Read the upstream model catalog for one OpenCode Go workspace or Zen credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/model-test", Description: "Probe one OpenCode model through a stored Go or Zen credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/bind", Description: "Create or update the OpenAI-compatible CPA channel that routes one OpenCode credential."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/pricing", Description: "Read the official OpenCode Zen and Go model prices with their sync provenance."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/pricing/refresh", Description: "Revalidate the official OpenCode price catalog and report whether it changed."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/session", Description: "Read the per-conversation x-opencode-session routing status."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
@@ -907,6 +979,12 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeModelTest(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/bind":
 		return a.handleOpenCodeBind(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/pricing":
+		return a.handleOpenCodePricing(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/pricing/refresh":
+		return a.handleOpenCodePricingRefresh(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/session":
+		return a.handleOpenCodeSession(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe-account":
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":

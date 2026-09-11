@@ -169,6 +169,12 @@ func (a *App) syncAIProviderChannelBindings(kind string, entries []map[string]an
 			runtimeID = ""
 		}
 		_ = a.aiProviderNames.UpsertBinding(bindingKey, identity.baseURL, identity.provider, runtimeID)
+		// An OpenCode channel also records its CPA auth index so the session
+		// router can attribute a request to OpenCode without guessing from a
+		// model id that Zen may resell to other providers too.
+		if authIdentity := openCodeChannelAuthIdentity(entry); authIdentity != "" {
+			_ = a.aiProviderNames.UpsertBinding(bindingKey, identity.baseURL, identity.provider, authIdentity)
+		}
 		// Keep the URL-level alias in step so a later rotation can adopt again.
 		if identity.urlKey != bindingKey {
 			_ = a.aiProviderNames.UpsertBinding(identity.urlKey, identity.baseURL, identity.provider, runtimeID)
@@ -195,6 +201,20 @@ func (a *App) syncAIProviderChannelBindings(kind string, entries []map[string]an
 		a.aiProviderNames.noteStorageError("AI provider name state could not be persisted")
 	}
 	return assignments
+}
+
+// openCodeChannelAuthIdentity returns the binding identity that records a CPA
+// auth index for an OpenCode channel. Non-OpenCode channels record nothing.
+func openCodeChannelAuthIdentity(entry map[string]any) string {
+	if !isOpenCodeGatewayBaseURL(aiProviderChannelBaseURL(entry)) {
+		return ""
+	}
+	index, _ := entry["auth-index"].(string)
+	index = strings.TrimSpace(index)
+	if index == "" {
+		return ""
+	}
+	return "auth-index:" + index
 }
 
 func containsAIProviderIdentity(values []string, identity string) bool {

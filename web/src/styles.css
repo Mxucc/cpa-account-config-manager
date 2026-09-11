@@ -3024,3 +3024,15 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .opencode-test-result dd { margin: 0; color: var(--text-primary); font-size: calc(12px * var(--font-size-scale)); overflow-wrap: anywhere; }
 @media (max-width: 760px) { .opencode-header { flex-direction: column; } .opencode-section-heading { align-items: flex-start; } }
 @media (max-width: 480px) { .opencode-workspace { padding: 12px; } .opencode-section { padding: 11px; } }
+
+/* OpenCode pricing catalog and conversation-session routing status. */
+.opencode-section-heading strong { display: inline-flex; align-items: center; gap: 6px; }
+.opencode-price-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); }
+.opencode-price-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.opencode-price-search { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-tertiary); background: var(--bg-primary); }
+.opencode-price-search input { min-width: 180px; border: 0; background: transparent; color: var(--text-primary); font-size: calc(12px * var(--font-size-scale)); }
+.opencode-price-search input:focus { outline: none; }
+.opencode-price-count { color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); }
+.opencode-price-table td { font-variant-numeric: tabular-nums; }
+.opencode-session .opencode-test-result { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.opencode-session .button { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }

@@ -1164,6 +1164,22 @@ export async function removeOpenCodeAccount(accountID: string): Promise<void> {
 	});
 }
 
+/** Read the synced official OpenCode price catalog. */
+export async function getOpenCodePricing(signal?: AbortSignal): Promise<{ pricing: import("../types").OpenCodePricingSnapshot }> {
+	return requestRecord<{ pricing: import("../types").OpenCodePricingSnapshot }>("/opencode/pricing", { signal });
+}
+
+/** Revalidate the official price catalog against models.dev. */
+export async function refreshOpenCodePricing(): Promise<{ changed?: boolean; pricing: import("../types").OpenCodePricingSnapshot }> {
+	return requestRecord<{ changed?: boolean; pricing: import("../types").OpenCodePricingSnapshot }>("/opencode/pricing/refresh", { method: "POST" });
+}
+
+/** Read the per-conversation x-opencode-session routing status. */
+export async function getOpenCodeSession(signal?: AbortSignal): Promise<{ session: import("../types").OpenCodeSessionSnapshot }> {
+	return requestRecord<{ session: import("../types").OpenCodeSessionSnapshot }>("/opencode/session", { signal });
+}
+
+
 export async function getOpenCodeQuota(signal?: AbortSignal): Promise<{ results?: Record<string, import("../types").OpenCodeQuotaResult>; fetched_at?: string; storage_error?: string }> {
 	return requestRecord<{ results?: Record<string, import("../types").OpenCodeQuotaResult>; fetched_at?: string; storage_error?: string }>("/opencode/quota", { signal });
 }

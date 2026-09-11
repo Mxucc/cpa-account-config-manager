@@ -99,7 +99,11 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 - 一键绑定会 upsert 一个 `openai-compatibility` CPA 渠道，把模型发布到 CPA 路由：Base URL 为 `{base}/v1`，以已保存的 API Key 作为 key 条目并携带 OpenCode 请求头，同时把已验证的模型目录写入渠道的模型列表；重复绑定同一账号只会更新已有渠道、保留既有别名，不会创建重复渠道。
 - 快捷入口提供 `https://opencode.ai/auth`、`https://opencode.ai/workspace`、`https://opencode.ai/zen` 和只读的 OpenCode 状态页。
 - auth Cookie 和 API Key 只在经过鉴权的 Management 连接中写入一次，保存在插件私有数据目录；不会返回给浏览器（只有 `key_set` 布尔标记），也不会写入日志。
-- 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`POST /opencode/models` 携带 `{kind: "go"|"zen", account_id}`，返回带模型列表的脱敏账号视图；`POST /opencode/model-test` 携带 `{kind, account_id, model, timeout_seconds?}`，返回状态、原因码、HTTP 状态、延迟、测试时间和详情；`POST /opencode/bind` 携带 `{kind, account_id}`，返回绑定信息（类型、Base URL、索引、是否新建、渠道 key）；`POST /opencode/accounts` 还接受 `{account_id, api_key}` 做仅更新密钥操作，`api_key` 为空时保留已保存的密钥，传入新密钥会使缓存的模型目录失效。
+- 已内置 OpenCode 官方价格并自动同步：来源为 models.dev（为 OpenCode 维护的模型数据库），其中发布 `opencode`（Zen）与 `opencode-go`（Go）两个提供商，逐模型给出以「美元/百万 Token」计的输入、输出与缓存价格。插件每 24 小时用 ETag 条件请求重新校验该目录，在插件私有数据目录保留缓存副本，并内置官方快照，因此离线或首次同步前价格即可用；OpenCode 工作区展示目录（模型、输入、输出、缓存读取、缓存写入、上下文窗口与按上下文长度的价格档位），并给出来源、最后同步时间和“同步价格”操作。
+- OpenCode 路由的用量改为按 OpenCode 自身价格计费，不再套用通用厂商价目表：当插件能按已记录的渠道 Base URL 将请求归属到某个 OpenCode 渠道时，就使用 Zen 或 Go 的目录。Go 是每月 $10 的订阅，因此其金额为所用量的标价价值。价格为公开数据，但相关路由仍需 Management Key。
+- OpenCode Go 路由按会话派生会话 ID：OpenCode Go 要求客户端“Send a stable session ID in `x-opencode-session` for each conversation so we can optimize routing and prompt caching”（引自 https://opencode.ai/docs/go/#where-can-i-use-it）；插件为 OpenCode 模型按以下顺序取值：入站 `x-opencode-session` 原样保留；否则复用原生客户端会话请求头（可识别 Claude Code、Codex、ZCode、Pi 风格的请求头）；再取请求体中的会话 ID（`prompt_cache_key`、`session_id`、`conversation_id`）；最后回退为对会话前缀的加盐摘要，使同一会话在各轮次保持同一 ID，且任何消息正文都不会被发送。注入仅限 OpenCode 发布的模型 ID（Zen 与 Go 目录，以及各账号已加载的目录），不触碰其他模型。
+- 工作区展示会话状态：启用/停用、覆盖的模型数量、已分配会话 ID 的请求数、观察到的不同会话数。会话 ID 永不写入日志，每个安装的盐以 0600 权限保存在插件数据目录中。
+- 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`POST /opencode/models` 携带 `{kind: "go"|"zen", account_id}`，返回带模型列表的脱敏账号视图；`POST /opencode/model-test` 携带 `{kind, account_id, model, timeout_seconds?}`，返回状态、原因码、HTTP 状态、延迟、测试时间和详情；`POST /opencode/bind` 携带 `{kind, account_id}`，返回绑定信息（类型、Base URL、索引、是否新建、渠道 key）；`POST /opencode/accounts` 还接受 `{account_id, api_key}` 做仅更新密钥操作，`api_key` 为空时保留已保存的密钥，传入新密钥会使缓存的模型目录失效；`GET /opencode/pricing` 返回目录及其同步来源信息；`POST /opencode/pricing/refresh` 重新校验该目录并报告是否发生变化；`GET /opencode/session` 返回会话路由状态。
 
 ### 操作日志、界面与更新
 

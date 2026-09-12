@@ -349,3 +349,101 @@ func TestOpenCodeMergeChannelModelsPreservesExistingRows(t *testing.T) {
 		t.Fatalf("empty merge = %#v", empty)
 	}
 }
+
+// The gateway reports a model the credential cannot use as HTTP 401 with a ModelError body, so the
+// reason must come from the body: telling the operator to rotate the key would send them the wrong
+// way, and a missing session header has its own fix.
+func TestOpenCodeProbeFailureClassification(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		status     int
+		body       string
+		wantStatus string
+		wantReason string
+	}{
+		"model not supported on this tier": {
+			status:     401,
+			body:       `{"type":"error","error":{"type":"ModelError","message":"Model gemini-3.1-pro is not supported"}}`,
+			wantStatus: "unavailable",
+			wantReason: "model_not_supported",
+		},
+		"model without the chat-completions protocol": {
+			status:     400,
+			body:       `{"error":{"type":"ModelError","message":"This model does not support chat completions"}}`,
+			wantStatus: "unavailable",
+			wantReason: "model_not_supported",
+		},
+		"missing session header": {
+			status:     400,
+			body:       `{"error":{"type":"MissingSessionID","message":"Request is missing x-opencode-session"}}`,
+			wantStatus: "unavailable",
+			wantReason: "missing_session",
+		},
+		"rejected credential": {
+			status:     401,
+			body:       `{"error":{"message":"Invalid API key"}}`,
+			wantStatus: "unavailable",
+			wantReason: "authentication_failed",
+		},
+		"rate limited": {
+			status:     429,
+			body:       `{"error":{"message":"Rate limit exceeded"}}`,
+			wantStatus: "unavailable",
+			wantReason: "quota_limited",
+		},
+		"unknown model": {
+			status:     404,
+			body:       `{"error":{"message":"unknown model"}}`,
+			wantStatus: "unavailable",
+			wantReason: "model_not_found",
+		},
+		"upstream down": {
+			status:     503,
+			body:       `gateway unavailable`,
+			wantStatus: "unavailable",
+			wantReason: "upstream_unavailable",
+		},
+		"unrecognised failure": {
+			status:     418,
+			body:       `{"error":{"message":"teapot"}}`,
+			wantStatus: "review",
+			wantReason: "unconfirmed_upstream_response",
+		},
+	} {
+		gotStatus, gotReason := classifyOpenCodeProbeFailure(testCase.status, testCase.body)
+		if gotStatus != testCase.wantStatus || gotReason != testCase.wantReason {
+			t.Fatalf("%s: (%s, %s), want (%s, %s)", name, gotStatus, gotReason, testCase.wantStatus, testCase.wantReason)
+		}
+	}
+}
+
+// Every probe carries the header set a real CLI call uses, because the gateway rejects a request
+// without a session id and expects the per-request and project headers too.
+func TestOpenCodeProbeSendsTheFullClientHeaderSet(t *testing.T) {
+	request, errRequest := newOpenCodeRequest(context.Background(), http.MethodPost, "https://opencode.ai/zen/go/v1/chat/completions", "sk-probe", nil)
+	if errRequest != nil {
+		t.Fatalf("newOpenCodeRequest() error = %v", errRequest)
+	}
+	for _, header := range []string{"x-opencode-client", "x-opencode-session", "x-opencode-request", "x-opencode-project", "x-session-affinity", "User-Agent"} {
+		if strings.TrimSpace(request.Header.Get(header)) == "" {
+			t.Fatalf("header %s is missing", header)
+		}
+	}
+	if request.Header.Get("x-opencode-client") != "cli" {
+		t.Fatalf("client header = %q", request.Header.Get("x-opencode-client"))
+	}
+	if !strings.HasPrefix(request.Header.Get("x-opencode-session"), "oc-") {
+		t.Fatalf("session header = %q", request.Header.Get("x-opencode-session"))
+	}
+	// The session and affinity headers agree, like the reference implementation.
+	if request.Header.Get("x-opencode-session") != request.Header.Get("x-session-affinity") {
+		t.Fatalf("affinity = %q, session = %q", request.Header.Get("x-session-affinity"), request.Header.Get("x-opencode-session"))
+	}
+	// Two probes are two conversations, but one credential keeps one project id.
+	second, _ := newOpenCodeRequest(context.Background(), http.MethodPost, "https://opencode.ai/zen/go/v1/chat/completions", "sk-probe", nil)
+	if second.Header.Get("x-opencode-session") == request.Header.Get("x-opencode-session") {
+		t.Fatalf("each probe must get its own session id")
+	}
+	if second.Header.Get("x-opencode-project") != request.Header.Get("x-opencode-project") {
+		t.Fatalf("the project id must stay stable for one credential")
+	}
+}

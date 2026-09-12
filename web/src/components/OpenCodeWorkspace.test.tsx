@@ -416,6 +416,42 @@ describe("OpenCodeWorkspace", () => {
     expect(within(dialog).getByText(/Go 网关拒绝了这把 API Key/)).toBeInTheDocument();
   });
 
+  it("blames the model, not the key, when the gateway answers ModelError with 401", async () => {
+    const user = userEvent.setup();
+    // Real answer from the Go gateway: 401 plus a ModelError body. Reporting that as an
+    // authentication failure would send the operator to rotate a key that was accepted.
+    openCodeFetchMock({
+      accounts: [
+        { id: "acc_go_1", workspace_id: "wrk_test", key_set: true, cookie_set: true, models: ["gpt-5.6-luna"], models_error: "", models_fetched_at: "2026-09-01T00:00:00Z" },
+      ],
+      modelTestResponse: {
+        result: {
+          reachable: true,
+          status: "unavailable",
+          reason_code: "model_not_supported",
+          status_code: 401,
+          latency_ms: 84,
+          detail: "{\"type\":\"error\",\"error\":{\"type\":\"ModelError\",\"message\":\"Model gemini-3.1-pro is not supported\"}}",
+          tested_at: "2026-09-01T00:00:00Z",
+        },
+      },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.6-luna" }));
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+
+    await waitFor(() => expect(within(dialog).getByText(/model_not_supported/)).toBeInTheDocument());
+    // Both the localized reason and the upstream message mention it.
+    expect(within(dialog).getAllByText(/not supported/).length).toBeGreaterThan(0);
+    // The model-specific hint replaces the credential hint.
+    expect(within(dialog).getByText(/密钥是被接受的/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Go 网关拒绝了这把 API Key/)).not.toBeInTheDocument();
+  });
+
   it("renders the test dialog into the document body so it centres in the viewport", async () => {
     const user = userEvent.setup();
     openCodeFetchMock({

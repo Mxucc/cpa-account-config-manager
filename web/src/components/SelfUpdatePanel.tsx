@@ -18,6 +18,10 @@ interface SelfUpdatePanelProps {
   onNotice: (message: string) => void;
 }
 
+// Reloading swaps the plugin in place, so give the host time to answer again. Exported so a test
+// can shorten the window instead of waiting for the real one.
+export const reloadPollTiming = { intervalMS: 3000, windowMS: 90_000 };
+
 /** Explains a refused reload in operator terms. */
 const reloadReasonKeys: Record<string, UIMessageKey> = {
   plugin_store_unavailable: "ui.self_update_reload_store_unavailable",
@@ -28,6 +32,7 @@ const reloadReasonKeys: Record<string, UIMessageKey> = {
   plugin_store_install_failed: "ui.self_update_reload_install_failed",
   cpa_management_api_unavailable: "ui.self_update_reload_management_unavailable",
   host_still_requires_a_restart: "ui.self_update_reload_restart_still_required",
+  reload_not_confirmed: "ui.self_update_reload_not_confirmed",
 };
 
 /** Maps the resolution channel onto its catalog key. */
@@ -178,11 +183,33 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
   }, [apply, handleError, onNotice, pluginFile, tx]);
 
   /**
-   * A store install is the only action CPA watches for a native plugin reload, so this asks the
-   * host to reinstall the plugin and reports exactly what it answered.
+   * The reload replaces the running plugin, so the host may unload this instance while the call
+   * is still open: a gateway then reports an invalid response (Cloudflare 502/524) even though
+   * the swap happened. Polling the version is the only reliable signal, because the reloaded
+   * instance answers with its own version.
    */
+  const waitForReload = useCallback(async (previousVersion: string): Promise<boolean> => {
+    const deadline = Date.now() + reloadPollTiming.windowMS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, reloadPollTiming.intervalMS); });
+      try {
+        const next = await api.getSelfUpdate();
+        if (next.current_version && next.current_version !== previousVersion) {
+          setSnapshot(next);
+          setReloadResult({ reloaded: true, restart_required: false, store_version: next.current_version });
+          onNotice(tx("ui.self_update_reloaded_refresh_page"));
+          return true;
+        }
+      } catch {
+        // The host is still swapping the plugin; keep polling until the window closes.
+      }
+    }
+    return false;
+  }, [onNotice, tx]);
+
   const reloadNow = useCallback(async () => {
     const current = ++sequence.current;
+    const previousVersion = snapshot?.current_version ?? "";
     setReloading(true);
     setError("");
     setReloadResult(null);
@@ -195,14 +222,20 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
         return;
       }
       handleReloadRefusal(result);
-    } catch (caught) {
+    } catch {
       if (current !== sequence.current) return;
-      // A failed call can mean the plugin was already reloaded and the request died with it.
-      setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+      // A closed connection is expected while the plugin is replaced, so ask the host instead of
+      // reporting a failure the operator cannot act on.
+      const reloaded = await waitForReload(previousVersion);
+      if (current !== sequence.current) return;
+      if (!reloaded) {
+        setReloadResult({ reloaded: false, restart_required: true, reason: "reload_not_confirmed" });
+        onNotice(tx("ui.self_update_reload_not_confirmed"));
+      }
     } finally {
       if (current === sequence.current) setReloading(false);
     }
-  }, [handleReloadRefusal, locale, onNotice, tx]);
+  }, [handleReloadRefusal, onNotice, snapshot?.current_version, tx, waitForReload]);
 
   const busy = loading || checking || installing || saving || reloading;
   const statusLabel = snapshot?.update_available
@@ -273,6 +306,9 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
       </div>
       {snapshot?.restart_required ? (
         <p className="self-update-hint">{tx("ui.self_update_reload_hint")}</p>
+      ) : null}
+      {reloading ? (
+        <p className="self-update-hint" role="status">{tx("ui.self_update_reload_waiting")}</p>
       ) : null}
       <p className="self-update-hint">{tx("ui.self_update_restart_hint")}</p>
       {reloadResult && !reloadResult.reloaded ? (

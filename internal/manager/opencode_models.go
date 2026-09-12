@@ -89,9 +89,34 @@ func newOpenCodeRequest(ctx context.Context, method, target, apiKey string, body
 	request.Header.Set("x-opencode-client", "cli")
 	request.Header.Set("Accept", "application/json")
 	// The gateway rejects a request that carries no session id at all, exactly like the CLI
-	// traffic it expects: this header is what makes the plugin's own probes routable.
-	request.Header.Set("x-opencode-session", newOpenCodeProbeSessionValue())
+	// traffic it expects. The community reference implementation
+	// (github.com/jasonxu114514/opencode2api) also sends a per-request id, a project id and the
+	// affinity headers, so the probe mimics a real CLI call instead of a bare HTTP request.
+	session := newOpenCodeProbeSessionValue()
+	request.Header.Set("x-opencode-session", session)
+	request.Header.Set("x-session-affinity", session)
+	request.Header.Set("X-Session-Id", session)
+	request.Header.Set("x-opencode-request", newOpenCodeProbeRequestValue())
+	request.Header.Set("x-opencode-project", openCodeProbeProjectValue(target, apiKey))
 	return request, nil
+}
+
+// newOpenCodeProbeRequestValue mints one id for a single probe attempt, like the CLI's
+// per-request identifier.
+func newOpenCodeProbeRequestValue() string {
+	raw := make([]byte, 16)
+	if _, errRead := rand.Read(raw); errRead != nil {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("request-%d", time.Now().UnixNano())))
+		return hex.EncodeToString(sum[:16])
+	}
+	return hex.EncodeToString(raw)
+}
+
+// openCodeProbeProjectValue derives a stable project id for one credential, so repeated probes
+// look like the same project without ever echoing the key itself.
+func openCodeProbeProjectValue(target, apiKey string) string {
+	sum := sha256.Sum256([]byte("project|" + strings.TrimSpace(target) + "|" + strings.TrimSpace(apiKey)))
+	return hex.EncodeToString(sum[:16])
 }
 
 // newOpenCodeProbeSessionValue mints one session id for a plugin-initiated request. The CLI keeps
@@ -245,21 +270,45 @@ func probeOpenCodeModel(ctx context.Context, baseURL, apiKey, model string, time
 	body, _ := io.ReadAll(io.LimitReader(response.Body, openCodeModelProbeMaxBytes))
 	result.StatusCode = response.StatusCode
 	result.Reachable = response.StatusCode > 0
-	switch {
-	case response.StatusCode >= 200 && response.StatusCode < 300:
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		result.Status, result.ReasonCode = "available", "model_response_ok"
 		return result
-	case response.StatusCode == http.StatusUnauthorized, response.StatusCode == http.StatusForbidden:
-		result.Status, result.ReasonCode = "unavailable", "authentication_failed"
-	case response.StatusCode == http.StatusNotFound:
-		result.Status, result.ReasonCode = "unavailable", "model_not_found"
-	case response.StatusCode == http.StatusTooManyRequests:
-		result.Status, result.ReasonCode = "unavailable", "quota_limited"
-	case response.StatusCode >= 500:
-		result.Status, result.ReasonCode = "unavailable", "upstream_unavailable"
-	default:
-		result.Status, result.ReasonCode = "review", "unconfirmed_upstream_response"
 	}
+	// The gateway answers 401 for a model the credential cannot use ("ModelError: Model X is not
+	// supported"), so the body decides the reason: reporting that as an authentication failure
+	// sends the operator to rotate a key that was never the problem.
 	result.Detail = sanitizeOpenCodeError(string(body))
+	result.Status, result.ReasonCode = classifyOpenCodeProbeFailure(response.StatusCode, string(body))
 	return result
+}
+
+// classifyOpenCodeProbeFailure maps an upstream failure onto a reason the operator can act on.
+func classifyOpenCodeProbeFailure(statusCode int, body string) (string, string) {
+	lowered := strings.ToLower(body)
+	switch {
+	case strings.Contains(lowered, "modelerror"),
+		strings.Contains(lowered, "not supported"),
+		strings.Contains(lowered, "unsupported model"),
+		strings.Contains(lowered, "does not support"):
+		return "unavailable", "model_not_supported"
+	case strings.Contains(lowered, "missingsessionid"),
+		strings.Contains(lowered, "x-opencode-session"):
+		return "unavailable", "missing_session"
+	case strings.Contains(lowered, "ratelimit"),
+		strings.Contains(lowered, "rate limit"),
+		strings.Contains(lowered, "too many requests"),
+		strings.Contains(lowered, "quota"):
+		return "unavailable", "quota_limited"
+	}
+	switch {
+	case statusCode == http.StatusUnauthorized, statusCode == http.StatusForbidden:
+		return "unavailable", "authentication_failed"
+	case statusCode == http.StatusNotFound:
+		return "unavailable", "model_not_found"
+	case statusCode == http.StatusTooManyRequests:
+		return "unavailable", "quota_limited"
+	case statusCode >= 500:
+		return "unavailable", "upstream_unavailable"
+	}
+	return "review", "unconfirmed_upstream_response"
 }

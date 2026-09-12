@@ -17,6 +17,8 @@ const openCodeReasonKeys: Record<string, UIMessageKey> = {
   request_failed: "ui.request_failed",
   credential_incomplete: "ui.opencode_incomplete_credentials",
   invalid_model: "ui.model_id_is_invalid",
+  model_not_supported: "ui.opencode_reason_model_not_supported",
+  missing_session: "ui.opencode_reason_missing_session",
 };
 
 /** Returns the catalog key for a probe reason code, or "" when the code is unknown. */
@@ -30,6 +32,12 @@ export function openCodeReasonKey(reasonCode?: string): UIMessageKey | "" {
  * two causes need different fixes, so they are named explicitly.
  */
 export function openCodeProbeHintKey(kind: "go" | "zen", reasonCode?: string): UIMessageKey | "" {
-  if ((reasonCode ?? "").trim() !== "authentication_failed") return "";
-  return kind === "go" ? "ui.opencode_probe_go_auth_failed_hint" : "ui.opencode_probe_zen_auth_failed_hint";
+  const code = (reasonCode ?? "").trim();
+  // Only a real credential rejection is a key problem: the gateway answers 401 for a model it
+  // will not serve either, and suggesting a key rotation there would be wrong.
+  if (code === "authentication_failed") {
+    return kind === "go" ? "ui.opencode_probe_go_auth_failed_hint" : "ui.opencode_probe_zen_auth_failed_hint";
+  }
+  if (code === "model_not_supported") return "ui.opencode_probe_model_not_supported_hint";
+  return "";
 }

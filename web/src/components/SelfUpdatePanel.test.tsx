@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/client";
 import { _resetSessionForTest, setSession } from "../store/session";
 import type { SelfUpdateSnapshot } from "../types";
-import { SelfUpdatePanel } from "./SelfUpdatePanel";
+import { SelfUpdatePanel, reloadPollTiming } from "./SelfUpdatePanel";
 
 function snapshot(overrides: Partial<SelfUpdateSnapshot> = {}): SelfUpdateSnapshot {
   return {
@@ -97,6 +97,47 @@ describe("SelfUpdatePanel", () => {
     await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
     expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，刷新本页即可使用新版本。");
   });
+
+  it("treats a dropped reload connection as success once the new version answers", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    // The plugin is swapped while the call is open, so the gateway reports an invalid response
+    // (Cloudflare 502). The reloaded instance answers with its own version, which is the only
+    // reliable signal, so the panel polls instead of reporting a failure.
+    const getSpy = vi.spyOn(api, "getSelfUpdate")
+      .mockResolvedValueOnce(snapshot({ update_available: false, applied_version: "0.3.1422", restart_required: true }))
+      .mockResolvedValue(snapshot({ current_version: "0.3.1422", update_available: false, restart_required: false }));
+    vi.spyOn(api, "reloadSelfUpdateThroughStore").mockRejectedValue(new api.APIError(502, "origin_bad_gateway"));
+
+    render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
+
+    const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
+    await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，刷新本页即可使用新版本。"), { timeout: 15_000 });
+    expect(getSpy.mock.calls.length).toBeGreaterThan(1);
+  }, 20_000);
+
+  it("reports an unconfirmed reload when the version never changes", async () => {
+    const user = userEvent.setup();
+    // Keep the case fast: the real window is 90 seconds.
+    const originalWindow = reloadPollTiming.windowMS;
+    reloadPollTiming.windowMS = 1500;
+    try {
+    const onNotice = vi.fn();
+    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({ update_available: false, applied_version: "0.3.1422", restart_required: true }));
+    vi.spyOn(api, "reloadSelfUpdateThroughStore").mockRejectedValue(new api.APIError(502, "origin_bad_gateway"));
+
+    render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
+
+    const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
+    await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
+
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("没有确认到热重载")), { timeout: 15_000 });
+    } finally {
+      reloadPollTiming.windowMS = originalWindow;
+    }
+  }, 20_000);
 
   it("names the reason when CPA refuses the reload", async () => {
     const user = userEvent.setup();

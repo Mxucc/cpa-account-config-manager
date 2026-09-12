@@ -6,7 +6,7 @@ import { openCodeProbeHintKey, openCodeReasonKey } from "../format/openCodeModel
 import { useI18n } from "../i18n";
 import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
-import { ModelProbeDialog } from "./ModelProbeDialog";
+import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 
 interface OpenCodeWorkspaceProps {
   refreshRevision: number;
@@ -1007,21 +1007,17 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
               >
                 {controlTestResult ? (
                   <>
-                    <dl className="codex-model-test-result">
-                      <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{statusLabel(controlTestResult.status)}</dd></div>
-                      <div>
-                        <dt>{tx("ui.model_test_result_reason")}</dt>
-                        <dd>
-                          {controlTestResult.reason_code || "-"}
-                          {controlTestReasonKey ? ` · ${tx(controlTestReasonKey)}` : ""}
-                        </dd>
-                      </div>
-                      <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{controlTestResult.status_code || "-"}</dd></div>
-                      <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{typeof controlTestResult.latency_ms === "number" ? `${controlTestResult.latency_ms} ms` : "-"}</dd></div>
-                      {controlTestResult.endpoint ? <div><dt>{tx("ui.model_test_endpoint")}</dt><dd>{controlTestResult.endpoint}{controlTestResult.tried_endpoints?.length ? ` · ${tx("ui.model_test_endpoint_tried", { list: controlTestResult.tried_endpoints.join(", ") })}` : ""}</dd></div> : null}
-                      <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(controlTestResult.tested_at)}</dd></div>
-                      {controlTestResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(controlTestResult.detail, locale)}</dd></div> : null}
-                    </dl>
+                    <ModelProbeOutcome
+                      status={controlTestResult.status}
+                      model={controlTestResult.model || controlTestModel}
+                      reasonCode={controlTestResult.reason_code}
+                      statusCode={controlTestResult.status_code}
+                      latencyMs={controlTestResult.latency_ms}
+                      testedAt={controlTestResult.tested_at}
+                      endpoint={controlTestResult.endpoint}
+                      triedEndpoints={controlTestResult.tried_endpoints}
+                      detail={controlTestResult.detail}
+                    />
                     {controlTestHintKey ? (
                       <p className="opencode-credential-warning" role="note">
                         <AlertTriangle size={14} />
@@ -1153,17 +1149,17 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
               </p>
               {testResult ? (
                 <>
-                  <dl className="opencode-test-result">
-                    <div><dt>{tx("ui.status")}</dt><dd>{statusLabel(testResult.status)}</dd></div>
-                    <div>
-                      <dt>{tx("ui.reason")}</dt>
-                      <dd>{testResult.reason_code || "-"}{accountTestReasonKey ? ` · ${tx(accountTestReasonKey)}` : ""}</dd>
-                    </div>
-                    <div><dt>{tx("ui.http_status")}</dt><dd>{testResult.status_code || "-"}</dd></div>
-                    {typeof testResult.latency_ms === "number" ? <div><dt>{tx("ui.latency")}</dt><dd>{testResult.latency_ms} ms</dd></div> : null}
-                    {testResult.tested_at ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(testResult.tested_at)}</dd></div> : null}
-                    {testResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(testResult.detail, locale)}</dd></div> : null}
-                  </dl>
+                  <ModelProbeOutcome
+                    status={testResult.status}
+                    model={testResult.model || testModel}
+                    reasonCode={testResult.reason_code}
+                    statusCode={testResult.status_code}
+                    latencyMs={testResult.latency_ms}
+                    testedAt={testResult.tested_at}
+                    endpoint={testResult.endpoint}
+                    triedEndpoints={testResult.tried_endpoints}
+                    detail={testResult.detail}
+                  />
                   {accountTestHintKey ? (
                     <p className="opencode-credential-warning" role="note"><AlertTriangle size={14} />{tx(accountTestHintKey)}</p>
                   ) : null}

@@ -1,6 +1,9 @@
-import { Activity, AlertTriangle, LoaderCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, LoaderCircle, ShieldQuestion, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
+import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
+import { openCodeReasonKey } from "../format/openCodeModelTest";
 import { useI18n } from "../i18n";
+import type { UIMessageKey } from "../i18n/uiText";
 import { Modal } from "./Modal";
 
 /**
@@ -90,5 +93,70 @@ export function ModelProbeDialog({
         {!testing ? children : null}
       </div>
     </Modal>
+  );
+}
+
+
+/**
+ * The probe outcome uses the same markup and classes as the accounts model test, so the two pages
+ * look identical: outcome banner, definition list and the sanitized upstream response.
+ */
+
+const probeStatusKeys: Record<string, UIMessageKey> = {
+  available: "ui.model_available",
+  unavailable: "ui.model_unavailable",
+  unsupported: "ui.testing_unsupported",
+  review: "ui.manual_confirmation_required",
+};
+
+export interface ModelProbeOutcomeProps {
+  status: string;
+  model?: string;
+  reasonCode?: string;
+  statusCode?: number;
+  latencyMs?: number;
+  testedAt?: string;
+  /** The protocol that answered, when the probe walked several. */
+  endpoint?: string;
+  triedEndpoints?: string[];
+  /** The sanitized upstream body, shown as the response block. */
+  detail?: string;
+}
+
+export function ModelProbeOutcome({ status, model, reasonCode, statusCode, latencyMs, testedAt, endpoint, triedEndpoints, detail }: ModelProbeOutcomeProps) {
+  const { formatDateTime, tx } = useI18n();
+  const Icon = status === "available" ? CheckCircle2 : status === "unavailable" ? XCircle : ShieldQuestion;
+  const reasonKey = openCodeReasonKey(reasonCode);
+  return (
+    <section className={`model-test-outcome outcome-${status}`} aria-label={tx("ui.model_test_result")}>
+      <div className="model-test-outcome-heading">
+        <Icon size={21} />
+        <div>
+          <strong>{tx(probeStatusKeys[status] ?? "ui.the_test_result_requires_manual_confirmation")}</strong>
+          <span>{reasonKey ? tx(reasonKey) : tx("ui.the_test_result_requires_manual_confirmation")}</span>
+        </div>
+      </div>
+      <dl>
+        <div><dt>{tx("ui.model")}</dt><dd>{model || "-"}</dd></div>
+        <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{reasonCode || "-"}</dd></div>
+        {endpoint ? (
+          <div>
+            <dt>{tx("ui.model_test_endpoint")}</dt>
+            <dd>{endpoint}{triedEndpoints?.length ? ` · ${tx("ui.model_test_endpoint_tried", { list: triedEndpoints.join(", ") })}` : ""}</dd>
+          </div>
+        ) : null}
+        <div><dt>{tx("ui.http_status")}</dt><dd>{statusCode || "-"}</dd></div>
+        <div><dt>{tx("ui.latency")}</dt><dd>{typeof latencyMs === "number" ? `${latencyMs} ms` : "-"}</dd></div>
+        {testedAt ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(testedAt)}</dd></div> : null}
+      </dl>
+      {detail ? (
+        <div className="model-test-response">
+          <div className="model-test-response-heading">
+            <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
+          </div>
+          <pre aria-label={tx("ui.response_body")}><code>{decodeHTMLCharacterReferences(detail)}</code></pre>
+        </div>
+      ) : null}
+    </section>
   );
 }

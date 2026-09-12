@@ -6,7 +6,7 @@ import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 import type { Account, CodexFingerprintField, CodexModelProbeResult, CodexTestTargetOption, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
 import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
-import { ModelProbeDialog } from "./ModelProbeDialog";
+import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 import { IconButton } from "./IconButton";
 
 interface CodexWorkspaceProps {
@@ -556,21 +556,27 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               error={testError}
             >
               {testResult ? (
-                <dl className="codex-model-test-result">
-                  <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{testStatusLabel(testResult.status)}</dd></div>
-                  <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{testResult.reason_code || "-"}</dd></div>
-                  <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{testResult.status_code || "-"}</dd></div>
-                  <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{testResult.latency_ms} ms</dd></div>
-                </dl>
+                <ModelProbeOutcome
+                  status={testResult.status}
+                  model={testResult.model}
+                  reasonCode={testResult.reason_code}
+                  statusCode={testResult.status_code}
+                  latencyMs={testResult.latency_ms}
+                  testedAt={testResult.tested_at}
+                  detail={testResult.response?.body}
+                />
               ) : null}
               {channelTestResult ? (
-                <dl className="codex-model-test-result">
-                  <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{testStatusLabel(accountTestStatus(channelTestResult.status))}</dd></div>
-                  <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{channelTestResult.reason_code || "-"}</dd></div>
-                  <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{channelTestResult.status_code || "-"}</dd></div>
-                  <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{channelTestResult.latency_ms ?? 0} ms</dd></div>
-                  {channelTestResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(channelTestResult.detail, locale)}</dd></div> : null}
-                </dl>
+                <ModelProbeOutcome
+                  status={channelTestResult.status}
+                  model={channelTestResult.model || testModel}
+                  reasonCode={channelTestResult.reason_code}
+                  statusCode={channelTestResult.status_code}
+                  latencyMs={channelTestResult.latency_ms}
+                  testedAt={channelTestResult.tested_at}
+                  endpoint={channelTestResult.endpoint}
+                  detail={channelTestResult.detail}
+                />
               ) : null}
             </ModelProbeDialog>
           ) : null}

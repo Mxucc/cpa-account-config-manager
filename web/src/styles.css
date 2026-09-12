@@ -3153,13 +3153,5 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .codex-model-bulk, .opencode-model-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-tertiary); }
 .codex-model-bulk-count, .opencode-model-bulk-count { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); font-weight: 700; }
 .codex-model-bulk .button, .opencode-model-bulk .button { display: inline-flex; align-items: center; gap: 6px; }
-.codex-model-tester { border-color: color-mix(in srgb, var(--primary-active) 24%, var(--border-color)); }
-.codex-model-test-target { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
-.codex-model-test-note { margin: 0; color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); }
-.codex-model-test-actions { display: flex; align-items: center; gap: 8px; }
-.codex-model-test-result { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0; }
-.codex-model-test-result > div { display: grid; gap: 2px; padding: 7px 9px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-tertiary); }
-.codex-model-test-result dt { color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.codex-model-test-result dd { margin: 0; color: var(--text-primary); font-size: calc(12px * var(--font-size-scale)); overflow-wrap: anywhere; }
 .codex-model-test-error { margin: 0; color: var(--danger); font-size: calc(11px * var(--font-size-scale)); }
 

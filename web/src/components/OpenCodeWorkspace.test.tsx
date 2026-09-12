@@ -764,7 +764,8 @@ describe("OpenCodeWorkspace", () => {
     await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.6-luna" }));
     // The test opens the same dialog the accounts page uses, instead of an inline block.
     const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
-    expect(within(dialog).getByText("gpt-5.6-luna")).toBeInTheDocument();
+    // The dialog shows the model in its header and in the outcome list, like the accounts test.
+    expect(within(dialog).getAllByText("gpt-5.6-luna").length).toBeGreaterThan(0);
     // The only credential that references the model is selected automatically.
     expect(within(dialog).getByLabelText("测试目标")).toHaveValue("wrk_test");
     await user.click(within(dialog).getByRole("button", { name: "开始测试" }));

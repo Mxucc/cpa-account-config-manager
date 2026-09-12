@@ -3,6 +3,24 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BatchEditor } from "./BatchEditor";
 
+vi.mock("../api/client", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../api/client")>();
+	return {
+		...actual,
+		listProxyProfiles: vi.fn(async () => ({
+			profiles: [{
+				id: "proxy-primary",
+				name: "Primary proxy",
+				proxy_url_masked: "socks5://user:***@proxy.example:1080",
+				enabled: true,
+				account_count: 0,
+				created_at: "",
+				updated_at: "",
+			}],
+		})),
+	};
+});
+
 describe("BatchEditor", () => {
   beforeEach(() => cleanup());
 	const loadModels = async () => ({ models: [], total: 1, eligible: 1, loaded: 1, failed: 0, read_only: 0, missing: 0 });
@@ -19,6 +37,32 @@ describe("BatchEditor", () => {
 
     expect(submit).toHaveBeenCalledWith({ note: "batch-note" });
   });
+
+	it("submits a selected proxy profile instead of the redacted proxy value", async () => {
+		const user = userEvent.setup();
+		const submit = vi.fn();
+		const loadCurrentConfig = vi.fn(async () => ({
+			account_id: "auth-1",
+			disabled: false,
+			priority: 0,
+			note: "",
+			prefix: "",
+			proxy: "configured",
+			proxy_configured: true,
+			websockets: false,
+			header_names: [],
+			model_policy: null,
+		}));
+
+		render(<BatchEditor scopeLabel="account" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
+
+		await screen.findByText("当前账号配置");
+		await user.click(screen.getByRole("checkbox", { name: "代理 URL" }));
+		await user.selectOptions(screen.getByLabelText("代理档案"), "proxy-primary");
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+		expect(submit).toHaveBeenCalledWith({ proxy_profile_id: "proxy-primary" });
+	});
 
 	it("submits both account request-window limits independently", async () => {
 		const user = userEvent.setup();

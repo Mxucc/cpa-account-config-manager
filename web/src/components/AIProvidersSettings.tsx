@@ -6,6 +6,7 @@ import { technicalLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
 import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { useI18n } from "../i18n";
+import { ModelTestResponseView } from "./ModelTestResponseView";
 import type { UIMessageKey } from "../i18n/uiText";
 import type {
   AIProviderAPIKeyEntry,
@@ -72,25 +73,6 @@ const providerTestReasonLabels: Record<string, UIMessageKey> = {
   transient_failure: "ui.upstream_service_is_temporarily_unavailable",
 };
 
-function ProviderTestResponse({ response }: { response: NonNullable<api.AIProviderProbeResult["response"]> }) {
-  const { tx } = useI18n();
-  const headers = Array.isArray(response.headers) ? response.headers : [];
-  const body = response.body ? decodeHTMLCharacterReferences(response.body) : tx("ui.empty_response_body");
-  return (
-    <div className="model-test-response">
-      <div className="model-test-response-heading">
-        <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
-        <span>{response.format.toUpperCase()}{response.truncated ? ` · ${tx("ui.truncated")}` : ""}</span>
-      </div>
-      {headers.length > 0 ? (
-        <div className="model-test-response-headers" aria-label={tx("ui.response_headers")}>
-          {headers.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
-        </div>
-      ) : null}
-      <pre aria-label={tx("ui.response_body")}><code>{body}</code></pre>
-    </div>
-  );
-}
 
 const addableKinds: Array<{ kind: AddKind; labelKey: UIMessageKey; descriptionKey: UIMessageKey }> = [
   { kind: "openai-compatibility", labelKey: "ui.ai_provider_channel_openai_compatibility", descriptionKey: "ui.ai_provider_channel_openai_compatibility_description" },
@@ -1788,7 +1770,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                     {typeof result.latency_ms === "number" ? <div><dt>{tx("ui.latency")}</dt><dd>{result.latency_ms >= 0 ? `${result.latency_ms} ms` : "-"}</dd></div> : null}
                     {result.tested_at ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(result.tested_at)}</dd></div> : null}
                   </dl>
-                  {result.response ? <ProviderTestResponse response={result.response} /> : null}
+                  {result.response ? <ModelTestResponseView response={result.response} /> : null}
                 </section>
               );
               })()

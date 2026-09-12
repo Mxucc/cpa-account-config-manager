@@ -416,6 +416,53 @@ describe("OpenCodeWorkspace", () => {
     expect(within(dialog).getByText(/Go 网关拒绝了这把 API Key/)).toBeInTheDocument();
   });
 
+  it("shows the sanitized upstream response, exactly like the accounts model test", async () => {
+    const user = userEvent.setup();
+    // The accounts test shows the response headers and the redacted JSON body; the model pages
+    // must render the same block for the probe they run.
+    openCodeFetchMock({
+      accounts: [
+        { id: "acc_go_1", workspace_id: "wrk_test", key_set: true, cookie_set: true, models: ["qwen3.7-max"], models_error: "", models_fetched_at: "2026-09-01T00:00:00Z" },
+      ],
+      modelTestResponse: {
+        result: {
+          reachable: true,
+          status: "available",
+          reason_code: "model_response_ok",
+          status_code: 200,
+          latency_ms: 357,
+          model: "qwen3.7-max",
+          probe_kind: "model",
+          endpoint: "chat",
+          response: {
+            format: "json",
+            truncated: false,
+            headers: [{ name: "cf-ray", value: "a39f5031edc19898-LAX" }],
+            body: '{\n  "_omitted_fields": 4,\n  "model": "qwen3.7-max",\n  "object": "chat.completion"\n}',
+          },
+          tested_at: "2026-09-12T21:38:00Z",
+        },
+      },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 qwen3.7-max" }));
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+
+    // Outcome banner and fields match the accounts dialog.
+    await waitFor(() => expect(within(dialog).getByText("模型可用")).toBeInTheDocument());
+    expect(within(dialog).getByText("模型测试")).toBeInTheDocument();
+    expect(within(dialog).getByText("上游实际响应")).toBeInTheDocument();
+    expect(within(dialog).getByText("已脱敏的诊断响应")).toBeInTheDocument();
+    // Headers and the redacted body are both shown.
+    expect(within(dialog).getByText("cf-ray")).toBeInTheDocument();
+    expect(within(dialog).getByText(/a39f5031edc19898-LAX/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/_omitted_fields/)).toBeInTheDocument();
+  });
+
   it("blames the model, not the key, when the gateway answers ModelError with 401", async () => {
     const user = userEvent.setup();
     // Real answer from the Go gateway: 401 plus a ModelError body. Reporting that as an

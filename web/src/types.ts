@@ -1345,6 +1345,9 @@ export interface CodexModelProbeResult {
   detail?: string;
   latency_ms?: number;
   endpoint?: string;
+  probe_kind?: string;
+  /** The sanitized upstream response, rendered like the accounts model test. */
+  response?: ModelTestResponsePreview;
   tested_at?: string;
 }
 
@@ -1417,6 +1420,10 @@ export interface OpenCodeModelTestResult {
   endpoint?: string;
   /** Every protocol the probe attempted, in order. */
   tried_endpoints?: string[];
+  /** "model" for these probes, so the dialog can label the probe kind. */
+  probe_kind?: string;
+  /** The sanitized upstream response, rendered like the accounts model test. */
+  response?: ModelTestResponsePreview;
   tested_at?: string;
 }
 

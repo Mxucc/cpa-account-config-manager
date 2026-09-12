@@ -1016,6 +1016,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                       testedAt={controlTestResult.tested_at}
                       endpoint={controlTestResult.endpoint}
                       triedEndpoints={controlTestResult.tried_endpoints}
+                      probeKind={controlTestResult.probe_kind ?? "model"}
+                      response={controlTestResult.response}
                       detail={controlTestResult.detail}
                     />
                     {controlTestHintKey ? (
@@ -1158,6 +1160,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                     testedAt={testResult.tested_at}
                     endpoint={testResult.endpoint}
                     triedEndpoints={testResult.tried_endpoints}
+                    probeKind={testResult.probe_kind ?? "model"}
+                    response={testResult.response}
                     detail={testResult.detail}
                   />
                   {accountTestHintKey ? (

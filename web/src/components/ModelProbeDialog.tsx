@@ -1,9 +1,10 @@
 import { Activity, AlertTriangle, CheckCircle2, LoaderCircle, ShieldQuestion, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
-import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { openCodeReasonKey } from "../format/openCodeModelTest";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
+import type { ModelTestResponsePreview } from "../types";
+import { ModelTestResponseView } from "./ModelTestResponseView";
 import { Modal } from "./Modal";
 
 /**
@@ -119,11 +120,15 @@ export interface ModelProbeOutcomeProps {
   /** The protocol that answered, when the probe walked several. */
   endpoint?: string;
   triedEndpoints?: string[];
-  /** The sanitized upstream body, shown as the response block. */
+  /** The sanitized upstream body, shown as the response block when no preview is available. */
   detail?: string;
+  /** The probe kind, labeled exactly like the accounts test. */
+  probeKind?: string;
+  /** The sanitized upstream response, rendered like the accounts model test. */
+  response?: ModelTestResponsePreview;
 }
 
-export function ModelProbeOutcome({ status, model, reasonCode, statusCode, latencyMs, testedAt, endpoint, triedEndpoints, detail }: ModelProbeOutcomeProps) {
+export function ModelProbeOutcome({ status, model, reasonCode, statusCode, latencyMs, testedAt, endpoint, triedEndpoints, detail, probeKind, response }: ModelProbeOutcomeProps) {
   const { formatDateTime, tx } = useI18n();
   const Icon = status === "available" ? CheckCircle2 : status === "unavailable" ? XCircle : ShieldQuestion;
   const reasonKey = openCodeReasonKey(reasonCode);
@@ -137,7 +142,7 @@ export function ModelProbeOutcome({ status, model, reasonCode, statusCode, laten
         </div>
       </div>
       <dl>
-        <div><dt>{tx("ui.model")}</dt><dd>{model || "-"}</dd></div>
+        <div><dt>{tx("ui.test_model")}</dt><dd>{model || "-"}</dd></div>
         <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{reasonCode || "-"}</dd></div>
         {endpoint ? (
           <div>
@@ -146,16 +151,12 @@ export function ModelProbeOutcome({ status, model, reasonCode, statusCode, laten
           </div>
         ) : null}
         <div><dt>{tx("ui.http_status")}</dt><dd>{statusCode || "-"}</dd></div>
+        <div><dt>{tx("ui.probe_type")}</dt><dd>{probeKind ? tx(probeKind === "credential" ? "ui.credential_probe" : "ui.model_probe") : "-"}</dd></div>
         <div><dt>{tx("ui.latency")}</dt><dd>{typeof latencyMs === "number" ? `${latencyMs} ms` : "-"}</dd></div>
         {testedAt ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(testedAt)}</dd></div> : null}
       </dl>
-      {detail ? (
-        <div className="model-test-response">
-          <div className="model-test-response-heading">
-            <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
-          </div>
-          <pre aria-label={tx("ui.response_body")}><code>{decodeHTMLCharacterReferences(detail)}</code></pre>
-        </div>
+      {response ? <ModelTestResponseView response={response} /> : detail ? (
+        <ModelTestResponseView response={{ format: "text", body: detail, headers: [], truncated: false }} />
       ) : null}
     </section>
   );

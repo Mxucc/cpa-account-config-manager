@@ -1,10 +1,10 @@
 import { Activity, AlertTriangle, CheckCircle2, FlaskConical, LoaderCircle, ShieldQuestion, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { Account, ModelTestAttempt, ModelTestResponsePreview, ModelTestResult, ModelTestStatus } from "../types";
+import type { Account, ModelTestAttempt, ModelTestResult, ModelTestStatus } from "../types";
 import { technicalLabel } from "../format/accountDisplay";
-import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { normalizeManualModelTestModel, readManualModelTestPreference, recordManualModelTestModel } from "../store/manualModelTestModel";
 import { Modal } from "./Modal";
+import { ModelTestResponseView } from "./ModelTestResponseView";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 
@@ -211,7 +211,7 @@ function ModelTestOutcome({ result }: { result: ModelTestResult }) {
           <div><strong>{tx(modelPolicyReasonLabels[result.model_policy.reason_code] || "ui.operation_failed")}</strong><code>{result.model_policy.models?.join(", ") ?? "-"}</code></div>
         </div>
       ) : null}
-      {showAttemptTimeline ? <ModelTestAttempts attempts={attempts} /> : result.response ? <ModelTestResponse response={result.response} /> : null}
+      {showAttemptTimeline ? <ModelTestAttempts attempts={attempts} /> : result.response ? <ModelTestResponseView response={result.response} /> : null}
     </section>
   );
 }
@@ -239,33 +239,13 @@ function ModelTestAttempts({ attempts }: { attempts: ModelTestAttempt[] }) {
               {attempt.response ? (
                 <details className="model-test-attempt-response">
                   <summary>{tx("ui.view_sanitized_response")}</summary>
-                  <ModelTestResponse response={attempt.response} />
+                  <ModelTestResponseView response={attempt.response} />
                 </details>
               ) : null}
             </li>
           );
         })}
       </ol>
-    </div>
-  );
-}
-
-function ModelTestResponse({ response }: { response: ModelTestResponsePreview }) {
-  const { tx } = useI18n();
-  const responseHeaders = Array.isArray(response.headers) ? response.headers : [];
-  const responseBody = response.body ? decodeHTMLCharacterReferences(response.body) : tx("ui.empty_response_body");
-  return (
-    <div className="model-test-response">
-      <div className="model-test-response-heading">
-        <div><strong>{tx("ui.upstream_response")}</strong><span>{tx("ui.sanitized_response")}</span></div>
-        <span>{response.format.toUpperCase()}{response.truncated ? ` · ${tx("ui.truncated")}` : ""}</span>
-      </div>
-      {responseHeaders.length > 0 ? (
-        <div className="model-test-response-headers" aria-label={tx("ui.response_headers")}>
-          {responseHeaders.map((header) => <div key={`${header.name}:${header.value}`}><code>{header.name}</code><span>{header.value}</span></div>)}
-        </div>
-      ) : null}
-      <pre aria-label={tx("ui.response_body")}><code>{responseBody}</code></pre>
     </div>
   );
 }

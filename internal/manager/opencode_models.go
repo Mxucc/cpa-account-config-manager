@@ -70,10 +70,15 @@ type OpenCodeModelTestResult struct {
 	Detail     string `json:"detail,omitempty"`
 	// Endpoint names the protocol that produced this result (responses, chat or anthropic), and
 	// TriedEndpoints lists every protocol the probe attempted.
-	Endpoint       string    `json:"endpoint,omitempty"`
-	TriedEndpoints []string  `json:"tried_endpoints,omitempty"`
-	LatencyMS      int64     `json:"latency_ms,omitempty"`
-	TestedAt       time.Time `json:"tested_at"`
+	Endpoint       string   `json:"endpoint,omitempty"`
+	TriedEndpoints []string `json:"tried_endpoints,omitempty"`
+	// ProbeKind is "model" for these probes, so the UI can label them like the accounts test.
+	ProbeKind string `json:"probe_kind,omitempty"`
+	// Response is the sanitized upstream response (headers and redacted JSON), exactly like the
+	// accounts model test shows, so the operator can see what the gateway actually returned.
+	Response  *ModelTestResponsePreview `json:"response,omitempty"`
+	LatencyMS int64                     `json:"latency_ms,omitempty"`
+	TestedAt  time.Time                 `json:"tested_at"`
 }
 
 func openCodeModelTimeout(seconds int) time.Duration {
@@ -282,6 +287,12 @@ func probeOpenCodeModel(ctx context.Context, baseURL, apiKey, model string, time
 			Reachable:  response.StatusCode > 0,
 			LatencyMS:  latency,
 			Endpoint:   attempt.name,
+			ProbeKind:  "model",
+			Response: sanitizeModelTestResponsePreview(modelProbeHTTPResponse{
+				StatusCode: response.StatusCode,
+				Header:     response.Header,
+				Body:       body,
+			}),
 		}
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			attemptResult.Status, attemptResult.ReasonCode = "available", "model_response_ok"

@@ -29,15 +29,17 @@ type CodexTestTarget struct {
 
 // CodexModelProbeResult is the sanitized outcome of one Codex channel probe.
 type CodexModelProbeResult struct {
-	Reachable  bool   `json:"reachable"`
-	Status     string `json:"status"`
-	StatusCode int    `json:"status_code,omitempty"`
-	ReasonCode string `json:"reason_code,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	LatencyMS  int64  `json:"latency_ms,omitempty"`
-	Endpoint   string `json:"endpoint,omitempty"`
-	TestedAt   string `json:"tested_at,omitempty"`
+	Reachable  bool                      `json:"reachable"`
+	Status     string                    `json:"status"`
+	StatusCode int                       `json:"status_code,omitempty"`
+	ReasonCode string                    `json:"reason_code,omitempty"`
+	Model      string                    `json:"model,omitempty"`
+	Detail     string                    `json:"detail,omitempty"`
+	LatencyMS  int64                     `json:"latency_ms,omitempty"`
+	Endpoint   string                    `json:"endpoint,omitempty"`
+	ProbeKind  string                    `json:"probe_kind,omitempty"`
+	Response   *ModelTestResponsePreview `json:"response,omitempty"`
+	TestedAt   string                    `json:"tested_at,omitempty"`
 }
 
 // handleCodexTestTargets lists every credential the Codex model page can probe.
@@ -123,6 +125,8 @@ func codexModelProbeResult(probe AIProviderProbeResult) CodexModelProbeResult {
 		Model:      probe.Model,
 		Detail:     sanitizeOpenCodeError(probe.Detail),
 		LatencyMS:  probe.LatencyMS,
+		ProbeKind:  probe.ProbeKind,
+		Response:   probe.Response,
 		TestedAt:   probe.TestedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if result.Status == "" {

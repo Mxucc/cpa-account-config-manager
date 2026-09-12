@@ -575,6 +575,8 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                   latencyMs={channelTestResult.latency_ms}
                   testedAt={channelTestResult.tested_at}
                   endpoint={channelTestResult.endpoint}
+                  probeKind={channelTestResult.probe_kind}
+                  response={channelTestResult.response}
                   detail={channelTestResult.detail}
                 />
               ) : null}

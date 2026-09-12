@@ -276,6 +276,69 @@ func TestRequestCompletionBypassesMalformedPayloadOnLegacyHost(t *testing.T) {
 	}
 }
 
+// A request routed to an OpenCode model must leave the plugin with an
+// x-opencode-session header: OpenCode Go rejects a request that carries none, and
+// this exercises the same ABI path the host uses.
+func TestRequestInterceptorAddsOpenCodeSessionThroughTheHostPath(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.Configure([]byte("data_dir: " + t.TempDir()))
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	body := []byte(`{"messages":[{"role":"user","content":"keep this conversation together"}]}`)
+	request := cpaapi.RequestInterceptRequest{
+		RequestID: "req-opencode-1", SourceFormat: "openai", ToFormat: "openai",
+		Model: "qwen3.7-max", RequestedModel: "qwen3.7-max", Body: body,
+	}
+	rawRequest, errMarshal := json.Marshal(request)
+	if errMarshal != nil {
+		t.Fatalf("marshal interceptor request: %v", errMarshal)
+	}
+	raw, errHandle := handleMethod(cpaapi.MethodRequestInterceptAfter, rawRequest)
+	if errHandle != nil {
+		t.Fatalf("handleMethod() error = %v", errHandle)
+	}
+	result, errDecode := decodeEnvelopeResult(raw)
+	if errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	var response cpaapi.RequestInterceptResponse
+	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+		t.Fatalf("decode response: %v", errUnmarshal)
+	}
+	session := response.Headers.Get("X-Opencode-Session")
+	if session == "" {
+		t.Fatalf("no x-opencode-session header was returned: %#v", response.Headers)
+	}
+	if !strings.HasPrefix(session, "oc-") {
+		t.Fatalf("session value = %q, want the derived oc- prefix", session)
+	}
+	if response.Headers.Get("X-Opencode-Client") != "cli" {
+		t.Fatalf("client header = %q", response.Headers.Get("X-Opencode-Client"))
+	}
+
+	// The same conversation keeps its id, a different one does not.
+	raw, errHandle = handleMethod(cpaapi.MethodRequestInterceptAfter, rawRequest)
+	if errHandle != nil {
+		t.Fatalf("second handleMethod() error = %v", errHandle)
+	}
+	result, errDecode = decodeEnvelopeResult(raw)
+	if errDecode != nil {
+		t.Fatalf("decode second result: %v", errDecode)
+	}
+	var second cpaapi.RequestInterceptResponse
+	if errUnmarshal := json.Unmarshal(result, &second); errUnmarshal != nil {
+		t.Fatalf("decode second response: %v", errUnmarshal)
+	}
+	if second.Headers.Get("X-Opencode-Session") != session {
+		t.Fatalf("session changed between identical requests: %q then %q", session, second.Headers.Get("X-Opencode-Session"))
+	}
+}
+
 func TestRequestInterceptorMethodsRemainAvailableWhenExperimentsDisabled(t *testing.T) {
 	originalApp := pluginApp
 	testApp := manager.NewApp(nil, nil)

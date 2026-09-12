@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -618,5 +619,285 @@ func TestAccountConcurrencySchedulerReservationExpiryAndReconfigure(t *testing.T
 	defer service.mu.Unlock()
 	if len(service.reservations) != 0 {
 		t.Fatalf("reservations survived reconfigure: %#v", service.reservations)
+	}
+}
+
+func schedulerSessionRequest(sessionID string, authIDs ...string) cpaapi.SchedulerPickRequest {
+	return cpaapi.SchedulerPickRequest{
+		Provider:   "codex",
+		Candidates: schedulerCandidates(authIDs...),
+		Options:    cpaapi.SchedulerOptions{Headers: map[string][]string{"x-opencode-session": {sessionID}}},
+	}
+}
+
+func schedulerMetadataRequest(metadata map[string]any, authIDs ...string) cpaapi.SchedulerPickRequest {
+	return cpaapi.SchedulerPickRequest{
+		Provider:   "codex",
+		Candidates: schedulerCandidates(authIDs...),
+		Options:    cpaapi.SchedulerOptions{Metadata: metadata},
+	}
+}
+
+func TestAccountConcurrencySchedulerKeepsSessionOnOneAccount(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 10)
+	configureSchedulerLimit(t, service, "auth-b", 10, 10)
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	first := service.PickAuth(schedulerSessionRequest("session-a", "auth-a", "auth-b"))
+	if !first.Handled || first.AuthID == "" {
+		t.Fatalf("first session pick = %#v", first)
+	}
+	second := service.PickAuth(schedulerSessionRequest("session-a", "auth-a", "auth-b"))
+	if !second.Handled || second.AuthID != first.AuthID {
+		t.Fatalf("sticky picks = %#v, %#v; want the same account", first, second)
+	}
+
+	third := service.PickAuth(schedulerSessionRequest("session-b", "auth-a", "auth-b"))
+	if !third.Handled || third.AuthID == first.AuthID {
+		t.Fatalf("second session pick = %#v, want a different account than %q", third, first.AuthID)
+	}
+	fourth := service.PickAuth(schedulerSessionRequest("session-b", "auth-a", "auth-b"))
+	if !fourth.Handled || fourth.AuthID != third.AuthID {
+		t.Fatalf("second session sticky picks = %#v, %#v; want the same account", third, fourth)
+	}
+	if snapshot := service.SessionStickiness(); snapshot.Tracked != 2 || snapshot.Bound != 0 {
+		t.Fatalf("stickiness snapshot = %#v, want 2 tracked and 0 dropped", snapshot)
+	}
+
+	// A sticky short-circuit must not advance the shared round-robin cursor.
+	service.mu.Lock()
+	service.schedulerCursor = 7
+	service.mu.Unlock()
+	fifth := service.PickAuth(schedulerSessionRequest("session-a", "auth-a", "auth-b"))
+	if !fifth.Handled || fifth.AuthID != first.AuthID {
+		t.Fatalf("sticky pick = %#v, want the mapped account %q", fifth, first.AuthID)
+	}
+	service.mu.Lock()
+	cursor := service.schedulerCursor
+	service.mu.Unlock()
+	if cursor != 7 {
+		t.Fatalf("scheduler cursor after a sticky pick = %d, want 7", cursor)
+	}
+}
+
+func TestAccountConcurrencySchedulerWithoutSessionKeepsLeastLoadedSelection(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 10)
+	configureSchedulerLimit(t, service, "auth-b", 10, 10)
+	service.now = func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) }
+
+	first := service.PickAuth(cpaapi.SchedulerPickRequest{Candidates: schedulerCandidates("auth-a", "auth-b")})
+	second := service.PickAuth(cpaapi.SchedulerPickRequest{Candidates: schedulerCandidates("auth-a", "auth-b")})
+	if !first.Handled || !second.Handled || first.AuthID == second.AuthID {
+		t.Fatalf("session-less picks = %#v, %#v; want alternating accounts", first, second)
+	}
+	if snapshot := service.SessionStickiness(); snapshot.Tracked != 0 || snapshot.Bound != 0 {
+		t.Fatalf("session-less stickiness snapshot = %#v", snapshot)
+	}
+}
+
+func TestAccountConcurrencySchedulerAbandonsSaturatedSessionAccount(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 10)
+	configureSchedulerLimit(t, service, "auth-b", 10, 10)
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	service.mu.Lock()
+	service.active["auth-b"] = 1
+	service.mu.Unlock()
+
+	// The idle account wins the first pick and becomes the session account.
+	first := service.PickAuth(schedulerSessionRequest("session-saturated", "auth-a", "auth-b"))
+	if !first.Handled || first.AuthID != "auth-a" {
+		t.Fatalf("first session pick = %#v, want auth-a", first)
+	}
+
+	service.mu.Lock()
+	service.active["auth-a"] = 10
+	service.mu.Unlock()
+	second := service.PickAuth(schedulerSessionRequest("session-saturated", "auth-a", "auth-b"))
+	if !second.Handled || second.AuthID != "auth-b" {
+		t.Fatalf("pick with a saturated session account = %#v, want auth-b", second)
+	}
+
+	// The saturated account is abandoned for the request, but the mapping follows the
+	// account that served it: once auth-a is idle again a session without a mapping would
+	// prefer auth-a, while the remapped session stays on auth-b.
+	service.mu.Lock()
+	service.active["auth-a"] = 0
+	service.mu.Unlock()
+	third := service.PickAuth(schedulerSessionRequest("session-saturated", "auth-a", "auth-b"))
+	if !third.Handled || third.AuthID != "auth-b" {
+		t.Fatalf("pick after the session account recovered = %#v, want the remapped auth-b", third)
+	}
+}
+
+func TestAccountConcurrencySchedulerRemapsWhenSessionAccountLeavesPool(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	for _, authID := range []string{"auth-a", "auth-b", "auth-c"} {
+		configureSchedulerLimit(t, service, authID, 10, 10)
+	}
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	service.mu.Lock()
+	service.active["auth-b"] = 1
+	service.mu.Unlock()
+
+	first := service.PickAuth(schedulerSessionRequest("session-gone", "auth-a", "auth-b"))
+	if !first.Handled || first.AuthID != "auth-a" {
+		t.Fatalf("first session pick = %#v, want auth-a", first)
+	}
+	second := service.PickAuth(schedulerSessionRequest("session-gone", "auth-b", "auth-c"))
+	if !second.Handled || second.AuthID != "auth-c" {
+		t.Fatalf("pick without the mapped account = %#v, want the idle auth-c", second)
+	}
+	third := service.PickAuth(schedulerSessionRequest("session-gone", "auth-b", "auth-c"))
+	if !third.Handled || third.AuthID != second.AuthID {
+		t.Fatalf("remapped session picks = %#v, %#v; want the remapped account", second, third)
+	}
+	service.mu.Lock()
+	mapped := service.sessions["session-gone"].AuthID
+	service.mu.Unlock()
+	if mapped != second.AuthID {
+		t.Fatalf("stored session mapping = %q, want %q", mapped, second.AuthID)
+	}
+}
+
+func TestAccountConcurrencySchedulerBoundsSessionMappings(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 1000)
+	configureSchedulerLimit(t, service, "auth-b", 10, 1000)
+	service.sessionCap = 4
+	service.now = func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) }
+
+	for index := range 10 {
+		request := schedulerSessionRequest(fmt.Sprintf("session-%d", index), "auth-a", "auth-b")
+		if response := service.PickAuth(request); !response.Handled || response.AuthID == "" {
+			t.Fatalf("session %d pick = %#v", index, response)
+		}
+		if snapshot := service.SessionStickiness(); snapshot.Tracked > service.sessionCap {
+			t.Fatalf("tracked session mappings = %d, want <= %d", snapshot.Tracked, service.sessionCap)
+		}
+	}
+	if snapshot := service.SessionStickiness(); snapshot.Tracked != 4 || snapshot.Bound != 6 {
+		t.Fatalf("bounded stickiness snapshot = %#v, want 4 tracked and 6 evicted", snapshot)
+	}
+}
+
+func TestAccountConcurrencySchedulerExpiresIdleSessionMapping(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 10)
+	configureSchedulerLimit(t, service, "auth-b", 10, 10)
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	service.mu.Lock()
+	service.active["auth-b"] = 1
+	service.mu.Unlock()
+
+	first := service.PickAuth(schedulerSessionRequest("session-ttl", "auth-a", "auth-b"))
+	if !first.Handled || first.AuthID != "auth-a" {
+		t.Fatalf("first session pick = %#v, want auth-a", first)
+	}
+
+	// A stale mapping must not win even though auth-a stays below saturation: the expired
+	// session falls back to the idle account and rebuilds its mapping there.
+	now = now.Add(accountConcurrencySessionTTL + time.Second)
+	service.mu.Lock()
+	service.active["auth-a"] = 5
+	service.mu.Unlock()
+	second := service.PickAuth(schedulerSessionRequest("session-ttl", "auth-a", "auth-b"))
+	if !second.Handled || second.AuthID != "auth-b" {
+		t.Fatalf("pick after session TTL = %#v, want the idle auth-b", second)
+	}
+	if snapshot := service.SessionStickiness(); snapshot.Tracked != 1 || snapshot.Bound != 1 {
+		t.Fatalf("stickiness snapshot after TTL = %#v, want 1 tracked and 1 expired", snapshot)
+	}
+}
+
+func TestAccountConcurrencySchedulerIgnoresMalformedSessionValues(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	cases := map[string]string{
+		"too_long":  strings.Repeat("s", accountConcurrencySessionKeyMaxLen+1),
+		"control":   "session\nvalue",
+		"nul":       "session\x00value",
+		"non_ascii": "sess\u00e3o",
+		"blank":     "   ",
+	}
+	sources := map[string]func(string, ...string) cpaapi.SchedulerPickRequest{
+		"header": schedulerSessionRequest,
+		"metadata": func(sessionID string, authIDs ...string) cpaapi.SchedulerPickRequest {
+			return schedulerMetadataRequest(map[string]any{"session_id": sessionID}, authIDs...)
+		},
+	}
+	for name, value := range cases {
+		for source, request := range sources {
+			t.Run(name+"_"+source, func(t *testing.T) {
+				service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+				configureSchedulerLimit(t, service, "auth-a", 10, 10)
+				configureSchedulerLimit(t, service, "auth-b", 10, 10)
+				service.now = func() time.Time { return now }
+				first := service.PickAuth(request(value, "auth-a", "auth-b"))
+				second := service.PickAuth(request(value, "auth-a", "auth-b"))
+				if !first.Handled || !second.Handled || first.AuthID == second.AuthID {
+					t.Fatalf("malformed session %q (%s) changed selection: %#v, %#v", value, source, first, second)
+				}
+				if snapshot := service.SessionStickiness(); snapshot.Tracked != 0 || snapshot.Bound != 0 {
+					t.Fatalf("malformed session %q (%s) was tracked: %#v", value, source, snapshot)
+				}
+			})
+		}
+	}
+}
+
+func TestAccountConcurrencySchedulerIgnoresNonStringSessionMetadata(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 10)
+	configureSchedulerLimit(t, service, "auth-b", 10, 10)
+	service.now = func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) }
+	request := schedulerMetadataRequest(map[string]any{"session_id": 42, "conversation_id": true, "thread_id": nil}, "auth-a", "auth-b")
+
+	first := service.PickAuth(request)
+	second := service.PickAuth(request)
+	if !first.Handled || !second.Handled || first.AuthID == second.AuthID {
+		t.Fatalf("non-string metadata picks = %#v, %#v; want alternating accounts", first, second)
+	}
+	if snapshot := service.SessionStickiness(); snapshot.Tracked != 0 {
+		t.Fatalf("non-string session metadata was tracked: %#v", snapshot)
+	}
+}
+
+func TestAccountConcurrencySchedulerSessionKeyPrecedence(t *testing.T) {
+	service := configuredConcurrencyService(t, cpaapi.SchemaVersion)
+	configureSchedulerLimit(t, service, "auth-a", 10, 10)
+	configureSchedulerLimit(t, service, "auth-b", 10, 10)
+	service.now = func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) }
+
+	// Header lookup is case-insensitive and outranks every metadata key.
+	request := cpaapi.SchedulerPickRequest{
+		Candidates: schedulerCandidates("auth-a", "auth-b"),
+		Options: cpaapi.SchedulerOptions{
+			Headers:  map[string][]string{"X-OpenCode-Session": {"header-session"}},
+			Metadata: map[string]any{"session_id": "metadata-session", "thread_id": "thread-1"},
+		},
+	}
+	if response := service.PickAuth(request); !response.Handled {
+		t.Fatalf("precedence pick = %#v", response)
+	}
+	service.mu.Lock()
+	_, headerKeyed := service.sessions["header-session"]
+	_, metadataKeyed := service.sessions["metadata-session"]
+	service.mu.Unlock()
+	if !headerKeyed || metadataKeyed {
+		t.Fatalf("session keys = header %v metadata %v, want the header key only", headerKeyed, metadataKeyed)
+	}
+
+	// Metadata-only sessions are sticky too, per key.
+	metadataRequest := schedulerMetadataRequest(map[string]any{"conversation_id": "metadata-session"}, "auth-a", "auth-b")
+	first := service.PickAuth(metadataRequest)
+	second := service.PickAuth(metadataRequest)
+	if !first.Handled || !second.Handled || first.AuthID != second.AuthID {
+		t.Fatalf("metadata session picks = %#v, %#v; want the same account", first, second)
 	}
 }

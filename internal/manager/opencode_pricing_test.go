@@ -376,21 +376,31 @@ func TestAppInjectsOpenCodeSessionForAttributedRequestsOnly(t *testing.T) {
 	if other.Headers.Get(openCodeSessionHeader) == first {
 		t.Fatalf("two conversations shared one session id")
 	}
-	// Another provider's channel is never touched, even for a vendor model id
-	// that Zen also resells, and unattributed requests are left alone.
+	// Codex traffic is never touched, even for a vendor model id that Zen also
+	// resells, and a request whose auth index provably belongs to another channel
+	// is skipped while the channel list is known.
 	for name, request := range map[string]cpaapi.RequestInterceptRequest{
-		"other provider": {
-			RequestID: "req-4", Model: "gpt-5.5", Headers: http.Header{}, Body: body,
-			Metadata: map[string]any{"selected_auth_index": "cpa-codex-9"},
+		"codex request": {
+			RequestID: "req-4", ToFormat: "codex", Model: "gpt-5.5", Headers: http.Header{}, Body: body,
 		},
-		"unattributed": {
+		"other channel": {
 			RequestID: "req-5", Model: "gpt-5.5", Headers: http.Header{}, Body: body,
+			Metadata: map[string]any{"selected_auth_index": "cpa-codex-9"},
 		},
 	} {
 		response := app.HandleRequestAfter(request)
 		if response.Headers.Get(openCodeSessionHeader) != "" {
-			t.Fatalf("%s request received a session header: %#v", name, response.Headers)
+			t.Fatalf("%s received a session header: %#v", name, response.Headers)
 		}
+	}
+
+	// A request with no auth index at all is still attributed by model, because
+	// the upstream rejects a request that carries no session header.
+	unattributed := app.HandleRequestAfter(cpaapi.RequestInterceptRequest{
+		RequestID: "req-6", Model: "qwen3.7-max", Headers: http.Header{}, Body: body,
+	})
+	if unattributed.Headers.Get(openCodeSessionHeader) == "" {
+		t.Fatalf("a targeted request without metadata was not given a session header")
 	}
 	// The OpenCode catalog still drives the reported coverage.
 	snapshot := app.opencodeSession.Snapshot()

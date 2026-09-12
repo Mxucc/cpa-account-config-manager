@@ -1400,6 +1400,12 @@ export interface OpenCodeSessionSnapshot {
   injected_requests: number;
   distinct_sessions: number;
   last_injected_at?: string;
+  /** How injected requests were recognised, and why others were skipped. */
+  attributed_by_auth_index?: number;
+  attributed_by_model?: number;
+  skipped_other_channel?: number;
+  skipped_codex_requests?: number;
+  skipped_untargeted_model?: number;
 }
 
 export interface OpenCodeWindowUsage {

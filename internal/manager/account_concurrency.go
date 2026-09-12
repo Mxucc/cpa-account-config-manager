@@ -30,6 +30,11 @@ const (
 	MinAccountConcurrencyWindowSeconds     = 1
 	MaxAccountConcurrencyWindowSeconds     = 3600
 	selectedAuthMetadataKey                = "selected_auth_id"
+	// AccountConcurrencySessionMapCap bounds how many conversation stickiness
+	// mappings the scheduler keeps in memory at once.
+	AccountConcurrencySessionMapCap    = 4096
+	accountConcurrencySessionTTL       = 30 * time.Minute
+	accountConcurrencySessionKeyMaxLen = 200
 )
 
 var (
@@ -60,6 +65,22 @@ type AccountConcurrencySummary struct {
 	FifteenSecLimit int `json:"limit_15s,omitempty"`
 	Used60s         int `json:"used_60s,omitempty"`
 	Used15s         int `json:"used_15s,omitempty"`
+}
+
+// SessionStickinessSnapshot reports the scheduler conversation stickiness state.
+// Tracked is the number of live key -> authID mappings; Bound is the cumulative
+// number of mappings dropped since start, either because their TTL elapsed or
+// because the cap forced an eviction.
+type SessionStickinessSnapshot struct {
+	Tracked int `json:"tracked"`
+	Bound   int `json:"bound"`
+}
+
+// accountConcurrencySessionRecord is one sticky conversation mapping.  Mappings
+// live in AccountConcurrencyService.sessions and share that service's mu.
+type accountConcurrencySessionRecord struct {
+	AuthID    string
+	UpdatedAt time.Time
 }
 
 type accountConcurrencyRecord struct {
@@ -95,6 +116,12 @@ type AccountConcurrencyService struct {
 	waitingRequests map[string]string
 	canceled        map[string]time.Time
 	reservations    map[string][]time.Time
+	// sessions maps sticky conversation keys to the authID that served them; it
+	// shares mu with the other mutable state.  sessionCap bounds the map and
+	// sessionPruned counts the mappings dropped since start for diagnostics.
+	sessions        map[string]accountConcurrencySessionRecord
+	sessionCap      int
+	sessionPruned   int
 	schedulerCursor uint64
 	wake            chan struct{}
 	epoch           uint64
@@ -119,6 +146,8 @@ func NewAccountConcurrencyService() *AccountConcurrencyService {
 		waitingRequests: make(map[string]string),
 		canceled:        make(map[string]time.Time),
 		reservations:    make(map[string][]time.Time),
+		sessions:        make(map[string]accountConcurrencySessionRecord),
+		sessionCap:      AccountConcurrencySessionMapCap,
 		wake:            make(chan struct{}),
 		now:             time.Now,
 		maxWait:         accountConcurrencyMaxWait,
@@ -312,6 +341,65 @@ type accountSchedulerCandidateLoad struct {
 	load     int
 }
 
+// accountConcurrencySessionHeaderKeys is the header priority order used to derive
+// the sticky session key of a scheduler pick.
+var accountConcurrencySessionHeaderKeys = []string{
+	"x-opencode-session", "session-id", "session_id", "x-session-id", "x-codex-session-id",
+	"x-claude-session-id", "conversation-id", "x-conversation-id",
+}
+
+// accountConcurrencySessionMetadataKeys is the metadata priority order used when no
+// header carries a usable session identifier.
+var accountConcurrencySessionMetadataKeys = []string{
+	"session_id", "conversation_id", "prompt_cache_key", "x-opencode-session", "thread_id",
+}
+
+// schedulerSessionKey derives the sticky session key of a pick request.  It returns
+// "" when no usable identifier is present, which keeps the scheduler session-less
+// behaviour unchanged.  Headers are compared case-insensitively because
+// cpaapi.SchedulerOptions.Headers is a plain map that no canonicalisation guarantees;
+// a malformed value is treated as absent so a later source can still provide the key.
+func schedulerSessionKey(request cpaapi.SchedulerPickRequest) string {
+	for _, name := range accountConcurrencySessionHeaderKeys {
+		for header, values := range request.Options.Headers {
+			if !strings.EqualFold(header, name) {
+				continue
+			}
+			for _, value := range values {
+				if key := normalizeSchedulerSessionKey(value); key != "" {
+					return key
+				}
+			}
+		}
+	}
+	for _, name := range accountConcurrencySessionMetadataKeys {
+		value, isString := request.Options.Metadata[name].(string)
+		if !isString {
+			continue
+		}
+		if key := normalizeSchedulerSessionKey(value); key != "" {
+			return key
+		}
+	}
+	return ""
+}
+
+// normalizeSchedulerSessionKey validates a candidate session identifier.  The result
+// is bounded and printable so it can be used as a map key without smuggling control
+// characters or unbounded client input into the service.
+func normalizeSchedulerSessionKey(value string) string {
+	key := strings.TrimSpace(value)
+	if key == "" || len(key) > accountConcurrencySessionKeyMaxLen {
+		return ""
+	}
+	for index := 0; index < len(key); index++ {
+		if key[index] < 0x20 || key[index] > 0x7e {
+			return ""
+		}
+	}
+	return key
+}
+
 // PickAuth balances every multi-account pool whose candidates all have plugin-managed
 // limits. It reserves the selected account immediately so a burst of scheduler calls
 // cannot all observe an idle pool and fall through to the same sticky credential before
@@ -367,6 +455,21 @@ func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest
 	if len(loads) < 2 {
 		return cpaapi.SchedulerPickResponse{}
 	}
+	sessionKey := schedulerSessionKey(request)
+	if sessionKey != "" {
+		if sticky, mapped := s.sessionAuthLocked(sessionKey, now); mapped {
+			for _, candidate := range loads {
+				// A live mapping wins while its account is not saturated: pressure below
+				// 1_000_000 means both the active and the request-window limit have room.
+				if candidate.authID != sticky || candidate.pressure >= 1_000_000 {
+					continue
+				}
+				s.rememberSessionAuthLocked(sessionKey, sticky, now)
+				s.reservations[sticky] = append(s.reservations[sticky], now)
+				return cpaapi.SchedulerPickResponse{AuthID: sticky, Handled: true}
+			}
+		}
+	}
 
 	bestPressure := loads[0].pressure
 	bestLoad := loads[0].load
@@ -387,6 +490,11 @@ func (s *AccountConcurrencyService) PickAuth(request cpaapi.SchedulerPickRequest
 	selected := best[int(s.schedulerCursor%uint64(len(best)))]
 	s.schedulerCursor++
 	s.reservations[selected] = append(s.reservations[selected], now)
+	if sessionKey != "" {
+		// Remember the fallback choice so the next request of this conversation sticks
+		// to it, including when the previous account vanished or was saturated.
+		s.rememberSessionAuthLocked(sessionKey, selected, now)
+	}
 	return cpaapi.SchedulerPickResponse{AuthID: selected, Handled: true}
 }
 
@@ -664,11 +772,104 @@ func (s *AccountConcurrencyService) pruneSchedulerReservationsLocked(now time.Ti
 	}
 }
 
+// SessionStickiness reports the live sticky conversation mappings and how many
+// mappings have been dropped since start.  It never exposes identifiers, only counts.
+func (s *AccountConcurrencyService) SessionStickiness() SessionStickinessSnapshot {
+	if s == nil {
+		return SessionStickinessSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredSessionMappingsLocked(s.now().UTC())
+	return SessionStickinessSnapshot{Tracked: len(s.sessions), Bound: s.sessionPruned}
+}
+
+// sessionAuthLocked resolves the sticky account of a session key.  An expired
+// mapping is dropped so a cold conversation starts from the normal selection.
+// The caller must hold s.mu.
+func (s *AccountConcurrencyService) sessionAuthLocked(sessionKey string, now time.Time) (string, bool) {
+	record, exists := s.sessions[sessionKey]
+	if !exists {
+		return "", false
+	}
+	if record.UpdatedAt.Before(now.Add(-accountConcurrencySessionTTL)) {
+		delete(s.sessions, sessionKey)
+		s.sessionPruned++
+		return "", false
+	}
+	return record.AuthID, true
+}
+
+// rememberSessionAuthLocked stores or refreshes the sticky account of a session
+// key.  The map is capped: expired mappings are pruned first and the oldest live
+// mapping is evicted when the cap is still reached.  The caller must hold s.mu.
+func (s *AccountConcurrencyService) rememberSessionAuthLocked(sessionKey, authID string, now time.Time) {
+	if s.sessions == nil {
+		s.sessions = make(map[string]accountConcurrencySessionRecord)
+	}
+	if record, exists := s.sessions[sessionKey]; exists {
+		record.AuthID = authID
+		record.UpdatedAt = now
+		s.sessions[sessionKey] = record
+		return
+	}
+	sessionCap := s.sessionCap
+	if sessionCap <= 0 {
+		sessionCap = AccountConcurrencySessionMapCap
+	}
+	if len(s.sessions) >= sessionCap {
+		s.pruneExpiredSessionMappingsLocked(now)
+	}
+	for len(s.sessions) >= sessionCap {
+		if !s.evictOldestSessionLocked() {
+			return
+		}
+	}
+	s.sessions[sessionKey] = accountConcurrencySessionRecord{AuthID: authID, UpdatedAt: now}
+}
+
+// pruneExpiredSessionMappingsLocked drops session mappings whose TTL elapsed.
+// The caller must hold s.mu.
+func (s *AccountConcurrencyService) pruneExpiredSessionMappingsLocked(now time.Time) {
+	if len(s.sessions) == 0 {
+		return
+	}
+	cutoff := now.Add(-accountConcurrencySessionTTL)
+	for sessionKey, record := range s.sessions {
+		if !record.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		delete(s.sessions, sessionKey)
+		s.sessionPruned++
+	}
+}
+
+// evictOldestSessionLocked drops the least recently refreshed mapping and reports
+// whether one was removed.  The caller must hold s.mu.
+func (s *AccountConcurrencyService) evictOldestSessionLocked() bool {
+	oldestKey := ""
+	var oldest time.Time
+	for sessionKey, record := range s.sessions {
+		if oldestKey == "" || record.UpdatedAt.Before(oldest) {
+			oldestKey, oldest = sessionKey, record.UpdatedAt
+		}
+	}
+	if oldestKey == "" {
+		return false
+	}
+	delete(s.sessions, oldestKey)
+	s.sessionPruned++
+	return true
+}
+
 func (s *AccountConcurrencyService) pruneExpiredLocked(now time.Time) {
 	if !s.nextPrune.IsZero() && now.Before(s.nextPrune) {
 		return
 	}
 	s.nextPrune = now.Add(accountConcurrencyPruneInterval)
+	// Sticky conversation mappings age out on the same cadence as the other
+	// request-lifecycle bookkeeping.
+	s.pruneExpiredSessionMappingsLocked(now)
 	cutoff := now.Add(-accountConcurrencyLeaseTTL)
 	for requestID, admission := range s.requests {
 		if admission.AdmittedAt.After(cutoff) {

@@ -544,7 +544,10 @@ describe("OpenCodeWorkspace", () => {
   it("shows the per-conversation session routing status", async () => {
     const user = userEvent.setup();
     openCodeFetchMock({
-      session: { enabled: true, salt_ready: true, target_models: ["a", "b", "c"], injected_requests: 7, distinct_sessions: 2 },
+      session: {
+        enabled: true, salt_ready: true, target_models: ["a", "b", "c"], injected_requests: 7, distinct_sessions: 2,
+        attributed_by_auth_index: 5, attributed_by_model: 2, skipped_codex_requests: 1, skipped_other_channel: 3, skipped_untargeted_model: 4,
+      },
     });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
@@ -554,6 +557,9 @@ describe("OpenCodeWorkspace", () => {
     expect(await within(section).findByText("已启用")).toBeInTheDocument();
     expect(within(section).getByText("7")).toBeInTheDocument();
     expect(within(section).getByText("2")).toBeInTheDocument();
+    // The attribution breakdown explains how the header was applied.
+    expect(within(section).getByText("按渠道 5，按模型 2")).toBeInTheDocument();
+    expect(within(section).getByText("Codex 1，其它渠道 3，非目标模型 4")).toBeInTheDocument();
     expect(within(section).getByRole("link", { name: "OpenCode Go 客户端要求" })).toHaveAttribute("href", "https://opencode.ai/docs/go/#where-can-i-use-it");
   });
 

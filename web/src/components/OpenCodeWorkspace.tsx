@@ -396,6 +396,21 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
               <div><dt>{tx("ui.opencode_session_targets")}</dt><dd>{session?.target_models?.length ?? 0} · {session?.target_auth_indexes ?? 0} {tx("ui.opencode_session_channels")}</dd></div>
               <div><dt>{tx("ui.opencode_session_injected")}</dt><dd>{session?.injected_requests ?? 0}</dd></div>
               <div><dt>{tx("ui.opencode_session_distinct")}</dt><dd>{session?.distinct_sessions ?? 0}</dd></div>
+          <div>
+            <dt>{tx("ui.opencode_session_attribution")}</dt>
+            <dd>{tx("ui.opencode_session_attribution_value", {
+              channel: String(session?.attributed_by_auth_index ?? 0),
+              model: String(session?.attributed_by_model ?? 0),
+            })}</dd>
+          </div>
+          <div>
+            <dt>{tx("ui.opencode_session_skipped")}</dt>
+            <dd>{tx("ui.opencode_session_skipped_value", {
+              codex: String(session?.skipped_codex_requests ?? 0),
+              other: String(session?.skipped_other_channel ?? 0),
+              untargeted: String(session?.skipped_untargeted_model ?? 0),
+            })}</dd>
+          </div>
             </dl>
           </section>
 

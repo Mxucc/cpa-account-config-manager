@@ -132,18 +132,39 @@ func TestOpenCodeSessionRouterDifferentConversationsGetDifferentValues(t *testin
 }
 
 func TestOpenCodeSessionRouterOnlyInterceptsAttributedRequests(t *testing.T) {
-	t.Run("no metadata", func(t *testing.T) {
+	// CPA does not always report an auth index. A request that carries none is
+	// still attributed by model when that model is published by OpenCode, which is
+	// what makes the header reliable in production.
+	t.Run("no metadata but a targeted model", func(t *testing.T) {
 		router := newTestOpenCodeSessionRouter(t, t.TempDir(), openCodeSessionTestModel)
 		response, changed := router.InterceptRequest(openCodeSessionTestRequestWithMetadata(
 			"req-1", openCodeSessionTestModel, nil, nil, openCodeSessionTestBody))
-		assertOpenCodeSessionNotIntercepted(t, router, response, changed)
+		if !changed || response.Headers.Get(openCodeSessionHeader) == "" {
+			t.Fatalf("a targeted request without metadata was not intercepted: %#v", response.Headers)
+		}
+		if snapshot := router.Snapshot(); snapshot.AttributedByModel != 1 || snapshot.InjectedRequests != 1 {
+			t.Fatalf("attribution counters = %#v", snapshot)
+		}
 	})
 
-	t.Run("empty metadata", func(t *testing.T) {
+	t.Run("empty metadata but a targeted model", func(t *testing.T) {
 		router := newTestOpenCodeSessionRouter(t, t.TempDir(), openCodeSessionTestModel)
 		response, changed := router.InterceptRequest(openCodeSessionTestRequestWithMetadata(
 			"req-1", openCodeSessionTestModel, map[string]any{}, nil, openCodeSessionTestBody))
+		if !changed || response.Headers.Get(openCodeSessionHeader) == "" {
+			t.Fatalf("a targeted request with empty metadata was not intercepted: %#v", response.Headers)
+		}
+	})
+
+	t.Run("codex traffic is never touched", func(t *testing.T) {
+		router := newTestOpenCodeSessionRouter(t, t.TempDir(), openCodeSessionTestModel)
+		request := openCodeSessionTestRequestWithMetadata("req-1", openCodeSessionTestModel, nil, nil, openCodeSessionTestBody)
+		request.ToFormat = "codex"
+		response, changed := router.InterceptRequest(request)
 		assertOpenCodeSessionNotIntercepted(t, router, response, changed)
+		if snapshot := router.Snapshot(); snapshot.SkippedCodexRequests != 1 {
+			t.Fatalf("skip counters = %#v", snapshot)
+		}
 	})
 
 	t.Run("unknown auth index", func(t *testing.T) {
@@ -318,13 +339,16 @@ func TestOpenCodeSessionRouterDisabledDoesNotInject(t *testing.T) {
 	assertOpenCodeSessionNotIntercepted(t, router, response, changed)
 }
 
-func TestOpenCodeSessionRouterRequiresAuthIndexesToBeActive(t *testing.T) {
+// The channel allow-list refines attribution but must not gate injection: CPA does
+// not report an auth index for every API-key channel, and a router that stays
+// inactive then never sends the header the upstream requires.
+func TestOpenCodeSessionRouterActiveWithTargetsEvenWithoutAuthIndexes(t *testing.T) {
 	router := NewOpenCodeSessionRouter()
 	router.Configure(Config{DataDir: t.TempDir()})
 	router.SetEnabled(true)
 	router.SetTargets([]string{openCodeSessionTestModel})
-	if router.RequestInterceptionActive() {
-		t.Fatal("router without auth indexes reported itself active")
+	if !router.RequestInterceptionActive() {
+		t.Fatal("router with targets but no auth indexes reported itself inactive")
 	}
 	snapshot := router.Snapshot()
 	if !snapshot.Enabled || !snapshot.SaltReady {
@@ -334,9 +358,12 @@ func TestOpenCodeSessionRouterRequiresAuthIndexesToBeActive(t *testing.T) {
 		t.Fatalf("target auth indexes = %d, want 0", snapshot.TargetAuthIndexes)
 	}
 
+	// Without a channel list the request is still injected, attributed by model.
 	response, changed := router.InterceptRequest(openCodeSessionTestRequest("req-1", openCodeSessionTestModel, nil,
 		openCodeSessionTestBody))
-	assertOpenCodeSessionNotIntercepted(t, router, response, changed)
+	if !changed || response.Headers.Get(openCodeSessionHeader) == "" {
+		t.Fatalf("a targeted request was not intercepted without a channel list")
+	}
 
 	router.SetAuthIndexes([]string{openCodeSessionTestAuthIndex})
 	if !router.RequestInterceptionActive() {

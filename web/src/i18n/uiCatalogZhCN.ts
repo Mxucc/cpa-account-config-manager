@@ -1898,5 +1898,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "当前已是最新版本",
   "ui.self_update_applied_restart_required": "版本 {version} 已校验并写入，重启 CPA 后生效。",
   "ui.self_update_path_saved": "插件库路径已保存",
+  "ui.models_updated_disabled_notice": "已全局禁用 {count} 个模型",
+  "ui.models_updated_enabled_notice": "已重新启用 {count} 个模型",
 
 };

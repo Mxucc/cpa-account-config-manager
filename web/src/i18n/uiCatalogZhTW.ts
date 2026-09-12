@@ -1898,5 +1898,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "目前已是最新版本",
   "ui.self_update_applied_restart_required": "版本 {version} 已校驗並寫入，重新啟動 CPA 後生效。",
   "ui.self_update_path_saved": "外掛程式庫路徑已儲存",
+  "ui.models_updated_disabled_notice": "已全域停用 {count} 個模型",
+  "ui.models_updated_enabled_notice": "已重新啟用 {count} 個模型",
 
 };

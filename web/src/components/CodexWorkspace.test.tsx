@@ -189,8 +189,9 @@ describe("CodexWorkspace", () => {
   it("disables a Codex model globally and can enable every model again", async () => {
     const user = userEvent.setup();
     const requests = codexFetchMock();
+    const onNotice = vi.fn();
 
-    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
     await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
 
     const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
@@ -204,12 +205,15 @@ describe("CodexWorkspace", () => {
     const disableRequest = requests.find(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT");
     expect(JSON.parse(String(disableRequest?.init.body))).toEqual({ disabled: ["gpt-5.4-codex"] });
     expect(await within(within(panel).getByText("gpt-5.4-codex").closest("tr") as HTMLElement).findByText("已禁用")).toBeInTheDocument();
+    // The result is announced: a silent write is indistinguishable from a dead button.
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("已全局禁用 1 个模型"));
 
     await user.click(within(panel).getByRole("button", { name: "全部启用" }));
     await waitFor(() => {
       const writes = requests.filter(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT");
       expect(JSON.parse(String(writes.at(-1)?.init.body))).toEqual({ disabled: [] });
     });
+    await waitFor(() => expect(onNotice).toHaveBeenLastCalledWith("已重新启用 1 个模型"));
   });
 
   it("shows the plugin price table rates and marks an unpriced model", async () => {

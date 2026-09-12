@@ -113,6 +113,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [controlTestTarget, setControlTestTarget] = useState("");
   const [controlTestResult, setControlTestResult] = useState<OpenCodeModelTestResult | null>(null);
   const [controlTestError, setControlTestError] = useState("");
+  // The row whose write is in flight, so the clicked button can show its own progress.
+  const [pendingModel, setPendingModel] = useState("");
   const request = useRef(0);
 
   const handleError = useCallback((caught: unknown) => {
@@ -290,17 +292,34 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
   ));
 
-  const applyControlDisabled = (next: string[]) => void withBusy("model-control", async () => {
-    const snapshot = await api.saveOpenCodeModelControl(next);
-    setModelControl(snapshot);
-    setSelectedModels([]);
+  /**
+   * Apply the global disabled set and confirm it. The request itself can wait on the host,
+   * so the clicked row shows its own progress and the result is announced: with no feedback
+   * at all, a slow write is indistinguishable from a dead button.
+   */
+  const applyControlDisabled = (next: string[], changed: number, pending: string) => void withBusy("model-control", async () => {
+    setPendingModel(pending);
+    try {
+      const before = modelControl?.disabled.length ?? 0;
+      const snapshot = await api.saveOpenCodeModelControl(next);
+      setModelControl(snapshot);
+      setSelectedModels([]);
+      const after = snapshot.disabled?.length ?? 0;
+      onNotice(tx(after >= before ? "ui.models_updated_disabled_notice" : "ui.models_updated_enabled_notice", { count: String(changed) }));
+    } finally {
+      setPendingModel("");
+    }
   });
 
   /** Bulk disable joins the current list; bulk enable removes the selection. */
   const applyControlSelection = (enable: boolean) => {
     const disabled = modelControl?.disabled ?? [];
     const selected = new Set(selectedModels);
-    applyControlDisabled(enable ? disabled.filter((id) => !selected.has(id)) : Array.from(new Set([...disabled, ...selectedModels])));
+    applyControlDisabled(
+      enable ? disabled.filter((id) => !selected.has(id)) : Array.from(new Set([...disabled, ...selectedModels])),
+      selectedModels.length,
+      "",
+    );
   };
 
   /** Accounts that actually reference the model, matched by normalised id. */
@@ -793,7 +812,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
               </div>
               <div className="opencode-section-actions">
                 <span className="opencode-model-count">{tx("ui.opencode_models_disabled_count")}: <strong>{controlDisabled.length}</strong></span>
-                <button className="button button-quiet" type="button" disabled={busy === "model-control" || controlDisabled.length === 0} onClick={() => applyControlDisabled([])}>
+                <button className="button button-quiet" type="button" disabled={busy === "model-control" || controlDisabled.length === 0} onClick={() => applyControlDisabled([], controlDisabled.length, "")}>
                   <RotateCcw size={15} />{tx("ui.opencode_models_enable_all")}
                 </button>
               </div>
@@ -847,14 +866,18 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                       <td className="actions-cell">
                         <div className="row-actions" role="group" aria-label={tx("ui.model_actions", { model: row.id })}>
                           <IconButton label={tx("ui.model_test_action", { model: row.id })} disabled={busy === "model-control-test"} onClick={() => openControlTest(row.id)}>
-                            <Activity size={15} />
+                            {busy === "model-control-test" && controlTestModel === row.id ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}
                           </IconButton>
                           <IconButton
                             label={row.disabled ? tx("ui.model_enable_action", { model: row.id }) : tx("ui.model_disable_action", { model: row.id })}
                             disabled={busy === "model-control"}
-                            onClick={() => applyControlDisabled(row.disabled ? controlDisabled.filter((id) => id !== row.id) : [...controlDisabled, row.id])}
+                            onClick={() => applyControlDisabled(
+                              row.disabled ? controlDisabled.filter((id) => id !== row.id) : [...controlDisabled, row.id],
+                              1,
+                              row.id,
+                            )}
                           >
-                            <Power size={15} />
+                            {busy === "model-control" && pendingModel === row.id ? <LoaderCircle className="spin" size={15} /> : <Power size={15} />}
                           </IconButton>
                         </div>
                       </td>

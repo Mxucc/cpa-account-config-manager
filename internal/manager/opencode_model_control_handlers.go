@@ -27,7 +27,11 @@ func (a *App) handleOpenCodeModelControl(ctx context.Context, req cpaapi.Managem
 	if a == nil || a.opencodeModelControl == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "OpenCode model control is unavailable"})
 	}
-	a.refreshOpenCodeChannelModels(ctx, managementKey)
+	// A read waits for the scan, but only up to the refresh bound: an unreachable CPA
+	// management API must degrade the row list, not hang the tab.
+	scanContext, cancelScan := boundedModelControlContext(ctx)
+	a.refreshOpenCodeChannelModels(scanContext, managementKey)
+	cancelScan()
 	return jsonResponse(http.StatusOK, a.openCodeModelControlPayload())
 }
 
@@ -48,7 +52,17 @@ func (a *App) handleOpenCodeModelControlUpdate(ctx context.Context, req cpaapi.M
 	if _, errUpdate := a.opencodeModelControl.Set(request.Disabled); errUpdate != nil {
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": errUpdate.Error()})
 	}
-	a.refreshOpenCodeChannelModels(ctx, managementKey)
+	// The change is already applied and persisted, so the response comes from the cached
+	// channel scan: waiting for the CPA management API here is what made a click look like
+	// it did nothing. The cache is refreshed in the background, or synchronously when it was
+	// never scanned and the row list would otherwise lose the channel-configured models.
+	if len(a.cachedOpenCodeChannelModels()) == 0 {
+		scanContext, cancelScan := boundedModelControlContext(ctx)
+		a.refreshOpenCodeChannelModels(scanContext, managementKey)
+		cancelScan()
+	} else {
+		refreshModelControlChannels(func(scan context.Context) { a.refreshOpenCodeChannelModels(scan, managementKey) })
+	}
 	return jsonResponse(http.StatusOK, a.openCodeModelControlPayload())
 }
 

@@ -564,8 +564,9 @@ describe("OpenCodeWorkspace", () => {
   it("disables and enables the selected OpenCode models in bulk", async () => {
     const user = userEvent.setup();
     const requests = openCodeFetchMock({});
+    const onNotice = vi.fn();
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
     await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
     const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
 
@@ -586,6 +587,8 @@ describe("OpenCodeWorkspace", () => {
       expect(JSON.parse(String(writes.at(-1)?.init.body)).disabled.sort()).toEqual(["gpt-5.6-luna", "qwen3.7-max"]);
     });
     await waitFor(() => expect(within(panel).getByText("已选择 0 个")).toBeInTheDocument());
+    // The write is confirmed: without a notice a slow request looks like a dead button.
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("已全局禁用 2 个模型"));
 
     // Enable one of them again: the other stays disabled.
     await user.click(within(panel).getByRole("checkbox", { name: "选择 gpt-5.6-luna" }));

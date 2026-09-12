@@ -1898,5 +1898,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "Установленная версия актуальна",
   "ui.self_update_applied_restart_required": "Версия {version} проверена и записана; перезапустите CPA для загрузки.",
   "ui.self_update_path_saved": "Путь к библиотеке плагина сохранён",
+  "ui.models_updated_disabled_notice": "Глобально отключено моделей: {count}",
+  "ui.models_updated_enabled_notice": "Снова включено моделей: {count}",
 
 };

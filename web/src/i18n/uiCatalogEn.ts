@@ -1896,5 +1896,7 @@ export const enUI = {
   "ui.self_update_is_current": "The installed version is current",
   "ui.self_update_applied_restart_required": "Version {version} was verified and written; restart CPA to load it.",
   "ui.self_update_path_saved": "Plugin library path saved",
+  "ui.models_updated_disabled_notice": "Disabled {count} model(s) globally",
+  "ui.models_updated_enabled_notice": "Enabled {count} model(s) again",
 
 } as const;

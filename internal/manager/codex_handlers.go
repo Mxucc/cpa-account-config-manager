@@ -97,7 +97,11 @@ func (a *App) handleCodexModels(ctx context.Context, req cpaapi.ManagementReques
 	if a == nil || a.codexModelControl == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Codex model control is unavailable"})
 	}
-	a.refreshCodexChannelModels(ctx, managementKey)
+	// A read waits for the scan, but only up to the refresh bound: an unreachable CPA
+	// management API must degrade the row list, not hang the tab.
+	scanContext, cancelScan := boundedModelControlContext(ctx)
+	a.refreshCodexChannelModels(scanContext, managementKey)
+	cancelScan()
 	snapshot := a.codexModelControl.Snapshot()
 	snapshot.Models = a.codexModelControlRows()
 	snapshot.PricingUpdatedAt, snapshot.PricingSource = a.codexPricingProvenance()
@@ -122,7 +126,17 @@ func (a *App) handleCodexModelsUpdate(ctx context.Context, req cpaapi.Management
 	if errUpdate != nil {
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": errUpdate.Error()})
 	}
-	a.refreshCodexChannelModels(ctx, managementKey)
+	// The change is already applied and persisted, so the response comes from the cached
+	// channel scan: waiting for the CPA management API here is what made a click look like
+	// it did nothing. The cache is refreshed in the background, or synchronously when it was
+	// never scanned and the row list would otherwise be empty.
+	if a.cachedCodexChannelModels() == nil {
+		scanContext, cancelScan := boundedModelControlContext(ctx)
+		a.refreshCodexChannelModels(scanContext, managementKey)
+		cancelScan()
+	} else {
+		refreshModelControlChannels(func(scan context.Context) { a.refreshCodexChannelModels(scan, managementKey) })
+	}
 	snapshot.Models = a.codexModelControlRows()
 	snapshot.PricingUpdatedAt, snapshot.PricingSource = a.codexPricingProvenance()
 	return jsonResponse(http.StatusOK, map[string]any{"models": snapshot.Models, "disabled": snapshot.Disabled, "storage_error": snapshot.StorageError, "pricing_source": snapshot.PricingSource, "pricing_updated_at": snapshot.PricingUpdatedAt})

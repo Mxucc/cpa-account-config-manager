@@ -82,6 +82,8 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
   const [codexIdentity, setCodexIdentity] = useState<ExperimentalCodexIdentitySettings>(EMPTY_CODEX_IDENTITY);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  // The row whose write is in flight, so the clicked button can show its own progress.
+  const [pendingModel, setPendingModel] = useState("");
   const [testModel, setTestModel] = useState("");
   const [testAccounts, setTestAccounts] = useState<Account[] | null>(null);
   const [testAccountID, setTestAccountID] = useState("");
@@ -180,22 +182,35 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
     onNotice(tx("ui.experimental_settings_saved"));
   });
 
-  const applyDisabled = (nextDisabled: string[]) => void withBusy("models", async () => {
-    const snapshot = await api.saveCodexModels(nextDisabled);
-    setModelControl(snapshot);
+  /**
+   * Apply the global disabled set and confirm it. The request can wait on the host, so the
+   * clicked row shows its own progress and the result is announced: with no feedback at all,
+   * a slow write is indistinguishable from a dead button.
+   */
+  const applyDisabled = (nextDisabled: string[], changed: number, pending: string) => void withBusy("models", async () => {
+    setPendingModel(pending);
+    try {
+      const before = modelControl?.disabled.length ?? 0;
+      const snapshot = await api.saveCodexModels(nextDisabled);
+      setModelControl(snapshot);
+      const after = snapshot.disabled?.length ?? 0;
+      onNotice(tx(after >= before ? "ui.models_updated_disabled_notice" : "ui.models_updated_enabled_notice", { count: String(changed) }));
+    } finally {
+      setPendingModel("");
+    }
   });
 
   /** Bulk disable/enable: disable joins the current list, enable removes the selection. */
-  const applySelection = (enable: boolean) => void withBusy("models", async () => {
+  const applySelection = (enable: boolean) => {
     const disabled = modelControl?.disabled ?? [];
     const selected = new Set(selectedModels);
-    const next = enable
-      ? disabled.filter((id) => !selected.has(id))
-      : Array.from(new Set([...disabled, ...selectedModels]));
-    const snapshot = await api.saveCodexModels(next);
-    setModelControl(snapshot);
+    applyDisabled(
+      enable ? disabled.filter((id) => !selected.has(id)) : Array.from(new Set([...disabled, ...selectedModels])),
+      selectedModels.length,
+      "",
+    );
     setSelectedModels([]);
-  });
+  };
 
   const toggleModelSelection = (id: string) => setSelectedModels((current) => (
     current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
@@ -406,7 +421,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               <strong>{tx("ui.codex_tab_models")}</strong>
               <span className="codex-models-count">{tx("ui.codex_models_disabled_count")}: <strong>{disabledCount}</strong></span>
             </div>
-            <button className="button button-quiet" type="button" disabled={busy === "models" || disabledCount === 0} onClick={() => applyDisabled([])}>
+            <button className="button button-quiet" type="button" disabled={busy === "models" || disabledCount === 0} onClick={() => applyDisabled([], disabledCount, "")}>
               <RotateCcw size={15} />{tx("ui.codex_models_enable_all")}
             </button>
           </div>
@@ -483,14 +498,18 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                     <td className="actions-cell">
                       <div className="row-actions" role="group" aria-label={tx("ui.model_actions", { model: row.id })}>
                         <IconButton label={tx("ui.model_test_action", { model: row.id })} disabled={busy === "model-test"} onClick={() => openModelTest(row.id)}>
-                          <Activity size={15} />
+                          {busy === "model-test" && testModel === row.id ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}
                         </IconButton>
                         <IconButton
                           label={row.disabled ? tx("ui.model_enable_action", { model: row.id }) : tx("ui.model_disable_action", { model: row.id })}
                           disabled={busy === "models"}
-                          onClick={() => applyDisabled(row.disabled ? disabledModels.filter((id) => id !== row.id) : [...disabledModels, row.id])}
+                          onClick={() => applyDisabled(
+                            row.disabled ? disabledModels.filter((id) => id !== row.id) : [...disabledModels, row.id],
+                            1,
+                            row.id,
+                          )}
                         >
-                          <Power size={15} />
+                          {busy === "models" && pendingModel === row.id ? <LoaderCircle className="spin" size={15} /> : <Power size={15} />}
                         </IconButton>
                       </div>
                     </td>

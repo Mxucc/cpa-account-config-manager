@@ -31,12 +31,23 @@ type OpenCodeBindingResult struct {
 // openCodeChannelHeaders are the headers the upstream expects from a client. CPA
 // forwards configured channel headers, so the same identity used by the model
 // probe is applied to routed traffic.
+//
+// The session header is included as a static baseline: OpenCode Go rejects a
+// request that carries no x-opencode-session at all, and the plugin's request
+// interceptor (which replaces this value with a per-conversation id whenever it
+// runs) is only attached on hosts that support request interception. The baseline
+// therefore keeps an older host routable instead of failing every request.
 func openCodeChannelHeaders() map[string]string {
 	return map[string]string{
-		"x-opencode-client": "cli",
-		"User-Agent":        openCodeClientUserAgent(),
+		"x-opencode-client":  "cli",
+		"x-opencode-session": openCodeChannelSessionBaseline,
+		"User-Agent":         openCodeClientUserAgent(),
 	}
 }
+
+// openCodeChannelSessionBaseline is the channel-level session id used until the
+// request interceptor substitutes a per-conversation one.
+const openCodeChannelSessionBaseline = "oc-cli-baseline"
 
 // bindOpenCodeChannel writes one OpenAI-compatible CPA channel for an OpenCode
 // credential. An existing channel with the same normalized base URL is updated in

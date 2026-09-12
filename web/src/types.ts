@@ -1475,6 +1475,27 @@ export interface OpenCodeAccountsResponse {
   accounts: OpenCodeAccountView[];
   storage_error?: string;
 }
+
+/** One row of the OpenCode global model control table. */
+export interface OpenCodeModelControlRow {
+  id: string;
+  disabled: boolean;
+  accounts: number;
+  channels: number;
+  priced?: boolean;
+  input_usd_per_million?: number;
+  output_usd_per_million?: number;
+  cache_read_usd_per_million?: number;
+}
+
+export interface OpenCodeModelControlSnapshot {
+  models: OpenCodeModelControlRow[];
+  disabled: string[];
+  storage_error?: string;
+  pricing_source?: string;
+  pricing_updated_at?: string;
+}
+
 /** One CPA AI-provider channel that belongs to OpenCode; the credential is never included. */
 export interface OpenCodeChannelView {
   kind: "go" | "zen";

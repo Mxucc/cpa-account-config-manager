@@ -43,6 +43,14 @@ describe("CodexWorkspace", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       requests.push({ url, init });
+      if (url.endsWith("/accounts/model-test") && init.method === "POST") {
+        return jsonResponse({ account_id: "acct-codex-1", provider: "codex", model: "gpt-5.4-codex", status: "available", probe_kind: "model", reason_code: "model_response_ok", status_code: 200, latency_ms: 42 });
+      }
+      if (url.includes("/accounts?")) {
+        return jsonResponse({ accounts: [
+          { id: "acct-codex-1", name: "codex-one.json", provider: "codex", type: "codex", status: "active", disabled: false, unavailable: false, editable: true, recommended_action: "keep" },
+        ], total: 1, page: 1, page_size: 100, pages: 1 });
+      }
       if (url.endsWith("/codex/overview")) {
         return jsonResponse({
           overview: {
@@ -190,7 +198,7 @@ describe("CodexWorkspace", () => {
     expect(within(panel).getByText(/在此禁用模型会作用于所有 Codex 账号与 AI 提供商渠道/)).toBeInTheDocument();
 
     const codexRow = within(panel).getByText("gpt-5.4-codex").closest("tr") as HTMLElement;
-    await user.click(within(codexRow).getByRole("button", { name: "禁用" }));
+    await user.click(within(codexRow).getByRole("button", { name: "禁用 gpt-5.4-codex" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT")).toBe(true));
     const disableRequest = requests.find(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT");
@@ -223,6 +231,56 @@ describe("CodexWorkspace", () => {
 
     const unpricedRow = within(panel).getByText("unpriced-model").closest("tr") as HTMLElement;
     expect(within(unpricedRow).getByText("暂无价格")).toBeInTheDocument();
+  });
+
+  it("disables and enables the selected models in bulk", async () => {
+    const user = userEvent.setup();
+    const requests = codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+
+    // Select both rows through the header checkbox, then disable the selection.
+    await user.click(within(panel).getByRole("checkbox", { name: "全选" }));
+    expect(within(panel).getByText("已选择 2 个")).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "禁用所选" }));
+
+    await waitFor(() => {
+      const writes = requests.filter(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT");
+      expect(writes.length).toBeGreaterThan(0);
+      expect(JSON.parse(String(writes.at(-1)?.init.body))).toEqual({ disabled: ["gpt-5.4-codex", "unpriced-model"] });
+    });
+    // The selection is cleared after a successful write.
+    await waitFor(() => expect(within(panel).getByText("已选择 0 个")).toBeInTheDocument());
+
+    // Re-select the same rows and enable them again.
+    await user.click(within(panel).getByRole("checkbox", { name: "全选" }));
+    await user.click(within(panel).getByRole("button", { name: "启用所选" }));
+    await waitFor(() => {
+      const writes = requests.filter(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT");
+      expect(JSON.parse(String(writes.at(-1)?.init.body))).toEqual({ disabled: [] });
+    });
+  });
+
+  it("tests one Codex model through a stored account credential", async () => {
+    const user = userEvent.setup();
+    const requests = codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.4-codex" }));
+    const tester = await within(panel).findByRole("region", { name: "测试 gpt-5.4-codex" });
+    // The only candidate account is auto-selected, so one click runs the probe.
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/accounts/model-test") && init.method === "POST")).toBe(true));
+    const probe = requests.find(({ url, init }) => url.endsWith("/accounts/model-test") && init.method === "POST");
+    expect(JSON.parse(String(probe?.init.body))).toMatchObject({ account_id: "acct-codex-1", model: "gpt-5.4-codex" });
+    // The probe result is rendered with the localized status label.
+    expect(await within(tester).findByText("模型可用")).toBeInTheDocument();
+    expect(within(tester).getByText("model_response_ok")).toBeInTheDocument();
+    expect(within(tester).getByText("200")).toBeInTheDocument();
   });
 
   it("keeps the Codex identity policy here and echoes the two experiments", async () => {

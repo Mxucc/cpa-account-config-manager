@@ -1139,6 +1139,18 @@ export async function testOpenCodeModel(kind: "go" | "zen", accountID: string, m
 	});
 }
 
+/** Global OpenCode model control: disabled ids affect every Go and Zen credential. */
+export async function getOpenCodeModelControl(signal?: AbortSignal): Promise<import("../types").OpenCodeModelControlSnapshot> {
+  return requestRecord<import("../types").OpenCodeModelControlSnapshot>("/opencode/model-control", { signal });
+}
+
+export async function saveOpenCodeModelControl(disabled: string[]): Promise<import("../types").OpenCodeModelControlSnapshot> {
+  return requestRecord<import("../types").OpenCodeModelControlSnapshot>("/opencode/model-control", {
+    method: "PUT",
+    body: JSON.stringify({ disabled }),
+  });
+}
+
 /**
  * Create or update the CPA OpenAI-compatible channel that routes one OpenCode
  * credential, so its models become reachable through CPA.

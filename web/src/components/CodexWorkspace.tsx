@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Fingerprint, LoaderCircle, RefreshCw, RotateCcw, Save, Search } from "lucide-react";
+import { Activity, AlertTriangle, Fingerprint, LoaderCircle, Power, RefreshCw, RotateCcw, Save, Search } from "lucide-react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
-import type { CodexFingerprintField, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings } from "../types";
+import type { Account, CodexFingerprintField, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
 import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
+import { IconButton } from "./IconButton";
 
 interface CodexWorkspaceProps {
   refreshRevision: number;
@@ -80,6 +81,12 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
   const [experiments, setExperiments] = useState<ExperimentalSettings | null>(null);
   const [codexIdentity, setCodexIdentity] = useState<ExperimentalCodexIdentitySettings>(EMPTY_CODEX_IDENTITY);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [testModel, setTestModel] = useState("");
+  const [testAccounts, setTestAccounts] = useState<Account[] | null>(null);
+  const [testAccountID, setTestAccountID] = useState("");
+  const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
+  const [testError, setTestError] = useState("");
   const [modelQuery, setModelQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -131,6 +138,12 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
     };
   }, [refresh, refreshRevision]);
 
+  // Selection is keyed by model id; ids that disappear from the snapshot are dropped.
+  useEffect(() => {
+    const available = new Set((modelControl?.models ?? []).map((row) => row.id));
+    setSelectedModels((current) => current.filter((id) => available.has(id)));
+  }, [modelControl]);
+
   useEffect(() => {
     if (!experiments) return;
     setCodexIdentity(experiments.codex_identity ?? EMPTY_CODEX_IDENTITY);
@@ -172,6 +185,72 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
     setModelControl(snapshot);
   });
 
+  /** Bulk disable/enable: disable joins the current list, enable removes the selection. */
+  const applySelection = (enable: boolean) => void withBusy("models", async () => {
+    const disabled = modelControl?.disabled ?? [];
+    const selected = new Set(selectedModels);
+    const next = enable
+      ? disabled.filter((id) => !selected.has(id))
+      : Array.from(new Set([...disabled, ...selectedModels]));
+    const snapshot = await api.saveCodexModels(next);
+    setModelControl(snapshot);
+    setSelectedModels([]);
+  });
+
+  const toggleModelSelection = (id: string) => setSelectedModels((current) => (
+    current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+  ));
+
+  const closeModelTest = () => {
+    setTestModel("");
+    setTestAccounts(null);
+    setTestAccountID("");
+    setTestResult(null);
+    setTestError("");
+  };
+
+  const runModelTest = (model: string, accountID: string) => void (async () => {
+    setBusy("model-test");
+    setTestError("");
+    setTestResult(null);
+    try {
+      setTestResult(await api.testAccountModel(accountID, model));
+    } catch (caught) {
+      if (caught instanceof api.APIError && caught.status === 401) {
+        onAPIError(caught);
+        return;
+      }
+      setTestError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setBusy("");
+    }
+  })();
+
+  /** Candidate accounts are loaded lazily so opening the tab stays cheap. */
+  const openModelTest = (model: string) => void (async () => {
+    setTestModel(model);
+    setTestAccounts(null);
+    setTestAccountID("");
+    setTestResult(null);
+    setTestError("");
+    try {
+      const response = await api.listAccounts(1, 100, {});
+      const candidates = response.accounts.filter((account) => `${account.provider ?? ""} ${account.type ?? ""}`.toLowerCase().includes("codex"));
+      setTestAccounts(candidates);
+      if (candidates.length === 1) {
+        setTestAccountID(candidates[0].id);
+        runModelTest(model, candidates[0].id);
+      }
+    } catch (caught) {
+      setTestAccounts([]);
+      if (caught instanceof api.APIError && caught.status === 401) {
+        onAPIError(caught);
+        return;
+      }
+      setTestError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    }
+  })();
+
   const updateDraft = (field: CodexFingerprintField, value: string) => {
     setFingerprintSaved(false);
     setDrafts((current) => ({ ...current, [field.key]: value }));
@@ -205,6 +284,21 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
     if (!query) return true;
     return row.id.toLowerCase().includes(query);
   });
+  const visibleSelectedCount = filteredRows.filter((row) => selectedModels.includes(row.id)).length;
+  const allVisibleSelected = filteredRows.length > 0 && visibleSelectedCount === filteredRows.length;
+  const toggleVisibleSelection = () => setSelectedModels((current) => (
+    allVisibleSelected
+      ? current.filter((id) => !filteredRows.some((row) => row.id === id))
+      : Array.from(new Set([...current, ...filteredRows.map((row) => row.id)]))
+  ));
+  const testStatusLabel = (status: ModelTestStatus): string => {
+    switch (status) {
+      case "available": return tx("ui.model_available");
+      case "unavailable": return tx("ui.model_unavailable");
+      case "unsupported": return tx("ui.testing_unsupported");
+      default: return tx("ui.manual_confirmation_required");
+    }
+  };
   const groups = useMemo(() => {
     const known = GROUP_ORDER.filter((group) => fields.some((field) => field.group === group));
     const rest = fields.map((field) => field.group).filter((group) => !known.includes(group));
@@ -326,10 +420,28 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
             <Search size={15} />
             <input value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder={tx("ui.search")} aria-label={tx("ui.search")} />
           </label>
+          <div className="codex-model-bulk" role="group" aria-label={tx("ui.codex_model_control_active")}>
+            <span className="codex-model-bulk-count">{tx("ui.models_selected_count", { count: String(selectedModels.length) })}</span>
+            <button className="button button-quiet" type="button" disabled={busy === "models" || selectedModels.length === 0} onClick={() => applySelection(false)}>
+              <Power size={15} />{tx("ui.models_disable_selected")}
+            </button>
+            <button className="button button-quiet" type="button" disabled={busy === "models" || selectedModels.length === 0} onClick={() => applySelection(true)}>
+              <RotateCcw size={15} />{tx("ui.models_enable_selected")}
+            </button>
+          </div>
           <div className="codex-table-wrap">
             <table className="account-table codex-table">
               <thead>
                 <tr>
+                  <th className="selection-header">
+                    <input
+                      type="checkbox"
+                      aria-label={tx("ui.select_all")}
+                      checked={allVisibleSelected}
+                      disabled={filteredRows.length === 0}
+                      onChange={toggleVisibleSelection}
+                    />
+                  </th>
                   <th>{tx("ui.model")}</th>
                   <th>{tx("ui.codex_models_input_price")}</th>
                   <th>{tx("ui.codex_models_output_price")}</th>
@@ -343,6 +455,14 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               <tbody>
                 {filteredRows.map((row) => (
                   <tr key={row.id}>
+                    <td className="selection-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={tx("ui.select_account", { account: row.id })}
+                        checked={selectedModels.includes(row.id)}
+                        onChange={() => toggleModelSelection(row.id)}
+                      />
+                    </td>
                     <td>
                       <div className="codex-model-cell">
                         <strong>{row.id}</strong>
@@ -361,21 +481,70 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                     <td>{row.channels}</td>
                     <td><span className={row.disabled ? "codex-model-state disabled" : "codex-model-state enabled"}>{tx(row.disabled ? "ui.disabled" : "ui.enabled")}</span></td>
                     <td className="actions-cell">
-                      <button
-                        className="button button-quiet button-small"
-                        type="button"
-                        disabled={busy === "models"}
-                        onClick={() => applyDisabled(row.disabled ? disabledModels.filter((id) => id !== row.id) : [...disabledModels, row.id])}
-                      >
-                        {row.disabled ? tx("ui.codex_models_enable") : tx("ui.codex_models_disable")}
-                      </button>
+                      <div className="row-actions" role="group" aria-label={tx("ui.model_actions", { model: row.id })}>
+                        <IconButton label={tx("ui.model_test_action", { model: row.id })} disabled={busy === "model-test"} onClick={() => openModelTest(row.id)}>
+                          <Activity size={15} />
+                        </IconButton>
+                        <IconButton
+                          label={row.disabled ? tx("ui.model_enable_action", { model: row.id }) : tx("ui.model_disable_action", { model: row.id })}
+                          disabled={busy === "models"}
+                          onClick={() => applyDisabled(row.disabled ? disabledModels.filter((id) => id !== row.id) : [...disabledModels, row.id])}
+                        >
+                          <Power size={15} />
+                        </IconButton>
+                      </div>
                     </td>
                   </tr>
                 ))}
-                {!loading && filteredRows.length === 0 ? <tr><td colSpan={7}>{tx("ui.codex_models_empty")}</td></tr> : null}
+                {!loading && filteredRows.length === 0 ? <tr><td colSpan={8}>{tx("ui.codex_models_empty")}</td></tr> : null}
               </tbody>
             </table>
           </div>
+          {testModel ? (
+            <section className="codex-section codex-model-tester" aria-label={tx("ui.model_test_action", { model: testModel })}>
+              <div className="codex-section-heading">
+                <div>
+                  <strong><Activity size={14} /> {tx("ui.model_test_action", { model: testModel })}</strong>
+                  <span>{tx("ui.model_test_target")}</span>
+                </div>
+                <button className="button button-quiet" type="button" onClick={closeModelTest}>{tx("ui.close")}</button>
+              </div>
+              {testAccounts === null ? (
+                <p className="codex-model-test-note" role="status"><LoaderCircle className="spin" size={15} />{tx("ui.testing")}</p>
+              ) : null}
+              {testAccounts !== null && testAccounts.length === 0 ? (
+                <p className="codex-model-test-note" role="status">{tx("ui.model_test_no_target")}</p>
+              ) : null}
+              {testAccounts && testAccounts.length > 0 ? (
+                <div className="codex-model-test-target">
+                  <span>{tx("ui.model_test_target")}</span>
+                  {testAccounts.length === 1 ? (
+                    <strong>{testAccounts[0].name || testAccounts[0].id}</strong>
+                  ) : (
+                    <select aria-label={tx("ui.model_test_target")} value={testAccountID} onChange={(event) => setTestAccountID(event.target.value)}>
+                      {testAccounts.map((account) => <option key={account.id} value={account.id}>{account.name || account.id}</option>)}
+                    </select>
+                  )}
+                </div>
+              ) : null}
+              {testAccounts && testAccounts.length > 0 ? (
+                <div className="codex-model-test-actions">
+                  <button className="button button-primary" type="button" disabled={busy === "model-test" || !testAccountID} onClick={() => runModelTest(testModel, testAccountID)}>
+                    {busy === "model-test" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}{tx("ui.test")}
+                  </button>
+                </div>
+              ) : null}
+              {testError ? <p className="codex-model-test-error" role="alert">{testError}</p> : null}
+              {testResult ? (
+                <dl className="codex-model-test-result">
+                  <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{testStatusLabel(testResult.status)}</dd></div>
+                  <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{testResult.reason_code || "-"}</dd></div>
+                  <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{testResult.status_code || "-"}</dd></div>
+                  <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{testResult.latency_ms} ms</dd></div>
+                </dl>
+              ) : null}
+            </section>
+          ) : null}
         </section>
       ) : null}
 

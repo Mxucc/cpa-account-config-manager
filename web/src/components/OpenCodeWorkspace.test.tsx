@@ -128,6 +128,7 @@ interface OpenCodeFetchMockOptions {
   modelTestResponse?: Record<string, unknown>;
   bindResponse?: Record<string, unknown>;
   pricing?: Record<string, unknown>;
+  modelControl?: Record<string, unknown>;
   pricingRefresh?: Record<string, unknown>;
   session?: Record<string, unknown>;
 }
@@ -142,6 +143,17 @@ describe("OpenCodeWorkspace", () => {
 
   function openCodeFetchMock(options: OpenCodeFetchMockOptions = {}) {
     const requests: Array<{ url: string; init: RequestInit }> = [];
+    let disabledModels = [...((options.modelControl?.disabled as string[] | undefined) ?? [])];
+    const controlRows = (disabled: string[]) => [
+      { id: "qwen3.7-max", disabled: disabled.includes("qwen3.7-max"), accounts: 1, channels: 1, priced: true, input_usd_per_million: 2.5, output_usd_per_million: 7.5 },
+      { id: "gpt-5.6-luna", disabled: disabled.includes("gpt-5.6-luna"), accounts: 1, channels: 0, priced: true, input_usd_per_million: 0.2, output_usd_per_million: 1.2 },
+      { id: "unpriced-opencode", disabled: disabled.includes("unpriced-opencode"), accounts: 0, channels: 0, priced: false },
+    ];
+    const modelControlBody = (opts: OpenCodeFetchMockOptions) => ({
+      storage_error: "",
+      pricing_source: "Sub2API / Wei-Shaw model-price-repo",
+      ...(opts.modelControl ?? {}),
+    });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       requests.push({ url, init });
@@ -185,6 +197,14 @@ describe("OpenCodeWorkspace", () => {
         return jsonResponse({ changed: true, pricing: options.pricingRefresh ?? options.pricing ?? {} });
       }
       if (url.endsWith("/opencode/pricing")) return jsonResponse({ pricing: options.pricing ?? {} });
+      if (url.endsWith("/opencode/model-control") && init.method === "PUT") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { disabled?: string[] };
+        disabledModels = body.disabled ?? [];
+        return jsonResponse({ ...modelControlBody(options), disabled: disabledModels, models: controlRows(disabledModels) });
+      }
+      if (url.endsWith("/opencode/model-control")) {
+        return jsonResponse({ ...modelControlBody(options), disabled: disabledModels, models: controlRows(disabledModels) });
+      }
       if (url.endsWith("/opencode/session")) return jsonResponse({ session: options.session ?? {} });
       return jsonResponse({});
     });
@@ -539,6 +559,70 @@ describe("OpenCodeWorkspace", () => {
     await user.click(within(section).getByRole("button", { name: "同步价格" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/pricing/refresh") && init.method === "POST")).toBe(true));
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith("价格已更新"));
+  });
+
+  it("disables and enables the selected OpenCode models in bulk", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({});
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+
+    // The control states that it affects every account and channel.
+    expect(within(panel).getByText(/所有 OpenCode 账号与渠道/)).toBeInTheDocument();
+
+    // Select two models and disable the selection.
+    const gptRow = within(panel).getByText("gpt-5.6-luna").closest("tr") as HTMLElement;
+    await user.click(within(gptRow).getByRole("checkbox", { name: "选择 gpt-5.6-luna" }));
+    const qwenRow = within(panel).getByText("qwen3.7-max").closest("tr") as HTMLElement;
+    await user.click(within(qwenRow).getByRole("checkbox", { name: "选择 qwen3.7-max" }));
+    expect(within(panel).getByText("已选择 2 个")).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "禁用所选" }));
+
+    await waitFor(() => {
+      const writes = requests.filter(({ url, init }) => url.endsWith("/opencode/model-control") && init.method === "PUT");
+      expect(writes.length).toBeGreaterThan(0);
+      expect(JSON.parse(String(writes.at(-1)?.init.body)).disabled.sort()).toEqual(["gpt-5.6-luna", "qwen3.7-max"]);
+    });
+    await waitFor(() => expect(within(panel).getByText("已选择 0 个")).toBeInTheDocument());
+
+    // Enable one of them again: the other stays disabled.
+    await user.click(within(panel).getByRole("checkbox", { name: "选择 gpt-5.6-luna" }));
+    await user.click(within(panel).getByRole("button", { name: "启用所选" }));
+    await waitFor(() => {
+      const writes = requests.filter(({ url, init }) => url.endsWith("/opencode/model-control") && init.method === "PUT");
+      expect(JSON.parse(String(writes.at(-1)?.init.body)).disabled).toEqual(["qwen3.7-max"]);
+    });
+
+    // Enable-all clears the whole list.
+    await user.click(within(panel).getByRole("button", { name: "全部启用" }));
+    await waitFor(() => {
+      const writes = requests.filter(({ url, init }) => url.endsWith("/opencode/model-control") && init.method === "PUT");
+      expect(JSON.parse(String(writes.at(-1)?.init.body)).disabled).toEqual([]);
+    });
+  });
+
+  it("tests one OpenCode model through a stored account credential", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({
+      accounts: [
+        { id: "acc_go_1", workspace_id: "wrk_test", key_set: true, models: ["gpt-5.6-luna"], models_error: "", models_fetched_at: "2026-09-01T00:00:00Z" },
+      ],
+      modelTestResponse: { result: { reachable: true, status: "available", reason_code: "model_response_ok", status_code: 200, latency_ms: 33, tested_at: "2026-09-01T00:00:00Z" } },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.6-luna" }));
+    // The only credential that references the model is selected and probed.
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST")).toBe(true));
+    const probe = requests.find(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST");
+    expect(JSON.parse(String(probe?.init.body))).toMatchObject({ kind: "go", account_id: "acc_go_1", model: "gpt-5.6-luna" });
+    const tester = await within(panel).findByRole("region", { name: "测试 gpt-5.6-luna" });
+    await waitFor(() => expect(within(tester).getByText("model_response_ok")).toBeInTheDocument());
   });
 
   it("shows the per-conversation session routing status", async () => {

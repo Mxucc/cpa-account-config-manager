@@ -266,7 +266,7 @@ func (r *OpenCodeSessionRouter) InterceptRequest(request cpaapi.RequestIntercept
 		r.recordAttribution("model")
 	}
 
-	value := resolveOpenCodeSessionValue(request.Headers, request.Body, salt)
+	value := resolveOpenCodeSessionValueWithFallback(request.Headers, request.Body, salt, openCodeSessionFallbackSeed(request))
 	if value == "" {
 		return cpaapi.RequestInterceptResponse{}, false
 	}
@@ -361,6 +361,56 @@ func (r *OpenCodeSessionRouter) recordInjection(value string) {
 // caller already sent and only falls back to a salted digest when nothing
 // usable is present.
 func resolveOpenCodeSessionValue(headers http.Header, body []byte, salt []byte) string {
+	return resolveOpenCodeSessionValueWithFallback(headers, body, salt, "")
+}
+
+// resolveOpenCodeSessionValueWithFallback resolves the conversation id and always
+// returns a usable value when the caller can supply a stable fallback seed. An
+// upstream that requires x-opencode-session rejects the request outright, so a body
+// the plugin cannot parse must degrade to a stable id rather than to no header.
+func resolveOpenCodeSessionValueWithFallback(headers http.Header, body []byte, salt []byte, fallbackSeed string) string {
+	value := resolveStructuredOpenCodeSessionValue(headers, body, salt)
+	if value != "" {
+		return value
+	}
+	// (e) A body shape the structured reader does not understand still carries a
+	// stable conversation prefix in its first bytes, so digest a bounded window.
+	if len(body) > 0 {
+		if value := openCodeSessionDigestValue(salt, "body:"+string(openCodeSessionBodyWindow(body))); value != "" {
+			return value
+		}
+	}
+	// (f) Last resort: a caller-supplied stable seed (the account identity and the
+	// model). It is coarser than a conversation id, but it keeps the request
+	// routable instead of failing it upstream.
+	if strings.TrimSpace(fallbackSeed) != "" {
+		return openCodeSessionDigestValue(salt, "request:"+fallbackSeed)
+	}
+	return ""
+}
+
+// openCodeSessionBodyWindow returns a bounded prefix of the raw body. The first
+// turns of a conversation are stable, so a digest over this window stays stable
+// for the same conversation while later turns append past it.
+func openCodeSessionBodyWindow(body []byte) []byte {
+	const window = 2048
+	if len(body) <= window {
+		return body
+	}
+	return body[:window]
+}
+
+func openCodeSessionDigestValue(salt []byte, seed string) string {
+	if len(salt) == 0 || strings.TrimSpace(seed) == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, salt)
+	mac.Write([]byte(seed))
+	digest := mac.Sum(nil)
+	return openCodeSessionValuePrefix + hex.EncodeToString(digest[:16])
+}
+
+func resolveStructuredOpenCodeSessionValue(headers http.Header, body []byte, salt []byte) string {
 	// (a) A client-provided OpenCode session is authoritative; never replace it.
 	if value := validOpenCodeSessionValue(headerValue(headers, openCodeSessionHeader)); value != "" {
 		return value
@@ -381,6 +431,21 @@ func resolveOpenCodeSessionValue(headers http.Header, body []byte, salt []byte) 
 		return value
 	}
 	return openCodeSessionFallbackValue(salt, decoded)
+}
+
+// openCodeSessionFallbackSeed derives the coarse last-resort seed: the selected
+// credential plus the routed model identifies the channel a request belongs to, so
+// an unparseable body still produces a stable id instead of no header at all.
+func openCodeSessionFallbackSeed(request cpaapi.RequestInterceptRequest) string {
+	identity := strings.TrimSpace(openCodeSessionAuthIndexFromMetadata(request.Metadata))
+	if identity == "" {
+		identity = strings.TrimSpace(firstNonEmpty(headerValue(request.Headers, "x-opencode-client"), ""))
+	}
+	model := normalizeOpenCodeSessionModel(firstNonEmpty(request.Model, request.RequestedModel))
+	if identity == "" && model == "" {
+		return ""
+	}
+	return identity + "|" + model
 }
 
 // openCodeSessionBodyValue looks for a client session identifier at the JSON
@@ -604,8 +669,16 @@ func normalizeOpenCodeSessionAuthIndex(index string) string {
 	return strings.ToLower(strings.TrimSpace(index))
 }
 
+// normalizeOpenCodeSessionModel folds a routed model name to the catalog key. A
+// channel prefix ("opencode-go/qwen3.7-max") and separator drift must not hide a
+// model, because an unmatched model would silently skip the session header the
+// upstream requires.
 func normalizeOpenCodeSessionModel(model string) string {
-	return strings.ToLower(strings.TrimSpace(model))
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if slash := strings.LastIndex(normalized, "/"); slash >= 0 {
+		normalized = normalized[slash+1:]
+	}
+	return strings.TrimSpace(strings.ReplaceAll(normalized, "_", "-"))
 }
 
 // loadOrCreateOpenCodeSessionSalt reuses a valid persisted salt and otherwise

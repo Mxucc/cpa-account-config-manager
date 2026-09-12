@@ -210,6 +210,11 @@ func TestOpenCodeGoModelRoutesAndBinding(t *testing.T) {
 	if boundHeaders["x-opencode-client"] != "cli" || !strings.HasPrefix(boundHeaders["User-Agent"].(string), "opencode/") {
 		t.Fatalf("bound headers = %#v", entry["headers"])
 	}
+	// The channel carries a baseline session id: OpenCode Go rejects a request that
+	// has none, and a host without request interception must still be routable.
+	if boundHeaders["x-opencode-session"] != openCodeChannelSessionBaseline {
+		t.Fatalf("bound session baseline = %#v", boundHeaders["x-opencode-session"])
+	}
 	if name, _ := entry["name"].(string); !strings.HasPrefix(name, "OpenCode Go") {
 		t.Fatalf("bound channel name = %#v", entry["name"])
 	}

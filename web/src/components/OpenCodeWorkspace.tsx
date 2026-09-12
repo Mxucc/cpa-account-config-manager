@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Radio, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Power, Radio, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
-import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
+import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 
 interface OpenCodeWorkspaceProps {
@@ -22,6 +22,12 @@ interface ModelTarget {
   accountID: string;
   label: string;
   models: string[];
+}
+
+interface OpenCodeTestCandidate {
+  kind: OpenCodeKind;
+  accountID: string;
+  label: string;
 }
 
 /** Prices are USD per million tokens; tiny values keep four decimals. */
@@ -101,6 +107,12 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [session, setSession] = useState<OpenCodeSessionSnapshot | null>(null);
   const [priceKind, setPriceKind] = useState<OpenCodeKind>("go");
   const [priceQuery, setPriceQuery] = useState("");
+  const [modelControl, setModelControl] = useState<OpenCodeModelControlSnapshot | null>(null);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [controlTestModel, setControlTestModel] = useState("");
+  const [controlTestTarget, setControlTestTarget] = useState("");
+  const [controlTestResult, setControlTestResult] = useState<OpenCodeModelTestResult | null>(null);
+  const [controlTestError, setControlTestError] = useState("");
   const request = useRef(0);
 
   const handleError = useCallback((caught: unknown) => {
@@ -117,13 +129,14 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     setLoading(true);
     setError("");
     try {
-      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot, channelSnapshot] = await Promise.all([
+      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot, channelSnapshot, controlSnapshot] = await Promise.all([
         api.listOpenCodeAccounts(signal),
         api.listOpenCodeZenAccounts(signal),
         api.getOpenCodeQuota(signal),
         api.getOpenCodePricing(signal),
         api.getOpenCodeSession(signal),
         api.getOpenCodeChannels(signal),
+        api.getOpenCodeModelControl(signal),
       ]);
       if (requestID !== request.current) return;
       setGoAccounts(go.accounts);
@@ -132,7 +145,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       setQuota(quotaSnapshot.results ?? {});
       setPricing(pricingSnapshot.pricing ?? {});
       setSession(sessionSnapshot.session ?? null);
-      setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || pricingSnapshot.pricing?.storage_error || "");
+      setModelControl(controlSnapshot);
+      setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || pricingSnapshot.pricing?.storage_error || controlSnapshot.storage_error || "");
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       if (requestID === request.current) handleError(caught);
@@ -149,6 +163,12 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       request.current += 1;
     };
   }, [refresh, refreshRevision]);
+
+  // Selection is keyed by model id; ids that disappear from the snapshot are dropped.
+  useEffect(() => {
+    const available = new Set((modelControl?.models ?? []).map((row) => row.id));
+    setSelectedModels((current) => current.filter((id) => available.has(id)));
+  }, [modelControl]);
 
   const withBusy = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -265,6 +285,84 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     const response = await api.testOpenCodeModel(target.kind, target.accountID, testModel.trim());
     setTestResult(response.result);
   });
+
+  const toggleModelSelection = (id: string) => setSelectedModels((current) => (
+    current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+  ));
+
+  const applyControlDisabled = (next: string[]) => void withBusy("model-control", async () => {
+    const snapshot = await api.saveOpenCodeModelControl(next);
+    setModelControl(snapshot);
+    setSelectedModels([]);
+  });
+
+  /** Bulk disable joins the current list; bulk enable removes the selection. */
+  const applyControlSelection = (enable: boolean) => {
+    const disabled = modelControl?.disabled ?? [];
+    const selected = new Set(selectedModels);
+    applyControlDisabled(enable ? disabled.filter((id) => !selected.has(id)) : Array.from(new Set([...disabled, ...selectedModels])));
+  };
+
+  /** Accounts that actually reference the model, matched by normalised id. */
+  const controlTestCandidates = (model: string): OpenCodeTestCandidate[] => {
+    const key = normalizePriceKey(model);
+    const candidates: OpenCodeTestCandidate[] = [];
+    for (const account of goAccounts) {
+      if ((account.models ?? []).some((entry) => normalizePriceKey(entry) === key)) {
+        candidates.push({ kind: "go", accountID: account.id, label: account.workspace_id || account.id });
+      }
+    }
+    for (const account of zenAccounts) {
+      if ((account.models ?? []).some((entry) => normalizePriceKey(entry) === key)) {
+        candidates.push({ kind: "zen", accountID: account.id, label: account.name || account.id });
+      }
+    }
+    return candidates;
+  };
+
+  const runControlTest = (model: string, candidate: OpenCodeTestCandidate) => void (async () => {
+    setBusy("model-control-test");
+    setControlTestError("");
+    setControlTestResult(null);
+    try {
+      const response = await api.testOpenCodeModel(candidate.kind, candidate.accountID, model);
+      setControlTestResult(response.result);
+    } catch (caught) {
+      if (caught instanceof api.APIError && caught.status === 401) {
+        onAPIError(caught);
+        return;
+      }
+      setControlTestError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      setBusy("");
+    }
+  })();
+
+  const openControlTest = (model: string) => {
+    setControlTestModel(model);
+    setControlTestResult(null);
+    setControlTestError("");
+    const candidates = controlTestCandidates(model);
+    const first = candidates[0];
+    setControlTestTarget(first ? `${first.kind}:${first.accountID}` : "");
+    if (candidates.length === 1) runControlTest(model, first);
+  };
+
+  const closeControlTest = () => {
+    setControlTestModel("");
+    setControlTestTarget("");
+    setControlTestResult(null);
+    setControlTestError("");
+  };
+
+  const controlRows = modelControl?.models ?? [];
+  const controlDisabled = modelControl?.disabled ?? [];
+  const visibleControlIds = controlRows.map((row) => row.id);
+  const allVisibleSelected = visibleControlIds.length > 0 && visibleControlIds.every((id) => selectedModels.includes(id));
+  const toggleVisibleSelection = () => setSelectedModels((current) => (
+    allVisibleSelected ? current.filter((id) => !visibleControlIds.includes(id)) : Array.from(new Set([...current, ...visibleControlIds]))
+  ));
+  const controlTestCandidatesFor = controlTestModel ? controlTestCandidates(controlTestModel) : [];
 
   const catalogPrices = (priceKind === "go" ? pricing.go : pricing.zen) ?? [];
   const filteredPrices = catalogPrices.filter((price) => {
@@ -687,6 +785,125 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
 
       {activeTab === "models" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("models")}>
+          <section className="opencode-section opencode-model-control" aria-label={tx("ui.opencode_model_control")}>
+            <div className="opencode-section-heading">
+              <div>
+                <strong><Power size={14} /> {tx("ui.opencode_model_control")}</strong>
+                <span>{tx("ui.opencode_model_control_description")}</span>
+              </div>
+              <div className="opencode-section-actions">
+                <span className="opencode-model-count">{tx("ui.opencode_models_disabled_count")}: <strong>{controlDisabled.length}</strong></span>
+                <button className="button button-quiet" type="button" disabled={busy === "model-control" || controlDisabled.length === 0} onClick={() => applyControlDisabled([])}>
+                  <RotateCcw size={15} />{tx("ui.opencode_models_enable_all")}
+                </button>
+              </div>
+            </div>
+            <div className="opencode-model-bulk" role="group" aria-label={tx("ui.opencode_model_control")}>
+              <span className="opencode-model-bulk-count">{tx("ui.models_selected_count", { count: String(selectedModels.length) })}</span>
+              <button className="button button-quiet" type="button" disabled={busy === "model-control" || selectedModels.length === 0} onClick={() => applyControlSelection(false)}>
+                <Power size={15} />{tx("ui.models_disable_selected")}
+              </button>
+              <button className="button button-quiet" type="button" disabled={busy === "model-control" || selectedModels.length === 0} onClick={() => applyControlSelection(true)}>
+                <RotateCcw size={15} />{tx("ui.models_enable_selected")}
+              </button>
+            </div>
+            <div className="opencode-table-wrap">
+              <table className="account-table opencode-table opencode-control-table">
+                <thead>
+                  <tr>
+                    <th className="selection-header">
+                      <input
+                        type="checkbox"
+                        aria-label={tx("ui.select_all")}
+                        checked={allVisibleSelected}
+                        disabled={controlRows.length === 0}
+                        onChange={toggleVisibleSelection}
+                      />
+                    </th>
+                    <th>{tx("ui.model")}</th>
+                    <th>{tx("ui.opencode_models_input_price")}</th>
+                    <th>{tx("ui.opencode_models_output_price")}</th>
+                    <th>{tx("ui.opencode_models_accounts_count")}</th>
+                    <th>{tx("ui.status")}</th>
+                    <th className="actions-header">{tx("ui.actions")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {controlRows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="selection-cell">
+                        <input
+                          type="checkbox"
+                          aria-label={tx("ui.select_account", { account: row.id })}
+                          checked={selectedModels.includes(row.id)}
+                          onChange={() => toggleModelSelection(row.id)}
+                        />
+                      </td>
+                      <td><strong>{row.id}</strong></td>
+                      <td>{row.priced ? formatPriceUSD(row.input_usd_per_million) : tx("ui.opencode_models_unpriced")}</td>
+                      <td>{formatPriceUSD(row.output_usd_per_million)}</td>
+                      <td>{row.accounts}</td>
+                      <td><span className={row.disabled ? "opencode-model-state disabled" : "opencode-model-state enabled"}>{tx(row.disabled ? "ui.disabled" : "ui.enabled")}</span></td>
+                      <td className="actions-cell">
+                        <div className="row-actions" role="group" aria-label={tx("ui.model_actions", { model: row.id })}>
+                          <IconButton label={tx("ui.model_test_action", { model: row.id })} disabled={busy === "model-control-test"} onClick={() => openControlTest(row.id)}>
+                            <Activity size={15} />
+                          </IconButton>
+                          <IconButton
+                            label={row.disabled ? tx("ui.model_enable_action", { model: row.id }) : tx("ui.model_disable_action", { model: row.id })}
+                            disabled={busy === "model-control"}
+                            onClick={() => applyControlDisabled(row.disabled ? controlDisabled.filter((id) => id !== row.id) : [...controlDisabled, row.id])}
+                          >
+                            <Power size={15} />
+                          </IconButton>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!loading && controlRows.length === 0 ? <tr><td colSpan={7}>{tx("ui.opencode_models_empty")}</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
+            {controlTestModel ? (
+              <div className="opencode-model-test" role="region" aria-label={tx("ui.model_test_action", { model: controlTestModel })}>
+                <div className="codex-model-test-target">
+                  <label className="field-block">
+                    <span>{tx("ui.model_test_target")}</span>
+                    <select value={controlTestTarget} onChange={(event) => setControlTestTarget(event.target.value)} aria-label={tx("ui.model_test_target")}>
+                      {controlTestCandidatesFor.map((candidate) => (
+                        <option key={`${candidate.kind}:${candidate.accountID}`} value={`${candidate.kind}:${candidate.accountID}`}>{candidate.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="codex-model-test-actions">
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      disabled={busy === "model-control-test" || controlTestCandidatesFor.length === 0}
+                      onClick={() => {
+                        const candidate = controlTestCandidatesFor.find((entry) => `${entry.kind}:${entry.accountID}` === controlTestTarget) ?? controlTestCandidatesFor[0];
+                        if (candidate) runControlTest(controlTestModel, candidate);
+                      }}
+                    >
+                      {busy === "model-control-test" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}{tx("ui.test")}
+                    </button>
+                    <button className="button button-quiet" type="button" onClick={() => { setControlTestModel(""); setControlTestResult(null); setControlTestError(""); }}>{tx("ui.close")}</button>
+                  </div>
+                </div>
+                {controlTestCandidatesFor.length === 0 ? <p className="codex-model-test-note" role="status">{tx("ui.model_test_no_target")}</p> : null}
+                {controlTestError ? <p className="codex-model-test-error" role="alert">{controlTestError}</p> : null}
+                {controlTestResult ? (
+                  <dl className="codex-model-test-result">
+                    <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{controlTestResult.status}</dd></div>
+                    <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{controlTestResult.reason_code || "-"}</dd></div>
+                    <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{controlTestResult.status_code || "-"}</dd></div>
+                    <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{typeof controlTestResult.latency_ms === "number" ? `${controlTestResult.latency_ms} ms` : "-"}</dd></div>
+                  </dl>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+
           <section className="opencode-section opencode-pricing" aria-label={tx("ui.opencode_pricing")}>
             <div className="opencode-section-heading">
               <div>

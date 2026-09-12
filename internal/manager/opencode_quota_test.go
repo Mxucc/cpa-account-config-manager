@@ -364,3 +364,73 @@ func TestOpenCodeQuotaPersistenceFailureIsSanitized(t *testing.T) {
 		t.Fatalf("StorageError leaked sensitive details: %q", service.Snapshot().StorageError)
 	}
 }
+
+// An account that was created before the workspace (or the key) was known must be
+// completable in place: deleting and re-adding it would drop the quota history binding and
+// the CPA channel that already references it.
+func TestOpenCodeCredentialCanBeCompletedInPlace(t *testing.T) {
+	dataDir := t.TempDir()
+	service := NewOpenCodeQuotaService()
+	service.Configure(Config{DataDir: dataDir})
+	accountID, errSave := service.SaveAccount("wrk_old", "cookie-secret", "")
+	if errSave != nil {
+		t.Fatalf("SaveAccount() error = %v", errSave)
+	}
+	view, errView := service.accountView(accountID)
+	if errView != nil {
+		t.Fatalf("accountView() error = %v", errView)
+	}
+	if view.KeySet || !view.CookieSet {
+		t.Fatalf("an account without a key must report cookie_set and no key_set: %#v", view)
+	}
+
+	// Add the missing API key only; the workspace and cookie stay untouched.
+	updated, errUpdate := service.UpdateCredentials(accountID, OpenCodeCredentialPatch{APIKey: "sk-new-key"})
+	if errUpdate != nil {
+		t.Fatalf("UpdateCredentials() error = %v", errUpdate)
+	}
+	if !updated.KeySet || updated.WorkspaceID != "wrk_old" || !updated.CookieSet {
+		t.Fatalf("partial update changed unrelated fields: %#v", updated)
+	}
+	if len(updated.Models) != 0 {
+		t.Fatalf("a changed key must invalidate the cached catalog: %#v", updated.Models)
+	}
+
+	// Correct the workspace and the cookie in the same call.
+	corrected, errCorrect := service.UpdateCredentials(accountID, OpenCodeCredentialPatch{
+		WorkspaceID: "wrk_corrected",
+		AuthCookie:  "auth=Fe26.2*rotated",
+	})
+	if errCorrect != nil {
+		t.Fatalf("UpdateCredentials() error = %v", errCorrect)
+	}
+	if corrected.WorkspaceID != "wrk_corrected" {
+		t.Fatalf("workspace = %q", corrected.WorkspaceID)
+	}
+	stored, errStored := service.accountView(accountID)
+	if errStored != nil {
+		t.Fatalf("accountView() error = %v", errStored)
+	}
+	if !stored.CookieSet || !stored.KeySet || stored.WorkspaceID != "wrk_corrected" {
+		t.Fatalf("stored credential = %#v", stored)
+	}
+	// The "auth=" prefix is stripped exactly like SaveAccount does.
+	encoded, errEncode := os.ReadFile(openCodeQuotaStorePath(dataDir))
+	if errEncode != nil {
+		t.Fatalf("read store: %v", errEncode)
+	}
+	if strings.Contains(string(encoded), "auth=Fe26.2*rotated") {
+		t.Fatalf("the stored cookie kept its auth= prefix")
+	}
+
+	// Two accounts cannot claim the same workspace.
+	if _, errOther := service.SaveAccount("wrk_other", "cookie-other", "sk-other"); errOther != nil {
+		t.Fatalf("SaveAccount() error = %v", errOther)
+	}
+	if _, errClash := service.UpdateCredentials(accountID, OpenCodeCredentialPatch{WorkspaceID: "wrk_other"}); errClash == nil {
+		t.Fatalf("a duplicate workspace must be rejected")
+	}
+	if _, errMissing := service.UpdateCredentials("missing-id", OpenCodeCredentialPatch{APIKey: "sk-x"}); errMissing == nil {
+		t.Fatalf("an unknown account must be rejected")
+	}
+}

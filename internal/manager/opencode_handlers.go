@@ -58,22 +58,41 @@ func (a *App) handleOpenCodeAccounts(_ context.Context, req cpaapi.ManagementReq
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid OpenCode account request"})
 		}
 		startedAt := time.Now().UTC()
-		if strings.TrimSpace(request.WorkspaceID) == "" {
-			// Key-only update: keep the existing session cookie and catalog rules.
-			if strings.TrimSpace(request.AccountID) == "" {
-				return jsonResponse(http.StatusBadRequest, map[string]any{"error": "workspace_id or account_id is required"})
-			}
-			view, errKey := a.opencode.SetAPIKey(request.AccountID, request.APIKey)
-			if errKey != nil {
-				return jsonResponse(http.StatusNotFound, map[string]any{"error": "OpenCode account was not found"})
+		// An account_id targets one stored credential, so workspace, cookie and key can be
+		// completed or corrected in place. An empty field keeps the stored value.
+		if accountID := strings.TrimSpace(request.AccountID); accountID != "" && strings.TrimSpace(request.WorkspaceID) == "" {
+			view, errUpdate := a.opencode.UpdateCredentials(accountID, OpenCodeCredentialPatch{
+				WorkspaceID: request.WorkspaceID,
+				AuthCookie:  request.AuthCookie,
+				APIKey:      request.APIKey,
+			})
+			if errUpdate != nil {
+				status := http.StatusBadRequest
+				if strings.Contains(errUpdate.Error(), "was not found") {
+					status = http.StatusNotFound
+				}
+				a.operations.Record(OperationEntry{
+					Category: OperationCategoryOpenCode, Action: OperationActionOpenCodeSave,
+					Status: OperationStatusFailed, Source: OperationSourceManual, Scope: OperationScopeSingle,
+					TargetCount: 1, Failed: 1, StartedAt: startedAt, FinishedAt: time.Now().UTC(), ReasonCode: "invalid_credential",
+				})
+				return jsonResponse(status, map[string]any{"error": errUpdate.Error()})
 			}
 			if strings.TrimSpace(request.APIKey) != "" {
 				// A new key should immediately show which models it can reach.
-				if refreshed, errRefresh := a.opencode.RefreshModels(context.Background(), request.AccountID, 0); errRefresh == nil {
+				if refreshed, errRefresh := a.opencode.RefreshModels(context.Background(), accountID, 0); errRefresh == nil {
 					view = refreshed
 				}
 			}
+			a.operations.Record(OperationEntry{
+				Category: OperationCategoryOpenCode, Action: OperationActionOpenCodeSave,
+				Status: OperationStatusSucceeded, Source: OperationSourceManual, Scope: OperationScopeSingle,
+				TargetCount: 1, Succeeded: 1, StartedAt: startedAt, FinishedAt: time.Now().UTC(),
+			})
 			return jsonResponse(http.StatusOK, map[string]any{"account": view})
+		}
+		if strings.TrimSpace(request.WorkspaceID) == "" {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "workspace_id or account_id is required"})
 		}
 		accountID, errSave := a.opencode.SaveAccount(request.WorkspaceID, request.AuthCookie, request.APIKey)
 		if errSave != nil {

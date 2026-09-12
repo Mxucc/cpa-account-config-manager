@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Power, Radio, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Power, Radio, RefreshCw, RotateCcw, Save, Search, Trash2, Wrench } from "lucide-react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
@@ -115,8 +115,11 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [controlTestError, setControlTestError] = useState("");
   // The row whose write is in flight, so the clicked button can show its own progress.
   const [pendingModel, setPendingModel] = useState("");
+  // The account whose credential editor is open, so a workspace or cookie can be completed
+  // in place instead of deleting and re-adding the account.
+  const [editingAccount, setEditingAccount] = useState("");
+  const [credentialDraft, setCredentialDraft] = useState({ workspace: "", cookie: "", key: "" });
   const request = useRef(0);
-
   const handleError = useCallback((caught: unknown) => {
     if (caught instanceof api.APIError && caught.status === 401) {
       onAPIError(caught);
@@ -194,6 +197,28 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     setGoAccounts((await api.listOpenCodeAccounts()).accounts);
     onNotice(tx("ui.opencode_account_saved"));
   });
+
+  /**
+   * Complete or correct a stored credential. The workspace id is the upstream identity and
+   * the API key drives the catalog, tests and routing, so an account created before either
+   * value was known must be repairable without deleting it and losing its CPA binding.
+   */
+  const saveCredentials = (accountID: string) => void withBusy(`cred-${accountID}`, async () => {
+    const response = await api.updateOpenCodeAccountCredentials(accountID, {
+      workspaceID: credentialDraft.workspace.trim(),
+      authCookie: credentialDraft.cookie.trim(),
+      apiKey: credentialDraft.key.trim(),
+    });
+    setGoAccounts((current) => current.map((account) => (account.id === accountID ? { ...account, ...response.account } : account)));
+    setEditingAccount("");
+    setCredentialDraft({ workspace: "", cookie: "", key: "" });
+    onNotice(tx("ui.opencode_credentials_saved"));
+  });
+
+  const openCredentials = (accountID: string) => {
+    setEditingAccount((current) => (current === accountID ? "" : accountID));
+    setCredentialDraft({ workspace: "", cookie: "", key: "" });
+  };
 
   const addZenAccount = () => void withBusy("add-zen", async () => {
     if (!newZenKey.trim()) return;
@@ -554,9 +579,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
             </div>
             {adding ? (
               <div className="opencode-form">
-                <label className="field-block"><span>{tx("ui.opencode_workspace_id")}</span><input value={newWorkspace} onChange={(event) => setNewWorkspace(event.target.value)} autoComplete="off" /></label>
-                <label className="field-block"><span>{tx("ui.opencode_auth_cookie")}</span><input type="password" value={newCookie} onChange={(event) => setNewCookie(event.target.value)} autoComplete="off" /></label>
-                <label className="field-block"><span>{tx("ui.opencode_api_key")}</span><input type="password" value={newKey} onChange={(event) => setNewKey(event.target.value)} autoComplete="off" /></label>
+                <label className="field-block"><span>{tx("ui.opencode_workspace_id")}</span><input value={newWorkspace} placeholder={tx("ui.opencode_workspace_placeholder")} onChange={(event) => setNewWorkspace(event.target.value)} autoComplete="off" /></label>
+                <label className="field-block"><span>{tx("ui.opencode_auth_cookie")}</span><input type="password" value={newCookie} placeholder={tx("ui.opencode_auth_cookie_placeholder")} onChange={(event) => setNewCookie(event.target.value)} autoComplete="off" /></label>
+                <label className="field-block"><span>{tx("ui.opencode_api_key")}</span><input type="password" value={newKey} placeholder={tx("ui.opencode_key_placeholder")} onChange={(event) => setNewKey(event.target.value)} autoComplete="off" /></label>
                 <div className="opencode-form-actions">
                   <button className="button button-primary" type="button" disabled={busy === "add-go" || !newWorkspace.trim() || !newCookie.trim()} onClick={addGoAccount}>
                     {busy === "add-go" ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}{tx("ui.save")}
@@ -580,7 +605,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                   {goAccounts.map((account) => {
                     const result = quota[account.id];
                     return (
-                      <tr key={account.id}>
+                      <Fragment key={account.id}>
+                        <tr>
                         <td><strong>{account.workspace_id}</strong></td>
                         <td>
                           <div className="opencode-key-cell">
@@ -639,6 +665,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                             <IconButton label={tx("ui.opencode_bind_for", { account: account.workspace_id })} disabled={busy === `bind-${account.id}` || !account.key_set} onClick={() => bind("go", account.id)}>
                               {busy === `bind-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <Link2 size={15} />}
                             </IconButton>
+                            <IconButton label={tx("ui.opencode_edit_credentials_for", { account: account.workspace_id })} disabled={busy === `cred-${account.id}`} onClick={() => openCredentials(account.id)}>
+                              <Wrench size={15} />
+                            </IconButton>
                             <IconButton className="button-danger" label={tx("ui.opencode_remove_for", { account: account.workspace_id })} onClick={() => void withBusy(`remove-${account.id}`, async () => {
                               await api.removeOpenCodeAccount(account.id);
                               setGoAccounts((await api.listOpenCodeAccounts()).accounts);
@@ -647,6 +676,46 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                           </div>
                         </td>
                       </tr>
+                      {editingAccount === account.id ? (
+                        <tr className="opencode-credential-row">
+                          <td colSpan={5}>
+                            <div className="opencode-form">
+                              <label className="field-block">
+                                <span>{tx("ui.opencode_workspace_id")}</span>
+                                <input value={credentialDraft.workspace} placeholder={account.workspace_id} autoComplete="off" onChange={(event) => setCredentialDraft((current) => ({ ...current, workspace: event.target.value }))} />
+                              </label>
+                              <label className="field-block">
+                                <span>{tx("ui.opencode_auth_cookie")}</span>
+                                <input type="password" value={credentialDraft.cookie} placeholder={account.cookie_set ? tx("ui.opencode_credentials_keep") : tx("ui.opencode_auth_cookie_placeholder")} autoComplete="off" onChange={(event) => setCredentialDraft((current) => ({ ...current, cookie: event.target.value }))} />
+                              </label>
+                              <label className="field-block">
+                                <span>{tx("ui.opencode_api_key")}</span>
+                                <input type="password" value={credentialDraft.key} placeholder={account.key_set ? tx("ui.opencode_credentials_keep") : tx("ui.opencode_key_placeholder")} autoComplete="off" onChange={(event) => setCredentialDraft((current) => ({ ...current, key: event.target.value }))} />
+                              </label>
+                              <div className="opencode-form-actions">
+                                <button className="button button-primary" type="button" disabled={busy === `cred-${account.id}` || !credentialDraft.workspace.trim() && !credentialDraft.cookie.trim() && !credentialDraft.key.trim()} onClick={() => saveCredentials(account.id)}>
+                                  {busy === `cred-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save")}
+                                </button>
+                                <button className="button button-quiet" type="button" onClick={() => setEditingAccount("")}>{tx("ui.cancel")}</button>
+                              </div>
+                              <p className="opencode-note">{tx("ui.opencode_credentials_keep_hint")}</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                      {!account.key_set || !account.cookie_set ? (
+                        <tr className="opencode-credential-row">
+                          <td colSpan={5}>
+                            <p className="opencode-credential-warning" role="status">
+                              <AlertTriangle size={14} />
+                              {!account.cookie_set ? tx("ui.opencode_cookie_missing") : ""}
+                              {!account.cookie_set && !account.key_set ? " · " : ""}
+                              {!account.key_set ? tx("ui.opencode_incomplete_credentials") : ""}
+                            </p>
+                          </td>
+                        </tr>
+                      ) : null}
+                      </Fragment>
                     );
                   })}
                   {!loading && goAccounts.length === 0 ? <tr><td colSpan={5}>{tx("ui.opencode_no_accounts")}</td></tr> : null}

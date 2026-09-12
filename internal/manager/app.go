@@ -822,10 +822,18 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	}
 	path := normalizedRequestPath(req.Path)
 	if method == http.MethodGet && path == resourceRoutePrefix+"/index.html" {
+		// A self-update may have staged a newer interface next to the private state; serving it
+		// lets interface-only updates take effect on a page refresh instead of a CPA restart.
+		body := a.indexHTML
+		if dataDir := a.configSnapshot().DataDir; dataDir != "" {
+			if staged, ok := readUIOverride(dataDir); ok {
+				body = staged
+			}
+		}
 		return cpaapi.ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
-			Body:       append([]byte(nil), a.indexHTML...),
+			Body:       append([]byte(nil), body...),
 		}
 	}
 	if configErr := a.configError(); configErr != "" {

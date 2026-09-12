@@ -2,6 +2,7 @@ package releasepack
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -18,11 +19,13 @@ var (
 )
 
 type Options struct {
-	PluginID  string
-	Version   string
-	GOOS      string
-	GOARCH    string
-	Library   string
+	PluginID string
+	Version  string
+	GOOS     string
+	GOARCH   string
+	Library  string
+	// UI is the built single-file interface that ships as ui/index.html in the archive.
+	UI        string
 	OutputDir string
 }
 
@@ -82,6 +85,26 @@ func Pack(options Options) (Result, error) {
 	entry, errEntry := zipWriter.CreateHeader(header)
 	if errEntry == nil {
 		_, errEntry = entry.Write(libraryData)
+	}
+	// The built interface travels with the release so the plugin can stage it and serve it
+	// straight from disk: interface-only updates then apply on a page refresh instead of
+	// waiting for a CPA restart. Older plugins ignore the extra member.
+	if errEntry == nil && options.UI != "" {
+		uiData, errReadUI := os.ReadFile(options.UI)
+		if errReadUI != nil {
+			errEntry = fmt.Errorf("read interface: %w", errReadUI)
+		} else if len(bytes.TrimSpace(uiData)) == 0 {
+			errEntry = fmt.Errorf("interface file %s is empty", options.UI)
+		} else {
+			uiHeader := &zip.FileHeader{Name: "ui/index.html", Method: zip.Deflate}
+			uiHeader.SetMode(0o644)
+			uiEntry, errCreateUI := zipWriter.CreateHeader(uiHeader)
+			if errCreateUI != nil {
+				errEntry = errCreateUI
+			} else {
+				_, errEntry = uiEntry.Write(uiData)
+			}
+		}
 	}
 	if errCloseZip := zipWriter.Close(); errEntry == nil {
 		errEntry = errCloseZip

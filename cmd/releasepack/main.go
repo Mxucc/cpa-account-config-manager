@@ -14,6 +14,7 @@ func main() {
 	goos := flag.String("goos", "", "target GOOS")
 	goarch := flag.String("goarch", "", "target GOARCH")
 	library := flag.String("library", "", "path to the built dynamic library")
+	ui := flag.String("ui", "", "path to the built single-file interface (optional)")
 	outputDir := flag.String("out", "dist/release", "release output directory")
 	flag.Parse()
 
@@ -23,6 +24,7 @@ func main() {
 		GOOS:      *goos,
 		GOARCH:    *goarch,
 		Library:   *library,
+		UI:        *ui,
 		OutputDir: *outputDir,
 	})
 	if errPack != nil {

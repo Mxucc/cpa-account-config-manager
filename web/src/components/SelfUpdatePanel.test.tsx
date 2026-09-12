@@ -21,6 +21,8 @@ function snapshot(overrides: Partial<SelfUpdateSnapshot> = {}): SelfUpdateSnapsh
     plugin_file_source: "setting",
     plugin_file_exists: true,
     restart_required: false,
+    ui_updated: false,
+    interface_refresh_only: false,
     can_install: true,
     ...overrides,
   };

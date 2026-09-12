@@ -3015,6 +3015,10 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .opencode-section-heading .button { display: inline-flex; align-items: center; gap: 6px; }
 .opencode-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; align-items: end; }
 .opencode-form-actions { display: flex; align-items: center; gap: 8px; }
+/* A credential editor or a completeness warning spans the account table width. */
+.opencode-credential-row > td { padding: 0; background: color-mix(in srgb, var(--bg-secondary) 62%, transparent); }
+.opencode-credential-row .opencode-form { padding: 12px 16px; }
+.opencode-credential-warning { display: flex; align-items: center; gap: 8px; margin: 0; padding: 9px 16px; color: var(--warning); border-top: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border-color)); font-size: calc(10px * var(--font-size-scale)); }
 .opencode-form-actions .button { display: inline-flex; align-items: center; gap: 6px; }
 .opencode-note { grid-column: 1 / -1; margin: 0; color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); line-height: 1.45; }
 .opencode-table-wrap { min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }

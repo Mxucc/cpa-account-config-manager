@@ -56,7 +56,10 @@ type OpenCodeAccountView struct {
 	BaseURL     string `json:"base_url,omitempty"`
 	// KeySet reports whether a Go API key is stored. The key itself is never
 	// returned by the management API.
-	KeySet          bool      `json:"key_set"`
+	KeySet bool `json:"key_set"`
+	// CookieSet reports whether the auth cookie is stored, so the UI can show an
+	// incomplete credential instead of waiting for the next failed request.
+	CookieSet       bool      `json:"cookie_set"`
 	Models          []string  `json:"models,omitempty"`
 	ModelsError     string    `json:"models_error,omitempty"`
 	ModelsFetchedAt time.Time `json:"models_fetched_at,omitempty"`
@@ -69,6 +72,7 @@ func openCodeAccountView(account OpenCodeAccount) OpenCodeAccountView {
 		WorkspaceID:     account.WorkspaceID,
 		BaseURL:         strings.TrimSpace(account.BaseURL),
 		KeySet:          strings.TrimSpace(account.APIKey) != "",
+		CookieSet:       strings.TrimSpace(account.AuthCookie) != "",
 		Models:          append([]string(nil), account.Models...),
 		ModelsError:     account.ModelsError,
 		ModelsFetchedAt: account.ModelsFetchedAt,
@@ -344,6 +348,72 @@ func (s *OpenCodeQuotaService) SetAPIKey(id, apiKey string) (OpenCodeAccountView
 		return openCodeAccountView(s.accounts[index]), nil
 	}
 	return OpenCodeAccountView{}, fmt.Errorf("OpenCode account was not found")
+}
+
+// OpenCodeCredentialPatch updates the stored credential of one existing account. An empty
+// field keeps the stored value, so an account created before the workspace was known can be
+// completed in place instead of being deleted and re-added.
+type OpenCodeCredentialPatch struct {
+	WorkspaceID string
+	AuthCookie  string
+	APIKey      string
+}
+
+// UpdateCredentials applies a partial credential update. The workspace id identifies the
+// upstream workspace, so changing it onto a workspace that another account already uses is
+// rejected rather than merged silently.
+func (s *OpenCodeQuotaService) UpdateCredentials(id string, patch OpenCodeCredentialPatch) (OpenCodeAccountView, error) {
+	if s == nil {
+		return OpenCodeAccountView{}, fmt.Errorf("OpenCode quota service is unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return OpenCodeAccountView{}, fmt.Errorf("account_id is required")
+	}
+	workspaceID := strings.TrimSpace(patch.WorkspaceID)
+	authCookie := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(patch.AuthCookie), "auth="))
+	apiKey := strings.TrimSpace(patch.APIKey)
+	if len(apiKey) > maxAccountConfigIDLength || len(authCookie) > maxAccountConfigIDLength {
+		return OpenCodeAccountView{}, fmt.Errorf("the credential value is too long")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	index := -1
+	for candidate := range s.accounts {
+		if s.accounts[candidate].ID == id {
+			index = candidate
+			break
+		}
+	}
+	if index < 0 {
+		return OpenCodeAccountView{}, fmt.Errorf("OpenCode account was not found")
+	}
+	if workspaceID != "" && workspaceID != s.accounts[index].WorkspaceID {
+		for candidate := range s.accounts {
+			if candidate != index && s.accounts[candidate].WorkspaceID == workspaceID {
+				return OpenCodeAccountView{}, fmt.Errorf("workspace %s is already configured", workspaceID)
+			}
+		}
+	}
+	previous := s.accounts[index]
+	if workspaceID != "" {
+		s.accounts[index].WorkspaceID = workspaceID
+	}
+	if authCookie != "" {
+		s.accounts[index].AuthCookie = authCookie
+	}
+	if apiKey != "" {
+		s.accounts[index].APIKey = apiKey
+		// A changed key can reach a different catalog.
+		s.accounts[index].Models = nil
+		s.accounts[index].ModelsError = ""
+		s.accounts[index].ModelsFetchedAt = time.Time{}
+	}
+	if errPersist := s.persistLocked(); errPersist != nil {
+		s.accounts[index] = previous
+		return OpenCodeAccountView{}, errPersist
+	}
+	return openCodeAccountView(s.accounts[index]), nil
 }
 
 // accountView returns the redacted view for one account.

@@ -75,9 +75,14 @@ type SelfUpdateSnapshot struct {
 	AppliedVersion  string `json:"applied_version,omitempty"`
 	BackupPath      string `json:"backup_path,omitempty"`
 	RestartRequired bool   `json:"restart_required"`
-	CanInstall      bool   `json:"can_install"`
-	Error           string `json:"error,omitempty"`
-	StorageError    string `json:"storage_error,omitempty"`
+	// UIUpdated reports that the release also delivered the interface, which is served from
+	// disk on the next page refresh even though the library still needs a restart.
+	UIUpdated            bool   `json:"ui_updated"`
+	UIPath               string `json:"ui_path,omitempty"`
+	InterfaceRefreshOnly bool   `json:"interface_refresh_only"`
+	CanInstall           bool   `json:"can_install"`
+	Error                string `json:"error,omitempty"`
+	StorageError         string `json:"storage_error,omitempty"`
 }
 
 type persistedSelfUpdate struct {
@@ -704,6 +709,16 @@ func (s *SelfUpdateService) Install(ctx context.Context) (SelfUpdateSnapshot, er
 	if errLibrary != nil {
 		return s.Snapshot(), errLibrary
 	}
+	// A release may also carry the built interface. Staging it here means interface-only
+	// changes apply on the next page refresh, while the library still needs a restart.
+	stagedUI := ""
+	uiUpdated := false
+	if uiPayload, ok := selfUpdateExtractUI(archive); ok {
+		if path, errUI := stageUIOverride(s.dataDir(), uiPayload); errUI == nil {
+			stagedUI = path
+			uiUpdated = true
+		}
+	}
 	staged, errStage := s.stageLibrary(pluginFile, library)
 	if errStage != nil {
 		return s.Snapshot(), errStage
@@ -716,6 +731,9 @@ func (s *SelfUpdateService) Install(ctx context.Context) (SelfUpdateSnapshot, er
 		s.state.AppliedVersion = latest
 		s.state.BackupPath = backup
 		s.state.Error = ""
+		s.state.UIUpdated = uiUpdated
+		s.state.UIPath = stagedUI
+		s.state.InterfaceRefreshOnly = uiUpdated && !s.state.RestartRequired
 		s.policy.AppliedVersion = latest
 		s.policy.BackupPath = backup
 		s.policy.StagedPath = staged
@@ -807,6 +825,49 @@ func selfUpdateExtractLibrary(archive []byte) ([]byte, error) {
 		return payload, nil
 	}
 	return nil, errors.New("the release archive carries no plugin library")
+}
+
+// dataDir reports the configured private state directory under the lock.
+func (s *SelfUpdateService) dataDir() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.config.DataDir
+}
+
+// selfUpdateExtractUI returns the built interface carried by a release, when it has one.
+// Older releases only contain the library, which is not an error: the embedded interface
+// stays in use and an update still needs the usual restart.
+func selfUpdateExtractUI(archive []byte) ([]byte, bool) {
+	reader, errReader := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if errReader != nil {
+		return nil, false
+	}
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		name := filepath.ToSlash(file.Name)
+		if name != uiIndexArchiveMember {
+			continue
+		}
+		if file.UncompressedSize64 > uiOverrideMaxBytes {
+			return nil, false
+		}
+		opened, errOpen := file.Open()
+		if errOpen != nil {
+			return nil, false
+		}
+		payload, errRead := io.ReadAll(io.LimitReader(opened, uiOverrideMaxBytes+1))
+		opened.Close()
+		if errRead != nil || len(payload) == 0 || len(payload) > uiOverrideMaxBytes {
+			return nil, false
+		}
+		if !looksLikeHTMLDocument(payload) {
+			return nil, false
+		}
+		return payload, true
+	}
+	return nil, false
 }
 
 // stageLibrary writes the downloaded library next to the installed one. The caller passes

@@ -1175,6 +1175,26 @@ export async function saveOpenCodeAccountKey(accountID: string, apiKey: string):
 	});
 }
 
+/**
+ * Complete or correct one stored credential. An omitted or empty field keeps the stored
+ * value, so an account created before the workspace (or the key) was known can be repaired
+ * in place instead of being deleted and re-added.
+ */
+export async function updateOpenCodeAccountCredentials(
+	accountID: string,
+	patch: { workspaceID?: string; authCookie?: string; apiKey?: string },
+): Promise<{ account: import("../types").OpenCodeAccountView }> {
+	return requestRecord<{ account: import("../types").OpenCodeAccountView }>("/opencode/accounts", {
+		method: "POST",
+		body: JSON.stringify({
+			account_id: accountID,
+			...(patch.workspaceID ? { workspace_id: patch.workspaceID } : {}),
+			...(patch.authCookie ? { auth_cookie: patch.authCookie } : {}),
+			...(patch.apiKey ? { api_key: patch.apiKey } : {}),
+		}),
+	});
+}
+
 export async function removeOpenCodeAccount(accountID: string): Promise<void> {
 	await request<{ removed: boolean }>("/opencode/accounts?account_id=" + encodeURIComponent(accountID), {
 		method: "DELETE",

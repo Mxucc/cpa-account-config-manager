@@ -198,6 +198,9 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
       {snapshot?.applied_version ? (
         <div className="self-update-verified" role="status"><HardDrive size={16} /><span>{tx("ui.self_update_installed_version", { version: snapshot.applied_version })}</span></div>
       ) : null}
+      {snapshot?.ui_updated ? (
+        <div className="self-update-verified" role="status"><CheckCircle2 size={16} /><span>{tx("ui.self_update_interface_updated")}</span></div>
+      ) : null}
       {snapshot?.restart_required ? (
         <div className="settings-update-callout" role="status"><RotateCcw size={18} /><strong>{tx("ui.self_update_restart_required")}</strong></div>
       ) : null}

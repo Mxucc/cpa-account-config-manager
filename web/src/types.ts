@@ -1173,6 +1173,11 @@ export interface SelfUpdateSnapshot {
   applied_version?: string;
   backup_path?: string;
   restart_required: boolean;
+  /** The release also delivered the interface, which is live after a page refresh. */
+  ui_updated: boolean;
+  ui_path?: string;
+  /** True when only the interface changed, so refreshing the page is enough. */
+  interface_refresh_only: boolean;
   can_install: boolean;
   error?: string;
   storage_error?: string;
@@ -1324,7 +1329,10 @@ export interface OpenCodeAccountView {
   workspace_id: string;
   base_url?: string;
   /** Whether a Go API key is stored. The key itself is never returned. */
+  /** Whether a Go API key is stored. The key itself is never returned. */
   key_set?: boolean;
+  /** Whether the auth cookie is stored, so an incomplete credential is visible. */
+  cookie_set?: boolean;
   /** Model catalog read from the upstream; ids are not secret. */
   models?: string[];
   models_error?: string;

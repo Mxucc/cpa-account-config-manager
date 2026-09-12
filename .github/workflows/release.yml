@@ -150,6 +150,7 @@ jobs:
             -goos "${{ matrix.goos }}" \
             -goarch "${{ matrix.goarch }}" \
             -library "dist/cpa-account-config-manager.${{ matrix.ext }}" \
+            -ui internal/web/dist/index.html \
             -out dist/release
 
       - name: Upload build artifact

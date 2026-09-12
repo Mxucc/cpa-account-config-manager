@@ -21,6 +21,7 @@ function goAccountView(overrides: Record<string, unknown> = {}): Record<string, 
     id: GO_ACCOUNT_ID,
     workspace_id: GO_WORKSPACE,
     key_set: true,
+    cookie_set: true,
     models: ["gpt-5.1", "claude-sonnet-4", "gemini-2.5-pro", "o4-mini"],
     models_error: "",
     models_fetched_at: "2026-09-01T00:00:00Z",
@@ -328,6 +329,42 @@ describe("OpenCodeWorkspace", () => {
     expect(JSON.parse(String(request?.init.body))).toEqual({ account_id: GO_ACCOUNT_ID, api_key: "sk-go-replacement-4321" });
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith("OpenCode API 密钥已保存"));
     await waitFor(() => expect(keyInput).toHaveValue(""));
+  });
+
+  it("completes an incomplete credential in place and warns while it is incomplete", async () => {
+    const user = userEvent.setup();
+    // The workspace and cookie are stored, but the API key never was: the account cannot
+    // reach the catalog, the model test, or the CPA route until it is completed.
+    const requests = openCodeFetchMock({ accounts: [goAccountView({ key_set: false })] });
+    const onNotice = vi.fn();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+
+    await selectTab(user, "Go 账号");
+    const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
+    expect(await within(section).findByText(/凭据不完整/)).toBeInTheDocument();
+
+    await user.click(within(section).getByRole("button", { name: `编辑 ${GO_WORKSPACE} 的凭据` }));
+    // Scope to the editor row: the key column also has a save button.
+    const editorRow = within(section).getByLabelText("Auth Cookie（auth 的值）").closest("tr") as HTMLElement;
+    const editor = within(editorRow).getByRole("button", { name: "保存" });
+    const cookieField = within(editorRow).getByLabelText("Auth Cookie（auth 的值）");
+    const keyField = within(editorRow).getByLabelText("OpenCode API 密钥");
+    await user.type(cookieField, "Fe26.2*rotated-cookie");
+    await user.type(keyField, "sk-completed-key");
+    await user.click(editor);
+
+    await waitFor(() => {
+      const writes = requests.filter(({ url, init }) => url.endsWith("/opencode/accounts") && init.method === "POST");
+      const body = JSON.parse(String(writes.at(-1)?.init.body));
+      // Only the fields the operator filled are sent: the workspace stays as recorded.
+      expect(body).toEqual({
+        account_id: GO_ACCOUNT_ID,
+        auth_cookie: "Fe26.2*rotated-cookie",
+        api_key: "sk-completed-key",
+      });
+    });
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("凭据已更新"));
   });
 
   it("loads models through the models route and updates the model count with the loaded notice", async () => {

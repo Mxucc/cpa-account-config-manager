@@ -77,6 +77,7 @@ type App struct {
 	newAccountProbe          *newAccountModelProbeEngine
 	quotaBootstrap           *accountQuotaMetadataBootstrap
 	managementDoer           HTTPDoer
+	authDir                  string
 	requestHooks             *RequestHook
 	quotaGuard               *AccountQuotaGuard
 	concurrency              *AccountConcurrencyService
@@ -245,6 +246,9 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	accounts.SetQuotaPolicies(quotaPolicies)
 	accounts.SetCodexIdentityOverrides(codexIdentityOverrides)
 	accounts.SetObserver(accountObserverGroup{newAccountProbe, quotaBootstrap})
+	// The plugin's own state follows the discovered CPA auth directory, exactly like the durable
+	// usage snapshot, so an implicit relative data directory cannot hide it after a restart.
+	accounts.AddUsageStorageDiscoverer(app)
 	policies.SetObserver(newAccountProbe)
 	policies.SetModelPolicyApplier(app.applyConditionalModelPolicy)
 	policies.SetGlobalPolicy(globalPolicy)
@@ -266,6 +270,131 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 
 func (a *App) Configure(raw []byte) {
 	a.ConfigureHost(raw, cpaapi.SchemaVersion)
+}
+
+// DiscoverAuthStorage keeps the plugin's private state beside CPA's auth files. The host gives
+// the plugin absolute auth file paths as soon as an account list is read, which is far more
+// stable than the implicit relative data directory that follows the working directory of
+// whoever started CPA. An operator-pinned `data_dir` is never overridden.
+func (a *App) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
+	if a == nil {
+		return
+	}
+	authDir := discoverUsageAuthDir(entries)
+	if authDir == "" {
+		return
+	}
+	a.mu.RLock()
+	previousDir := a.authDir
+	configured := a.config
+	reconfigured := a.configErr == "" && configured.DataDir != ""
+	a.mu.RUnlock()
+	if !reconfigured || (previousDir == authDir && !isImplicitStateDir(configured)) {
+		return
+	}
+	a.mu.Lock()
+	a.authDir = authDir
+	a.mu.Unlock()
+	if !isImplicitStateDir(configured) {
+		// The operator pinned a data directory, so only remember the auth dir for reporting.
+		return
+	}
+	resolved := a.resolveStateDirectories(configured, authDir)
+	if resolved.DataDir == configured.DataDir && len(resolved.DataDirAlternates) == len(configured.DataDirAlternates) {
+		return
+	}
+	a.applyResolvedConfig(resolved)
+}
+
+// applyResolvedConfig re-configures every store after the state directory was resolved again,
+// without touching the host schema or the background start-up sequence.
+func (a *App) applyResolvedConfig(config Config) {
+	a.mu.Lock()
+	a.config = config
+	a.mu.Unlock()
+	a.operations.Configure(config)
+	a.opencode.Configure(config)
+	a.opencodeZen.Configure(config)
+	a.opencodeModelControl.Configure(config)
+	a.opencodeSession.Configure(config)
+	a.codexFingerprints.Configure(config)
+	a.codexModelControl.Configure(config)
+	a.selfUpdate.Configure(config)
+	a.creditUsage.Configure(config, a.experiments.Sub2APICreditUsageEnabled())
+	a.providerRuntime.Configure(config)
+	a.usage.Configure(config)
+	a.jobs.Configure(config)
+	a.policies.Configure(config)
+	a.updates.Configure(config)
+	a.proxyProfiles.Configure(config)
+	a.quotaPolicies.Configure(config)
+	a.aiProviderNames.Configure(config)
+	a.codexIdentityOverrides.Configure(config)
+	a.experiments.Configure(config)
+	a.globalPolicy.Configure(config)
+	a.riskControl.Configure(config)
+	a.inspection.Configure(config)
+	a.force.Configure(config)
+	a.newAccountProbe.Configure(config)
+}
+
+// stateDirUnderAuthDir is where plugin state lives when the data directory is implicit: the
+// same hidden folder the durable usage snapshot already uses, inside CPA's auth directory.
+func stateDirUnderAuthDir(authDir string) string {
+	trimmed := strings.TrimSpace(authDir)
+	if trimmed == "" {
+		return ""
+	}
+	return filepath.Join(trimmed, usageDurableDirName)
+}
+
+// isImplicitStateDir reports whether this config still uses the working-directory default.
+func isImplicitStateDir(config Config) bool {
+	return strings.TrimSpace(config.DataDir) == "" || filepath.Clean(config.DataDir) == filepath.Clean(implicitDataDirName)
+}
+
+// resolveStateDirectories decides the effective state directory and the fallbacks to look in.
+// With an implicit data directory the state follows CPA's auth directory; the working-directory
+// default and the directories beside the plugin library stay as fallbacks so existing state is
+// adopted rather than left behind.
+func (a *App) resolveStateDirectories(config Config, authDir string) Config {
+	resolved := config
+	alternates := make([]string, 0, 6)
+	if isImplicitStateDir(config) {
+		if underAuth := stateDirUnderAuthDir(authDir); underAuth != "" {
+			resolved.DataDir = underAuth
+		}
+	}
+	alternates = append(alternates, config.DataDir)
+	alternates = append(alternates, a.dataDirAlternates(resolved.DataDir)...)
+	if !isImplicitStateDir(config) {
+		// A pinned directory is authoritative and needs no fallbacks.
+		alternates = nil
+	}
+	resolved.DataDirAlternates = dedupeDirectories(alternates)
+	return resolved
+}
+
+// dedupeDirectories keeps the first occurrence of each cleaned, absolute directory.
+func dedupeDirectories(directories []string) []string {
+	cleaned := make([]string, 0, len(directories))
+	seen := map[string]struct{}{}
+	for _, directory := range directories {
+		trimmed := strings.TrimSpace(directory)
+		if trimmed == "" {
+			continue
+		}
+		if absolute, errAbs := filepath.Abs(trimmed); errAbs == nil {
+			trimmed = absolute
+		}
+		trimmed = filepath.Clean(trimmed)
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		cleaned = append(cleaned, trimmed)
+	}
+	return cleaned
 }
 
 // dataDirAlternates lists other directories that may hold this plugin's state. The implicit
@@ -329,7 +458,10 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 		a.mu.Unlock()
 		return
 	}
-	config.DataDirAlternates = a.dataDirAlternates(config.DataDir)
+	a.mu.RLock()
+	authDir := a.authDir
+	a.mu.RUnlock()
+	config = a.resolveStateDirectories(config, authDir)
 	a.mu.Lock()
 	a.config = config
 	a.configErr = ""

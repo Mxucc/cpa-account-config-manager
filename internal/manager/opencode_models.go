@@ -3,6 +3,9 @@ package manager
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -85,7 +88,23 @@ func newOpenCodeRequest(ctx context.Context, method, target, apiKey string, body
 	request.Header.Set("User-Agent", openCodeClientUserAgent())
 	request.Header.Set("x-opencode-client", "cli")
 	request.Header.Set("Accept", "application/json")
+	// The gateway rejects a request that carries no session id at all, exactly like the CLI
+	// traffic it expects: this header is what makes the plugin's own probes routable.
+	request.Header.Set("x-opencode-session", newOpenCodeProbeSessionValue())
 	return request, nil
+}
+
+// newOpenCodeProbeSessionValue mints one session id for a plugin-initiated request. The CLI keeps
+// a session per conversation; a probe is its own short conversation, so it gets a fresh id in the
+// same shape the router uses for routed traffic.
+func newOpenCodeProbeSessionValue() string {
+	raw := make([]byte, 16)
+	if _, errRead := rand.Read(raw); errRead != nil {
+		// A missing random source must not produce a request without the header.
+		sum := sha256.Sum256([]byte(fmt.Sprintf("probe-%d", time.Now().UnixNano())))
+		return "oc-" + hex.EncodeToString(sum[:16])
+	}
+	return "oc-" + hex.EncodeToString(raw)
 }
 
 // fetchOpenCodeModels lists the models one OpenCode credential can reach. It

@@ -119,6 +119,8 @@ type OpenCodeStorageInfo struct {
 	// AdoptedFrom names the directory a store was taken from when the preferred directory had
 	// none; it is empty for the normal case.
 	AdoptedFrom string `json:"adopted_from,omitempty"`
+	// Fallbacks lists the other directories the plugin looks in when this one holds no store.
+	Fallbacks []string `json:"fallbacks,omitempty"`
 	// Hint explains a suspicious state, such as an empty store in an implicit directory.
 	Hint string `json:"hint,omitempty"`
 }
@@ -135,6 +137,7 @@ func (s *OpenCodeQuotaService) Storage() OpenCodeStorageInfo {
 		StorePath:   s.resolvedStorePath(),
 		Accounts:    len(s.accounts),
 		AdoptedFrom: s.adoptedFrom,
+		Fallbacks:   append([]string(nil), s.fallbacks...),
 	}
 	if detail, errStat := os.Stat(info.StorePath); errStat == nil && !detail.IsDir() {
 		info.StoreExists = true

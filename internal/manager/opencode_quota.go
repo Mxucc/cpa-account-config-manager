@@ -128,6 +128,7 @@ type OpenCodeQuotaService struct {
 	// the effective data directory held no store.
 	storePath   string
 	adoptedFrom string
+	fallbacks   []string
 	loaded      bool
 	loadFailed  bool
 	storageErr  string
@@ -157,6 +158,7 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 	// working directory of whoever started CPA. Adopting an existing store from a known
 	// location keeps the credentials visible when CPA is restarted from another directory.
 	storePath, adoptedFrom := resolveOpenCodeQuotaStore(config)
+	fallbacks := append([]string(nil), config.DataDirAlternates...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sameStore := s.loaded && s.dataDir == config.DataDir
@@ -172,6 +174,7 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 		s.dataDir = config.DataDir
 		s.storePath = storePath
 		s.adoptedFrom = adoptedFrom
+		s.fallbacks = fallbacks
 		if s.loadFailed {
 			// Keep a copy of an unreadable store before anything can overwrite it, so a
 			// corrupt or newer-format file never destroys recoverable credentials.
@@ -192,6 +195,7 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 	s.dataDir = config.DataDir
 	s.storePath = storePath
 	s.adoptedFrom = adoptedFrom
+	s.fallbacks = fallbacks
 	s.accounts = append([]OpenCodeAccount(nil), loaded.Accounts...)
 	s.timeoutSeconds = timeout
 	s.loaded = true

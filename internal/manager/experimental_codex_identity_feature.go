@@ -445,10 +445,15 @@ func (e *CodexIdentityExperiment) effectiveAccountFingerprintMode(gate codexAcco
 		return codexFingerprintOff
 	}
 	settings := e.settings.codexIdentitySnapshot()
-	if !settings.OutboundConvergenceEnabled {
-		return codexFingerprintOff
+	if settings.OutboundConvergenceEnabled {
+		if mode := effectiveCodexFingerprintMode(settings.ConvergenceMode); mode != codexFingerprintOff {
+			return mode
+		}
 	}
-	return effectiveCodexFingerprintMode(settings.ConvergenceMode)
+	// The fingerprint profile carries an operator-set default mode, so the Codex
+	// workspace can switch convergence on without touching the experimental
+	// settings. An explicit "off" in the profile still means off.
+	return effectiveCodexFingerprintMode(codexProfile().mode)
 }
 
 func (e *CodexIdentityExperiment) effectiveFingerprintModeForAccount(ctx context.Context, account Account) codexFingerprintMode {
@@ -500,10 +505,15 @@ func (e *CodexIdentityExperiment) effectiveProviderFingerprintMode(providerKey s
 		return codexFingerprintOff
 	}
 	settings := e.settings.codexIdentitySnapshot()
-	if !settings.OutboundConvergenceEnabled {
-		return codexFingerprintOff
+	if settings.OutboundConvergenceEnabled {
+		if mode := effectiveCodexFingerprintMode(settings.ConvergenceMode); mode != codexFingerprintOff {
+			return mode
+		}
 	}
-	return effectiveCodexFingerprintMode(settings.ConvergenceMode)
+	// The fingerprint profile carries an operator-set default mode, so the Codex
+	// workspace can switch convergence on without touching the experimental
+	// settings. An explicit "off" in the profile still means off.
+	return effectiveCodexFingerprintMode(codexProfile().mode)
 }
 
 // effectiveProviderIngressGate follows the same rule as the account path: the

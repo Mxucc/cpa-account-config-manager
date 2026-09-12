@@ -1060,8 +1060,8 @@ export async function getExperimentalSettings(signal?: AbortSignal): Promise<Exp
 	return requestRecord<ExperimentalSettingsSnapshot>("/experiments", { signal });
 }
 
-export async function saveExperimentalSettings(settings: ExperimentalSettings): Promise<ExperimentalSettingsSnapshot> {
-	await persistPluginSettings({ experimental_settings: settings });
+export async function saveExperimentalSettings(settings: Partial<ExperimentalSettings>): Promise<ExperimentalSettingsSnapshot> {
+	await persistPluginSettings({ experimental_settings: settings as ExperimentalSettings });
 	return requestRecord<ExperimentalSettingsSnapshot>("/experiments", {
 		method: "PUT",
 		body: JSON.stringify(settings),
@@ -2638,4 +2638,40 @@ export async function clearRiskControlEvents(): Promise<import("../types").RiskC
 
 export async function clearRiskControlHashes(): Promise<import("../types").RiskControlSnapshot> {
   return requestRecord<import("../types").RiskControlSnapshot>("/risk-control/hashes", { method: "DELETE" });
+}
+
+export async function getCodexFingerprint(signal?: AbortSignal): Promise<{ profile: import("../types").CodexFingerprintProfile }> {
+  return requestRecord<{ profile: import("../types").CodexFingerprintProfile }>("/codex/fingerprint", { signal });
+}
+
+/** An empty string clears the field back to its built-in default. */
+export async function saveCodexFingerprint(values: Record<string, string>): Promise<{ profile: import("../types").CodexFingerprintProfile }> {
+  return requestRecord<{ profile: import("../types").CodexFingerprintProfile }>("/codex/fingerprint", {
+    method: "PUT",
+    body: JSON.stringify({ values }),
+  });
+}
+
+/** An empty key list resets every field. */
+export async function resetCodexFingerprint(keys: string[]): Promise<{ profile: import("../types").CodexFingerprintProfile }> {
+  return requestRecord<{ profile: import("../types").CodexFingerprintProfile }>("/codex/fingerprint/reset", {
+    method: "POST",
+    body: JSON.stringify({ keys }),
+  });
+}
+
+export async function getCodexModels(signal?: AbortSignal): Promise<import("../types").CodexModelControlSnapshot> {
+  return requestRecord<import("../types").CodexModelControlSnapshot>("/codex/models", { signal });
+}
+
+/** Disabling a model is global: it affects every Codex account and AI-provider channel. */
+export async function saveCodexModels(disabled: string[]): Promise<import("../types").CodexModelControlSnapshot> {
+  return requestRecord<import("../types").CodexModelControlSnapshot>("/codex/models", {
+    method: "PUT",
+    body: JSON.stringify({ disabled }),
+  });
+}
+
+export async function getCodexOverview(signal?: AbortSignal): Promise<{ overview: import("../types").CodexOverview }> {
+  return requestRecord<{ overview: import("../types").CodexOverview }>("/codex/overview", { signal });
 }

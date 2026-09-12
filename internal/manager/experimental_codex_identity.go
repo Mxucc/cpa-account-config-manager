@@ -227,31 +227,37 @@ func ensureCodexIdentityHeaders(h http.Header) {
 	if h == nil {
 		return
 	}
+	// The client identity strings are profile values so an operator can match a
+	// specific client build without a plugin release.
+	profile := codexProfile()
 	if strings.TrimSpace(h.Get("User-Agent")) == "" {
-		h.Set("User-Agent", defaultCodexCLIUserAgent)
+		h.Set("User-Agent", profile.userAgent)
 	}
 	if strings.TrimSpace(h.Get("Originator")) == "" {
-		h.Set("Originator", "codex-tui")
+		h.Set("Originator", profile.originator)
 	}
 	if strings.TrimSpace(h.Get("Version")) == "" {
-		h.Set("Version", codexCLIVersion)
+		h.Set("Version", profile.version)
 	}
-	h.Set("OpenAI-Beta", "responses=experimental")
+	if beta := strings.TrimSpace(profile.openAIBeta); beta != "" {
+		h.Set("OpenAI-Beta", beta)
+	}
 }
 
 func enforceCodexIdentityHeaders(h http.Header) {
 	if h == nil || strings.TrimSpace(h.Get("Originator")) == "" {
 		return
 	}
+	profile := codexProfile()
 	originator, pairedUA, ok := pairCodexClientIdentity(h.Get("User-Agent"))
 	if !ok {
-		originator = "codex-tui"
-		pairedUA = defaultCodexCLIUserAgent
+		originator = profile.originator
+		pairedUA = profile.userAgent
 	}
 	h.Set("User-Agent", pairedUA)
 	h.Set("Originator", originator)
 	if version := strings.TrimSpace(h.Get("Version")); version != "" && compareVersions(version, codexUpstreamMinVersion) < 0 {
-		h.Set("Version", codexCLIVersion)
+		h.Set("Version", profile.version)
 	}
 }
 

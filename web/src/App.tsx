@@ -11,6 +11,7 @@ import {
   Download,
   Eye,
   FileCog,
+  Fingerprint,
   Github,
   Gauge,
   CircleHelp,
@@ -52,6 +53,7 @@ import { IconButton } from "./components/IconButton";
 import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { AIProvidersSettings } from "./components/AIProvidersSettings";
+import { CodexWorkspace } from "./components/CodexWorkspace";
 import { OpenCodeWorkspace } from "./components/OpenCodeWorkspace";
 import { formatCreditUSD } from "./format/currency";
 import { providerRuntimeSnapshotsForChannels } from "./format/providerRuntime";
@@ -239,7 +241,7 @@ export default function App() {
 function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "opencode" | "operations" | "risk" | "automation" | "proxy_profiles" | "notifications" | "settings">("accounts");
+  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "codex" | "opencode" | "operations" | "risk" | "automation" | "proxy_profiles" | "notifications" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -1239,6 +1241,7 @@ function AccountManagerApp() {
           <button type="button" className={activeView === "accounts" ? "active" : ""} aria-current={activeView === "accounts" ? "page" : undefined} onClick={() => setActiveView("accounts")}><FileCog size={16} /><span>{tx("ui.accounts")}</span></button>
           <button type="button" className={activeView === "inspection" ? "active" : ""} aria-current={activeView === "inspection" ? "page" : undefined} onClick={() => setActiveView("inspection")}><Activity size={16} /><span>{tx("ui.inspection_and_automation")}</span></button>
           <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} /><span>{tx("ui.ai_providers")}</span></button>
+          <button type="button" className={activeView === "codex" ? "active" : ""} aria-current={activeView === "codex" ? "page" : undefined} onClick={() => setActiveView("codex")}><Fingerprint size={16} /><span>{tx("ui.codex_menu")}</span></button>
           <button type="button" className={activeView === "opencode" ? "active" : ""} aria-current={activeView === "opencode" ? "page" : undefined} onClick={() => setActiveView("opencode")}><Sparkles size={16} /><span>{tx("ui.opencode_menu")}</span></button>
           <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} /><span>{tx("ui.operation_log")}</span></button>
           <button type="button" className={activeView === "risk" ? "active" : ""} aria-current={activeView === "risk" ? "page" : undefined} onClick={() => setActiveView("risk")}><ShieldAlert size={16} /><span>{tx("ui.risk_control_center")}</span></button>
@@ -1270,7 +1273,9 @@ function AccountManagerApp() {
                   ? tx("ui.inspection_and_automation")
                   : activeView === "providers"
                     ? tx("ui.ai_providers")
-                    : activeView === "opencode"
+                    : activeView === "codex"
+                      ? tx("ui.codex_menu")
+                      : activeView === "opencode"
                       ? tx("ui.opencode_menu")
                       : activeView === "operations"
                       ? tx("ui.operation_log")
@@ -1488,6 +1493,8 @@ function AccountManagerApp() {
             onNotice={setNotice}
             accountIdentities={sidebarAccounts.flatMap((account) => [account.id, account.auth_id, account.credential?.id, account.credential?.auth_id].filter((value): value is string => Boolean(value)))}
           />
+        ) : activeView === "codex" ? (
+          <CodexWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "opencode" ? (
           <OpenCodeWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "operations" ? (

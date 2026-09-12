@@ -1227,6 +1227,49 @@ export interface ExperimentalSettingsSnapshot {
   storage_error?: string;
 }
 
+/** One editable Codex request-fingerprint field returned by GET /codex/fingerprint. */
+export interface CodexFingerprintField {
+  key: string;
+  group: string;
+  kind: "text" | "select" | "bool" | "number";
+  default: string;
+  value: string;
+  overridden: boolean;
+  options?: string[];
+}
+
+export interface CodexFingerprintProfile {
+  fields: CodexFingerprintField[];
+  overridden_fields: number;
+  storage_error?: string;
+}
+
+/** One row of the global model control table. */
+export interface CodexModelControlRow {
+  id: string;
+  disabled: boolean;
+  accounts: number;
+  channels: number;
+  priced?: boolean;
+}
+
+export interface CodexModelControlSnapshot {
+  models: CodexModelControlRow[];
+  disabled: string[];
+  storage_error?: string;
+}
+
+export interface CodexOverview {
+  accounts: number;
+  channels: number;
+  disabled_models: number;
+  convergence_mode: string;
+  account_overrides: number;
+  provider_overrides: number;
+  fingerprint_overridden_fields: number;
+  model_control_active: boolean;
+}
+
 export interface AgentIdentitySessionLoginResponse {
   status: "completed";
   account: {

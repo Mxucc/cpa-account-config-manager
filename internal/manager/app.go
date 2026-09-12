@@ -86,6 +86,8 @@ type App struct {
 	opencode                *OpenCodeQuotaService
 	opencodeZen             *OpenCodeZenService
 	opencodePricing         *OpenCodePricingService
+	codexFingerprints       *CodexFingerprintProfileService
+	codexModelControl       *CodexModelControlService
 	opencodeSession         *OpenCodeSessionRouter
 	opencodeSessionSyncedAt atomic.Int64
 	opencodeSessionPrimedAt atomic.Int64
@@ -123,6 +125,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
 	opencodePricing := NewOpenCodePricingService()
+	codexFingerprints := NewCodexFingerprintProfileService()
+	codexModelControl := NewCodexModelControlService()
 	opencodeSession := NewOpenCodeSessionRouter()
 	opencodeSession.SetEnabled(true)
 	proxyProfiles := NewProxyProfileService()
@@ -160,7 +164,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	// Admission must run before observational trackers. A saturated account can
 	// block in the concurrency transformer; recording it as active before that
 	// wait would skew provider runtime metrics and rolling request windows.
-	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity, opencodeSession)
+	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity, opencodeSession, NewCodexModelControl(codexModelControl))
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -205,6 +209,8 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		opencode:               opencode,
 		opencodeZen:            opencodeZen,
 		opencodePricing:        opencodePricing,
+		codexFingerprints:      codexFingerprints,
+		codexModelControl:      codexModelControl,
 		opencodeSession:        opencodeSession,
 		proxyProfiles:          proxyProfiles,
 		quotaPolicies:          quotaPolicies,
@@ -284,6 +290,8 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
 	a.opencodePricing.Configure(config)
+	a.codexFingerprints.Configure(config)
+	a.codexModelControl.Configure(config)
 	a.opencodeSession.Configure(config)
 	a.refreshOpenCodeSessionTargets()
 	a.proxyProfiles.Configure(config)
@@ -748,6 +756,12 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/session", Description: "Read the per-conversation x-opencode-session routing status."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/channels", Description: "List the CPA AI-provider channels that belong to OpenCode."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/import", Description: "Import the credential of one existing OpenCode AI-provider channel."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/overview", Description: "Read the Codex workspace counts and effective convergence mode."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Read every editable Codex fingerprint field with its default."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Update Codex fingerprint fields; an empty value restores a field default."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/codex/fingerprint/reset", Description: "Restore Codex fingerprint fields to their defaults."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/models", Description: "List the Codex models and the globally disabled set."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/models", Description: "Replace the globally disabled Codex model set."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
@@ -991,6 +1005,18 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeChannels(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/import":
 		return a.handleOpenCodeImport(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/overview":
+		return a.handleCodexOverview(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint":
+		return a.handleCodexFingerprint(req)
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint":
+		return a.handleCodexFingerprintUpdate(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint/reset":
+		return a.handleCodexFingerprintReset(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/models":
+		return a.handleCodexModels(ctx, req)
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/codex/models":
+		return a.handleCodexModelsUpdate(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe-account":
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":

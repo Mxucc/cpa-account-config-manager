@@ -114,10 +114,14 @@ func resolveConvergedInstallationID(account Account, seed string) string {
 	if deviceID := codexAccountDeviceID(account); deviceID != "" {
 		return deviceID
 	}
+	profile := codexProfile()
+	if profile.installationID != "" {
+		return strings.ToLower(profile.installationID)
+	}
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-install-id:v2:" + seed)
+	return deriveStableUUIDv4(profile.installPrefix + seed)
 }
 
 // codexAccountDeviceID returns an administrator-configured physical auth field.
@@ -134,17 +138,25 @@ func codexAccountDeviceID(account Account) string {
 }
 
 func resolveConvergedSessionID(seed string) string {
+	profile := codexProfile()
+	if profile.sessionID != "" {
+		return strings.ToLower(profile.sessionID)
+	}
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-session-id:v2:" + seed)
+	return deriveStableUUIDv4(profile.sessionPrefix + seed)
 }
 
 func resolveConvergedThreadID(seed, clientSessionID string) string {
+	profile := codexProfile()
+	if profile.threadID != "" {
+		return strings.ToLower(profile.threadID)
+	}
 	if seed == "" || clientSessionID == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-thread-id:v2:" + seed + ":" + clientSessionID)
+	return deriveStableUUIDv4(profile.threadPrefix + seed + ":" + clientSessionID)
 }
 
 // resolveCodexFingerprintIDs computes one shared ID set for headers and body.
@@ -174,7 +186,7 @@ func resolveCodexFingerprintIDs(account Account, seed string, clientSessionID st
 		ids.threadID = ids.sessionID
 	}
 	ids.turnID = newTimeUUIDv7(ids.turnStartedAtUnixMs)
-	ids.windowID = ids.threadID + ":0"
+	ids.windowID = ids.threadID + codexProfile().windowSuffix
 	return ids
 }
 
@@ -221,23 +233,33 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	h.Set("Session-Id", ids.sessionID)
 	h.Set("Session_Id", ids.sessionID)
 	h.Set("Thread-Id", ids.threadID)
-	fields := map[string]any{
-		"installation_id":         ids.installationID,
-		"session_id":              ids.sessionID,
-		"thread_id":               ids.threadID,
-		"turn_id":                 ids.turnID,
-		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": strconv.FormatInt(ids.turnStartedAtUnixMs, 10),
-	}
+	fields := codexFingerprintMetadataFields(ids)
 	addCodexConvergenceRelationshipFields(fields, ids)
 	rewriteCodexTurnMetadataFields(h, fields)
+}
+
+// codexFingerprintMetadataFields builds the turn-metadata payload. The
+// turn-start timestamp is optional so an operator can match a client that does
+// not send it.
+func codexFingerprintMetadataFields(ids *codexFingerprintIDs) map[string]any {
+	fields := map[string]any{
+		"installation_id": ids.installationID,
+		"session_id":      ids.sessionID,
+		"thread_id":       ids.threadID,
+		"turn_id":         ids.turnID,
+		"window_id":       ids.windowID,
+	}
+	if codexProfile().includeTurnStartedAt {
+		fields["turn_started_at_unix_ms"] = strconv.FormatInt(ids.turnStartedAtUnixMs, 10)
+	}
+	return fields
 }
 
 func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	if h == nil {
 		return
 	}
-	raw := strings.TrimSpace(h.Get(codexFingerprintHeader))
+	raw := strings.TrimSpace(h.Get(codexFingerprintMetadataHeader()))
 	metadata := make(map[string]any)
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &metadata)
@@ -249,7 +271,7 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	if errMarshal != nil {
 		return
 	}
-	h.Set(codexFingerprintHeader, string(rebuilt))
+	h.Set(codexFingerprintMetadataHeader(), string(rebuilt))
 }
 
 // applyCodexFingerprintClientMetadata rewrites only the identity-bearing object
@@ -284,14 +306,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["thread_id"] = ids.threadID
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
-	fields := map[string]any{
-		"installation_id":         ids.installationID,
-		"session_id":              ids.sessionID,
-		"thread_id":               ids.threadID,
-		"turn_id":                 ids.turnID,
-		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": strconv.FormatInt(ids.turnStartedAtUnixMs, 10),
-	}
+	fields := codexFingerprintMetadataFields(ids)
 	addCodexConvergenceRelationshipFields(fields, ids)
 	for key, value := range fields {
 		existing[key] = value
@@ -309,6 +324,9 @@ func addCodexConvergenceRelationshipFields(fields map[string]any, ids *codexFing
 	if fields == nil || ids == nil || ids.mode == codexFingerprintDevice {
 		return
 	}
+	if !codexProfile().includeRelationshipFields {
+		return
+	}
 	if ids.threadID != "" {
 		fields["parent_thread_id"] = ids.threadID
 		fields["x-codex-parent-thread-id"] = ids.threadID
@@ -322,7 +340,7 @@ func addCodexConvergenceRelationshipFields(fields map[string]any, ids *codexFing
 }
 
 func rewriteEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) {
-	raw, ok := clientMetadata[codexFingerprintHeader].(string)
+	raw, ok := clientMetadata[codexFingerprintMetadataHeader()].(string)
 	if !ok || raw == "" {
 		return
 	}
@@ -334,7 +352,7 @@ func rewriteEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[strin
 		metadata[key] = value
 	}
 	if rebuilt, errMarshal := json.Marshal(metadata); errMarshal == nil {
-		clientMetadata[codexFingerprintHeader] = string(rebuilt)
+		clientMetadata[codexFingerprintMetadataHeader()] = string(rebuilt)
 	}
 }
 
@@ -353,6 +371,9 @@ func captureOriginalBodySessionID(ids *codexFingerprintIDs, value any) {
 }
 
 func applyCodexFingerprintPromptCacheKey(reqBody map[string]any, ids *codexFingerprintIDs) bool {
+	if !codexProfile().rewritePromptCacheKey {
+		return false
+	}
 	if reqBody == nil || ids == nil || ids.sessionID == "" ||
 		(ids.mode != codexFingerprintSession && ids.mode != codexFingerprintFull) ||
 		!ids.originalBodySessionIDCaptured || ids.originalBodySessionID == "" {
@@ -433,6 +454,13 @@ func resolveCodexFingerprintSeed(
 	store fingerprintSeedStore,
 	account Account,
 ) (string, bool) {
+	// A fixed seed pins every account to one fingerprint; the default derives a
+	// separate seed per account.
+	if profile := codexProfile(); profile.seedStrategy == codexFingerprintSeedStrategyFixed {
+		if seed := strings.TrimSpace(profile.fixedSeed); seed != "" {
+			return seed, true
+		}
+	}
 	if isCodexOAuthLikeAccount(account) {
 		return ensureCodexFingerprintSeed(ctx, store, account)
 	}

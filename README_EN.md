@@ -88,6 +88,19 @@ Provider fields include type, name, state, model count, concurrency, Base URL, A
 
 OpenCode Go additionally supports Workspace ID plus auth Cookie, 5h/7d/30d quotas, reset times, manual refresh, and deletion. Configuration and refresh live in the authenticated UI: the standalone OpenCode status page is served without authentication, so it only renders cached state, masks workspace identifiers, and never accepts credentials.
 
+### Codex
+
+A dedicated **Codex** workspace is added to the side menu directly before **OpenCode**:
+
+- The workspace is organized as three tabs, in this order: Overview, Models and prices, and Fingerprint profiles.
+- Overview shows the counts (Codex accounts, AI-provider channels, disabled models, account-level overrides, provider-level overrides, and overridden fingerprint fields), the effective convergence mode, and an indicator for whether the global model control is active.
+- The Codex experiments that used to live under Experimental settings now live on Overview: the Codex 5h/7d quota overdraft continuation, Agent Identity, and the Codex identity policy editor. Experimental settings therefore only keep non-Codex options and echo the Codex-owned values back unchanged when saved.
+- Fingerprint profiles turn every value that used to be compiled into the Codex fingerprint into an editable field with its built-in default shown next to the current value, an "overridden" marker, a per-field restore, a per-group restore, and a restore-everything action.
+- The editable fields are: convergence mode; the client identity strings (User-Agent, Originator, Version, OpenAI-Beta) and the turn-metadata header name; explicit installation/session/thread ids (empty means derive) and the window suffix; the derivation prefixes for installation, session and thread ids plus the seed strategy (per account or one fixed seed); and the body toggles (turn timestamp, relationship fields, and prompt-cache-key rewrite).
+- Clearing a field, or restoring it, returns it to the default; an invalid value is rejected and changes nothing. The profile applies to every Codex account and every Codex AI-provider channel, and the per-account and per-provider convergence overrides on the AI providers page still take precedence over the profile default.
+- Models and prices provides one global switch list for Codex model ids showing how many Codex accounts and AI-provider channels reference each model, with per-model enable/disable and an enable-all action. Disabling a model applies to every Codex account and AI-provider channel at once and is enforced in the request path: a disabled model is answered immediately with a rejection instead of being forwarded upstream, so the change takes effect on the next request without waiting for host-side policy application. Only Codex traffic is affected; the same model id on another provider family is untouched.
+- Both settings are stored in the plugin private data directory (0600) and exposed through management routes that require the Management Key, under `/v0/management/plugins/cpa-account-config-manager`: `GET /codex/overview`, `GET|PUT /codex/fingerprint`, `POST /codex/fingerprint/reset`, and `GET|PUT /codex/models`. Responses never include a credential.
+
 ### OpenCode
 
 A dedicated **OpenCode** workspace is added to the side menu directly after **AI Providers**:
@@ -121,10 +134,10 @@ A dedicated **OpenCode** workspace is added to the side menu directly after **AI
 
 The remaining opt-in experiments are:
 
-- **Codex 5h/7d quota overdraft continuation**: after a quota is exhausted, run up to five probes; any successful probe keeps the account enabled, while five failures allow automatic disablement. The first ordinary-request failure freezes the quota-window baseline, overdraft tokens and costs are tracked separately, and the cycle ends when quota resets. This modifies the Codex tool-call chain and may increase time-to-first-token on slower servers.
-- **Agent Identity and PAT**: import, conversion, login, and native-plugin authentication paths for these formats, including common Sub2API-compatible structures.
+- **Codex 5h/7d quota overdraft continuation** (edited in the **Codex** view → Overview): after a quota is exhausted, run up to five probes; any successful probe keeps the account enabled, while five failures allow automatic disablement. The first ordinary-request failure freezes the quota-window baseline, overdraft tokens and costs are tracked separately, and the cycle ends when quota resets. This modifies the Codex tool-call chain and may increase time-to-first-token on slower servers.
+- **Agent Identity and PAT** (edited in the **Codex** view → Overview): import, conversion, login, and native-plugin authentication paths for these formats, including common Sub2API-compatible structures.
 
-Sub2API-compatible cost accounting, automatic model compatibility allowlists, and Codex client identity policy are permanent features and are not experimental toggles.
+Sub2API-compatible cost accounting, automatic model compatibility allowlists, and the Codex client identity policy are permanent features and are not experimental toggles. The Codex identity policy editor and the two experiments above are edited in the Codex view; **Other settings → Experimental features** keeps only the non-Codex options and echoes the Codex-owned values back unchanged.
 
 ## Installation
 

@@ -1515,7 +1515,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.quota_group_help": "可选设置 5 小时和 7 天额度限制；留空表示保留当前账号配置。",
   "ui.request_policy_group": "请求与模型策略",
   "ui.request_policy_group_help": "为新管理的凭证应用请求头修改以及模型白名单或黑名单。",
-  "ui.codex_settings_moved_note": "Codex 收敛、每周额度透支实验、Agent Identity 与指纹特征已迁移到「Codex」页面。",
+  "ui.codex_settings_moved_note": "Codex 身份兼容策略已迁移到「Codex」页面；额度透支续用与 Agent Identity 仍作为实验性开关保留在这里。",
   "ui.codex_identity_group": "Codex 身份兼容",
   "ui.codex_identity_group_help": "Codex 客户端身份的唯一全局配置：出站收敛与官方客户端入口门都在此设置，自动策略只继承它，不再保存副本。",
   "ui.codex_identity_single_source_note": "此处是唯一入口；单个账号或供应商仍可在其「Codex 客户端身份策略」中显式覆盖，选择「继承全局设置」即恢复跟随这里。",

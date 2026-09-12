@@ -1515,7 +1515,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.quota_group_help": "可選設定 5 小時與 7 天額度限制；留白表示保留目前帳號設定。",
   "ui.request_policy_group": "請求與模型策略",
   "ui.request_policy_group_help": "為新管理的憑證套用請求標頭修改以及模型白名單或黑名單。",
-  "ui.codex_settings_moved_note": "Codex 收斂、每週額度透支實驗、Agent Identity 與指紋特徵已移至「Codex」頁面。",
+  "ui.codex_settings_moved_note": "Codex 身分相容策略已移至「Codex」頁面；額度透支續用與 Agent Identity 仍作為實驗性開關保留在這裡。",
   "ui.codex_identity_group": "Codex 身份相容",
   "ui.codex_identity_group_help": "Codex 用戶端身分的唯一全域設定：出站收斂與官方用戶端入口門都在此設定，自動策略只會繼承它，不再保存副本。",
   "ui.codex_identity_single_source_note": "此處是唯一入口；單一帳號或供應商仍可在其「Codex 用戶端身分策略」中明確覆寫，選擇「繼承全域設定」即恢復跟隨這裡。",

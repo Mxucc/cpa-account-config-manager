@@ -3,6 +3,7 @@ import {
   BellRing,
   ExternalLink,
   FlaskConical,
+  KeyRound,
   LoaderCircle,
   Network,
   PackageCheck,
@@ -70,6 +71,8 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [installing, setInstalling] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingExperiment, setSavingExperiment] = useState(false);
+  const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
+  const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
   const [checkEnabled, setCheckEnabled] = useState(true);
   const [checkInterval, setCheckInterval] = useState("24");
   const [autoUpdate, setAutoUpdate] = useState(false);
@@ -83,6 +86,12 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     }
     setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
   }, [locale, onAPIError, tx]);
+
+  useEffect(() => {
+    if (!experiments) return;
+    setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
+    setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
+  }, [experiments]);
 
   const refreshPlugin = useCallback(async (checkNow = false, signal?: AbortSignal) => {
     const next = await api.getEffectiveUpdateStatus(checkNow, signal);
@@ -219,11 +228,11 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setError("");
     try {
       const next = await api.saveExperimentalSettings({
-        // Codex identity, the weekly-overdraft experiment and Agent Identity are
-        // edited in the Codex workspace. Their current values are echoed back so
-        // saving this panel never clears what the Codex workspace configured.
-        weekly_overdraft_enabled: experiments?.settings.weekly_overdraft_enabled ?? false,
-        agent_identity_enabled: experiments?.settings.agent_identity_enabled ?? false,
+        // The two Codex experiments are edited here. The Codex identity policy is
+        // edited in the Codex view, so its current value is echoed back to avoid
+        // clearing what that view configured.
+        weekly_overdraft_enabled: weeklyOverdraftEnabled,
+        agent_identity_enabled: agentIdentityEnabled,
         codex_identity: experiments?.settings.codex_identity ?? EMPTY_CODEX_IDENTITY,
         auto_model_whitelist_enabled: true,
         // Kept in the request for older runtimes; credit pricing is now a
@@ -389,6 +398,58 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             <div><strong>{tx("ui.experimental_features_warning")}</strong><span>{tx("ui.experimental_features_may_change_or_stop_working")}</span></div>
           </div>
           {experiments?.storage_error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.experimental_settings_storage_error")}</span></div> : null}
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><FlaskConical size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_weekly_quota_overdraft")}</strong>
+                  <span>{tx("ui.codex_weekly_quota_overdraft_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input
+                  type="checkbox"
+                  checked={weeklyOverdraftEnabled}
+                  disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setWeeklyOverdraftEnabled(event.target.checked)}
+                  aria-label={tx("ui.codex_weekly_quota_overdraft")}
+                />
+                <b>{tx(weeklyOverdraftEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.request_behavior")}</strong><span>{tx("ui.weekly_overdraft_request_behavior")}</span></div>
+              <div><strong>{tx("ui.automation_behavior")}</strong><span>{tx("ui.weekly_overdraft_automation_behavior")}</span></div>
+              <div><strong>{tx("ui.availability_notice")}</strong><span>{tx("ui.weekly_overdraft_availability_notice")}</span></div>
+            </div>
+          </div>
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><KeyRound size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_agent_identity")}</strong>
+                  <span>{tx("ui.codex_agent_identity_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input
+                  type="checkbox"
+                  checked={agentIdentityEnabled}
+                  disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setAgentIdentityEnabled(event.target.checked)}
+                  aria-label={tx("ui.codex_agent_identity")}
+                />
+                <b>{tx(agentIdentityEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.authentication_path")}</strong><span>{tx("ui.agent_identity_authentication_behavior")}</span></div>
+              <div><strong>{tx("ui.supported_imports")}</strong><span>{tx("ui.agent_identity_import_formats")}</span></div>
+              <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.agent_identity_security_notice")}</span></div>
+            </div>
+          </div>
           <p className="experimental-moved-note">{tx("ui.codex_settings_moved_note")}</p>
           <div className="settings-section-actions experimental-actions">
             <button className="button button-primary" type="button" disabled={loading || savingExperiment || !experiments} onClick={() => void saveExperimentalSettings()}>

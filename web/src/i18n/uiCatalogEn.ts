@@ -1513,7 +1513,7 @@ export const enUI = {
   "ui.quota_group_help": "Optional 5-hour and 7-day limits. Leave values blank to preserve the current account settings.",
   "ui.request_policy_group": "Request and model policy",
   "ui.request_policy_group_help": "Apply header patches and model allow/block lists to newly managed credentials.",
-  "ui.codex_settings_moved_note": "Codex convergence, the weekly-overdraft experiment, Agent Identity and fingerprint profiles moved to the Codex view.",
+  "ui.codex_settings_moved_note": "The Codex identity policy is edited in the Codex view. The weekly-overdraft experiment and Agent Identity stay here as experimental toggles.",
   "ui.codex_identity_group": "Codex identity compatibility",
   "ui.codex_identity_group_help": "The single global configuration for Codex client identity: outbound convergence and the official-client ingress gate are set here, and automation policies only inherit it instead of keeping a copy.",
   "ui.codex_identity_single_source_note": "This is the only global editor. A single account or provider can still override it in its Codex client identity policy; choosing inherit restores the value set here.",

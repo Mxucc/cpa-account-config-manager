@@ -225,7 +225,7 @@ describe("CodexWorkspace", () => {
     expect(within(unpricedRow).getByText("暂无价格")).toBeInTheDocument();
   });
 
-  it("saves the moved Codex experimental settings from the overview", async () => {
+  it("keeps the Codex identity policy here and echoes the two experiments", async () => {
     const user = userEvent.setup();
     const requests = codexFetchMock();
     const onNotice = vi.fn();
@@ -233,13 +233,20 @@ describe("CodexWorkspace", () => {
     render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
 
     const panel = await screen.findByRole("tabpanel", { name: "总览" });
-    await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity / PAT" }));
+    // The identity policy editor lives here; the two experiments stay experimental
+    // toggles in the experimental settings panel and must not be edited here.
+    expect(within(panel).getByRole("region", { name: "Codex 身份兼容" })).toBeInTheDocument();
+    expect(within(panel).queryByText("Codex 5h / 7d 额度透支续用")).not.toBeInTheDocument();
+    expect(within(panel).queryByText("Codex Agent Identity / PAT")).not.toBeInTheDocument();
+
     await user.click(within(panel).getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(true));
     const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
     const body = JSON.parse(String(saveRequest?.init.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({ agent_identity_enabled: true, auto_model_whitelist_enabled: true });
+    // The experiment values are echoed from the snapshot so saving here cannot
+    // clear what the experimental settings panel configured.
+    expect(body).toMatchObject({ weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true });
     expect((body.codex_identity as Record<string, unknown>).outbound_convergence_enabled).toBe(false);
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith("实验性设置已保存"));
   });

@@ -79,8 +79,6 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
   const [profile, setProfile] = useState<CodexFingerprintProfile | null>(null);
   const [experiments, setExperiments] = useState<ExperimentalSettings | null>(null);
   const [codexIdentity, setCodexIdentity] = useState<ExperimentalCodexIdentitySettings>(EMPTY_CODEX_IDENTITY);
-  const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
-  const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [modelQuery, setModelQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -135,8 +133,6 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
 
   useEffect(() => {
     if (!experiments) return;
-    setWeeklyOverdraftEnabled(experiments.weekly_overdraft_enabled === true);
-    setAgentIdentityEnabled(experiments.agent_identity_enabled === true);
     setCodexIdentity(experiments.codex_identity ?? EMPTY_CODEX_IDENTITY);
   }, [experiments]);
 
@@ -159,8 +155,10 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
 
   const saveCodexSettings = () => void withBusy("codex-settings", async () => {
     const next = await api.saveExperimentalSettings({
-      weekly_overdraft_enabled: weeklyOverdraftEnabled,
-      agent_identity_enabled: agentIdentityEnabled,
+      // The two Codex experiments are owned by the experimental settings panel.
+      // Their current values are echoed back so saving here never clears them.
+      weekly_overdraft_enabled: experiments?.weekly_overdraft_enabled ?? false,
+      agent_identity_enabled: experiments?.agent_identity_enabled ?? false,
       auto_model_whitelist_enabled: experiments?.auto_model_whitelist_enabled ?? true,
       sub2api_credit_usage_enabled: experiments?.sub2api_credit_usage_enabled ?? true,
       codex_identity: codexIdentity,
@@ -297,46 +295,6 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               <button className="button button-primary" type="button" disabled={settingsDisabled} onClick={saveCodexSettings}>
                 {busy === "codex-settings" ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}
               </button>
-            </div>
-            <div className="experimental-feature-block">
-              <div className="experimental-feature-row">
-                <div className="experimental-feature-copy">
-                  <div>
-                    <strong>{tx("ui.codex_weekly_quota_overdraft")}</strong>
-                    <span>{tx("ui.codex_weekly_quota_overdraft_description")}</span>
-                  </div>
-                </div>
-                <label className="switch-control experimental-feature-switch">
-                  <input
-                    type="checkbox"
-                    checked={weeklyOverdraftEnabled}
-                    disabled={settingsDisabled}
-                    onChange={(event) => setWeeklyOverdraftEnabled(event.target.checked)}
-                    aria-label={tx("ui.codex_weekly_quota_overdraft")}
-                  />
-                  <b>{tx(weeklyOverdraftEnabled ? "ui.on_2" : "ui.off_2")}</b>
-                </label>
-              </div>
-            </div>
-            <div className="experimental-feature-block">
-              <div className="experimental-feature-row">
-                <div className="experimental-feature-copy">
-                  <div>
-                    <strong>{tx("ui.codex_agent_identity")}</strong>
-                    <span>{tx("ui.codex_agent_identity_description")}</span>
-                  </div>
-                </div>
-                <label className="switch-control experimental-feature-switch">
-                  <input
-                    type="checkbox"
-                    checked={agentIdentityEnabled}
-                    disabled={settingsDisabled}
-                    onChange={(event) => setAgentIdentityEnabled(event.target.checked)}
-                    aria-label={tx("ui.codex_agent_identity")}
-                  />
-                  <b>{tx(agentIdentityEnabled ? "ui.on_2" : "ui.off_2")}</b>
-                </label>
-              </div>
             </div>
             <CodexIdentityPolicyEditor
               value={codexIdentity}

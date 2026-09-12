@@ -245,7 +245,10 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 		}
     if (enabled.note) patch.note = note;
     if (enabled.prefix) patch.prefix = prefix;
-    if (enabled.proxy_url) patch.proxy_url = proxyURL;
+    if (enabled.proxy_url) {
+			if (proxyProfileID) patch.proxy_profile_id = proxyProfileID;
+			else patch.proxy_url = proxyURL;
+		}
     if (enabled.websockets) patch.websockets = websockets;
 		if (enabled.codex_identity) {
 			patch.codex_identity = {

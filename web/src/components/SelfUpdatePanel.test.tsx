@@ -21,6 +21,7 @@ function snapshot(overrides: Partial<SelfUpdateSnapshot> = {}): SelfUpdateSnapsh
     plugin_file_source: "setting",
     plugin_file_exists: true,
     restart_required: false,
+    pending_restart: false,
     ui_updated: false,
     interface_refresh_only: false,
     can_install: true,
@@ -46,6 +47,7 @@ describe("SelfUpdatePanel", () => {
       archive_sha256: "a".repeat(64),
       applied_version: "0.3.1416",
       restart_required: true,
+      pending_restart: true,
       staged_path: "/opt/cpa/plugins/cpa-account-config-manager.dylib.update-staged",
       backup_path: "/opt/cpa/plugins/cpa-account-config-manager.dylib.previous",
     }));
@@ -72,6 +74,25 @@ describe("SelfUpdatePanel", () => {
     expect(panel).toBeInTheDocument();
   });
 
+  it("stops claiming a restart is pending once the applied version is running", async () => {
+    // The applied version is persisted, so this state survives every restart; deriving
+    // pending_restart from the running version is what clears the message.
+    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({
+      current_version: "0.3.1422",
+      applied_version: "0.3.1422",
+      update_available: false,
+      restart_required: false,
+      pending_restart: false,
+    }));
+
+    render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
+    expect(await within(panel).findByText(/已写入磁盘的 0.3.1422 就是当前运行的版本/)).toBeInTheDocument();
+    expect(within(panel).queryByText("请重启 CPA 以加载更新后的插件库。")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "不重启热重载" })).not.toBeInTheDocument();
+  });
+
   it("asks CPA to reload in place instead of waiting for a restart", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
@@ -81,6 +102,7 @@ describe("SelfUpdatePanel", () => {
       update_available: false,
       applied_version: "0.3.1420",
       restart_required: true,
+      pending_restart: true,
     }));
     const reloadSpy = vi.spyOn(api, "reloadSelfUpdateThroughStore").mockResolvedValue({
       reloaded: true,
@@ -105,7 +127,7 @@ describe("SelfUpdatePanel", () => {
     // (Cloudflare 502). The reloaded instance answers with its own version, which is the only
     // reliable signal, so the panel polls instead of reporting a failure.
     const getSpy = vi.spyOn(api, "getSelfUpdate")
-      .mockResolvedValueOnce(snapshot({ update_available: false, applied_version: "0.3.1422", restart_required: true }))
+      .mockResolvedValueOnce(snapshot({ update_available: false, applied_version: "0.3.1422", restart_required: true, pending_restart: true }))
       .mockResolvedValue(snapshot({ current_version: "0.3.1422", update_available: false, restart_required: false }));
     vi.spyOn(api, "reloadSelfUpdateThroughStore").mockRejectedValue(new api.APIError(502, "origin_bad_gateway"));
 
@@ -125,7 +147,7 @@ describe("SelfUpdatePanel", () => {
     reloadPollTiming.windowMS = 1500;
     try {
     const onNotice = vi.fn();
-    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({ update_available: false, applied_version: "0.3.1422", restart_required: true }));
+    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({ update_available: false, applied_version: "0.3.1422", restart_required: true, pending_restart: true }));
     vi.spyOn(api, "reloadSelfUpdateThroughStore").mockRejectedValue(new api.APIError(502, "origin_bad_gateway"));
 
     render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
@@ -142,7 +164,7 @@ describe("SelfUpdatePanel", () => {
   it("names the reason when CPA refuses the reload", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
-    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({ update_available: false, applied_version: "0.3.1420", restart_required: true }));
+    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({ update_available: false, applied_version: "0.3.1420", restart_required: true, pending_restart: true }));
     vi.spyOn(api, "reloadSelfUpdateThroughStore").mockResolvedValue({
       reloaded: false,
       restart_required: true,

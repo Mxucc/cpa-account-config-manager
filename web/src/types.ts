@@ -1182,6 +1182,12 @@ export interface SelfUpdateSnapshot {
   applied_version?: string;
   backup_path?: string;
   restart_required: boolean;
+  /**
+   * Derived by the plugin: the library on disk is newer than the one this process loaded. It
+   * clears by itself once the process runs the applied version, so a stale applied_version can
+   * no longer keep claiming that a restart is pending.
+   */
+  pending_restart: boolean;
   /** The last reload attempt through the CPA plugin store, when one was made. */
   reload?: SelfUpdateReloadResult;
   /** The release also delivered the interface, which is live after a page refresh. */

@@ -614,3 +614,46 @@ func TestSelfUpdateReloadThroughStore(t *testing.T) {
 		}
 	}
 }
+
+// A persisted applied_version used to make the panel claim a restart was pending forever, even
+// after CPA had been restarted into that very version.
+func TestPendingRestartIsDerivedFromTheRunningVersion(t *testing.T) {
+	dataDir := t.TempDir()
+	store := selfUpdateStorePath(dataDir)
+	encoded, errEncode := json.Marshal(persistedSelfUpdate{
+		Version:        selfUpdateVersion,
+		LatestVersion:  "0.3.1422",
+		AppliedVersion: "0.3.1422",
+		Source:         selfUpdateSourceAPI,
+	})
+	if errEncode != nil {
+		t.Fatalf("encode store: %v", errEncode)
+	}
+	if errWrite := os.WriteFile(store, encoded, 0o600); errWrite != nil {
+		t.Fatalf("write store: %v", errWrite)
+	}
+
+	// Still running the previous library: the restart is genuinely pending.
+	older := NewSelfUpdateService("0.3.1421")
+	t.Cleanup(older.Close)
+	older.Configure(Config{DataDir: dataDir})
+	if snapshot := older.Snapshot(); !snapshot.PendingRestart {
+		t.Fatalf("a newer library on disk must report a pending restart: %#v", snapshot)
+	}
+
+	// Restarted into the applied version: nothing is pending any more.
+	restarted := NewSelfUpdateService("0.3.1422")
+	t.Cleanup(restarted.Close)
+	restarted.Configure(Config{DataDir: dataDir})
+	snapshot := restarted.Snapshot()
+	if snapshot.PendingRestart || snapshot.RestartRequired {
+		t.Fatalf("a running applied version must not report a restart: %#v", snapshot)
+	}
+	// A later version is still offered as an update.
+	restarted.mu.Lock()
+	restarted.state.LatestVersion = "0.3.1423"
+	restarted.mu.Unlock()
+	if next := restarted.Snapshot(); next.PendingRestart || !next.UpdateAvailable {
+		t.Fatalf("snapshot = %#v", next)
+	}
+}

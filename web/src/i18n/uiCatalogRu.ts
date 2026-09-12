@@ -1898,6 +1898,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "Установленная версия актуальна",
   "ui.self_update_applied_restart_required": "Версия {version} проверена и записана; перезапустите CPA для загрузки.",
   "ui.self_update_path_saved": "Путь к библиотеке плагина сохранён",
+  "ui.self_update_applied_active": "Записанная на диск версия {version} уже запущена, ничего не ожидается.",
   "ui.opencode_reason_model_not_supported": "Эта модель недоступна для этих данных доступа (апстрим отвечает «not supported»). Не все модели работают через chat-completions, поэтому сначала загрузите каталог моделей.",
   "ui.opencode_reason_missing_session": "Апстрим отклонил запрос из-за отсутствия идентификатора сессии. Обновите плагин и повторите; если ошибка остаётся, требования шлюза изменились.",
   "ui.opencode_probe_model_not_supported_hint": "Ключ принят: недоступна сама модель для этих данных доступа или тарифа. Загрузите каталог моделей этого доступа и выберите модель из списка.",

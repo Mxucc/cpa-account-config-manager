@@ -1898,6 +1898,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "目前已是最新版本",
   "ui.self_update_applied_restart_required": "版本 {version} 已校驗並寫入，重新啟動 CPA 後生效。",
   "ui.self_update_path_saved": "外掛程式庫路徑已儲存",
+  "ui.self_update_applied_active": "已寫入磁碟的 {version} 就是目前執行的版本，無需再重新啟動。",
   "ui.opencode_reason_model_not_supported": "該模型在此憑證上不可用（上游明確回覆 not supported）。並非所有模型都走 chat/completions 協定，建議先「拉取模型目錄」確認該憑證可用的模型。",
   "ui.opencode_reason_missing_session": "上游因缺少工作階段 ID 拒絕了請求。請更新外掛後重試；若仍失敗，代表閘道的要求又變了。",
   "ui.opencode_probe_model_not_supported_hint": "金鑰是被接受的：是這個模型在目前憑證/方案上不可用。請先為該憑證「拉取模型目錄」，再從清單中選模型測試。",

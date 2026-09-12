@@ -1896,6 +1896,7 @@ export const enUI = {
   "ui.self_update_is_current": "The installed version is current",
   "ui.self_update_applied_restart_required": "Version {version} was verified and written; restart CPA to load it.",
   "ui.self_update_path_saved": "Plugin library path saved",
+  "ui.self_update_applied_active": "The version written to disk ({version}) is the one running: nothing is pending.",
   "ui.opencode_reason_model_not_supported": "This model is not available on this credential (the upstream answers \"not supported\"). Not every model speaks the chat-completions protocol, so load the model catalog to see what this credential can reach.",
   "ui.opencode_reason_missing_session": "The upstream rejected the request for a missing session id. Update the plugin and retry; if it persists, the gateway changed its requirements.",
   "ui.opencode_probe_model_not_supported_hint": "The key was accepted: the model itself is out of reach for this credential or tier. Load the model catalog for this credential and pick a model from that list.",

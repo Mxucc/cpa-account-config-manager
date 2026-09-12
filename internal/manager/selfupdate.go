@@ -77,7 +77,12 @@ type SelfUpdateSnapshot struct {
 	RestartRequired bool   `json:"restart_required"`
 	// UIUpdated reports that the release also delivered the interface, which is served from
 	// disk on the next page refresh even though the library still needs a restart.
-	UIUpdated            bool   `json:"ui_updated"`
+	UIUpdated bool `json:"ui_updated"`
+	// PendingRestart is derived: the library written to disk is newer than the one this process
+	// loaded, so only a restart (or a reload) can activate it. It becomes false by itself once
+	// the process runs the version that is on disk, which is what a persisted applied_version
+	// alone could never express.
+	PendingRestart       bool   `json:"pending_restart"`
 	UIPath               string `json:"ui_path,omitempty"`
 	InterfaceRefreshOnly bool   `json:"interface_refresh_only"`
 	CanInstall           bool   `json:"can_install"`
@@ -295,6 +300,11 @@ func (s *SelfUpdateService) refreshDerivedLocked() {
 	}
 	s.state.LatestVersion = latest
 	applied := normalizePluginVersion(s.state.AppliedVersion)
+	s.state.PendingRestart = applied != "" && compareVersions(applied, s.current) > 0
+	if !s.state.PendingRestart {
+		// Either nothing was applied, or this process already runs what is on disk.
+		s.state.RestartRequired = false
+	}
 	s.state.UpdateAvailable = latest != applied && compareVersions(latest, s.current) > 0
 	s.state.AssetName = selfUpdateAssetName(latest)
 	s.state.AssetURL = s.assetURL(latest)

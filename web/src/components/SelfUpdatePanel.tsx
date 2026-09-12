@@ -237,6 +237,7 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
     }
   }, [handleReloadRefusal, onNotice, snapshot?.current_version, tx, waitForReload]);
 
+  const pendingRestart = snapshot?.pending_restart === true;
   const busy = loading || checking || installing || saving || reloading;
   const statusLabel = snapshot?.update_available
     ? tx("ui.version_version_available", { version: snapshot.latest_version || "-" })
@@ -276,13 +277,15 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
       {snapshot?.checksum_ok ? (
         <div className="self-update-verified" role="status"><CheckCircle2 size={16} /><span>{tx("ui.self_update_checksum_verified")}</span><code>{snapshot.archive_sha256}</code></div>
       ) : null}
-      {snapshot?.applied_version ? (
-        <div className="self-update-verified" role="status"><HardDrive size={16} /><span>{tx("ui.self_update_installed_version", { version: snapshot.applied_version })}</span></div>
+      {pendingRestart ? (
+        <div className="self-update-verified" role="status"><HardDrive size={16} /><span>{tx("ui.self_update_installed_version", { version: snapshot?.applied_version || "-" })}</span></div>
+      ) : snapshot?.applied_version ? (
+        <div className="self-update-verified" role="status"><CheckCircle2 size={16} /><span>{tx("ui.self_update_applied_active", { version: snapshot.applied_version })}</span></div>
       ) : null}
       {snapshot?.ui_updated ? (
         <div className="self-update-verified" role="status"><CheckCircle2 size={16} /><span>{tx("ui.self_update_interface_updated")}</span></div>
       ) : null}
-      {snapshot?.restart_required ? (
+      {pendingRestart ? (
         <div className="settings-update-callout" role="status"><RotateCcw size={18} /><strong>{tx("ui.self_update_restart_required")}</strong></div>
       ) : null}
       {snapshot?.backup_path ? (
@@ -304,7 +307,7 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
           {saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.self_update_save_path")}
         </button>
       </div>
-      {snapshot?.restart_required ? (
+      {pendingRestart ? (
         <p className="self-update-hint">{tx("ui.self_update_reload_hint")}</p>
       ) : null}
       {reloading ? (
@@ -315,7 +318,7 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
         <p className="self-update-hint" role="status">{tx("ui.self_update_reload_last_result", { reason: reloadResult.reason || "-" })}</p>
       ) : null}
       <div className="settings-section-actions">
-        {snapshot?.restart_required ? (
+        {pendingRestart ? (
           <button className="button button-primary" type="button" disabled={busy} onClick={() => void reloadNow()}>
             {reloading ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}{tx("ui.self_update_reload_without_restart")}
           </button>

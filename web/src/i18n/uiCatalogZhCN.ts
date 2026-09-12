@@ -1898,6 +1898,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "当前已是最新版本",
   "ui.self_update_applied_restart_required": "版本 {version} 已校验并写入，重启 CPA 后生效。",
   "ui.self_update_path_saved": "插件库路径已保存",
+  "ui.self_update_applied_active": "已写入磁盘的 {version} 就是当前运行的版本，无需再重启。",
   "ui.opencode_reason_model_not_supported": "该模型在这份凭据上不可用（上游明确回复 not supported）。并非所有模型都走 chat/completions 协议，建议先「拉取模型目录」确认该凭据能用的模型。",
   "ui.opencode_reason_missing_session": "上游因缺少会话 ID 拒绝了请求。请更新插件后重试；若仍失败，说明网关的要求又变了。",
   "ui.opencode_probe_model_not_supported_hint": "密钥是被接受的：是这个模型在当前凭据/套餐上不可用。请先为该凭据「拉取模型目录」，再从列表里选模型测试。",

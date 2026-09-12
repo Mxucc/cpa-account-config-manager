@@ -1273,6 +1273,23 @@ export async function probeOpenCodeZenAccount(accountID: string): Promise<OpenCo
 		method: "POST",
 	});
 }
+/** List the CPA AI-provider channels that belong to OpenCode so they can be imported. */
+export async function getOpenCodeChannels(signal?: AbortSignal): Promise<{ channels: import("../types").OpenCodeChannelView[] }> {
+	return requestRecord<{ channels: import("../types").OpenCodeChannelView[] }>("/opencode/channels", { signal });
+}
+
+/**
+ * Import one OpenCode AI-provider channel. The key is read and stored server-side; only
+ * the resulting account metadata comes back. A Go channel that still needs its Workspace
+ * ID and auth Cookie answers 409.
+ */
+export async function importOpenCodeChannel(baseURL: string): Promise<{ import: import("../types").OpenCodeImportResult }> {
+	return requestRecord<{ import: import("../types").OpenCodeImportResult }>("/opencode/import", {
+		method: "POST",
+		body: JSON.stringify({ base_url: baseURL }),
+	});
+}
+
 
 export async function saveUpdatePolicy(policy: UpdatePolicy, confirmAutoUpdate = false): Promise<UpdateSnapshot> {
 	await persistPluginSettings({ update_policy: policy });

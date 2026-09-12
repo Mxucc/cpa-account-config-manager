@@ -7,6 +7,8 @@ import { OpenCodeWorkspace } from "./OpenCodeWorkspace";
 const GO_ACCOUNT_ID = "acc_go_1";
 const GO_WORKSPACE = "wrk_test";
 const ZEN_ACCOUNT_ID = "zen_1";
+const CHANNEL_ZEN_BASE = "https://opencode.ai/zen/v1";
+const CHANNEL_GO_BASE = "https://opencode.ai/zen/go/v1";
 // Canary that must never be rendered: responses only ever expose `key_set`.
 const UNRENDERED_SECRET = "sk-opencode-canary-secret-1234";
 
@@ -37,6 +39,20 @@ function zenAccountView(overrides: Record<string, unknown> = {}): Record<string,
     models: ["zen-model-a"],
     models_error: "",
     models_fetched_at: "2026-09-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+/** One row of `GET /opencode/channels`: an AI-provider channel that belongs to OpenCode. */
+function channelView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "zen",
+    name: "Zen channel",
+    base_url: CHANNEL_ZEN_BASE,
+    key_set: true,
+    models: 3,
+    source: "ai_provider",
+    imported: false,
     ...overrides,
   };
 }
@@ -102,6 +118,10 @@ interface OpenCodeFetchMockOptions {
   accountsStatus?: number;
   accountsErrorBody?: Record<string, unknown>;
   zenAccounts?: Array<Record<string, unknown>>;
+  channels?: Array<Record<string, unknown>>;
+  importResponse?: Record<string, unknown>;
+  importStatus?: number;
+  importErrorBody?: Record<string, unknown>;
   quota?: Record<string, Record<string, unknown>>;
   quotaRefresh?: Record<string, unknown>;
   modelsResponse?: Record<string, unknown>;
@@ -129,6 +149,21 @@ describe("OpenCodeWorkspace", () => {
         return jsonResponse({ account: zenAccountView(), result: { success: true } });
       }
       if (url.endsWith("/opencode/zen/accounts")) return jsonResponse({ accounts: options.zenAccounts ?? [] });
+      if (url.endsWith("/opencode/channels")) return jsonResponse({ channels: options.channels ?? [] });
+      if (url.endsWith("/opencode/import") && init.method === "POST") {
+        if (options.importStatus) {
+          return jsonResponse(options.importErrorBody ?? { error: "opencode import failed" }, options.importStatus);
+        }
+        return jsonResponse({
+          import: options.importResponse ?? {
+            kind: "zen",
+            action: "create_zen",
+            account_id: ZEN_ACCOUNT_ID,
+            name: "Zen mirror",
+            base_url: CHANNEL_ZEN_BASE,
+          },
+        });
+      }
       if (url.endsWith("/opencode/accounts") && init.method === "POST") {
         return jsonResponse({ account: goAccountView(), result: { success: true } });
       }
@@ -157,6 +192,10 @@ describe("OpenCodeWorkspace", () => {
     return requests;
   }
 
+  async function selectTab(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(screen.getByRole("tab", { name }));
+  }
+
   async function findGoRow(section: HTMLElement): Promise<HTMLElement> {
     return waitFor(() => {
       const found = Array.from(section.querySelectorAll(".opencode-table tbody tr"))
@@ -166,7 +205,40 @@ describe("OpenCodeWorkspace", () => {
     });
   }
 
+  function findChannelRow(panel: HTMLElement, name: string): HTMLElement {
+    const cell = within(panel).getByText(name);
+    const row = cell.closest("tr");
+    expect(row).not.toBeNull();
+    return row as HTMLElement;
+  }
+
+  it("renders the five workspace tabs and switches to the matching panel", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const tablist = await screen.findByRole("tablist", { name: "OpenCode" });
+    expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "总览",
+      "Go 账号",
+      "Zen 账号",
+      "渠道",
+      "模型与价格",
+    ]);
+    expect(within(tablist).getByRole("tab", { name: "总览" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "总览" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "Go 账号" })).not.toBeInTheDocument();
+
+    await user.click(within(tablist).getByRole("tab", { name: "渠道" }));
+
+    expect(within(tablist).getByRole("tab", { name: "渠道" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "渠道" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
+  });
+
   it("renders a Go workspace row with its quota windows and model count from the initial load", async () => {
+    const user = userEvent.setup();
     const requests = openCodeFetchMock({
       quota: {
         [GO_ACCOUNT_ID]: {
@@ -180,6 +252,7 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     expect(within(row).getByText(GO_WORKSPACE)).toBeInTheDocument();
@@ -192,13 +265,16 @@ describe("OpenCodeWorkspace", () => {
     expect(requests.some(({ url }) => url.endsWith("/opencode/accounts"))).toBe(true);
     expect(requests.some(({ url }) => url.endsWith("/opencode/zen/accounts"))).toBe(true);
     expect(requests.some(({ url }) => url.endsWith("/opencode/quota"))).toBe(true);
+    expect(requests.some(({ url }) => url.endsWith("/opencode/channels"))).toBe(true);
   });
 
   it("never renders a stored API key value and only shows the key status", async () => {
+    const user = userEvent.setup();
     openCodeFetchMock({ accounts: [goAccountView({ key_set: true })] });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     expect(within(row).getByText("已保存密钥")).toBeInTheDocument();
@@ -218,6 +294,7 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     expect(within(row).getByText("未设置密钥")).toBeInTheDocument();
@@ -243,6 +320,7 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     expect(row.textContent).toContain("先拉取模型目录，才能进行模型测试与 CPA 绑定。");
@@ -276,12 +354,16 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     await user.click(within(row).getByRole("button", { name: `拉取 ${GO_WORKSPACE} 的模型列表` }));
     await waitFor(() => expect(within(row).getByText("2")).toBeInTheDocument());
 
     await user.click(within(row).getByRole("button", { name: `测试 ${GO_WORKSPACE} 的模型` }));
+
+    // The tester lives on the Models tab, so opening it switches the active tab.
+    expect(screen.getByRole("tab", { name: "模型与价格" })).toHaveAttribute("aria-selected", "true");
     const tester = await screen.findByRole("region", { name: "模型测试" });
     expect(within(tester).getByRole("combobox")).toHaveValue("gpt-5.1");
     await user.click(within(tester).getByRole("button", { name: "测试" }));
@@ -315,6 +397,7 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     await user.click(within(row).getByRole("button", { name: `将 ${GO_WORKSPACE} 的模型发布到 CPA 路由` }));
@@ -336,6 +419,7 @@ describe("OpenCodeWorkspace", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("opencode accounts storage unavailable");
     expect(screen.getByText("OpenCode Go 与 Zen 控制器")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "OpenCode" })).toBeInTheDocument();
   });
 
   it("refreshes one workspace quota through the per-account route", async () => {
@@ -351,12 +435,84 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "Go 账号");
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     await user.click(within(row).getByRole("button", { name: "刷新 OpenCode 额度" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.includes(`/opencode/refresh-account?account_id=${GO_ACCOUNT_ID}`) && init.method === "POST")).toBe(true));
     expect(await within(row).findByText(/5 小时额度: 5\.0% · 5 分钟/)).toBeInTheDocument();
+  });
+
+  it("renders the detected channels and imports one through the import route", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({
+      channels: [
+        channelView(),
+        channelView({ kind: "go", name: "OpenCode Go wrk_9", base_url: CHANNEL_GO_BASE, key_set: false }),
+      ],
+      importResponse: { kind: "zen", action: "create_zen", account_id: "zen_2", name: "Zen channel", base_url: CHANNEL_ZEN_BASE },
+    });
+    const onNotice = vi.fn();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+
+    await selectTab(user, "渠道");
+    const panel = await screen.findByRole("tabpanel", { name: "渠道" });
+    const zenRow = findChannelRow(panel, "Zen channel");
+    expect(zenRow.textContent).toContain(CHANNEL_ZEN_BASE);
+    expect(zenRow.textContent).toContain("已保存密钥");
+    expect(zenRow.textContent).toContain("未导入");
+    expect(within(zenRow).getAllByRole("cell")[3]).toHaveTextContent("3");
+
+    // A channel without a stored key has nothing to import.
+    const goRow = findChannelRow(panel, "OpenCode Go wrk_9");
+    expect(within(goRow).getByRole("button", { name: "导入" })).toBeDisabled();
+
+    await user.click(within(zenRow).getByRole("button", { name: "导入" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/import") && init.method === "POST")).toBe(true));
+    const request = requests.find(({ url, init }) => url.endsWith("/opencode/import") && init.method === "POST");
+    expect(JSON.parse(String(request?.init.body))).toEqual({ base_url: CHANNEL_ZEN_BASE });
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("已将 Zen 渠道导入 OpenCode 工作区"));
+    await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/opencode/channels")).length).toBeGreaterThan(1));
+    await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/opencode/accounts")).length).toBeGreaterThan(1));
+    await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/opencode/zen/accounts")).length).toBeGreaterThan(1));
+  });
+
+  it("explains a 409 import that needs the Go workspace credentials and switches to the Go tab", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({
+      channels: [channelView({ kind: "go", name: "OpenCode Go wrk_test", base_url: CHANNEL_GO_BASE })],
+      importStatus: 409,
+      importErrorBody: {
+        error: "add the Workspace ID and auth Cookie for this Go workspace, then import the API key",
+        needs_workspace: true,
+      },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    await selectTab(user, "渠道");
+    const panel = await screen.findByRole("tabpanel", { name: "渠道" });
+    await user.click(within(findChannelRow(panel, "OpenCode Go wrk_test")).getByRole("button", { name: "导入" }));
+
+    expect(await screen.findByText("该 Go 渠道需要先填写 Workspace ID 与 auth Cookie：请先在 Go 账号页添加，再导入 API 密钥。")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Go 账号" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tabpanel", { name: "Go 账号" })).toBeInTheDocument();
+  });
+
+  it("marks an already imported channel as imported", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({ channels: [channelView({ imported: true })] });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    await selectTab(user, "渠道");
+    const panel = await screen.findByRole("tabpanel", { name: "渠道" });
+    const row = findChannelRow(panel, "Zen channel");
+    expect(within(row).getByText("已导入")).toBeInTheDocument();
+    expect(within(row).queryByText("未导入")).not.toBeInTheDocument();
   });
 
   it("renders the official OpenCode price catalog and syncs it on demand", async () => {
@@ -368,6 +524,7 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
 
+    await selectTab(user, "模型与价格");
     const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     expect(within(section).getByText(/^来源: models\.dev/)).toBeInTheDocument();
     expect(await within(section).findByText("LongCat-2.0")).toBeInTheDocument();
@@ -385,12 +542,14 @@ describe("OpenCodeWorkspace", () => {
   });
 
   it("shows the per-conversation session routing status", async () => {
+    const user = userEvent.setup();
     openCodeFetchMock({
       session: { enabled: true, salt_ready: true, target_models: ["a", "b", "c"], injected_requests: 7, distinct_sessions: 2 },
     });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "总览");
     const section = await screen.findByRole("region", { name: "对话会话" });
     expect(await within(section).findByText("已启用")).toBeInTheDocument();
     expect(within(section).getByText("7")).toBeInTheDocument();
@@ -399,10 +558,12 @@ describe("OpenCodeWorkspace", () => {
   });
 
   it("renders the Go monthly allowance with its derived 5-hour and weekly budgets", async () => {
+    const user = userEvent.setup();
     openCodeFetchMock({ pricing: billingPricingFixture() });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "模型与价格");
     const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     expect(await within(section).findByText("LongCat-2.0")).toBeInTheDocument();
     expect(within(section).getByText("每月额度")).toBeInTheDocument();
@@ -413,10 +574,12 @@ describe("OpenCodeWorkspace", () => {
   });
 
   it("renders the documented request estimates with the three window labels", async () => {
+    const user = userEvent.setup();
     openCodeFetchMock({ pricing: billingPricingFixture() });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "模型与价格");
     const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     const estimates = await within(section).findByText("1,830 / 4,580 / 9,150");
     expect(estimates.getAttribute("title")).toContain("预估请求数");
@@ -432,10 +595,12 @@ describe("OpenCodeWorkspace", () => {
   });
 
   it("warns about Go models the official docs mark as deprecated", async () => {
+    const user = userEvent.setup();
     openCodeFetchMock({ pricing: billingPricingFixture() });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "模型与价格");
     const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     const warning = await within(section).findByText("已弃用 January 2026");
     expect(warning).toHaveClass("opencode-model-error");
@@ -447,6 +612,7 @@ describe("OpenCodeWorkspace", () => {
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
+    await selectTab(user, "模型与价格");
     const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     expect(await within(section).findByText("每月额度")).toBeInTheDocument();
 
@@ -459,12 +625,14 @@ describe("OpenCodeWorkspace", () => {
   });
 
   it("summarizes metered Zen and subscription Go billing with the docs links and sync time", async () => {
+    const user = userEvent.setup();
     openCodeFetchMock({ pricing: billingPricingFixture() });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
-    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
-    const billing = await within(section).findByRole("group", { name: "计费" });
+    // The billing summary lives on Overview; the sync metadata stays on Models.
+    await selectTab(user, "总览");
+    const billing = await screen.findByRole("group", { name: "计费" });
     expect(billing).toHaveTextContent("OpenCode Zen");
     expect(billing).toHaveTextContent("按量计费");
     expect(billing).toHaveTextContent("Pay-as-you-go per 1M tokens");
@@ -476,6 +644,9 @@ describe("OpenCodeWorkspace", () => {
       "https://opencode.ai/docs/zen/",
       "https://opencode.ai/docs/go/",
     ]);
+
+    await selectTab(user, "模型与价格");
+    const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     expect(within(section).getByText(/官方文档同步/)).toBeInTheDocument();
   });
 });

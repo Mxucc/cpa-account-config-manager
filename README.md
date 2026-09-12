@@ -92,8 +92,10 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 
 侧边菜单在「AI 提供商」之后新增独立的 **OpenCode** 工作区：
 
-- 以 Workspace ID 和 auth Cookie（用于抓取额度）添加 OpenCode Go 工作区，并可选择保存 OpenCode Go API Key；每个工作区展示已保存的 5h/7d/30d 配额。
-- 以名称、Base URL（默认 `https://opencode.ai/zen`）和 API Key 添加 OpenCode Zen 凭据。
+- 工作区按标签页组织，便于管理，依次为：「概览」（计费摘要、对话会话状态和计数条）、「Go 账号」、「Zen 账号」、「渠道」，以及「模型与价格」（价格目录与模型测试）。快捷入口和刷新操作在每个标签页都保持可用，从账号行发起模型测试会切换到「模型与价格」标签页。
+- 绑定 OpenCode Go 时，先登录 opencode.ai 并打开 Go 工作区页面，再以 Workspace ID 和 auth Cookie（即 `auth` 的值，用于抓取额度）添加工作区，并可选择保存 OpenCode Go API Key；每个工作区展示已保存的 5h/7d/30d 配额。
+- 以名称、API Key 和 Base URL 添加 OpenCode Zen 凭据，Base URL 可以是 Zen 网关 `https://opencode.ai/zen`（默认值），也可以是自建 `opencode-cc` 桥接地址（例如 `http://localhost:8787`）。
+- 「渠道」标签页会读取已归属 OpenCode 的 CPA AI 提供商渠道并列出类型、名称、Base URL、模型数量、密钥状态以及工作区是否已管理该渠道。一次点击即可导入渠道凭据，无需重复填写：Zen 渠道（包括自建 `opencode-cc` 桥接）会成为 Zen 账号，Go 渠道会把其 API Key 附加到已保存 Workspace ID 和 auth Cookie 的工作区账号。若没有这样的账号，Go 渠道会返回一个明确状态，引导操作者先到「Go 账号」标签页填写 Workspace ID 和 auth Cookie。凭据在服务端读取并保存，绝不会到达浏览器。
 - “加载模型”会从 OpenAI 兼容端点 `GET {base}/v1/models` 获取模型列表，请求携带 `x-opencode-client: cli` 请求头和 `opencode/<version>` User-Agent，并按账号缓存结果。
 - 模型测试会使用所选模型发起真实 `POST {base}/v1/chat/completions` 探测，返回状态、原因码、HTTP 状态和延迟；原因码包括 `authentication_failed`、`model_not_found`、`quota_limited` 和 `upstream_unavailable`。
 - 一键绑定会 upsert 一个 `openai-compatibility` CPA 渠道，把模型发布到 CPA 路由：Base URL 为 `{base}/v1`，以已保存的 API Key 作为 key 条目并携带 OpenCode 请求头，同时把已验证的模型目录写入渠道的模型列表；重复绑定同一账号只会更新已有渠道、保留既有别名，不会创建重复渠道。
@@ -106,7 +108,7 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 - 订阅价格、窗口拆分以及自动充值阈值与金额都会从文档正文解析，内置默认值仅作兜底，因此 OpenCode 侧的改动会在下一次同步时被采用。官方文档同步时间与镜像同步时间分开显示；某个来源暂时不可用时保留最近一次可用数据，而不会清空价格。
 - OpenCode Go 路由按会话派生会话 ID：OpenCode Go 要求客户端“Send a stable session ID in `x-opencode-session` for each conversation so we can optimize routing and prompt caching”（引自 https://opencode.ai/docs/go/#where-can-i-use-it）；插件为 OpenCode 模型按以下顺序取值：入站 `x-opencode-session` 原样保留；否则复用原生客户端会话请求头（可识别 Claude Code、Codex、ZCode、Pi 风格的请求头）；再取请求体中的会话 ID（`prompt_cache_key`、`session_id`、`conversation_id`）；最后回退为对会话前缀的加盐摘要，使同一会话在各轮次保持同一 ID，且任何消息正文都不会被发送。注入仅限 OpenCode 发布的模型 ID（Zen 与 Go 目录，以及各账号已加载的目录），不触碰其他模型。
 - 工作区展示会话状态：启用/停用、覆盖的模型数量、已分配会话 ID 的请求数、观察到的不同会话数。会话 ID 永不写入日志，每个安装的盐以 0600 权限保存在插件数据目录中。
-- 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`POST /opencode/models` 携带 `{kind: "go"|"zen", account_id}`，返回带模型列表的脱敏账号视图；`POST /opencode/model-test` 携带 `{kind, account_id, model, timeout_seconds?}`，返回状态、原因码、HTTP 状态、延迟、测试时间和详情；`POST /opencode/bind` 携带 `{kind, account_id}`，返回绑定信息（类型、Base URL、索引、是否新建、渠道 key）；`POST /opencode/accounts` 还接受 `{account_id, api_key}` 做仅更新密钥操作，`api_key` 为空时保留已保存的密钥，传入新密钥会使缓存的模型目录失效；`GET /opencode/pricing` 返回目录及其同步来源信息；`POST /opencode/pricing/refresh` 重新校验该目录并报告是否发生变化；`GET /opencode/session` 返回会话路由状态。
+- 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`POST /opencode/models` 携带 `{kind: "go"|"zen", account_id}`，返回带模型列表的脱敏账号视图；`POST /opencode/model-test` 携带 `{kind, account_id, model, timeout_seconds?}`，返回状态、原因码、HTTP 状态、延迟、测试时间和详情；`POST /opencode/bind` 携带 `{kind, account_id}`，返回绑定信息（类型、Base URL、索引、是否新建、渠道 key）；`POST /opencode/accounts` 还接受 `{account_id, api_key}` 做仅更新密钥操作，`api_key` 为空时保留已保存的密钥，传入新密钥会使缓存的模型目录失效；`GET /opencode/pricing` 返回目录及其同步来源信息；`POST /opencode/pricing/refresh` 重新校验该目录并报告是否发生变化；`GET /opencode/session` 返回会话路由状态；`GET /opencode/channels` 返回 OpenCode 渠道及其导入状态；`POST /opencode/import` 携带 `{base_url}` 导入一条渠道凭据，成功返回 200，需要工作区凭据的 Go 渠道返回标记为 `needs_workspace` 的 409。
 
 ### 操作日志、界面与更新
 

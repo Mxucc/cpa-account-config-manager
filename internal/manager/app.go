@@ -746,6 +746,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/pricing", Description: "Read the official OpenCode Zen and Go model prices with their sync provenance."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/pricing/refresh", Description: "Revalidate the official OpenCode price catalog and report whether it changed."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/session", Description: "Read the per-conversation x-opencode-session routing status."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/channels", Description: "List the CPA AI-provider channels that belong to OpenCode."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/import", Description: "Import the credential of one existing OpenCode AI-provider channel."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
@@ -985,6 +987,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodePricingRefresh(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/session":
 		return a.handleOpenCodeSession(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/channels":
+		return a.handleOpenCodeChannels(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/import":
+		return a.handleOpenCodeImport(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/zen/probe-account":
 		return a.handleOpenCodeZenProbeAccount(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/ai-providers/test":

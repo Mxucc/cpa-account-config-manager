@@ -3049,3 +3049,22 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .opencode-estimates { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .opencode-session .opencode-test-result { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .opencode-session .button { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+
+/* The OpenCode workspace tabs; styled after .risk-tabs, widened to five tabs. */
+.opencode-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--line); }
+.opencode-tabs button { min-height: 40px; border: 0; background: var(--bg-tertiary); color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); font-weight: 750; cursor: pointer; }
+.opencode-tabs button:hover { color: var(--text-primary); background: var(--bg-hover); }
+.opencode-tabs button.active { color: var(--primary-contrast); background: var(--primary-color); }
+.opencode-tab-panel { min-width: 0; display: grid; gap: 14px; }
+.opencode-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0; }
+.opencode-counts > div { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-tertiary); }
+.opencode-counts dt { color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.opencode-counts dd { margin: 0; color: var(--text-primary); font-size: calc(16px * var(--font-size-scale)); font-weight: 750; font-variant-numeric: tabular-nums; }
+.opencode-channel-kind { display: inline-flex; align-items: center; padding: 1px 7px; border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-secondary); background: var(--bg-primary); font-size: calc(10px * var(--font-size-scale)); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.opencode-channel-name { min-width: 140px; display: grid; gap: 3px; }
+.opencode-channel-name small { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); overflow-wrap: anywhere; }
+.opencode-channel-state { font-size: calc(11px * var(--font-size-scale)); font-weight: 700; }
+.opencode-channel-state.imported { color: var(--success); }
+.opencode-channel-state.not-imported { color: var(--text-tertiary); }
+.opencode-channels .actions-cell .button { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 480px) { .opencode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .opencode-tabs button { min-height: 36px; } }

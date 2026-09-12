@@ -1416,6 +1416,27 @@ export interface OpenCodeAccountsResponse {
   accounts: OpenCodeAccountView[];
   storage_error?: string;
 }
+/** One CPA AI-provider channel that belongs to OpenCode; the credential is never included. */
+export interface OpenCodeChannelView {
+  kind: "go" | "zen";
+  name?: string;
+  base_url: string;
+  key_set: boolean;
+  models: number;
+  source: string;
+  imported: boolean;
+  workspace_id?: string;
+}
+
+/** Outcome of importing one AI-provider channel credential into the workspace. */
+export interface OpenCodeImportResult {
+  kind: string;
+  action: "create_zen" | "attach_key";
+  account_id: string;
+  name?: string;
+  base_url: string;
+}
+
 
 export type AIProviderChannelKind =
   | "openai-compatibility"

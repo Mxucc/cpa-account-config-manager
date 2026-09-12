@@ -100,7 +100,8 @@ func (a *App) handleCodexModels(ctx context.Context, req cpaapi.ManagementReques
 	a.refreshCodexChannelModels(ctx, managementKey)
 	snapshot := a.codexModelControl.Snapshot()
 	snapshot.Models = a.codexModelControlRows()
-	return jsonResponse(http.StatusOK, map[string]any{"models": snapshot.Models, "disabled": snapshot.Disabled, "storage_error": snapshot.StorageError})
+	snapshot.PricingUpdatedAt, snapshot.PricingSource = a.codexPricingProvenance()
+	return jsonResponse(http.StatusOK, map[string]any{"models": snapshot.Models, "disabled": snapshot.Disabled, "storage_error": snapshot.StorageError, "pricing_source": snapshot.PricingSource, "pricing_updated_at": snapshot.PricingUpdatedAt})
 }
 
 // handleCodexModelsUpdate replaces the globally disabled set. The change applies
@@ -123,5 +124,6 @@ func (a *App) handleCodexModelsUpdate(ctx context.Context, req cpaapi.Management
 	}
 	a.refreshCodexChannelModels(ctx, managementKey)
 	snapshot.Models = a.codexModelControlRows()
-	return jsonResponse(http.StatusOK, map[string]any{"models": snapshot.Models, "disabled": snapshot.Disabled, "storage_error": snapshot.StorageError})
+	snapshot.PricingUpdatedAt, snapshot.PricingSource = a.codexPricingProvenance()
+	return jsonResponse(http.StatusOK, map[string]any{"models": snapshot.Models, "disabled": snapshot.Disabled, "storage_error": snapshot.StorageError, "pricing_source": snapshot.PricingSource, "pricing_updated_at": snapshot.PricingUpdatedAt})
 }

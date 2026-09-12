@@ -98,7 +98,7 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 - 「指纹配置」把原先直接编译进 Codex 指纹的每个取值都变成可编辑字段，字段旁同时展示内置默认值与当前生效值，并提供「已覆盖」标记、单字段恢复、分组恢复和全部恢复操作。
 - 可编辑字段为：收敛模式；客户端身份字符串（User-Agent、Originator、Version、OpenAI-Beta）和 turn 元数据请求头名称；显式 installation/session/thread id（留空表示自动派生）和窗口后缀；installation、session 和 thread id 的派生前缀以及种子策略（按账号或固定种子）；请求体开关（turn 时间戳、关联字段和 prompt-cache-key 重写）。
 - 清空字段或执行恢复都会回到默认值；无效取值会被拒绝，且不会产生任何改动。指纹配置作用于每个 Codex 账号和每条 Codex AI 提供商渠道，AI 提供商页面上的账号级与提供商级收敛覆盖仍优先于档案默认值。
-- 「模型与价格」提供 Codex 模型 id 的全局开关列表，展示每个模型被多少 Codex 账号和 AI 提供商渠道引用，支持逐个模型启用/禁用以及「全部启用」。禁用会同时作用于所有 Codex 账号和 AI 提供商渠道，并在请求路径上强制执行：被禁用的模型会立即收到拒绝响应，而不是被转发到上游，因此改动在下一次请求即生效，无需等待宿主侧策略应用。此能力只影响 Codex 流量，同一模型 id 在其他提供商系列上不受影响。
+- 「模型与价格」提供 Codex 模型 id 的全局开关列表，展示每个模型被多少 Codex 账号和 AI 提供商渠道引用，支持逐个模型启用/禁用以及「全部启用」。每个模型同时显示插件计费所采用的价格——输入、输出与缓存读取的「美元 / 百万 token」单价，取自与 Codex 用量计费相同的 Sub2API / Wei-Shaw 价格表，并标注该模型的长上下文倍率；列表上方展示价格来源与同步时间。价格表未收录的模型会标记为「暂无价格」，而不是显示为免费。禁用会同时作用于所有 Codex 账号和 AI 提供商渠道，并在请求路径上强制执行：被禁用的模型会立即收到拒绝响应，而不是被转发到上游，因此改动在下一次请求即生效，无需等待宿主侧策略应用。此能力只影响 Codex 流量，同一模型 id 在其他提供商系列上不受影响。
 - 两项设置都保存在插件私有数据目录（0600），并通过要求 Management Key 的管理路由开放，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`GET /codex/overview`、`GET|PUT /codex/fingerprint`、`POST /codex/fingerprint/reset` 和 `GET|PUT /codex/models`。响应中不包含任何凭据。
 
 ### OpenCode

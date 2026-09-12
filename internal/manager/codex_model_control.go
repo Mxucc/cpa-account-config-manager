@@ -32,14 +32,25 @@ const (
 	codexModelDisabledMessage = "this model is disabled for Codex by the account config manager"
 )
 
-// CodexModelControlRow is one model id known to the Codex family.
+// CodexModelControlRow is one model id known to the Codex family, with the price
+// the plugin's own accounting uses for it (USD per million tokens).
 type CodexModelControlRow struct {
 	ID       string `json:"id"`
 	Disabled bool   `json:"disabled"`
 	// Accounts counts the Codex provider identities that reported traffic for the
 	// model; Channels counts the Codex AI-provider channels that list it.
-	Accounts int `json:"accounts"`
-	Channels int `json:"channels"`
+	Accounts                   int     `json:"accounts"`
+	Channels                   int     `json:"channels"`
+	Priced                     bool    `json:"priced"`
+	InputUSDPerMillion         float64 `json:"input_usd_per_million,omitempty"`
+	OutputUSDPerMillion        float64 `json:"output_usd_per_million,omitempty"`
+	CacheReadUSDPerMillion     float64 `json:"cache_read_usd_per_million,omitempty"`
+	CacheCreationUSDPerMillion float64 `json:"cache_creation_usd_per_million,omitempty"`
+	// LongContextThresholdTokens and the multipliers are part of the same table and
+	// explain why a long request costs more.
+	LongContextThresholdTokens  int64   `json:"long_context_threshold_tokens,omitempty"`
+	LongContextInputMultiplier  float64 `json:"long_context_input_multiplier,omitempty"`
+	LongContextOutputMultiplier float64 `json:"long_context_output_multiplier,omitempty"`
 }
 
 // CodexModelControlSnapshot is the redacted state exposed to the UI.
@@ -47,6 +58,9 @@ type CodexModelControlSnapshot struct {
 	Models       []CodexModelControlRow `json:"models"`
 	Disabled     []string               `json:"disabled"`
 	StorageError string                 `json:"storage_error,omitempty"`
+	// Pricing provenance lets the UI label where the displayed prices come from.
+	PricingSource    string    `json:"pricing_source,omitempty"`
+	PricingUpdatedAt time.Time `json:"pricing_updated_at,omitempty"`
 }
 
 // CodexModelControlService stores the disabled model list.
@@ -336,10 +350,50 @@ func (a *App) codexModelControlRows() []CodexModelControlRow {
 	}
 	list := make([]CodexModelControlRow, 0, len(rows))
 	for _, row := range rows {
+		pricing, priced := a.codexModelPriceFor(row.ID)
+		applyCodexModelPrice(row, pricing, priced)
 		list = append(list, *row)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	return list
+}
+
+// codexModelPriceFor resolves one model against the plugin's price table using the
+// same lookup the credit accounting uses.
+func (a *App) codexModelPriceFor(model string) (creditModelPricing, bool) {
+	if a == nil || a.creditUsage == nil {
+		return creditModelPricing{}, false
+	}
+	return a.creditUsage.PriceForModel(model)
+}
+
+// applyCodexModelPrice converts the per-token rates the billing path uses into the
+// per-million figures an operator reads, so the displayed price always matches the
+// rate the plugin charges for the same model.
+func applyCodexModelPrice(row *CodexModelControlRow, pricing creditModelPricing, priced bool) {
+	if row == nil || !priced {
+		return
+	}
+	row.Priced = true
+	row.InputUSDPerMillion = pricing.Input * 1_000_000
+	row.OutputUSDPerMillion = pricing.Output * 1_000_000
+	row.CacheReadUSDPerMillion = pricing.CacheRead * 1_000_000
+	row.CacheCreationUSDPerMillion = pricing.CacheCreation * 1_000_000
+	row.LongContextThresholdTokens = pricing.LongContextThreshold
+	if pricing.LongContextInputMultiplier > 1 {
+		row.LongContextInputMultiplier = pricing.LongContextInputMultiplier
+	}
+	if pricing.LongContextOutputMultiplier > 1 {
+		row.LongContextOutputMultiplier = pricing.LongContextOutputMultiplier
+	}
+}
+
+// codexPricingProvenance reports the price table's source and last refresh.
+func (a *App) codexPricingProvenance() (time.Time, string) {
+	if a == nil || a.creditUsage == nil {
+		return time.Time{}, ""
+	}
+	return a.creditUsage.Provenance()
 }
 
 func providerIsCodexFamily(provider string) bool {

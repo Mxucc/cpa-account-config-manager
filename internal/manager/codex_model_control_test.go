@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -121,6 +122,98 @@ func TestCodexModelControlRowsMergeObservedAndConfiguredModels(t *testing.T) {
 	enabledRow, ok := byID["gpt-5.4"]
 	if !ok || enabledRow.Disabled || enabledRow.Channels != 1 {
 		t.Fatalf("enabled row = %#v (present=%v)", enabledRow, ok)
+	}
+}
+
+// Codex model prices come from the same Sub2API table the credit accounting uses,
+// so the displayed rate always matches what the plugin charges.
+func TestCodexModelRowsCarryPricesFromTheBillingTable(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	// $3 in / $15 out / $0.30 cache read per million tokens.
+	app.creditUsage.table.Store(&creditPricingTable{
+		Models: map[string]creditModelPricing{
+			"gpt-5.3-codex": {Input: 3e-06, Output: 1.5e-05, CacheRead: 3e-07, LongContextThreshold: 272000, LongContextInputMultiplier: 2},
+			// The billing lookup maps a suffixed id onto its family rate, so a
+			// "gpt-5.4-codex" request is charged the gpt-5.4 rate.
+			"gpt-5.4": {Input: 1.25e-06, Output: 1e-05},
+		},
+		UpdatedAt: time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
+		Source:    creditPricingSource,
+	})
+	if _, errSet := app.codexModelControl.Set([]string{"gpt-5.3-codex"}); errSet != nil {
+		t.Fatalf("set: %v", errSet)
+	}
+
+	rows := app.codexModelControlRows()
+	if len(rows) == 0 {
+		t.Fatalf("no model rows")
+	}
+	byID := map[string]CodexModelControlRow{}
+	for _, candidate := range rows {
+		byID[candidate.ID] = candidate
+	}
+	row, ok := byID["gpt-5.3-codex"]
+	if !ok {
+		t.Fatalf("the disabled model row is missing: %#v", rows)
+	}
+	if !row.Priced || row.InputUSDPerMillion != 3 || row.OutputUSDPerMillion != 15 || row.CacheReadUSDPerMillion != 0.3 {
+		t.Fatalf("priced row = %#v", row)
+	}
+	// The long-context rule from the same table is surfaced, not dropped.
+	if row.LongContextThresholdTokens != 272000 || row.LongContextInputMultiplier != 2 {
+		t.Fatalf("long-context fields = %#v", row)
+	}
+	// Provenance is reported for the UI label.
+	updatedAt, source := app.codexPricingProvenance()
+	if source != creditPricingSource || updatedAt.IsZero() {
+		t.Fatalf("provenance = %q at %v", source, updatedAt)
+	}
+	// A suffixed Codex id is priced through the same family mapping the billing
+	// path uses, so the table and the charge cannot disagree.
+	if _, errSet := app.codexModelControl.Set([]string{"gpt-5.3-codex", "gpt-5.4-codex"}); errSet != nil {
+		t.Fatalf("set both: %v", errSet)
+	}
+	rows = app.codexModelControlRows()
+	byID = map[string]CodexModelControlRow{}
+	for _, candidate := range rows {
+		byID[candidate.ID] = candidate
+	}
+	if family := byID["gpt-5.4-codex"]; !family.Priced || family.InputUSDPerMillion != 1.25 {
+		t.Fatalf("family mapping row = %#v", family)
+	}
+	if _, errSet := app.codexModelControl.Set([]string{"gpt-5.3-codex"}); errSet != nil {
+		t.Fatalf("restore set: %v", errSet)
+	}
+	if _, ok := byID["gpt-5.3-codex"]; !ok {
+		t.Fatalf("the base row disappeared")
+	}
+
+	// The route exposes both the rows and the provenance.
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management" + managementRoutePrefix + "/codex/models",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload struct {
+		Models           []CodexModelControlRow `json:"models"`
+		PricingSource    string                 `json:"pricing_source"`
+		PricingUpdatedAt time.Time              `json:"pricing_updated_at"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode: %v", errDecode)
+	}
+	if payload.PricingSource != creditPricingSource || len(payload.Models) == 0 || !payload.Models[0].Priced {
+		t.Fatalf("payload = %#v", payload)
+	}
+	// An unpriced model is reported as unpriced rather than silently free.
+	app.creditUsage.table.Store(&creditPricingTable{Models: map[string]creditModelPricing{}, Source: creditPricingSource})
+	for _, unpriced := range app.codexModelControlRows() {
+		if unpriced.Priced {
+			t.Fatalf("model %s reported a price from an empty table", unpriced.ID)
+		}
 	}
 }
 

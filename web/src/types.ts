@@ -1250,13 +1250,23 @@ export interface CodexModelControlRow {
   disabled: boolean;
   accounts: number;
   channels: number;
+  /** True when the plugin's price table (Sub2API) prices this model. */
   priced?: boolean;
+  input_usd_per_million?: number;
+  output_usd_per_million?: number;
+  cache_read_usd_per_million?: number;
+  cache_creation_usd_per_million?: number;
+  long_context_threshold_tokens?: number;
+  long_context_input_multiplier?: number;
+  long_context_output_multiplier?: number;
 }
 
 export interface CodexModelControlSnapshot {
   models: CodexModelControlRow[];
   disabled: string[];
   storage_error?: string;
+  pricing_source?: string;
+  pricing_updated_at?: string;
 }
 
 export interface CodexOverview {

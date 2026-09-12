@@ -17,9 +17,10 @@ const fingerprintFields = [
   { key: "include_relationship_fields", group: "body", kind: "bool", default: "true", value: "true", overridden: false },
 ];
 
+// Rows carry the price the plugin's own accounting table resolves for the model.
 const modelRows = [
-  { id: "gpt-5.4-codex", disabled: false, accounts: 2, channels: 1 },
-  { id: "gpt-5.4", disabled: false, accounts: 1, channels: 1 },
+  { id: "gpt-5.4-codex", disabled: false, accounts: 2, channels: 1, priced: true, input_usd_per_million: 1.25, output_usd_per_million: 10, cache_read_usd_per_million: 0.125 },
+  { id: "unpriced-model", disabled: false, accounts: 0, channels: 1, priced: false },
 ];
 
 interface CodexFetchMockOptions {
@@ -60,10 +61,20 @@ describe("CodexWorkspace", () => {
       if (url.endsWith("/codex/models") && init.method === "PUT") {
         const body = JSON.parse(String(init.body ?? "{}")) as { disabled?: string[] };
         disabled = body.disabled ?? [];
-        return jsonResponse({ models: modelRows.map((row) => ({ ...row, disabled: disabled.includes(row.id) })), disabled });
+        return jsonResponse({
+          models: modelRows.map((row) => ({ ...row, disabled: disabled.includes(row.id) })),
+          disabled,
+          pricing_source: "Sub2API / Wei-Shaw model-price-repo",
+          pricing_updated_at: "2026-09-12T00:00:00Z",
+        });
       }
       if (url.endsWith("/codex/models")) {
-        return jsonResponse({ models: modelRows.map((row) => ({ ...row, disabled: disabled.includes(row.id) })), disabled });
+        return jsonResponse({
+          models: modelRows.map((row) => ({ ...row, disabled: disabled.includes(row.id) })),
+          disabled,
+          pricing_source: "Sub2API / Wei-Shaw model-price-repo",
+          pricing_updated_at: "2026-09-12T00:00:00Z",
+        });
       }
       if (url.endsWith("/codex/fingerprint") && init.method === "PUT") {
         const body = JSON.parse(String(init.body ?? "{}")) as { values?: Record<string, string> };
@@ -191,6 +202,27 @@ describe("CodexWorkspace", () => {
       const writes = requests.filter(({ url, init }) => url.endsWith("/codex/models") && init.method === "PUT");
       expect(JSON.parse(String(writes.at(-1)?.init.body))).toEqual({ disabled: [] });
     });
+  });
+
+  it("shows the plugin price table rates and marks an unpriced model", async () => {
+    const user = userEvent.setup();
+    codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    // The source of the displayed prices is stated explicitly.
+    expect(within(panel).getByText(/Sub2API \/ Wei-Shaw model-price-repo/)).toBeInTheDocument();
+
+    const pricedRow = within(panel).getByText("gpt-5.4-codex").closest("tr") as HTMLElement;
+    const pricedCells = within(pricedRow).getAllByRole("cell").map((cell) => cell.textContent);
+    expect(pricedCells).toContain("$1.25");
+    expect(pricedCells).toContain("$10.00");
+    expect(pricedCells).toContain("$0.13");
+
+    const unpricedRow = within(panel).getByText("unpriced-model").closest("tr") as HTMLElement;
+    expect(within(unpricedRow).getByText("暂无价格")).toBeInTheDocument();
   });
 
   it("saves the moved Codex experimental settings from the overview", async () => {

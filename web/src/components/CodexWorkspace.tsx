@@ -16,11 +16,22 @@ interface CodexWorkspaceProps {
 /** The workspace is split into tabs so identity, model control and fingerprints stay reachable. */
 type CodexTab = "overview" | "models" | "fingerprint";
 
+/** Mirrors the backend price-table label so the source is shown before the first load. */
+const creditPricingSourceFallback = "Sub2API / Wei-Shaw model-price-repo";
+
 const EMPTY_CODEX_IDENTITY: ExperimentalCodexIdentitySettings = {
   outbound_convergence_enabled: false,
   ingress_gate_enabled: false,
   allow_app_server_clients: false,
 };
+
+/** Prices come from the plugin price table as USD per million tokens. */
+function formatCodexPrice(value: number | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "-";
+  if (value === 0) return "$0";
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
 
 const GROUP_ORDER = ["client", "identity", "derivation", "body"];
 
@@ -61,7 +72,7 @@ function draftFor(field: CodexFingerprintField, drafts: Record<string, string>):
  * the global model control, and the request fingerprint profile.
  */
 export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexWorkspaceProps) {
-  const { locale, tx } = useI18n();
+  const { locale, tx, formatDateTime } = useI18n();
   const [activeTab, setActiveTab] = useState<CodexTab>("overview");
   const [overview, setOverview] = useState<CodexOverview | null>(null);
   const [modelControl, setModelControl] = useState<CodexModelControlSnapshot | null>(null);
@@ -348,6 +359,11 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
             </button>
           </div>
           <p className="codex-models-note" role="note"><AlertTriangle size={15} />{tx("ui.codex_model_control_description")}</p>
+          <p className="codex-price-source">
+            {tx("ui.codex_models_price_source")}: <strong>{modelControl?.pricing_source || creditPricingSourceFallback}</strong>
+            {modelControl?.pricing_updated_at ? ` · ${tx("ui.codex_pricing_updated")}: ${formatDateTime(modelControl.pricing_updated_at)}` : ""}
+            {" · "}{tx("ui.codex_models_price_unit")}
+          </p>
           <label className="codex-model-search">
             <Search size={15} />
             <input value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder={tx("ui.search")} aria-label={tx("ui.search")} />
@@ -357,6 +373,9 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               <thead>
                 <tr>
                   <th>{tx("ui.model")}</th>
+                  <th>{tx("ui.codex_models_input_price")}</th>
+                  <th>{tx("ui.codex_models_output_price")}</th>
+                  <th>{tx("ui.codex_models_cache_read_price")}</th>
                   <th>{tx("ui.codex_models_accounts_count")}</th>
                   <th>{tx("ui.codex_models_channels_count")}</th>
                   <th>{tx("ui.status")}</th>
@@ -366,7 +385,20 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               <tbody>
                 {filteredRows.map((row) => (
                   <tr key={row.id}>
-                    <td><strong>{row.id}</strong></td>
+                    <td>
+                      <div className="codex-model-cell">
+                        <strong>{row.id}</strong>
+                        {row.long_context_threshold_tokens && (row.long_context_input_multiplier ?? 0) > 1 ? (
+                          <small className="codex-model-long-context">{tx("ui.codex_models_long_context_note", {
+                            tokens: String(row.long_context_threshold_tokens),
+                            multiplier: String(row.long_context_input_multiplier),
+                          })}</small>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>{row.priced ? formatCodexPrice(row.input_usd_per_million) : tx("ui.codex_models_unpriced")}</td>
+                    <td>{formatCodexPrice(row.output_usd_per_million)}</td>
+                    <td>{formatCodexPrice(row.cache_read_usd_per_million)}</td>
                     <td>{row.accounts}</td>
                     <td>{row.channels}</td>
                     <td><span className={row.disabled ? "codex-model-state disabled" : "codex-model-state enabled"}>{tx(row.disabled ? "ui.disabled" : "ui.enabled")}</span></td>
@@ -382,7 +414,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                     </td>
                   </tr>
                 ))}
-                {!loading && filteredRows.length === 0 ? <tr><td colSpan={5}>{tx("ui.codex_models_empty")}</td></tr> : null}
+                {!loading && filteredRows.length === 0 ? <tr><td colSpan={7}>{tx("ui.codex_models_empty")}</td></tr> : null}
               </tbody>
             </table>
           </div>

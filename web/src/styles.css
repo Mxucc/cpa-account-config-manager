@@ -3125,3 +3125,11 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .codex-fingerprint-row > .button { justify-self: end; display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 768px) { .codex-fingerprint-row { grid-template-columns: minmax(0, 1fr); } .codex-fingerprint-row > .button { justify-self: start; } }
 @media (max-width: 480px) { .codex-tabs { grid-template-columns: repeat(1, minmax(0, 1fr)); } .codex-tabs button { min-height: 36px; } }
+
+/* Codex model prices come from the plugin price table, shown per million tokens. */
+.codex-model-cell { min-width: 160px; display: grid; gap: 3px; }
+.codex-model-long-context { color: var(--warning); font-size: calc(10px * var(--font-size-scale)); }
+.codex-price-source { margin: 0; color: var(--text-tertiary); font-size: calc(11px * var(--font-size-scale)); }
+.codex-price-source strong { color: var(--text-secondary); font-weight: 700; }
+.codex-table td { font-variant-numeric: tabular-nums; }
+

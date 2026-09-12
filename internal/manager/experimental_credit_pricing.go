@@ -335,6 +335,32 @@ func (s *Sub2APICreditUsage) Calculate(record cpaapi.UsageRecord) CreditCharge {
 	return charge
 }
 
+// PriceForModel resolves one model against the loaded price table using the same
+// lookup the billing path uses, so a displayed price always matches the rate the
+// plugin charges. Prices are per token; callers scale them for display.
+func (s *Sub2APICreditUsage) PriceForModel(model string) (creditModelPricing, bool) {
+	if s == nil {
+		return creditModelPricing{}, false
+	}
+	table := s.table.Load()
+	if table == nil {
+		return creditModelPricing{}, false
+	}
+	return resolveCreditModelPricing(table.Models, model)
+}
+
+// Provenance reports where the price table came from and when it was refreshed.
+func (s *Sub2APICreditUsage) Provenance() (time.Time, string) {
+	if s == nil {
+		return time.Time{}, ""
+	}
+	table := s.table.Load()
+	if table == nil {
+		return time.Time{}, ""
+	}
+	return table.UpdatedAt, table.Source
+}
+
 func (s *Sub2APICreditUsage) Close() {
 	if s == nil {
 		return

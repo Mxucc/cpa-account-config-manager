@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -266,6 +268,56 @@ func (a *App) Configure(raw []byte) {
 	a.ConfigureHost(raw, cpaapi.SchemaVersion)
 }
 
+// dataDirAlternates lists other directories that may hold this plugin's state. The implicit
+// data directory is a relative path, so it follows the working directory of whoever started
+// CPA; looking beside the plugin library and the CPA binary keeps stored credentials visible
+// after a restart from a different directory.
+func (a *App) dataDirAlternates(primary string) []string {
+	if a == nil {
+		return nil
+	}
+	alternates := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	appendAlternate := func(directory string) {
+		trimmed := strings.TrimSpace(directory)
+		if trimmed == "" {
+			return
+		}
+		if absolute, errAbs := filepath.Abs(trimmed); errAbs == nil {
+			trimmed = absolute
+		}
+		trimmed = filepath.Clean(trimmed)
+		if trimmed == filepath.Clean(primary) {
+			return
+		}
+		if _, exists := seen[trimmed]; exists {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		alternates = append(alternates, trimmed)
+	}
+	// The plugin library lives where the host installed it, which does not move when CPA is
+	// restarted from another working directory.
+	if a.selfUpdate != nil {
+		if pluginFile, errFile := a.selfUpdatePluginFile(); errFile == nil && pluginFile != "" {
+			appendAlternate(filepath.Join(filepath.Dir(pluginFile), implicitDataDirName))
+		}
+	}
+	if executable, errExecutable := os.Executable(); errExecutable == nil {
+		appendAlternate(filepath.Join(filepath.Dir(executable), implicitDataDirName))
+	}
+	return alternates
+}
+
+// selfUpdatePluginFile reports the located plugin library, if any.
+func (a *App) selfUpdatePluginFile() (string, error) {
+	if a == nil || a.selfUpdate == nil {
+		return "", nil
+	}
+	snapshot := a.selfUpdate.Snapshot()
+	return snapshot.PluginFile, nil
+}
+
 func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	if a == nil {
 		return
@@ -277,6 +329,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 		a.mu.Unlock()
 		return
 	}
+	config.DataDirAlternates = a.dataDirAlternates(config.DataDir)
 	a.mu.Lock()
 	a.config = config
 	a.configErr = ""
@@ -777,6 +830,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/session", Description: "Read the per-conversation x-opencode-session routing status."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/channels", Description: "List the CPA AI-provider channels that belong to OpenCode."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/import", Description: "Import the credential of one existing OpenCode AI-provider channel."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/storage", Description: "Report the private state directory that holds the OpenCode credentials."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/model-control", Description: "List the OpenCode models and the globally disabled set."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/opencode/model-control", Description: "Replace the globally disabled OpenCode model set."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/self-update", Description: "Read the direct GitHub self-update state."},
@@ -1040,6 +1094,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeChannels(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/import":
 		return a.handleOpenCodeImport(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/storage":
+		return a.handleOpenCodeStorage(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/model-control":
 		return a.handleOpenCodeModelControl(ctx, req)
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/opencode/model-control":

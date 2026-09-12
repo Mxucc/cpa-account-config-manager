@@ -1898,6 +1898,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "当前已是最新版本",
   "ui.self_update_applied_restart_required": "版本 {version} 已校验并写入，重启 CPA 后生效。",
   "ui.self_update_path_saved": "插件库路径已保存",
+  "ui.opencode_storage_missing": "当前使用的状态目录里没有账号文件（{path}）。如果你此前保存过凭据，说明 CPA 重启时的工作目录变了：请把 data_dir 配成绝对路径，或把原来的 opencode-quota.json 复制到这里。",
+  "ui.opencode_storage_adopted": "已从另一个状态目录采纳账号文件（{path}）。",
   "ui.model_probe_scope": "在选定凭据上执行一次最小上游探测",
   "ui.model_test_dialog_description": "在选定凭据上执行一次最小上游探测，返回真实的状态、原因码、HTTP 状态与延迟。",
   "ui.model_test_target_placeholder": "没有可用凭据",

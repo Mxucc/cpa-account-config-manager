@@ -434,3 +434,81 @@ func TestOpenCodeCredentialCanBeCompletedInPlace(t *testing.T) {
 		t.Fatalf("an unknown account must be rejected")
 	}
 }
+
+// A restart from another working directory leaves an implicit relative data directory empty,
+// which used to make every stored credential look gone. The store is now adopted from a known
+// location instead, and the UI can see where it came from.
+func TestOpenCodeCredentialsSurviveAChangedWorkingDirectory(t *testing.T) {
+	original := t.TempDir()
+	service := NewOpenCodeQuotaService()
+	service.Configure(Config{DataDir: original})
+	if _, errSave := service.SaveAccount("wrk_kept", "cookie-secret", "sk-key"); errSave != nil {
+		t.Fatalf("SaveAccount() error = %v", errSave)
+	}
+
+	// The next start resolves a different (empty) directory, but the plugin knows where else
+	// its state may live, exactly like a CPA restart from another working directory.
+	restartedAt := t.TempDir()
+	restarted := NewOpenCodeQuotaService()
+	restarted.Configure(Config{DataDir: restartedAt, DataDirAlternates: []string{original}})
+	accounts := restarted.ListAccounts()
+	if len(accounts) != 1 || accounts[0].WorkspaceID != "wrk_kept" {
+		t.Fatalf("the adopted store was not used: %#v", accounts)
+	}
+	storage := restarted.Storage()
+	if storage.AdoptedFrom != original {
+		t.Fatalf("adopted_from = %q, want %q", storage.AdoptedFrom, original)
+	}
+	if !storage.StoreExists || storage.StorePath != openCodeQuotaStorePath(original) {
+		t.Fatalf("storage = %#v", storage)
+	}
+	// Later writes keep using the adopted file, so the credentials stay in one place.
+	if _, errSave := restarted.SaveAccount("wrk_new", "cookie-2", "sk-2"); errSave != nil {
+		t.Fatalf("SaveAccount() error = %v", errSave)
+	}
+	reread := NewOpenCodeQuotaService()
+	reread.Configure(Config{DataDir: original})
+	if len(reread.ListAccounts()) != 2 {
+		t.Fatalf("the adopted store did not receive the new account: %#v", reread.ListAccounts())
+	}
+
+	// A directory that already has its own store always wins over the alternates.
+	ownService := NewOpenCodeQuotaService()
+	ownService.Configure(Config{DataDir: restartedAt})
+	if _, errOwn := ownService.SaveAccount("wrk_own", "cookie-own", "sk-own"); errOwn != nil {
+		t.Fatalf("SaveAccount() error = %v", errOwn)
+	}
+	preferred := NewOpenCodeQuotaService()
+	preferred.Configure(Config{DataDir: original, DataDirAlternates: []string{restartedAt}})
+	if accounts := preferred.ListAccounts(); len(accounts) != 2 {
+		t.Fatalf("the primary store must win: %#v", accounts)
+	}
+}
+
+// An unreadable store is copied aside before the plugin can write a new one, so a corrupt or
+// newer-format file never destroys recoverable credentials.
+func TestUnreadableOpenCodeStoreIsPreserved(t *testing.T) {
+	dataDir := t.TempDir()
+	store := openCodeQuotaStorePath(dataDir)
+	if errWrite := os.WriteFile(store, []byte("{ this is not json"), 0o600); errWrite != nil {
+		t.Fatalf("seed store: %v", errWrite)
+	}
+	service := NewOpenCodeQuotaService()
+	service.Configure(Config{DataDir: dataDir})
+	if service.Storage().Accounts != 0 {
+		t.Fatalf("an unreadable store must not report accounts")
+	}
+	preserved, errRead := os.ReadFile(store + ".unreadable")
+	if errRead != nil || string(preserved) != "{ this is not json" {
+		t.Fatalf("preserved copy = %q err=%v", preserved, errRead)
+	}
+}
+
+// The storage report explains the suspicious states instead of leaving them implicit.
+func TestOpenCodeStorageReportsMissingAndAdoptedStates(t *testing.T) {
+	empty := NewOpenCodeQuotaService()
+	empty.Configure(Config{DataDir: t.TempDir()})
+	if got := empty.Storage(); got.StoreExists || got.Hint != "missing" {
+		t.Fatalf("empty storage = %#v", got)
+	}
+}

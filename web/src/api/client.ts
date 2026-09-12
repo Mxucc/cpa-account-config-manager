@@ -1097,6 +1097,10 @@ function normalizeOpenCodeAccountsResponse(response: unknown): OpenCodeAccountsR
 			};
 			if (typeof account.base_url === "string" && account.base_url.trim()) view.base_url = account.base_url.trim();
 			if (typeof account.key_set === "boolean") view.key_set = account.key_set;
+			// Copying the view field by field means a new field is dropped unless it is listed here:
+			// cookie_set drives the "incomplete credential" warning, so losing it warned about every
+			// account even when the auth cookie was stored.
+			if (typeof account.cookie_set === "boolean") view.cookie_set = account.cookie_set;
 			const models = stringArrayOrUndefined(account.models);
 			if (models) view.models = models;
 			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
@@ -1142,6 +1146,11 @@ export async function testOpenCodeModel(kind: "go" | "zen", accountID: string, m
 		method: "POST",
 		body: JSON.stringify({ kind, account_id: accountID, model, timeout_seconds: timeoutSeconds }),
 	});
+}
+
+/** Report the private state directory that holds the OpenCode credentials. */
+export async function getOpenCodeStorage(signal?: AbortSignal): Promise<{ storage: import("../types").OpenCodeStorageInfo }> {
+	return requestRecord<{ storage: import("../types").OpenCodeStorageInfo }>("/opencode/storage", { signal });
 }
 
 /** Global OpenCode model control: disabled ids affect every Go and Zen credential. */
@@ -1259,6 +1268,7 @@ function normalizeOpenCodeZenAccountsResponse(response: unknown): OpenCodeZenAcc
 				id: (account.id as string).trim(),
 				base_url: (account.base_url as string).trim(),
 				key_set: account.key_set as boolean,
+				...(typeof account.cookie_set === "boolean" ? { cookie_set: account.cookie_set } : {}),
 			};
 			if (typeof account.name === "string") view.name = account.name;
 			const models = stringArrayOrUndefined(account.models);

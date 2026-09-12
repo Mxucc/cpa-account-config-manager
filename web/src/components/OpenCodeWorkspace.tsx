@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
-import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
+import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog } from "./ModelProbeDialog";
 
@@ -109,6 +109,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [priceKind, setPriceKind] = useState<OpenCodeKind>("go");
   const [priceQuery, setPriceQuery] = useState("");
   const [modelControl, setModelControl] = useState<OpenCodeModelControlSnapshot | null>(null);
+  const [storage, setStorage] = useState<OpenCodeStorageInfo | null>(null);
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [controlTestModel, setControlTestModel] = useState("");
   const [controlTestTarget, setControlTestTarget] = useState("");
@@ -135,7 +136,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     setLoading(true);
     setError("");
     try {
-      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot, channelSnapshot, controlSnapshot] = await Promise.all([
+      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot, channelSnapshot, controlSnapshot, storageSnapshot] = await Promise.all([
         api.listOpenCodeAccounts(signal),
         api.listOpenCodeZenAccounts(signal),
         api.getOpenCodeQuota(signal),
@@ -143,6 +144,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
         api.getOpenCodeSession(signal),
         api.getOpenCodeChannels(signal),
         api.getOpenCodeModelControl(signal),
+        api.getOpenCodeStorage(signal),
       ]);
       if (requestID !== request.current) return;
       setGoAccounts(go.accounts);
@@ -152,6 +154,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       setPricing(pricingSnapshot.pricing ?? {});
       setSession(sessionSnapshot.session ?? null);
       setModelControl(controlSnapshot);
+      setStorage(storageSnapshot.storage ?? null);
       setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || pricingSnapshot.pricing?.storage_error || controlSnapshot.storage_error || "");
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
@@ -587,6 +590,14 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                 <Plus size={15} />{tx("ui.opencode_add_go")}
               </button>
             </div>
+            {storage && (storage.hint === "missing" || storage.hint === "adopted") ? (
+              <p className={storage.hint === "missing" ? "opencode-credential-warning" : "opencode-note"} role="status">
+                <AlertTriangle size={14} />
+                {storage.hint === "missing"
+                  ? tx("ui.opencode_storage_missing", { path: storage.store_path || storage.data_dir })
+                  : tx("ui.opencode_storage_adopted", { path: storage.adopted_from || "" })}
+              </p>
+            ) : null}
             {adding ? (
               <div className="opencode-form">
                 <label className="field-block"><span>{tx("ui.opencode_workspace_id")}</span><input value={newWorkspace} placeholder={tx("ui.opencode_workspace_placeholder")} onChange={(event) => setNewWorkspace(event.target.value)} autoComplete="off" /></label>

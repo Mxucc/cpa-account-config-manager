@@ -1896,6 +1896,8 @@ export const enUI = {
   "ui.self_update_is_current": "The installed version is current",
   "ui.self_update_applied_restart_required": "Version {version} was verified and written; restart CPA to load it.",
   "ui.self_update_path_saved": "Plugin library path saved",
+  "ui.opencode_storage_missing": "No credential file in the state directory in use ({path}). If you saved credentials before, CPA was restarted with a different working directory: pin data_dir to an absolute path, or copy the previous opencode-quota.json here.",
+  "ui.opencode_storage_adopted": "Credentials were adopted from another state directory ({path}).",
   "ui.model_probe_scope": "Runs one minimal upstream probe on the selected credential",
   "ui.model_test_dialog_description": "Runs one minimal upstream probe on the selected credential and reports the real status, reason code, HTTP status and latency.",
   "ui.model_test_target_placeholder": "No credential available",

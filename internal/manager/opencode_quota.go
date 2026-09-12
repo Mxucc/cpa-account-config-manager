@@ -124,11 +124,15 @@ type OpenCodeQuotaService struct {
 	cache          map[string]*OpenCodeQuotaResult
 	fetchedAt      time.Time
 	dataDir        string
-	loaded         bool
-	loadFailed     bool
-	storageErr     string
-	fetchMu        sync.Mutex
-	now            func() time.Time
+	// storePath is the resolved state file; adoptedFrom names the directory it came from when
+	// the effective data directory held no store.
+	storePath   string
+	adoptedFrom string
+	loaded      bool
+	loadFailed  bool
+	storageErr  string
+	fetchMu     sync.Mutex
+	now         func() time.Time
 }
 
 func NewOpenCodeQuotaService() *OpenCodeQuotaService {
@@ -149,7 +153,10 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 	if s == nil {
 		return
 	}
-	storePath := openCodeQuotaStorePath(config.DataDir)
+	// The state directory is implicit by default, and an implicit relative path follows the
+	// working directory of whoever started CPA. Adopting an existing store from a known
+	// location keeps the credentials visible when CPA is restarted from another directory.
+	storePath, adoptedFrom := resolveOpenCodeQuotaStore(config)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sameStore := s.loaded && s.dataDir == config.DataDir
@@ -162,7 +169,13 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 	if errLoad != nil {
 		s.loaded = true
 		s.loadFailed = !errors.Is(errLoad, os.ErrNotExist)
+		s.dataDir = config.DataDir
+		s.storePath = storePath
+		s.adoptedFrom = adoptedFrom
 		if s.loadFailed {
+			// Keep a copy of an unreadable store before anything can overwrite it, so a
+			// corrupt or newer-format file never destroys recoverable credentials.
+			preserveUnreadableOpenCodeStore(storePath)
 			s.storageErr = "OpenCode quota state could not be loaded"
 		} else {
 			s.storageErr = ""
@@ -171,13 +184,14 @@ func (s *OpenCodeQuotaService) Configure(config Config) {
 				s.timeoutSeconds = timeout
 			}
 		}
-		s.dataDir = config.DataDir
 		return
 	}
 	if loaded.TimeoutSeconds >= 1 && loaded.TimeoutSeconds <= openCodeQuotaMaxTimeoutSeconds {
 		timeout = loaded.TimeoutSeconds
 	}
 	s.dataDir = config.DataDir
+	s.storePath = storePath
+	s.adoptedFrom = adoptedFrom
 	s.accounts = append([]OpenCodeAccount(nil), loaded.Accounts...)
 	s.timeoutSeconds = timeout
 	s.loaded = true
@@ -207,7 +221,7 @@ func (s *OpenCodeQuotaService) persistLocked() error {
 	if s.dataDir == "" {
 		return nil
 	}
-	errPersist := savePrivateJSON(openCodeQuotaStorePath(s.dataDir), openCodeQuotaPersisted{
+	errPersist := savePrivateJSON(s.resolvedStorePath(), openCodeQuotaPersisted{
 		Version:        openCodeQuotaStoreVersion,
 		Accounts:       append([]OpenCodeAccount(nil), s.accounts...),
 		TimeoutSeconds: s.timeoutSeconds,

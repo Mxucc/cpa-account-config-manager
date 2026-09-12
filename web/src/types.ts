@@ -1324,6 +1324,23 @@ export interface AgentIdentitySessionLoginResponse {
   };
 }
 
+/**
+ * Where the OpenCode credentials are stored. The plugin's state directory is implicit unless
+ * `data_dir` is pinned, so an empty store here explains why saved credentials can look gone
+ * after CPA is restarted from another working directory.
+ */
+export interface OpenCodeStorageInfo {
+  data_dir: string;
+  store_path: string;
+  store_exists: boolean;
+  store_bytes?: number;
+  store_modified?: string;
+  accounts: number;
+  /** Set when the store was adopted from another directory. */
+  adopted_from?: string;
+  hint?: "missing" | "adopted";
+}
+
 export interface OpenCodeAccountView {
   id: string;
   workspace_id: string;

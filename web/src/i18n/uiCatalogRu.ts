@@ -1898,6 +1898,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "Установленная версия актуальна",
   "ui.self_update_applied_restart_required": "Версия {version} проверена и записана; перезапустите CPA для загрузки.",
   "ui.self_update_path_saved": "Путь к библиотеке плагина сохранён",
+  "ui.opencode_storage_missing": "В используемом каталоге состояния нет файла учётных данных ({path}). Если вы сохраняли их раньше, значит CPA был перезапущен с другим рабочим каталогом: задайте абсолютный data_dir или скопируйте прежний opencode-quota.json сюда.",
+  "ui.opencode_storage_adopted": "Учётные данные взяты из другого каталога состояния ({path}).",
   "ui.model_probe_scope": "Одна минимальная проверка на выбранных данных доступа",
   "ui.model_test_dialog_description": "Выполняет одну минимальную проверку выбранных данных доступа и показывает реальный статус, код причины, HTTP-статус и задержку.",
   "ui.model_test_target_placeholder": "Нет доступных данных доступа",

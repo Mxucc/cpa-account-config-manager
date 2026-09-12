@@ -34,6 +34,19 @@ func (a *App) handleOpenCodePricing(req cpaapi.ManagementRequest) cpaapi.Managem
 // handleOpenCodeSession reports the per-conversation session routing status. The
 // call also self-heals the attribution map, because CPA assigns channel auth
 // indexes itself and can regenerate them after a channel edit.
+// handleOpenCodeStorage reports where the OpenCode credentials are stored. An implicit data
+// directory follows the working directory of whoever started CPA, so this is the first place to
+// look when stored credentials appear to be gone.
+func (a *App) handleOpenCodeStorage(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if resolveManagementKey(req.Headers) == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	if a == nil || a.opencode == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "OpenCode quota service is unavailable"})
+	}
+	return jsonResponse(http.StatusOK, map[string]any{"storage": a.opencode.Storage()})
+}
+
 func (a *App) handleOpenCodeSession(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	managementKey := resolveManagementKey(req.Headers)
 	if managementKey == "" {

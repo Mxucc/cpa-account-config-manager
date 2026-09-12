@@ -367,6 +367,41 @@ describe("OpenCodeWorkspace", () => {
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith("凭据已更新"));
   });
 
+  it("only warns about an incomplete credential when the stored cookie is really missing", async () => {
+    const user = userEvent.setup();
+    // The account was saved through the add form, so the backend reports cookie_set: true and
+    // the row must stay quiet: losing cookie_set in the response normalizer used to warn about
+    // every account even though the cookie was stored.
+    openCodeFetchMock({ accounts: [goAccountView()] });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    await selectTab(user, "Go 账号");
+    const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
+    expect(await findGoRow(section)).toBeInTheDocument();
+    expect(within(section).queryByText(/缺少 Auth Cookie/)).not.toBeInTheDocument();
+  });
+
+  it("renders the test dialog into the document body so it centres in the viewport", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({
+      accounts: [
+        { id: "acc_go_1", workspace_id: "wrk_test", key_set: true, cookie_set: true, models: ["gpt-5.6-luna"], models_error: "", models_fetched_at: "2026-09-01T00:00:00Z" },
+      ],
+      modelTestResponse: { result: { reachable: true, status: "available", reason_code: "model_response_ok", status_code: 200, latency_ms: 33, tested_at: "2026-09-01T00:00:00Z" } },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.6-luna" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    // Portalled to <body>: an ancestor with a transform would otherwise become the containing
+    // block of the fixed backdrop and the dialog would centre inside the scrolled workspace.
+    expect(dialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
+  });
+
   it("loads models through the models route and updates the model count with the loaded notice", async () => {
     const user = userEvent.setup();
     const requests = openCodeFetchMock({

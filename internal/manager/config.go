@@ -11,6 +11,9 @@ import (
 const (
 	defaultWorkers = 6
 	maxWorkers     = 16
+	// implicitDataDirName is the default state directory, relative to the working directory of
+	// the process that started CPA unless the operator pins data_dir.
+	implicitDataDirName = "data/cpa-account-config-manager"
 )
 
 type Config struct {
@@ -24,6 +27,10 @@ type Config struct {
 	GlobalPolicy         *GlobalPolicy            `yaml:"global_policy,omitempty"`
 	ExperimentalSettings *ExperimentalSettings    `yaml:"experimental_settings,omitempty"`
 	implicitDataDir      bool
+	// DataDirAlternates lists directories that may already hold this plugin's state. They are
+	// only consulted when the effective data directory has no store, so an implicit relative
+	// path cannot hide credentials after CPA is restarted from another directory.
+	DataDirAlternates []string `yaml:"-"`
 }
 
 type OperationSettingsConfig struct {
@@ -61,7 +68,7 @@ func normalizeConfig(cfg Config) Config {
 			cfg.DataDir = strings.TrimSpace(os.Getenv("CPA_ACCOUNT_CONFIG_MANAGER_DATA_DIR"))
 		}
 		if cfg.DataDir == "" {
-			cfg.DataDir = "data/cpa-account-config-manager"
+			cfg.DataDir = implicitDataDirName
 			cfg.implicitDataDir = true
 		}
 	}

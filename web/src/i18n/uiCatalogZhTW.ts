@@ -1898,6 +1898,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.self_update_is_current": "目前已是最新版本",
   "ui.self_update_applied_restart_required": "版本 {version} 已校驗並寫入，重新啟動 CPA 後生效。",
   "ui.self_update_path_saved": "外掛程式庫路徑已儲存",
+  "ui.opencode_storage_missing": "目前使用的狀態目錄裡沒有帳號檔案（{path}）。如果你之前儲存過憑證，表示 CPA 重新啟動時的工作目錄變了：請把 data_dir 設成絕對路徑，或把原本的 opencode-quota.json 複製到這裡。",
+  "ui.opencode_storage_adopted": "已從另一個狀態目錄採用帳號檔案（{path}）。",
   "ui.model_probe_scope": "在選定憑證上執行一次最小上游探測",
   "ui.model_test_dialog_description": "在選定憑證上執行一次最小上游探測，回報真實的狀態、原因碼、HTTP 狀態與延遲。",
   "ui.model_test_target_placeholder": "沒有可用憑證",

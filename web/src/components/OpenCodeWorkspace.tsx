@@ -5,6 +5,7 @@ import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
+import { ModelProbeDialog } from "./ModelProbeDialog";
 
 interface OpenCodeWorkspaceProps {
   refreshRevision: number;
@@ -347,21 +348,26 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     );
   };
 
-  /** Accounts that actually reference the model, matched by normalised id. */
+  /**
+   * Accounts that reference the model, matched by normalised id. When no cached catalog lists
+   * the model, every credential of the family is offered instead of leaving the dialog empty:
+   * a probe is exactly how an operator finds out whether a credential can run the model.
+   */
   const controlTestCandidates = (model: string): OpenCodeTestCandidate[] => {
     const key = normalizePriceKey(model);
-    const candidates: OpenCodeTestCandidate[] = [];
+    const matching: OpenCodeTestCandidate[] = [];
+    const every: OpenCodeTestCandidate[] = [];
     for (const account of goAccounts) {
-      if ((account.models ?? []).some((entry) => normalizePriceKey(entry) === key)) {
-        candidates.push({ kind: "go", accountID: account.id, label: account.workspace_id || account.id });
-      }
+      const candidate = { kind: "go" as OpenCodeKind, accountID: account.id, label: account.workspace_id || account.id };
+      every.push(candidate);
+      if ((account.models ?? []).some((entry) => normalizePriceKey(entry) === key)) matching.push(candidate);
     }
     for (const account of zenAccounts) {
-      if ((account.models ?? []).some((entry) => normalizePriceKey(entry) === key)) {
-        candidates.push({ kind: "zen", accountID: account.id, label: account.name || account.id });
-      }
+      const candidate = { kind: "zen" as OpenCodeKind, accountID: account.id, label: account.name || account.id };
+      every.push(candidate);
+      if ((account.models ?? []).some((entry) => normalizePriceKey(entry) === key)) matching.push(candidate);
     }
-    return candidates;
+    return matching.length > 0 ? matching : every;
   };
 
   const runControlTest = (model: string, candidate: OpenCodeTestCandidate) => void (async () => {
@@ -407,6 +413,10 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     allVisibleSelected ? current.filter((id) => !visibleControlIds.includes(id)) : Array.from(new Set([...current, ...visibleControlIds]))
   ));
   const controlTestCandidatesFor = controlTestModel ? controlTestCandidates(controlTestModel) : [];
+  // True when the dialog had to fall back to every credential, so the operator is told why.
+  const controlTestIsFallback = controlTestModel !== "" && controlTestCandidatesFor.length > 0
+    && !controlTestCandidatesFor.some((candidate) => (candidate.kind === "go" ? goAccounts : zenAccounts)
+      .some((account) => account.id === candidate.accountID && (account.models ?? []).some((entry) => normalizePriceKey(entry) === normalizePriceKey(controlTestModel))));
 
   const catalogPrices = (priceKind === "go" ? pricing.go : pricing.zen) ?? [];
   const filteredPrices = catalogPrices.filter((price) => {
@@ -957,33 +967,20 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
               </table>
             </div>
             {controlTestModel ? (
-              <div className="opencode-model-test" role="region" aria-label={tx("ui.model_test_action", { model: controlTestModel })}>
-                <div className="codex-model-test-target">
-                  <label className="field-block">
-                    <span>{tx("ui.model_test_target")}</span>
-                    <select value={controlTestTarget} onChange={(event) => setControlTestTarget(event.target.value)} aria-label={tx("ui.model_test_target")}>
-                      {controlTestCandidatesFor.map((candidate) => (
-                        <option key={`${candidate.kind}:${candidate.accountID}`} value={`${candidate.kind}:${candidate.accountID}`}>{candidate.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="codex-model-test-actions">
-                    <button
-                      className="button button-primary"
-                      type="button"
-                      disabled={busy === "model-control-test" || controlTestCandidatesFor.length === 0}
-                      onClick={() => {
-                        const candidate = controlTestCandidatesFor.find((entry) => `${entry.kind}:${entry.accountID}` === controlTestTarget) ?? controlTestCandidatesFor[0];
-                        if (candidate) runControlTest(controlTestModel, candidate);
-                      }}
-                    >
-                      {busy === "model-control-test" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}{tx("ui.test")}
-                    </button>
-                    <button className="button button-quiet" type="button" onClick={() => { setControlTestModel(""); setControlTestResult(null); setControlTestError(""); }}>{tx("ui.close")}</button>
-                  </div>
-                </div>
-                {controlTestCandidatesFor.length === 0 ? <p className="codex-model-test-note" role="status">{tx("ui.model_test_no_target")}</p> : null}
-                {controlTestError ? <p className="codex-model-test-error" role="alert">{controlTestError}</p> : null}
+              <ModelProbeDialog
+                model={controlTestModel}
+                targets={controlTestCandidatesFor.map((candidate) => ({ id: `${candidate.kind}:${candidate.accountID}`, label: candidate.label }))}
+                targetID={controlTestTarget}
+                onSelectTarget={setControlTestTarget}
+                onRun={() => {
+                  const candidate = controlTestCandidatesFor.find((entry) => `${entry.kind}:${entry.accountID}` === controlTestTarget) ?? controlTestCandidatesFor[0];
+                  if (candidate) runControlTest(controlTestModel, candidate);
+                }}
+                onClose={closeControlTest}
+                testing={busy === "model-control-test"}
+                fallbackHint={controlTestIsFallback}
+                error={controlTestError}
+              >
                 {controlTestResult ? (
                   <dl className="codex-model-test-result">
                     <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{controlTestResult.status}</dd></div>
@@ -992,7 +989,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                     <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{typeof controlTestResult.latency_ms === "number" ? `${controlTestResult.latency_ms} ms` : "-"}</dd></div>
                   </dl>
                 ) : null}
-              </div>
+              </ModelProbeDialog>
             ) : null}
           </section>
 

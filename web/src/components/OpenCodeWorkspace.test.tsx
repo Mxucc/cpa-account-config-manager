@@ -657,12 +657,17 @@ describe("OpenCodeWorkspace", () => {
     const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
 
     await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.6-luna" }));
-    // The only credential that references the model is selected and probed.
+    // The test opens the same dialog the accounts page uses, instead of an inline block.
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByText("gpt-5.6-luna")).toBeInTheDocument();
+    // The only credential that references the model is selected automatically.
+    expect(within(dialog).getByLabelText("测试目标")).toHaveValue("wrk_test");
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST")).toBe(true));
     const probe = requests.find(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST");
     expect(JSON.parse(String(probe?.init.body))).toMatchObject({ kind: "go", account_id: "acc_go_1", model: "gpt-5.6-luna" });
-    const tester = await within(panel).findByRole("region", { name: "测试 gpt-5.6-luna" });
-    await waitFor(() => expect(within(tester).getByText("model_response_ok")).toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).getByText("model_response_ok")).toBeInTheDocument());
   });
 
   it("shows the per-conversation session routing status", async () => {

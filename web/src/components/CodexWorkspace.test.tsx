@@ -276,15 +276,19 @@ describe("CodexWorkspace", () => {
     const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
 
     await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.4-codex" }));
-    const tester = await within(panel).findByRole("region", { name: "测试 gpt-5.4-codex" });
-    // The only candidate account is auto-selected, so one click runs the probe.
+    // The test opens the same dialog the accounts page uses, with the model and target.
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByText("gpt-5.4-codex")).toBeInTheDocument();
+    // A single candidate is shown by name, so the dialog never needs a second click to run it.
+    expect(await within(dialog).findByLabelText("测试目标")).toHaveValue("codex-one.json");
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/accounts/model-test") && init.method === "POST")).toBe(true));
     const probe = requests.find(({ url, init }) => url.endsWith("/accounts/model-test") && init.method === "POST");
     expect(JSON.parse(String(probe?.init.body))).toMatchObject({ account_id: "acct-codex-1", model: "gpt-5.4-codex" });
-    // The probe result is rendered with the localized status label.
-    expect(await within(tester).findByText("模型可用")).toBeInTheDocument();
-    expect(within(tester).getByText("model_response_ok")).toBeInTheDocument();
-    expect(within(tester).getByText("200")).toBeInTheDocument();
+    // The probe result is rendered inside the dialog with the localized status label.
+    expect(await within(dialog).findByText("模型可用")).toBeInTheDocument();
+    expect(within(dialog).getByText("model_response_ok")).toBeInTheDocument();
+    expect(within(dialog).getByText("200")).toBeInTheDocument();
   });
 
   it("keeps the Codex identity policy here and echoes the two experiments", async () => {

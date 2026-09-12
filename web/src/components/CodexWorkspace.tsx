@@ -6,6 +6,7 @@ import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 import type { Account, CodexFingerprintField, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
 import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
+import { ModelProbeDialog } from "./ModelProbeDialog";
 import { IconButton } from "./IconButton";
 
 interface CodexWorkspaceProps {
@@ -520,40 +521,16 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
             </table>
           </div>
           {testModel ? (
-            <section className="codex-section codex-model-tester" aria-label={tx("ui.model_test_action", { model: testModel })}>
-              <div className="codex-section-heading">
-                <div>
-                  <strong><Activity size={14} /> {tx("ui.model_test_action", { model: testModel })}</strong>
-                  <span>{tx("ui.model_test_target")}</span>
-                </div>
-                <button className="button button-quiet" type="button" onClick={closeModelTest}>{tx("ui.close")}</button>
-              </div>
-              {testAccounts === null ? (
-                <p className="codex-model-test-note" role="status"><LoaderCircle className="spin" size={15} />{tx("ui.testing")}</p>
-              ) : null}
-              {testAccounts !== null && testAccounts.length === 0 ? (
-                <p className="codex-model-test-note" role="status">{tx("ui.model_test_no_target")}</p>
-              ) : null}
-              {testAccounts && testAccounts.length > 0 ? (
-                <div className="codex-model-test-target">
-                  <span>{tx("ui.model_test_target")}</span>
-                  {testAccounts.length === 1 ? (
-                    <strong>{testAccounts[0].name || testAccounts[0].id}</strong>
-                  ) : (
-                    <select aria-label={tx("ui.model_test_target")} value={testAccountID} onChange={(event) => setTestAccountID(event.target.value)}>
-                      {testAccounts.map((account) => <option key={account.id} value={account.id}>{account.name || account.id}</option>)}
-                    </select>
-                  )}
-                </div>
-              ) : null}
-              {testAccounts && testAccounts.length > 0 ? (
-                <div className="codex-model-test-actions">
-                  <button className="button button-primary" type="button" disabled={busy === "model-test" || !testAccountID} onClick={() => runModelTest(testModel, testAccountID)}>
-                    {busy === "model-test" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}{tx("ui.test")}
-                  </button>
-                </div>
-              ) : null}
-              {testError ? <p className="codex-model-test-error" role="alert">{testError}</p> : null}
+            <ModelProbeDialog
+              model={testModel}
+              targets={testAccounts === null ? [] : testAccounts.map((account) => ({ id: account.id, label: account.label || account.email || account.name || account.id }))}
+              targetID={testAccountID}
+              onSelectTarget={setTestAccountID}
+              onRun={() => runModelTest(testModel, testAccountID)}
+              onClose={closeModelTest}
+              testing={busy === "model-test" || testAccounts === null}
+              error={testError}
+            >
               {testResult ? (
                 <dl className="codex-model-test-result">
                   <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{testStatusLabel(testResult.status)}</dd></div>
@@ -562,7 +539,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                   <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{testResult.latency_ms} ms</dd></div>
                 </dl>
               ) : null}
-            </section>
+            </ModelProbeDialog>
           ) : null}
         </section>
       ) : null}

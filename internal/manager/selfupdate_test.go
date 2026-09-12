@@ -526,3 +526,91 @@ func TestSelfUpdateArchiveMustCarryThePluginLibrary(t *testing.T) {
 		t.Fatalf("a non-zip archive must be rejected")
 	}
 }
+
+// Reloading through the store is the only way to apply a replaced library without restarting
+// CPA, so it must never silently downgrade the plugin or pretend the host reloaded it.
+func TestSelfUpdateReloadThroughStore(t *testing.T) {
+	// reloadDoer answers the two native CPA routes the reload uses.
+	reloadDoer := func(storeBody string, installed pluginStoreInstallResult, installStatus int) HTTPDoer {
+		return httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.URL.Path == "/v0/management/plugin-store" && request.Method == http.MethodGet:
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: newStringReadCloser(storeBody)}, nil
+			case strings.HasSuffix(request.URL.Path, "/install") && request.Method == http.MethodPost:
+				if installStatus != http.StatusOK {
+					return &http.Response{StatusCode: installStatus, Header: http.Header{}, Body: newStringReadCloser("")}, nil
+				}
+				encoded, errEncode := json.Marshal(installed)
+				if errEncode != nil {
+					return nil, errEncode
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: newBytesReadCloser(encoded)}, nil
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: newStringReadCloser("")}, nil
+		})
+	}
+	newReloadService := func(t *testing.T, applied string, doer HTTPDoer) *SelfUpdateService {
+		t.Helper()
+		service := selfUpdateTestService(t, "1.0.0", nil)
+		service.Configure(Config{DataDir: t.TempDir(), ManagementBaseURL: "http://127.0.0.1:8317"})
+		service.SetManagementDoer(doer)
+		service.mu.Lock()
+		service.state.AppliedVersion = applied
+		service.mu.Unlock()
+		return service
+	}
+	installed := pluginStoreInstallResult{Status: "installed", ID: PluginID, Version: "9.9.9"}
+
+	// A store that offers the same or a newer version is installed, and the host answer decides
+	// whether a restart is still needed.
+	service := newReloadService(t, "9.9.9", reloadDoer(
+		`{"plugins_enabled":true,"plugins":[{"id":"cpa-account-config-manager","version":"9.9.9"}]}`, installed, http.StatusOK))
+	result, errReload := service.ReloadThroughStore(context.Background(), "management-secret")
+	if errReload != nil {
+		t.Fatalf("ReloadThroughStore() error = %v", errReload)
+	}
+	if !result.Reloaded || result.RestartRequired || result.StoreVersion != "9.9.9" {
+		t.Fatalf("reload result = %#v", result)
+	}
+
+	// A host that still answers restart_required is reported as such instead of as a reload.
+	restarting := newReloadService(t, "9.9.9", reloadDoer(
+		`{"plugins_enabled":true,"plugins":[{"id":"cpa-account-config-manager","version":"9.9.9"}]}`,
+		pluginStoreInstallResult{Status: "installed", ID: PluginID, Version: "9.9.9", RestartRequired: true}, http.StatusOK))
+	restartResult, errRestart := restarting.ReloadThroughStore(context.Background(), "management-secret")
+	if errRestart != nil || restartResult.Reloaded || !restartResult.RestartRequired {
+		t.Fatalf("restart result = %#v err=%v", restartResult, errRestart)
+	}
+	if restartResult.Reason != "host_still_requires_a_restart" {
+		t.Fatalf("restart reason = %q", restartResult.Reason)
+	}
+
+	// An older store index must be refused: reinstalling it would downgrade the plugin.
+	older := newReloadService(t, "9.9.9", reloadDoer(
+		`{"plugins_enabled":true,"plugins":[{"id":"cpa-account-config-manager","version":"1.0.0"}]}`, installed, http.StatusOK))
+	if _, errOld := older.ReloadThroughStore(context.Background(), "management-secret"); errOld == nil {
+		t.Fatalf("an older store version must be refused")
+	}
+
+	// A missing plugin, a disabled store, a failing install and an unreachable store each report
+	// a reason instead of claiming success.
+	cases := map[string]HTTPDoer{
+		"not listed": reloadDoer(`{"plugins_enabled":true,"plugins":[]}`, installed, http.StatusOK),
+		"disabled":   reloadDoer(`{"plugins_enabled":false,"plugins":[]}`, installed, http.StatusOK),
+		"install failed": reloadDoer(
+			`{"plugins_enabled":true,"plugins":[{"id":"cpa-account-config-manager","version":"9.9.9"}]}`, installed, http.StatusInternalServerError),
+		"unreachable": httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		}),
+	}
+	for name, doer := range cases {
+		failing := newReloadService(t, "9.9.9", doer)
+		failure, errFail := failing.ReloadThroughStore(context.Background(), "management-secret")
+		if errFail == nil || failure.Reloaded {
+			t.Fatalf("%s: error = %v result = %#v", name, errFail, failure)
+		}
+		if failure.Reason == "" {
+			t.Fatalf("%s: a refusal must carry a reason", name)
+		}
+	}
+}

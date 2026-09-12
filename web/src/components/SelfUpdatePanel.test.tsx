@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/client";
@@ -70,6 +70,52 @@ describe("SelfUpdatePanel", () => {
     expect(screen.getByText("请重启 CPA 以加载更新后的插件库。")).toBeInTheDocument();
     expect(screen.getByText("旧版本库文件保留在 /opt/cpa/plugins/cpa-account-config-manager.dylib.previous")).toBeInTheDocument();
     expect(panel).toBeInTheDocument();
+  });
+
+  it("asks CPA to reload in place instead of waiting for a restart", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    // The library is already replaced, so the panel offers the one action CPA watches for a
+    // native plugin reload.
+    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({
+      update_available: false,
+      applied_version: "0.3.1420",
+      restart_required: true,
+    }));
+    const reloadSpy = vi.spyOn(api, "reloadSelfUpdateThroughStore").mockResolvedValue({
+      reloaded: true,
+      store_version: "0.3.1420",
+      applied_version: "0.3.1420",
+      restart_required: false,
+    });
+
+    render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
+
+    const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
+    await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
+
+    await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
+    expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，刷新本页即可使用新版本。");
+  });
+
+  it("names the reason when CPA refuses the reload", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({ update_available: false, applied_version: "0.3.1420", restart_required: true }));
+    vi.spyOn(api, "reloadSelfUpdateThroughStore").mockResolvedValue({
+      reloaded: false,
+      restart_required: true,
+      reason: "plugin_store_unavailable",
+    });
+
+    render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
+
+    const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
+    await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
+
+    // A refusal explains itself instead of leaving the operator guessing why nothing happened.
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("读不到 CPA 插件市场，因此没有发起热重载。"));
+    expect(await screen.findByText(/上次热重载结果：plugin_store_unavailable/)).toBeInTheDocument();
   });
 
   it("blocks installation until the plugin library is located and saves a corrected path", async () => {

@@ -59,6 +59,26 @@ func (a *App) handleSelfUpdateInstall(ctx context.Context, req cpaapi.Management
 	return jsonResponse(http.StatusOK, map[string]any{"self_update": snapshot})
 }
 
+// handleSelfUpdateReload asks CPA to reinstall and reload this plugin. A store install is the
+// only path the host watches for a native plugin reload, so it is the way to apply a replaced
+// library without restarting CPA.
+func (a *App) handleSelfUpdateReload(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	if a == nil || a.selfUpdate == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "self update is unavailable"})
+	}
+	result, errReload := a.selfUpdate.ReloadThroughStore(ctx, managementKey)
+	payload := map[string]any{"reload": result}
+	if errReload != nil {
+		// The reason code lets the UI explain the refusal without echoing internal details.
+		return jsonResponse(http.StatusBadGateway, payload)
+	}
+	return jsonResponse(http.StatusOK, payload)
+}
+
 // handleSelfUpdateSettings records the plugin library path when auto-detection is
 // not possible on this host.
 func (a *App) handleSelfUpdateSettings(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

@@ -104,6 +104,7 @@ type SelfUpdateService struct {
 	installMu sync.Mutex
 	config    Config
 	store     string
+	doer      HTTPDoer
 	client    *http.Client
 	current   string
 	repoSlug  string

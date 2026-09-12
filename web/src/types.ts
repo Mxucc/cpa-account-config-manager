@@ -1155,6 +1155,15 @@ export interface UpdateSnapshot {
  * library file on disk. A loaded library cannot be swapped in-process, so an applied
  * update always waits for a CPA restart.
  */
+/** Outcome of asking CPA to reinstall and reload this plugin in place. */
+export interface SelfUpdateReloadResult {
+  reloaded: boolean;
+  store_version?: string;
+  applied_version?: string;
+  restart_required: boolean;
+  reason?: string;
+}
+
 export interface SelfUpdateSnapshot {
   current_version: string;
   latest_version?: string;
@@ -1173,6 +1182,8 @@ export interface SelfUpdateSnapshot {
   applied_version?: string;
   backup_path?: string;
   restart_required: boolean;
+  /** The last reload attempt through the CPA plugin store, when one was made. */
+  reload?: SelfUpdateReloadResult;
   /** The release also delivered the interface, which is live after a page refresh. */
   ui_updated: boolean;
   ui_path?: string;

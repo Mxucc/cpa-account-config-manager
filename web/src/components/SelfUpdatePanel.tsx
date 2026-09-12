@@ -4,7 +4,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
-import type { SelfUpdateSnapshot } from "../types";
+import type { SelfUpdateReloadResult, SelfUpdateSnapshot } from "../types";
 
 /**
  * Direct GitHub self-update. The plugin resolves and applies its own release, so an
@@ -17,6 +17,18 @@ interface SelfUpdatePanelProps {
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
 }
+
+/** Explains a refused reload in operator terms. */
+const reloadReasonKeys: Record<string, UIMessageKey> = {
+  plugin_store_unavailable: "ui.self_update_reload_store_unavailable",
+  plugin_store_disabled: "ui.self_update_reload_store_disabled",
+  plugin_not_in_store: "ui.self_update_reload_not_in_store",
+  plugin_store_version_unknown: "ui.self_update_reload_store_version_unknown",
+  plugin_store_version_is_older: "ui.self_update_reload_store_older",
+  plugin_store_install_failed: "ui.self_update_reload_install_failed",
+  cpa_management_api_unavailable: "ui.self_update_reload_management_unavailable",
+  host_still_requires_a_restart: "ui.self_update_reload_restart_still_required",
+};
 
 /** Maps the resolution channel onto its catalog key. */
 function sourceKey(source: SelfUpdateSnapshot["source"]): UIMessageKey {
@@ -67,6 +79,8 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [reloadResult, setReloadResult] = useState<SelfUpdateReloadResult | null>(null);
   const [error, setError] = useState("");
   const sequence = useRef(0);
 
@@ -140,6 +154,13 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
     }
   }, [apply, handleError, onNotice, tx]);
 
+  /** Maps a reload refusal onto the operator-facing explanation. */
+  const handleReloadRefusal = useCallback((result: SelfUpdateReloadResult) => {
+    const key = reloadReasonKeys[result.reason ?? ""];
+    setReloadResult(result);
+    onNotice(tx(key ?? "ui.self_update_reload_failed"));
+  }, [onNotice, tx]);
+
   const savePath = useCallback(async () => {
     const current = ++sequence.current;
     setSaving(true);
@@ -156,7 +177,34 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
     }
   }, [apply, handleError, onNotice, pluginFile, tx]);
 
-  const busy = loading || checking || installing || saving;
+  /**
+   * A store install is the only action CPA watches for a native plugin reload, so this asks the
+   * host to reinstall the plugin and reports exactly what it answered.
+   */
+  const reloadNow = useCallback(async () => {
+    const current = ++sequence.current;
+    setReloading(true);
+    setError("");
+    setReloadResult(null);
+    try {
+      const result = await api.reloadSelfUpdateThroughStore();
+      if (current !== sequence.current) return;
+      setReloadResult(result);
+      if (result.reloaded) {
+        onNotice(tx("ui.self_update_reloaded_refresh_page"));
+        return;
+      }
+      handleReloadRefusal(result);
+    } catch (caught) {
+      if (current !== sequence.current) return;
+      // A failed call can mean the plugin was already reloaded and the request died with it.
+      setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+    } finally {
+      if (current === sequence.current) setReloading(false);
+    }
+  }, [handleReloadRefusal, locale, onNotice, tx]);
+
+  const busy = loading || checking || installing || saving || reloading;
   const statusLabel = snapshot?.update_available
     ? tx("ui.version_version_available", { version: snapshot.latest_version || "-" })
     : snapshot?.latest_version
@@ -223,8 +271,19 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
           {saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.self_update_save_path")}
         </button>
       </div>
+      {snapshot?.restart_required ? (
+        <p className="self-update-hint">{tx("ui.self_update_reload_hint")}</p>
+      ) : null}
       <p className="self-update-hint">{tx("ui.self_update_restart_hint")}</p>
+      {reloadResult && !reloadResult.reloaded ? (
+        <p className="self-update-hint" role="status">{tx("ui.self_update_reload_last_result", { reason: reloadResult.reason || "-" })}</p>
+      ) : null}
       <div className="settings-section-actions">
+        {snapshot?.restart_required ? (
+          <button className="button button-primary" type="button" disabled={busy} onClick={() => void reloadNow()}>
+            {reloading ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}{tx("ui.self_update_reload_without_restart")}
+          </button>
+        ) : null}
         <button className="button button-quiet" type="button" disabled={busy} onClick={() => void checkNow()}>
           {checking ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{tx("ui.self_update_check")}
         </button>

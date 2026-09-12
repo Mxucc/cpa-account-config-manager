@@ -382,6 +382,40 @@ describe("OpenCodeWorkspace", () => {
     expect(within(section).queryByText(/缺少 Auth Cookie/)).not.toBeInTheDocument();
   });
 
+  it("explains a rejected probe with the upstream detail and a Go-specific hint", async () => {
+    const user = userEvent.setup();
+    // A 401 from the Go gateway means the credential was refused, not that the model is broken:
+    // the dialog must say so instead of leaving an opaque reason code.
+    openCodeFetchMock({
+      accounts: [
+        { id: "acc_go_1", workspace_id: "wrk_test", key_set: true, cookie_set: true, models: ["gpt-5.6-luna"], models_error: "", models_fetched_at: "2026-09-01T00:00:00Z" },
+      ],
+      modelTestResponse: {
+        result: {
+          reachable: true,
+          status: "unavailable",
+          reason_code: "authentication_failed",
+          status_code: 401,
+          latency_ms: 101,
+          detail: "{\"error\":{\"message\":\"Invalid API key\"}}",
+          tested_at: "2026-09-01T00:00:00Z",
+        },
+      },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.6-luna" }));
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+
+    // The localized reason and the sanitized upstream message are both shown.
+    await waitFor(() => expect(within(dialog).getByText(/authentication_failed/)).toBeInTheDocument());
+    expect(within(dialog).getByText(/Invalid API key/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Go 网关拒绝了这把 API Key/)).toBeInTheDocument();
+  });
+
   it("renders the test dialog into the document body so it centres in the viewport", async () => {
     const user = userEvent.setup();
     openCodeFetchMock({
@@ -469,7 +503,7 @@ describe("OpenCodeWorkspace", () => {
       timeout_seconds: 30,
     });
     expect(await within(tester).findByText("模型不可用")).toBeInTheDocument();
-    expect(within(tester).getByText("model_not_found")).toBeInTheDocument();
+    expect(within(tester).getByText(/model_not_found/)).toBeInTheDocument();
   });
 
   it("binds a Go workspace through the bind route and reports the channel base URL", async () => {
@@ -702,7 +736,7 @@ describe("OpenCodeWorkspace", () => {
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST")).toBe(true));
     const probe = requests.find(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST");
     expect(JSON.parse(String(probe?.init.body))).toMatchObject({ kind: "go", account_id: "acc_go_1", model: "gpt-5.6-luna" });
-    await waitFor(() => expect(within(dialog).getByText("model_response_ok")).toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).getByText(/model_response_ok/)).toBeInTheDocument());
   });
 
   it("shows the per-conversation session routing status", async () => {

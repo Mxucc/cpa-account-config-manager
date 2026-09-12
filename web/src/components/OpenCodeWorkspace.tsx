@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Power, Radio, RefreshCw, RotateCcw, Save, Search, Trash2, Wrench } from "lucide-react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
+import { openCodeProbeHintKey, openCodeReasonKey } from "../format/openCodeModelTest";
 import { useI18n } from "../i18n";
 import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
@@ -190,6 +191,11 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       setBusy("");
     }
   };
+
+/** The family of the credential that produced a probe result, for the hint wording. */
+  const testKindForModel = (model: string): OpenCodeKind =>
+    controlTestCandidatesFor.find((candidate) => candidate.kind === "zen"
+      && `${candidate.kind}:${candidate.accountID}` === controlTestTarget)?.kind ?? "go";
 
   const addGoAccount = () => void withBusy("add-go", async () => {
     if (!newWorkspace.trim() || !newCookie.trim()) return;
@@ -416,6 +422,13 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     allVisibleSelected ? current.filter((id) => !visibleControlIds.includes(id)) : Array.from(new Set([...current, ...visibleControlIds]))
   ));
   const controlTestCandidatesFor = controlTestModel ? controlTestCandidates(controlTestModel) : [];
+  /** The family of the credential the probe used, so the hint names the right gateway. */
+  const controlTestKind: OpenCodeKind = controlTestCandidatesFor
+    .find((candidate) => `${candidate.kind}:${candidate.accountID}` === controlTestTarget)?.kind ?? "go";
+  const accountTestReasonKey = openCodeReasonKey(testResult?.reason_code);
+  const accountTestHintKey = openCodeProbeHintKey(target?.kind ?? "go", testResult?.reason_code);
+  const controlTestReasonKey = openCodeReasonKey(controlTestResult?.reason_code);
+  const controlTestHintKey = openCodeProbeHintKey(controlTestKind, controlTestResult?.reason_code);
   // True when the dialog had to fall back to every credential, so the operator is told why.
   const controlTestIsFallback = controlTestModel !== "" && controlTestCandidatesFor.length > 0
     && !controlTestCandidatesFor.some((candidate) => (candidate.kind === "go" ? goAccounts : zenAccounts)
@@ -993,12 +1006,28 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                 error={controlTestError}
               >
                 {controlTestResult ? (
-                  <dl className="codex-model-test-result">
-                    <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{controlTestResult.status}</dd></div>
-                    <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{controlTestResult.reason_code || "-"}</dd></div>
-                    <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{controlTestResult.status_code || "-"}</dd></div>
-                    <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{typeof controlTestResult.latency_ms === "number" ? `${controlTestResult.latency_ms} ms` : "-"}</dd></div>
-                  </dl>
+                  <>
+                    <dl className="codex-model-test-result">
+                      <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{statusLabel(controlTestResult.status)}</dd></div>
+                      <div>
+                        <dt>{tx("ui.model_test_result_reason")}</dt>
+                        <dd>
+                          {controlTestResult.reason_code || "-"}
+                          {controlTestReasonKey ? ` · ${tx(controlTestReasonKey)}` : ""}
+                        </dd>
+                      </div>
+                      <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{controlTestResult.status_code || "-"}</dd></div>
+                      <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{typeof controlTestResult.latency_ms === "number" ? `${controlTestResult.latency_ms} ms` : "-"}</dd></div>
+                      <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(controlTestResult.tested_at)}</dd></div>
+                      {controlTestResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(controlTestResult.detail, locale)}</dd></div> : null}
+                    </dl>
+                    {controlTestHintKey ? (
+                      <p className="opencode-credential-warning" role="note">
+                        <AlertTriangle size={14} />
+                        {tx(controlTestHintKey)}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
               </ModelProbeDialog>
             ) : null}
@@ -1122,14 +1151,22 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                   : tx("ui.opencode_no_price")}
               </p>
               {testResult ? (
-                <dl className="opencode-test-result">
-                  <div><dt>{tx("ui.status")}</dt><dd>{statusLabel(testResult.status)}</dd></div>
-                  <div><dt>{tx("ui.reason")}</dt><dd>{testResult.reason_code || "-"}</dd></div>
-                  <div><dt>{tx("ui.http_status")}</dt><dd>{testResult.status_code || "-"}</dd></div>
-                  {typeof testResult.latency_ms === "number" ? <div><dt>{tx("ui.latency")}</dt><dd>{testResult.latency_ms} ms</dd></div> : null}
-                  {testResult.tested_at ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(testResult.tested_at)}</dd></div> : null}
-                  {testResult.detail ? <div><dt>{tx("ui.detail")}</dt><dd>{operatorMessage(testResult.detail, locale)}</dd></div> : null}
-                </dl>
+                <>
+                  <dl className="opencode-test-result">
+                    <div><dt>{tx("ui.status")}</dt><dd>{statusLabel(testResult.status)}</dd></div>
+                    <div>
+                      <dt>{tx("ui.reason")}</dt>
+                      <dd>{testResult.reason_code || "-"}{accountTestReasonKey ? ` · ${tx(accountTestReasonKey)}` : ""}</dd>
+                    </div>
+                    <div><dt>{tx("ui.http_status")}</dt><dd>{testResult.status_code || "-"}</dd></div>
+                    {typeof testResult.latency_ms === "number" ? <div><dt>{tx("ui.latency")}</dt><dd>{testResult.latency_ms} ms</dd></div> : null}
+                    {testResult.tested_at ? <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(testResult.tested_at)}</dd></div> : null}
+                    {testResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(testResult.detail, locale)}</dd></div> : null}
+                  </dl>
+                  {accountTestHintKey ? (
+                    <p className="opencode-credential-warning" role="note"><AlertTriangle size={14} />{tx(accountTestHintKey)}</p>
+                  ) : null}
+                </>
               ) : null}
             </section>
           ) : null}

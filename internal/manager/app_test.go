@@ -176,6 +176,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/self-update/check":                        {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/self-update/install":                      {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/self-update/settings":                      {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/self-update/reload":                       {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/codex/fingerprint":                         {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/codex/fingerprint":                         {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/codex/fingerprint/reset":                  {},

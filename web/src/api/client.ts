@@ -71,6 +71,7 @@ import type {
   PolicySnapshot,
 	QuotaMetadataResponse,
   ResultExportFormat,
+  SelfUpdateReloadResult,
   SelfUpdateSnapshot,
   TargetScope,
   UpdatePolicy,
@@ -1368,6 +1369,17 @@ export async function checkSelfUpdate(signal?: AbortSignal): Promise<SelfUpdateS
 export async function installSelfUpdate(signal?: AbortSignal): Promise<SelfUpdateSnapshot> {
 	const response = await requestRecord<unknown>("/self-update/install", { method: "POST", signal }, undefined, RELEASE_DOWNLOAD_TIMEOUT_MS);
 	return readSelfUpdateEnvelope(response);
+}
+
+/**
+ * Ask CPA to reinstall and reload this plugin. A store install is the only action the host
+ * watches for a native plugin reload, so this is how a replaced library applies without a full
+ * CPA restart; a refusal carries a reason code instead of pretending it worked.
+ */
+export async function reloadSelfUpdateThroughStore(signal?: AbortSignal): Promise<SelfUpdateReloadResult> {
+	const response = await requestRecord<{ reload: SelfUpdateReloadResult }>("/self-update/reload", { method: "POST", signal }, undefined, RELEASE_DOWNLOAD_TIMEOUT_MS);
+	if (!isRecord(response.reload)) throw new APIError(502, "ui.invalid_json_response");
+	return response.reload as unknown as SelfUpdateReloadResult;
 }
 
 /** Record the plugin library path when this host cannot detect it automatically. */

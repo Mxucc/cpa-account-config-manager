@@ -125,12 +125,14 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 - 会话粘性参照 Codex 的行为：调度选号会把同一会话固定到同一上游账号。粘性键优先取请求的会话请求头（`x-opencode-session`、`session-id`、`session_id`、`x-session-id`、`x-codex-session-id`、`x-claude-session-id`、`conversation-id`、`x-conversation-id`），都没有时再取与会话相关的请求元数据（`session_id`、`conversation_id`、`prompt_cache_key`、`x-opencode-session`、`thread_id`）。映射到的账号仍有容量时继续复用；账号饱和、从候选列表消失或映射过期（30 分钟）时，选号回退到常规的最低负载选择并重新建立映射。映射只驻留内存、有界（4096 个会话），从不持久化；没有任何会话标识的请求保持原有行为不变。
 - 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`POST /opencode/models` 携带 `{kind: "go"|"zen", account_id}`，返回带模型列表的脱敏账号视图；`POST /opencode/model-test` 携带 `{kind, account_id, model, timeout_seconds?}`，返回状态、原因码、HTTP 状态、延迟、测试时间和详情；`POST /opencode/bind` 携带 `{kind, account_id}`，返回绑定信息（类型、Base URL、索引、是否新建、渠道 key）；`POST /opencode/accounts` 还接受 `{account_id, api_key}` 做仅更新密钥操作，`api_key` 为空时保留已保存的密钥，传入新密钥会使缓存的模型目录失效；`GET /opencode/pricing` 返回目录及其同步来源信息；`POST /opencode/pricing/refresh` 重新校验该目录并报告是否发生变化；`GET /opencode/session` 返回会话路由状态；`GET /opencode/channels` 返回 OpenCode 渠道及其导入状态；`POST /opencode/import` 携带 `{base_url}` 导入一条渠道凭据，成功返回 200，需要工作区凭据的 Go 渠道返回标记为 `needs_workspace` 的 409；`GET|PUT /opencode/model-control` 返回模型行与价格表来源信息，其中 `PUT` 携带 `{"disabled": [...]}`，两者都要求 Management Key。
 
+- 自更新不经过插件商店：`GET /self-update` 返回当前版本、已解析版本、解析来源、压缩包与校验和状态、插件库文件定位结果和 `restart_required`；`POST /self-update/check` 立即解析最新 Release（依次尝试 GitHub API、`releases/latest` 跳转、`releases.atom`）；`POST /self-update/install` 下载当前平台压缩包，用 Release 的 `checksums.txt` 校验 SHA-256 后原子替换插件库文件并保留 `<插件库>.previous` 备份，校验失败时不替换；`PUT /self-update/settings` 携带 `{"plugin_file": "..."}`，在宿主无法自动定位插件库时记录其路径。四个路由都要求 Management Key，响应只包含版本号、校验和、文件路径与状态。
+
 ### 操作日志、界面与更新
 
 - 操作日志覆盖导入、导出、批量修改、模型测试、策略扫描、巡检、自动处置、通知和插件更新，记录成功/失败/部分完成、失败依据、数量、脱敏样本、来源和时间。
 - 界面支持简体中文、繁体中文、English 和 Русский，并跟随 CPA 语言与主题；另提供中性、靛蓝、森林、玫瑰主题，舒适/紧凑密度，小/中/大字号，以及主标题与描述字号区分。
 - 表格排序、分页大小、筛选条件和手动测试模型会持久化。
-- 可检查并从 CPA 插件商店安装插件更新，也会展示 CPA 当前版本和最新版本。插件只检测 CPA 主程序更新，不替换 CPA 可执行文件。
+- 可检查并从 CPA 插件商店安装插件更新，也会展示 CPA 当前版本和最新版本。插件只检测 CPA 主程序更新，不替换 CPA 可执行文件。插件商店读取不到数据时，还可在「其他配置 → 更新」里直接使用本插件的 GitHub Release 更新自身：解析最新版本、按当前平台选择压缩包、用 Release 的 `checksums.txt` 校验 SHA-256，校验通过才原子替换插件库文件并保留上一份备份；下载仅限 GitHub 域名，且下载体积有上限。
 
 ## 实验性功能
 
@@ -164,7 +166,7 @@ plugins:
       priority: 20
 ```
 
-CPA 加载插件后，可从 Management Center 打开 **CPA-A Manager**。大多数插件商店更新只需刷新页面；只有 CPA 明确返回 `restart_required: true` 或动态库被宿主锁定时才需要完整重启。
+CPA 加载插件后，可从 Management Center 打开 **CPA-A Manager**。大多数插件商店更新只需刷新页面；只有 CPA 明确返回 `restart_required: true` 或动态库被宿主锁定时才需要完整重启。通过插件自身 GitHub 直连更新替换的是磁盘上的插件库文件，运行中的 CPA 仍映射旧库，因此始终需要重启 CPA 才会生效（界面会显示 `restart_required`）。
 
 ## 配置与持久化
 

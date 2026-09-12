@@ -32,6 +32,7 @@ import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { ProxyProfilesSettings } from "./ProxyProfilesSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
+import { SelfUpdatePanel } from "./SelfUpdatePanel";
 import { readPluginDensity, readPluginTheme, readPluginThemeEnabled, resetPluginTheme, setPluginDensity, setPluginTheme, setPluginThemeEnabled, type PluginDensity, type PluginThemePreset } from "../store/pluginTheme";
 
 export type OtherSettingsSection = "automation" | "proxy_profiles" | "notifications" | "updates" | "experimental";
@@ -390,6 +391,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             <button className="button button-primary" type="button" disabled={saving || !updates} onClick={() => void saveUpdateSettings()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}</button>
           </div>
         </section>
+        <SelfUpdatePanel onAPIError={onAPIError} onNotice={onNotice} />
         </div>
       </div> : (
         <section className="experimental-settings-section" role="tabpanel" aria-label={tx("ui.experimental_features")}>

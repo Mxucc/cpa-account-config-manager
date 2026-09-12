@@ -71,6 +71,7 @@ import type {
   PolicySnapshot,
 	QuotaMetadataResponse,
   ResultExportFormat,
+  SelfUpdateSnapshot,
   TargetScope,
   UpdatePolicy,
   UpdateSnapshot,
@@ -78,6 +79,10 @@ import type {
 
 const API_ROOT = "/v0/management/plugins/cpa-account-config-manager";
 const REQUEST_TIMEOUT_MS = 30_000;
+// Resolving a release and downloading an archive legitimately takes longer than an
+// ordinary request: the server fetches the checksums, downloads the zip and replaces the
+// library, with its own 60s budget per upstream call.
+const RELEASE_DOWNLOAD_TIMEOUT_MS = 300_000;
 
 export class APIError extends Error {
   status: number;
@@ -120,7 +125,7 @@ async function responseErrorMessage(response: Response, fallback: string, prefer
   return fallback;
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => controller.abort();
@@ -129,7 +134,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   const timeout = globalThis.setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  }, timeoutMs);
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
@@ -141,7 +146,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, query?: URLSearchParams): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, query?: URLSearchParams, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const session = getSession();
   if (!session) throw new APIError(401, "ui.management_key_is_not_set");
   const headers = new Headers(init.headers);
@@ -149,7 +154,7 @@ async function request<T>(path: string, init: RequestInit = {}, query?: URLSearc
   headers.set("Authorization", `Bearer ${session.managementKey}`);
   const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
   if (init.body && !isFormData && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const response = await fetchWithTimeout(buildURL(path, query), { ...init, headers });
+  const response = await fetchWithTimeout(buildURL(path, query), { ...init, headers }, timeoutMs);
   if (!response.ok) {
     const message = await responseErrorMessage(response, `Request failed (${response.status})`);
     throw new APIError(response.status, message);
@@ -157,8 +162,8 @@ async function request<T>(path: string, init: RequestInit = {}, query?: URLSearc
   return parseJSONResponse<T>(response);
 }
 
-async function requestRecord<T>(path: string, init: RequestInit = {}, query?: URLSearchParams): Promise<T> {
-  const response = await request<unknown>(path, init, query);
+async function requestRecord<T>(path: string, init: RequestInit = {}, query?: URLSearchParams, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  const response = await request<unknown>(path, init, query, timeoutMs);
   if (!isRecord(response)) {
     throw new APIError(502, "ui.invalid_json_response");
   }
@@ -1317,6 +1322,43 @@ export async function checkForUpdates(signal?: AbortSignal): Promise<UpdateSnaps
 	return requestRecord<UpdateSnapshot>("/updates/check", { method: "POST", signal });
 }
 
+/**
+ * Direct GitHub self-update, independent of the CPA plugin store. Every response wraps
+ * the same snapshot; the routes only ever return versions, checksums and file paths.
+ */
+export async function getSelfUpdate(signal?: AbortSignal): Promise<SelfUpdateSnapshot> {
+	return readSelfUpdateEnvelope(await requestRecord<unknown>("/self-update", { signal }));
+}
+
+export async function checkSelfUpdate(signal?: AbortSignal): Promise<SelfUpdateSnapshot> {
+	const response = await requestRecord<unknown>("/self-update/check", { method: "POST", signal }, undefined, RELEASE_DOWNLOAD_TIMEOUT_MS);
+	return readSelfUpdateEnvelope(response);
+}
+
+export async function installSelfUpdate(signal?: AbortSignal): Promise<SelfUpdateSnapshot> {
+	const response = await requestRecord<unknown>("/self-update/install", { method: "POST", signal }, undefined, RELEASE_DOWNLOAD_TIMEOUT_MS);
+	return readSelfUpdateEnvelope(response);
+}
+
+/** Record the plugin library path when this host cannot detect it automatically. */
+export async function saveSelfUpdateSettings(pluginFile: string, signal?: AbortSignal): Promise<SelfUpdateSnapshot> {
+	const response = await requestRecord<unknown>("/self-update/settings", {
+		method: "PUT",
+		body: JSON.stringify({ plugin_file: pluginFile }),
+		signal,
+	});
+	return readSelfUpdateEnvelope(response);
+}
+
+/**
+ * Every self-update route answers with a `self_update` envelope. A response without it is
+ * malformed, and silently returning `undefined` would crash the panel instead of showing
+ * the operator a clear error.
+ */
+function readSelfUpdateEnvelope(response: unknown): SelfUpdateSnapshot {
+	if (!isRecord(response) || !isRecord(response.self_update)) throw new APIError(502, "ui.invalid_json_response");
+	return response.self_update as unknown as SelfUpdateSnapshot;
+}
 export async function getPluginStore(signal?: AbortSignal): Promise<PluginStoreResponse> {
   const response = await managementRequest<unknown>("/plugin-store", { signal });
   if (!isRecord(response)) throw new APIError(502, "ui.invalid_json_response");

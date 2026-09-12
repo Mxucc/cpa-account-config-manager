@@ -1,0 +1,235 @@
+import { AlertTriangle, CheckCircle2, DownloadCloud, HardDrive, LoaderCircle, RefreshCw, RotateCcw, Save, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import * as api from "../api/client";
+import { operatorMessage } from "../format/operatorMessage";
+import { useI18n } from "../i18n";
+import type { UIMessageKey } from "../i18n/uiText";
+import type { SelfUpdateSnapshot } from "../types";
+
+/**
+ * Direct GitHub self-update. The plugin resolves and applies its own release, so an
+ * installation whose CPA plugin-store request never succeeds can still update. The
+ * replacement only takes effect after CPA restarts, because the host already mapped
+ * the previous library into the running process.
+ */
+
+interface SelfUpdatePanelProps {
+  onAPIError: (error: unknown) => void;
+  onNotice: (message: string) => void;
+}
+
+/** Maps the resolution channel onto its catalog key. */
+function sourceKey(source: SelfUpdateSnapshot["source"]): UIMessageKey {
+  switch (source) {
+    case "github_api":
+      return "ui.self_update_source_api";
+    case "github_redirect":
+      return "ui.self_update_source_redirect";
+    case "github_atom":
+      return "ui.self_update_source_atom";
+    default:
+      return "ui.self_update_source_unknown";
+  }
+}
+
+/** Maps the plugin-file discovery channel onto its catalog key. */
+function pluginFileSourceKey(source: SelfUpdateSnapshot["plugin_file_source"]): UIMessageKey {
+  switch (source) {
+    case "setting":
+      return "ui.self_update_file_source_setting";
+    case "proc":
+      return "ui.self_update_file_source_process";
+    case "search":
+      return "ui.self_update_file_source_search";
+    default:
+      return "ui.self_update_file_source_unknown";
+  }
+}
+
+/** Renders a byte count without leaking an out-of-range value into the UI. */
+function formatBytes(value: number | undefined): string {
+  if (!Number.isFinite(value) || !value || value <= 0) return "-";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
+}
+
+export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) {
+  const { locale, tx, formatDateTime } = useI18n();
+  const [snapshot, setSnapshot] = useState<SelfUpdateSnapshot | null>(null);
+  const [pluginFile, setPluginFile] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const sequence = useRef(0);
+
+  const handleError = useCallback((caught: unknown) => {
+    if (caught instanceof api.APIError && caught.status === 401) {
+      onAPIError(caught);
+      return;
+    }
+    setError(operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale));
+  }, [locale, onAPIError, tx]);
+
+  const apply = useCallback((next: SelfUpdateSnapshot) => {
+    setSnapshot(next);
+    setPluginFile((current) => (current === "" ? next.plugin_file ?? "" : current));
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    // The initial read joins the same sequence as the buttons, so a slow first response
+    // can never overwrite a newer snapshot the operator already produced.
+    const current = ++sequence.current;
+    const bootstrap = async () => {
+      setLoading(true);
+      try {
+        const next = await api.getSelfUpdate(controller.signal);
+        if (!controller.signal.aborted && current === sequence.current) apply(next);
+      } catch (caught) {
+        if (!controller.signal.aborted && current === sequence.current) handleError(caught);
+      } finally {
+        if (!controller.signal.aborted && current === sequence.current) setLoading(false);
+      }
+    };
+    void bootstrap().catch(() => undefined);
+    return () => {
+      controller.abort();
+      sequence.current += 1;
+    };
+  }, [apply, handleError]);
+
+  const checkNow = useCallback(async () => {
+    const current = ++sequence.current;
+    setChecking(true);
+    setError("");
+    try {
+      const next = await api.checkSelfUpdate();
+      if (current !== sequence.current) return;
+      apply(next);
+      onNotice(next.update_available
+        ? tx("ui.self_update_found_version", { version: next.latest_version || "-" })
+        : tx("ui.self_update_is_current"));
+    } catch (caught) {
+      if (current === sequence.current) handleError(caught);
+    } finally {
+      if (current === sequence.current) setChecking(false);
+    }
+  }, [apply, handleError, onNotice, tx]);
+
+  const installNow = useCallback(async () => {
+    const current = ++sequence.current;
+    setInstalling(true);
+    setError("");
+    try {
+      const next = await api.installSelfUpdate();
+      if (current !== sequence.current) return;
+      apply(next);
+      onNotice(tx("ui.self_update_applied_restart_required", { version: next.applied_version || next.latest_version || "-" }));
+    } catch (caught) {
+      if (current === sequence.current) handleError(caught);
+    } finally {
+      if (current === sequence.current) setInstalling(false);
+    }
+  }, [apply, handleError, onNotice, tx]);
+
+  const savePath = useCallback(async () => {
+    const current = ++sequence.current;
+    setSaving(true);
+    setError("");
+    try {
+      const next = await api.saveSelfUpdateSettings(pluginFile.trim());
+      if (current !== sequence.current) return;
+      apply(next);
+      onNotice(tx("ui.self_update_path_saved"));
+    } catch (caught) {
+      if (current === sequence.current) handleError(caught);
+    } finally {
+      if (current === sequence.current) setSaving(false);
+    }
+  }, [apply, handleError, onNotice, pluginFile, tx]);
+
+  const busy = loading || checking || installing || saving;
+  const statusLabel = snapshot?.update_available
+    ? tx("ui.version_version_available", { version: snapshot.latest_version || "-" })
+    : snapshot?.latest_version
+      ? tx("ui.self_update_is_current")
+      : tx("ui.self_update_source_unknown");
+
+  return (
+    <section className="settings-section self-update-section" aria-label={tx("ui.self_update_title")}>
+      <header>
+        <DownloadCloud size={18} />
+        <div>
+          <strong>{tx("ui.self_update_title")}</strong>
+          <span>{tx("ui.self_update_description")}</span>
+        </div>
+      </header>
+      <div className="settings-version-grid">
+        <div><span>{tx("ui.current_version")}</span><code>{snapshot?.current_version || "-"}</code></div>
+        <div><span>{tx("ui.latest_version")}</span><code>{snapshot?.latest_version || "-"}</code></div>
+        <div><span>{tx("ui.self_update_source")}</span><strong>{tx(sourceKey(snapshot?.source))}</strong></div>
+        <div><span>{tx("ui.last_checked")}</span><time>{formatDateTime(snapshot?.checked_at)}</time></div>
+        <div><span>{tx("ui.self_update_asset")}</span><code>{snapshot?.asset_name || "-"}</code></div>
+        <div><span>{tx("ui.self_update_asset_size")}</span><code>{formatBytes(snapshot?.asset_bytes)}</code></div>
+        <div><span>{tx("ui.self_update_library_file")}</span><code>{snapshot?.plugin_file || tx("ui.self_update_library_not_located")}</code></div>
+        <div><span>{tx("ui.check_status")}</span><strong className={snapshot?.update_available ? "status-warning" : ""}>{loading ? tx("ui.loading") : statusLabel}</strong></div>
+      </div>
+      {snapshot?.plugin_file ? (
+        <p className="self-update-hint">
+          {tx("ui.self_update_library_detected_via", { source: tx(pluginFileSourceKey(snapshot.plugin_file_source)) })}
+        </p>
+      ) : (
+        <p className="self-update-hint">{tx("ui.self_update_library_hint")}</p>
+      )}
+      {snapshot?.plugin_file && !snapshot.plugin_file_exists ? (
+        <div className="experimental-storage-warning" role="alert"><AlertTriangle size={16} /><span>{tx("ui.self_update_library_missing")}</span></div>
+      ) : null}
+      {snapshot?.checksum_ok ? (
+        <div className="self-update-verified" role="status"><CheckCircle2 size={16} /><span>{tx("ui.self_update_checksum_verified")}</span><code>{snapshot.archive_sha256}</code></div>
+      ) : null}
+      {snapshot?.applied_version ? (
+        <div className="self-update-verified" role="status"><HardDrive size={16} /><span>{tx("ui.self_update_installed_version", { version: snapshot.applied_version })}</span></div>
+      ) : null}
+      {snapshot?.restart_required ? (
+        <div className="settings-update-callout" role="status"><RotateCcw size={18} /><strong>{tx("ui.self_update_restart_required")}</strong></div>
+      ) : null}
+      {snapshot?.backup_path ? (
+        <p className="self-update-hint">{tx("ui.self_update_backup_at", { path: snapshot.backup_path })}</p>
+      ) : null}
+      {snapshot?.storage_error ? (
+        <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{tx("ui.self_update_storage_error")}</span></div>
+      ) : null}
+      {snapshot?.error ? (
+        <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{snapshot.error}</span></div>
+      ) : null}
+      {error ? <div className="experimental-storage-error" role="alert"><AlertTriangle size={16} /><span>{error}</span></div> : null}
+      <div className="self-update-path-control">
+        <label className="filter-control">
+          <span>{tx("ui.self_update_library_file")}</span>
+          <input type="text" value={pluginFile} disabled={saving} placeholder="/opt/cpa/plugins/cpa-account-config-manager.so" onChange={(event) => setPluginFile(event.target.value)} aria-label={tx("ui.self_update_library_file")} />
+        </label>
+        <button className="button button-quiet" type="button" disabled={saving || pluginFile.trim() === (snapshot?.plugin_file ?? "")} onClick={() => void savePath()}>
+          {saving ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.self_update_save_path")}
+        </button>
+      </div>
+      <p className="self-update-hint">{tx("ui.self_update_restart_hint")}</p>
+      <div className="settings-section-actions">
+        <button className="button button-quiet" type="button" disabled={busy} onClick={() => void checkNow()}>
+          {checking ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{tx("ui.self_update_check")}
+        </button>
+        {snapshot?.asset_url ? <a className="button button-quiet" href={snapshot.asset_url} target="_blank" rel="noopener noreferrer">{tx("ui.self_update_download_manually")}</a> : null}
+        <button className="button button-primary" type="button" disabled={busy || !snapshot?.update_available || !snapshot.can_install} onClick={() => void installNow()}>
+          {installing ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}{tx("ui.self_update_install")}
+        </button>
+      </div>
+    </section>
+  );
+}

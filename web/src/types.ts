@@ -1149,6 +1149,35 @@ export interface UpdateSnapshot {
   };
 }
 
+/**
+ * State of the direct GitHub self-update path, which never depends on the CPA plugin
+ * store: the plugin resolves its own release, verifies the archive and replaces its
+ * library file on disk. A loaded library cannot be swapped in-process, so an applied
+ * update always waits for a CPA restart.
+ */
+export interface SelfUpdateSnapshot {
+  current_version: string;
+  latest_version?: string;
+  update_available: boolean;
+  source?: "github_api" | "github_redirect" | "github_atom";
+  checked_at?: string;
+  asset_name?: string;
+  asset_url?: string;
+  asset_bytes?: number;
+  archive_sha256?: string;
+  checksum_ok: boolean;
+  plugin_file?: string;
+  plugin_file_source?: "setting" | "proc" | "search";
+  plugin_file_exists: boolean;
+  staged_path?: string;
+  applied_version?: string;
+  backup_path?: string;
+  restart_required: boolean;
+  can_install: boolean;
+  error?: string;
+  storage_error?: string;
+}
+
 export interface PluginStoreEntry {
   id: string;
   version: string;

@@ -131,7 +131,9 @@ describe("OtherSettingsWorkspace", () => {
 
     await user.click(within(plugin).getByLabelText("自动更新"));
     await user.click(within(plugin).getByRole("button", { name: "保存设置" }));
-    expect(within(workspace).getByRole("alert")).toHaveTextContent("确认风险");
+    // The workspace now also renders the direct self-update panel, so query the
+    // confirmation text instead of assuming this is the only alert on the page.
+    expect(within(workspace).getByText(/确认风险/)).toBeInTheDocument();
     await user.click(within(plugin).getByLabelText("确认开启自动更新"));
     await user.click(within(plugin).getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/updates") && init.method === "PUT")).toBe(true));

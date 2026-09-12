@@ -86,6 +86,7 @@ type App struct {
 	opencode                 *OpenCodeQuotaService
 	opencodeZen              *OpenCodeZenService
 	opencodePricing          *OpenCodePricingService
+	selfUpdate               *SelfUpdateService
 	codexFingerprints        *CodexFingerprintProfileService
 	codexModelControl        *CodexModelControlService
 	opencodeModelControl     *OpenCodeModelControlService
@@ -127,6 +128,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
 	opencodePricing := NewOpenCodePricingService()
+	selfUpdate := NewSelfUpdateService(PluginVersion)
 	codexFingerprints := NewCodexFingerprintProfileService()
 	codexModelControl := NewCodexModelControlService()
 	opencodeModelControl := NewOpenCodeModelControlService()
@@ -213,6 +215,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		opencode:                 opencode,
 		opencodeZen:              opencodeZen,
 		opencodePricing:          opencodePricing,
+		selfUpdate:               selfUpdate,
 		codexFingerprints:        codexFingerprints,
 		codexModelControl:        codexModelControl,
 		opencodeModelControl:     opencodeModelControl,
@@ -296,6 +299,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
 	a.opencodePricing.Configure(config)
+	a.selfUpdate.Configure(config)
 	a.codexFingerprints.Configure(config)
 	a.codexModelControl.Configure(config)
 	a.opencodeModelControl.Configure(config)
@@ -422,6 +426,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.newAccountProbe.Shutdown()
 		a.quotaBootstrap.Shutdown()
 		a.opencodePricing.Close()
+		a.selfUpdate.Close()
 		a.updates.Shutdown()
 		a.policies.Shutdown()
 		a.jobs.Shutdown()
@@ -774,12 +779,16 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/import", Description: "Import the credential of one existing OpenCode AI-provider channel."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/model-control", Description: "List the OpenCode models and the globally disabled set."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/opencode/model-control", Description: "Replace the globally disabled OpenCode model set."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/self-update", Description: "Read the direct GitHub self-update state."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/overview", Description: "Read the Codex workspace counts and effective convergence mode."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Read every editable Codex fingerprint field with its default."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Update Codex fingerprint fields; an empty value restores a field default."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/codex/fingerprint/reset", Description: "Restore Codex fingerprint fields to their defaults."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/models", Description: "List the Codex models and the globally disabled set."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/models", Description: "Replace the globally disabled Codex model set."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/self-update/check", Description: "Resolve the latest release from GitHub for the direct self-update path."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/self-update/install", Description: "Download, verify and apply the selected release to the plugin library file."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/self-update/settings", Description: "Record the plugin library path used by the direct self-update."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
@@ -1027,6 +1036,14 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeModelControl(ctx, req)
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/opencode/model-control":
 		return a.handleOpenCodeModelControlUpdate(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/self-update":
+		return a.handleSelfUpdate(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/self-update/check":
+		return a.handleSelfUpdateCheck(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/self-update/install":
+		return a.handleSelfUpdateInstall(ctx, req)
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/self-update/settings":
+		return a.handleSelfUpdateSettings(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/overview":
 		return a.handleCodexOverview(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint":

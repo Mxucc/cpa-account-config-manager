@@ -54,6 +54,8 @@ import {
   saveAIProviderName,
   setAIProviderChannelEnabled,
   testAIProviderChannelForKind,
+  getSelfUpdate,
+  saveSelfUpdateSettings,
 } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
@@ -1415,6 +1417,50 @@ describe("management API client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(getPluginStore()).rejects.toMatchObject({ status: 502, message: "ui.invalid_api_response" });
+  });
+
+  it("rejects a self-update response without the snapshot envelope", async () => {
+    setSession("", "management-secret");
+    // A body without `self_update` must fail loudly: returning undefined would crash the
+    // panel instead of surfacing a clear operator error.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({})));
+
+    await expect(getSelfUpdate()).rejects.toMatchObject({ status: 502, message: "ui.invalid_json_response" });
+  });
+
+  it("reads the direct self-update snapshot and the recorded plugin file", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        self_update: {
+          current_version: "0.3.1415",
+          latest_version: "0.3.1416",
+          update_available: true,
+          source: "github_api",
+          plugin_file: "/opt/cpa/plugins/cpa-account-config-manager.so",
+          plugin_file_exists: true,
+          checksum_ok: false,
+          restart_required: false,
+          can_install: true,
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        self_update: {
+          current_version: "0.3.1415",
+          plugin_file: "/srv/cpa/plugins/cpa-account-config-manager.so",
+          plugin_file_source: "setting",
+          plugin_file_exists: true,
+          checksum_ok: false,
+          restart_required: false,
+          can_install: true,
+        },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getSelfUpdate()).resolves.toMatchObject({ current_version: "0.3.1415", latest_version: "0.3.1416", source: "github_api" });
+    await expect(saveSelfUpdateSettings("/srv/cpa/plugins/cpa-account-config-manager.so")).resolves.toMatchObject({ plugin_file: "/srv/cpa/plugins/cpa-account-config-manager.so" });
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("/self-update/settings");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ plugin_file: "/srv/cpa/plugins/cpa-account-config-manager.so" });
   });
 
   it("rejects unverified versions and malformed plugin-store install responses", async () => {

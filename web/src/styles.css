@@ -1031,6 +1031,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-version-grid .status-warning { color: var(--warning); }
 .settings-update-callout { min-height: 46px; display: flex; align-items: center; gap: 9px; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border-color)); color: var(--warning); background: var(--warning-soft); }
 .settings-update-callout strong { color: var(--text-primary); font-size: calc(11px * var(--font-size-scale)); }
+/* Direct GitHub self-update: it sits beside the plugin-store block and reuses the same
+   version grid, callout and alert styles, adding only the path row and the hints. */
+.self-update-section { min-width: 0; }
+.self-update-hint { min-width: 0; margin: 0; padding: 9px 16px; border-bottom: 1px solid var(--border-color); color: var(--text-tertiary); font-size: calc(9px * var(--font-size-scale)); line-height: 1.55; }
+.self-update-verified { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); color: var(--success); background: var(--success-soft); }
+.self-update-verified span { min-width: 0; color: var(--text-secondary); font-size: calc(10px * var(--font-size-scale)); }
+.self-update-verified code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: calc(9px * var(--font-size-scale)); }
+.self-update-path-control { min-width: 0; display: flex; align-items: flex-end; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
+.self-update-path-control > label { min-width: 0; flex: 1 1 auto; }
+.self-update-path-control input { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0 10px; color: var(--text-primary); background: var(--bg-primary); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: calc(10px * var(--font-size-scale)); }
 .update-policy-controls { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--border-color); }
 .update-policy-controls > label { min-width: 0; min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 9px 12px; border-right: 1px solid var(--border-color); }
 .update-policy-controls > label:last-child { border-right: none; }

@@ -24,6 +24,10 @@ const modelRows = [
 ];
 
 interface CodexFetchMockOptions {
+  /** Extra AI-provider channels that answer the target list, used when no Codex account exists. */
+  channels?: string[];
+  /** Answer the account list with nothing, like an installation that only uses channels. */
+  noAccounts?: boolean;
   disabled?: string[];
   fields?: Array<Record<string, unknown>>;
   overview?: Record<string, unknown>;
@@ -39,6 +43,9 @@ describe("CodexWorkspace", () => {
 
   function codexFetchMock(options: CodexFetchMockOptions = {}) {
     const requests: Array<{ url: string; init: RequestInit }> = [];
+    // A Codex credential may exist only as an AI-provider channel, which is the case this option
+    // covers: no Codex account is listed, so the channel has to be offered as a target.
+    const channelTargets = (options.channels ?? []).map((label, index) => ({ id: `channel:${index}`, label, kind: "channel", key_set: true }));
     let disabled = [...(options.disabled ?? [])];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
@@ -46,7 +53,18 @@ describe("CodexWorkspace", () => {
       if (url.endsWith("/accounts/model-test") && init.method === "POST") {
         return jsonResponse({ account_id: "acct-codex-1", provider: "codex", model: "gpt-5.4-codex", status: "available", probe_kind: "model", reason_code: "model_response_ok", status_code: 200, latency_ms: 42 });
       }
+      if (url.endsWith("/codex/test-targets")) {
+        return jsonResponse({ targets: channelTargets });
+      }
+      if (url.endsWith("/codex/model-test") && init.method === "POST") {
+        return jsonResponse({
+          result: { reachable: true, status: "available", reason_code: "model_response_ok", status_code: 200, latency_ms: 12, model: "gpt-5.4-codex", endpoint: "responses", tested_at: "2026-09-12T00:00:00Z" },
+        });
+      }
       if (url.includes("/accounts?")) {
+        if (options.noAccounts) {
+          return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 100, pages: 0 });
+        }
         return jsonResponse({ accounts: [
           { id: "acct-codex-1", name: "codex-one.json", provider: "codex", type: "codex", status: "active", disabled: false, unavailable: false, editable: true, recommended_action: "keep" },
         ], total: 1, page: 1, page_size: 100, pages: 1 });
@@ -214,6 +232,27 @@ describe("CodexWorkspace", () => {
       expect(JSON.parse(String(writes.at(-1)?.init.body))).toEqual({ disabled: [] });
     });
     await waitFor(() => expect(onNotice).toHaveBeenLastCalledWith("已重新启用 1 个模型"));
+  });
+
+  it("offers an AI-provider channel when no Codex account exists", async () => {
+    const user = userEvent.setup();
+    // The reported case: the Codex credential exists only as an AI-provider channel, so the
+    // account list is empty and the channel has to be offered instead.
+    const requests = codexFetchMock({ channels: ["my-codex-channel"], noAccounts: true });
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.4-codex" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).queryByText("没有可用于测试的凭据")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/codex/model-test") && init.method === "POST")).toBe(true));
+    const probe = requests.find(({ url, init }) => url.endsWith("/codex/model-test") && init.method === "POST");
+    expect(JSON.parse(String(probe?.init.body))).toEqual({ channel_index: 0, model: "gpt-5.4-codex" });
+    expect(await within(dialog).findByText("模型可用")).toBeInTheDocument();
   });
 
   it("shows the plugin price table rates and marks an unpriced model", async () => {

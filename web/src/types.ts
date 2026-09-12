@@ -1320,6 +1320,34 @@ export interface CodexModelControlSnapshot {
   pricing_updated_at?: string;
 }
 
+/** One credential the Codex model page can probe: a CPA account or an AI-provider channel. */
+export interface CodexTestTarget {
+  /** "account:<id>" or "channel:<index>". */
+  id: string;
+  label: string;
+  kind: "channel" | "account";
+  key_set: boolean;
+}
+
+/** One selectable probe target: a CPA account or an AI-provider channel. */
+export interface CodexTestTargetOption {
+  id: string;
+  label: string;
+}
+
+/** Outcome of one Codex channel probe. */
+export interface CodexModelProbeResult {
+  reachable: boolean;
+  status: "available" | "unavailable" | "unsupported" | "review" | string;
+  status_code?: number;
+  reason_code?: string;
+  model?: string;
+  detail?: string;
+  latency_ms?: number;
+  endpoint?: string;
+  tested_at?: string;
+}
+
 export interface CodexOverview {
   accounts: number;
   channels: number;
@@ -1385,6 +1413,10 @@ export interface OpenCodeModelTestResult {
   model?: string;
   detail?: string;
   latency_ms?: number;
+  /** The protocol that produced this result: responses, chat or anthropic. */
+  endpoint?: string;
+  /** Every protocol the probe attempted, in order. */
+  tried_endpoints?: string[];
   tested_at?: string;
 }
 

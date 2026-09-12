@@ -1018,6 +1018,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                       </div>
                       <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{controlTestResult.status_code || "-"}</dd></div>
                       <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{typeof controlTestResult.latency_ms === "number" ? `${controlTestResult.latency_ms} ms` : "-"}</dd></div>
+                      {controlTestResult.endpoint ? <div><dt>{tx("ui.model_test_endpoint")}</dt><dd>{controlTestResult.endpoint}{controlTestResult.tried_endpoints?.length ? ` · ${tx("ui.model_test_endpoint_tried", { list: controlTestResult.tried_endpoints.join(", ") })}` : ""}</dd></div> : null}
                       <div><dt>{tx("ui.tested_at")}</dt><dd>{formatDateTime(controlTestResult.tested_at)}</dd></div>
                       {controlTestResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(controlTestResult.detail, locale)}</dd></div> : null}
                     </dl>

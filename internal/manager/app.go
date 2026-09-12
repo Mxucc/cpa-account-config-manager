@@ -971,6 +971,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Read every editable Codex fingerprint field with its default."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Update Codex fingerprint fields; an empty value restores a field default."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/codex/fingerprint/reset", Description: "Restore Codex fingerprint fields to their defaults."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/test-targets", Description: "List the credentials the Codex model page can probe, including AI-provider channels."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/codex/model-test", Description: "Probe one model through a saved Codex AI-provider channel."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/models", Description: "List the Codex models and the globally disabled set."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/models", Description: "Replace the globally disabled Codex model set."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/self-update/check", Description: "Resolve the latest release from GitHub for the direct self-update path."},
@@ -1252,6 +1254,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleCodexFingerprintUpdate(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint/reset":
 		return a.handleCodexFingerprintReset(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/test-targets":
+		return a.handleCodexTestTargets(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/codex/model-test":
+		return a.handleCodexModelTest(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/models":
 		return a.handleCodexModels(ctx, req)
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/codex/models":

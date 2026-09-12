@@ -4,7 +4,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
-import type { Account, CodexFingerprintField, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
+import type { Account, CodexFingerprintField, CodexModelProbeResult, CodexTestTargetOption, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
 import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
 import { ModelProbeDialog } from "./ModelProbeDialog";
 import { IconButton } from "./IconButton";
@@ -86,9 +86,10 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
   // The row whose write is in flight, so the clicked button can show its own progress.
   const [pendingModel, setPendingModel] = useState("");
   const [testModel, setTestModel] = useState("");
-  const [testAccounts, setTestAccounts] = useState<Account[] | null>(null);
+  const [testAccounts, setTestAccounts] = useState<CodexTestTargetOption[] | null>(null);
   const [testAccountID, setTestAccountID] = useState("");
   const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
+  const [channelTestResult, setChannelTestResult] = useState<CodexModelProbeResult | null>(null);
   const [testError, setTestError] = useState("");
   const [modelQuery, setModelQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -222,15 +223,24 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
     setTestAccounts(null);
     setTestAccountID("");
     setTestResult(null);
+    setChannelTestResult(null);
     setTestError("");
   };
 
-  const runModelTest = (model: string, accountID: string) => void (async () => {
+  const runModelTest = (model: string, target: string) => void (async () => {
     setBusy("model-test");
     setTestError("");
     setTestResult(null);
     try {
-      setTestResult(await api.testAccountModel(accountID, model));
+      // A channel target is probed through its own base URL and credential; an account target goes
+      // through CPA's account probe, which is what the accounts page uses.
+      if (target.startsWith("channel:")) {
+        const index = Number.parseInt(target.slice("channel:".length), 10);
+        const response = await api.testCodexChannelModel(index, model);
+        setChannelTestResult(response.result);
+        return;
+      }
+      setTestResult(await api.testAccountModel(target.replace(/^account:/, ""), model));
     } catch (caught) {
       if (caught instanceof api.APIError && caught.status === 401) {
         onAPIError(caught);
@@ -243,15 +253,29 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
   })();
 
   /** Candidate accounts are loaded lazily so opening the tab stays cheap. */
+  /**
+   * The Codex credential can live as a CPA account or as an AI-provider channel, and an
+   * installation that only configured channels has no account at all, so both are offered.
+   */
   const openModelTest = (model: string) => void (async () => {
     setTestModel(model);
     setTestAccounts(null);
     setTestAccountID("");
     setTestResult(null);
+    setChannelTestResult(null);
     setTestError("");
     try {
-      const response = await api.listAccounts(1, 100, {});
-      const candidates = response.accounts.filter((account) => `${account.provider ?? ""} ${account.type ?? ""}`.toLowerCase().includes("codex"));
+      const [accounts, targets] = await Promise.all([
+        api.listAccounts(1, 100, {}),
+        api.getCodexTestTargets(),
+      ]);
+      const accountTargets = accounts.accounts
+        .filter((account) => `${account.provider ?? ""} ${account.type ?? ""}`.toLowerCase().includes("codex"))
+        .map((account) => ({ id: `account:${account.id}`, label: account.label || account.email || account.name || account.id }));
+      const channelTargets = targets.targets
+        .filter((target) => target.kind === "channel" && target.key_set)
+        .map((target) => ({ id: target.id, label: `${target.label} · ${tx("ui.codex_test_channel_suffix")}` }));
+      const candidates = [...accountTargets, ...channelTargets];
       setTestAccounts(candidates);
       if (candidates.length === 1) {
         setTestAccountID(candidates[0].id);
@@ -523,7 +547,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
           {testModel ? (
             <ModelProbeDialog
               model={testModel}
-              targets={testAccounts === null ? [] : testAccounts.map((account) => ({ id: account.id, label: account.label || account.email || account.name || account.id }))}
+              targets={testAccounts ?? []}
               targetID={testAccountID}
               onSelectTarget={setTestAccountID}
               onRun={() => runModelTest(testModel, testAccountID)}
@@ -537,6 +561,15 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                   <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{testResult.reason_code || "-"}</dd></div>
                   <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{testResult.status_code || "-"}</dd></div>
                   <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{testResult.latency_ms} ms</dd></div>
+                </dl>
+              ) : null}
+              {channelTestResult ? (
+                <dl className="codex-model-test-result">
+                  <div><dt>{tx("ui.model_test_result_status")}</dt><dd>{testStatusLabel(accountTestStatus(channelTestResult.status))}</dd></div>
+                  <div><dt>{tx("ui.model_test_result_reason")}</dt><dd>{channelTestResult.reason_code || "-"}</dd></div>
+                  <div><dt>{tx("ui.model_test_result_http")}</dt><dd>{channelTestResult.status_code || "-"}</dd></div>
+                  <div><dt>{tx("ui.model_test_result_latency")}</dt><dd>{channelTestResult.latency_ms ?? 0} ms</dd></div>
+                  {channelTestResult.detail ? <div><dt>{tx("ui.upstream_detail")}</dt><dd>{operatorMessage(channelTestResult.detail, locale)}</dd></div> : null}
                 </dl>
               ) : null}
             </ModelProbeDialog>
@@ -629,4 +662,18 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
       ) : null}
     </section>
   );
+}
+
+/** The channel probe reports its own status vocabulary; map it onto the account-test labels. */
+function accountTestStatus(status: string): ModelTestStatus {
+  switch (status) {
+    case "available":
+      return "available";
+    case "unavailable":
+      return "unavailable";
+    case "unsupported":
+      return "unsupported";
+    default:
+      return "review";
+  }
 }

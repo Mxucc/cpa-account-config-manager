@@ -20,7 +20,14 @@ interface SelfUpdatePanelProps {
 
 // Reloading swaps the plugin in place, so give the host time to answer again. Exported so a test
 // can shorten the window instead of waiting for the real one.
-export const reloadPollTiming = { intervalMS: 3000, windowMS: 90_000 };
+export const reloadPollTiming = { intervalMS: 3000, windowMS: 90_000, refreshDelayMS: 1200 };
+
+// schedulePageRefresh reloads the page once the notice had a moment to register. In a test
+// environment (no navigation) it does nothing.
+function schedulePageRefresh(): void {
+  if (typeof window === "undefined" || typeof window.location?.reload !== "function") return;
+  setTimeout(() => { window.location.reload(); }, reloadPollTiming.refreshDelayMS);
+}
 
 /** Explains a refused reload in operator terms. */
 const reloadReasonKeys: Record<string, UIMessageKey> = {
@@ -198,6 +205,9 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
           setSnapshot(next);
           setReloadResult({ reloaded: true, restart_required: false, store_version: next.current_version });
           onNotice(tx("ui.self_update_reloaded_refresh_page"));
+          // The reload replaced the interface as well, so the page is refreshed automatically
+          // instead of asking the operator to do it.
+          schedulePageRefresh();
           return true;
         }
       } catch {
@@ -219,6 +229,7 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
       setReloadResult(result);
       if (result.reloaded) {
         onNotice(tx("ui.self_update_reloaded_refresh_page"));
+        schedulePageRefresh();
         return;
       }
       handleReloadRefusal(result);

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -445,5 +446,115 @@ func TestOpenCodeProbeSendsTheFullClientHeaderSet(t *testing.T) {
 	}
 	if second.Header.Get("x-opencode-project") != request.Header.Get("x-opencode-project") {
 		t.Fatalf("the project id must stay stable for one credential")
+	}
+}
+
+// Models differ in the protocol they speak, so the probe walks them instead of assuming
+// chat-completions: the gateway answers "not supported" for the wrong endpoint, which is not a
+// statement about the model.
+func TestOpenCodeProbeWalksTheProtocols(t *testing.T) {
+	newServer := func(t *testing.T, responses func(http.ResponseWriter, *http.Request) bool) (*httptest.Server, *[]string) {
+		t.Helper()
+		seen := &[]string{}
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			*seen = append(*seen, request.URL.Path)
+			if responses(writer, request) {
+				return
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"error":{"type":"ModelError","message":"Model x is not supported"}}`))
+		}))
+		t.Cleanup(server.Close)
+		return server, seen
+	}
+
+	// A Responses-only model succeeds on the first attempt.
+	responsesOnly, responsesPaths := newServer(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/v1/responses" {
+			return false
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"id":"resp_1"}`))
+		return true
+	})
+	result := probeOpenCodeModel(context.Background(), responsesOnly.URL, "sk-probe", "gpt-5.6-sol", 5*time.Second)
+	if result.Status != "available" || result.Endpoint != "responses" {
+		t.Fatalf("responses probe = %#v", result)
+	}
+	if len(*responsesPaths) != 1 {
+		t.Fatalf("attempts = %#v", *responsesPaths)
+	}
+
+	// A chat-only model falls back to chat-completions and reports that endpoint.
+	chatOnly, chatPaths := newServer(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/v1/chat/completions" {
+			return false
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`))
+		return true
+	})
+	result = probeOpenCodeModel(context.Background(), chatOnly.URL, "sk-probe", "claude-opus-4-1", 5*time.Second)
+	if result.Status != "available" || result.Endpoint != "chat" {
+		t.Fatalf("chat probe = %#v", result)
+	}
+	if len(*chatPaths) < 2 {
+		t.Fatalf("the responses endpoint must be tried first: %#v", *chatPaths)
+	}
+
+	// An Anthropic-only model is reachable through /v1/messages.
+	anthropicOnly, anthropicPaths := newServer(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/v1/messages" {
+			return false
+		}
+		if request.Header.Get("anthropic-version") == "" {
+			t.Errorf("the anthropic-version header is missing")
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"content":[{"type":"text","text":"pong"}]}`))
+		return true
+	})
+	result = probeOpenCodeModel(context.Background(), anthropicOnly.URL, "sk-probe", "claude-opus-4-1", 5*time.Second)
+	if result.Status != "available" || result.Endpoint != "anthropic" {
+		t.Fatalf("anthropic probe = %#v", result)
+	}
+	if len(*anthropicPaths) < 3 {
+		t.Fatalf("every protocol must be tried: %#v", *anthropicPaths)
+	}
+
+	// When no protocol serves the model, the failure names the protocols that were tried.
+	none, _ := newServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	result = probeOpenCodeModel(context.Background(), none.URL, "sk-probe", "ghost-model", 5*time.Second)
+	if result.Status != "unavailable" || result.ReasonCode != "model_not_supported" {
+		t.Fatalf("unsupported model = %#v", result)
+	}
+	if len(result.TriedEndpoints) != 3 {
+		t.Fatalf("tried endpoints = %#v", result.TriedEndpoints)
+	}
+}
+
+// A real credential or quota failure outranks a protocol mismatch, because only the former tells
+// the operator what to fix.
+func TestOpenCodeProbePrefersTheActionableFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/responses":
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"error":{"type":"ModelError","message":"Model x is not supported"}}`))
+		default:
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result := probeOpenCodeModel(context.Background(), server.URL, "sk-probe", "gpt-5.6-sol", 5*time.Second)
+	if result.ReasonCode != "authentication_failed" {
+		t.Fatalf("reason = %q result = %#v", result.ReasonCode, result)
+	}
+	if result.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status code = %d", result.StatusCode)
 	}
 }

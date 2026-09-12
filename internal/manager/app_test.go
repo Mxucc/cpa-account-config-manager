@@ -180,6 +180,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodGet + " /plugins/cpa-account-config-manager/codex/fingerprint":                         {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/codex/fingerprint":                         {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/codex/fingerprint/reset":                  {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/codex/test-targets":                        {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/codex/model-test":                         {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/codex/models":                              {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/codex/models":                              {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/ai-provider-names":                         {},

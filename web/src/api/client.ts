@@ -2760,6 +2760,19 @@ export async function getCodexModels(signal?: AbortSignal): Promise<import("../t
   return requestRecord<import("../types").CodexModelControlSnapshot>("/codex/models", { signal });
 }
 
+/** Every credential the Codex model page can probe, including AI-provider channels. */
+export async function getCodexTestTargets(signal?: AbortSignal): Promise<{ targets: import("../types").CodexTestTarget[] }> {
+	return requestRecord<{ targets: import("../types").CodexTestTarget[] }>("/codex/test-targets", { signal });
+}
+
+/** Probe one model through a saved Codex AI-provider channel. */
+export async function testCodexChannelModel(channelIndex: number, model: string): Promise<{ result: import("../types").CodexModelProbeResult }> {
+	return requestRecord<{ result: import("../types").CodexModelProbeResult }>("/codex/model-test", {
+		method: "POST",
+		body: JSON.stringify({ channel_index: channelIndex, model }),
+	});
+}
+
 /** Disabling a model is global: it affects every Codex account and AI-provider channel. */
 export async function saveCodexModels(disabled: string[]): Promise<import("../types").CodexModelControlSnapshot> {
   return requestRecord<import("../types").CodexModelControlSnapshot>("/codex/models", {

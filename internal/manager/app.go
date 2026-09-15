@@ -59,6 +59,7 @@ type App struct {
 	mu                       sync.RWMutex
 	config                   Config
 	configErr                string
+	configureErr             string
 	accounts                 *AccountService
 	deduplication            *AccountDeduplicationService
 	deletions                *AccountDeleteService
@@ -107,6 +108,19 @@ type App struct {
 	indexHTML                []byte
 	quiesceOnce              sync.Once
 	quotaResetLocks          [64]sync.Mutex
+	// State-directory reconfigure coalescing. DiscoverAuthStorage can run on a stack that already
+	// holds a service lock (the inspection scan holds scanMu while it reads accounts), so the
+	// service reconfiguration is applied by one background worker instead of inline.
+	reconfigureMu      sync.Mutex
+	reconfigurePending Config
+	reconfigureQueued  bool
+	reconfigureRunning bool
+	reconfigureCycle   chan struct{}
+	// configApplyMu serializes every service configuration, so a deferred configure and a host
+	// reconfigure never mutate the services at the same time.
+	configApplyMu sync.Mutex
+	// testServiceConfigurer replaces the service configuration applier in tests.
+	testServiceConfigurer serviceConfigureApplier
 }
 
 func NewApp(host AuthHost, indexHTML []byte) *App {
@@ -275,10 +289,23 @@ func (a *App) Configure(raw []byte) {
 	a.ConfigureHost(raw, cpaapi.SchemaVersion)
 }
 
+// serviceConfigureApplier runs the service side of one host configuration. Production code uses
+// the App itself; tests substitute a deliberately blocking collaborator to exercise the bounded
+// ConfigureHostBounded path without driving the real services.
+type serviceConfigureApplier interface {
+	applyServiceConfig(config Config, hostSchema uint32)
+}
+
 // DiscoverAuthStorage keeps the plugin's private state beside CPA's auth files. The host gives
 // the plugin absolute auth file paths as soon as an account list is read, which is far more
 // stable than the implicit relative data directory that follows the working directory of
 // whoever started CPA. An operator-pinned `data_dir` is never overridden.
+//
+// This runs on AccountService.baseAccounts, which the inspection scan calls while it already
+// holds InspectionEngine.scanMu. The expensive service reconfiguration is therefore never applied
+// on the caller's stack: re-entering InspectionEngine.Configure here would self-deadlock on the
+// non-reentrant mutex and wedge CPA startup (GitHub issue #7). Only the resolved directories are
+// recorded inline, and one coalesced worker applies the rest off this stack.
 func (a *App) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
 	if a == nil {
 		return
@@ -306,12 +333,109 @@ func (a *App) DiscoverAuthStorage(entries []cpaapi.HostAuthFileEntry) {
 	if resolved.DataDir == configured.DataDir && len(resolved.DataDirAlternates) == len(configured.DataDirAlternates) {
 		return
 	}
-	a.applyResolvedConfig(resolved)
+	// Record the resolved directories immediately so the change is visible to every reader of the
+	// config snapshot, then let the coalesced worker re-open the stores from the new paths.
+	a.mu.Lock()
+	a.config = resolved
+	a.mu.Unlock()
+	a.scheduleResolvedConfigReconfigure(resolved)
+}
+
+// scheduleResolvedConfigReconfigure queues one state-directory reconfiguration and starts the
+// single worker when none is running. Repeated calls coalesce into one pending apply, so there is
+// never more than one reconfigure goroutine per app.
+func (a *App) scheduleResolvedConfigReconfigure(config Config) {
+	if a == nil {
+		return
+	}
+	a.reconfigureMu.Lock()
+	a.reconfigurePending = config
+	a.reconfigureQueued = true
+	if a.reconfigureRunning {
+		a.reconfigureMu.Unlock()
+		return
+	}
+	a.reconfigureRunning = true
+	cycle := make(chan struct{})
+	a.reconfigureCycle = cycle
+	a.reconfigureMu.Unlock()
+	go a.runReconfigureWorker(cycle)
+}
+
+// runReconfigureWorker applies the latest queued configuration until the queue drains, then
+// reports idle. It is the only goroutine that runs applyResolvedConfig.
+func (a *App) runReconfigureWorker(cycle chan struct{}) {
+	defer close(cycle)
+	for {
+		a.reconfigureMu.Lock()
+		config := a.reconfigurePending
+		queued := a.reconfigureQueued
+		a.reconfigureQueued = false
+		if !queued {
+			a.reconfigureRunning = false
+			a.reconfigureCycle = nil
+			a.reconfigureMu.Unlock()
+			return
+		}
+		a.reconfigureMu.Unlock()
+		a.applyResolvedConfigSafely(config)
+	}
+}
+
+// applyResolvedConfigSafely contains a panic so a failed reconfiguration can never take down CPA,
+// and records the sanitized diagnostic.
+func (a *App) applyResolvedConfigSafely(config Config) {
+	defer func() {
+		if recover() != nil {
+			a.noteConfigureFailure()
+		}
+	}()
+	a.applyResolvedConfig(config)
+}
+
+// ReconfigurePending reports whether a state-directory reconfiguration is queued or in flight.
+func (a *App) ReconfigurePending() bool {
+	if a == nil {
+		return false
+	}
+	a.reconfigureMu.Lock()
+	defer a.reconfigureMu.Unlock()
+	return a.reconfigureRunning || a.reconfigureQueued
+}
+
+// WaitForReconfigure waits until no state-directory reconfiguration is queued or in flight, or
+// until timeout elapses. It is the bounded observability hook for the asynchronous worker.
+func (a *App) WaitForReconfigure(timeout time.Duration) bool {
+	if a == nil {
+		return true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		a.reconfigureMu.Lock()
+		cycle := a.reconfigureCycle
+		running := a.reconfigureRunning
+		a.reconfigureMu.Unlock()
+		if !running || cycle == nil {
+			return true
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		select {
+		case <-cycle:
+		case <-time.After(remaining):
+			return false
+		}
+	}
 }
 
 // applyResolvedConfig re-configures every store after the state directory was resolved again,
-// without touching the host schema or the background start-up sequence.
+// without touching the host schema or the background start-up sequence. It runs on the coalesced
+// reconfigure worker, never on a caller stack that may already hold a service lock.
 func (a *App) applyResolvedConfig(config Config) {
+	a.configApplyMu.Lock()
+	defer a.configApplyMu.Unlock()
 	a.mu.Lock()
 	a.config = config
 	a.mu.Unlock()
@@ -451,16 +575,29 @@ func (a *App) selfUpdatePluginFile() (string, error) {
 	return snapshot.PluginFile, nil
 }
 
+// ConfigureHost applies a host lifecycle configuration synchronously. CPA's register and
+// reconfigure path uses ConfigureHostBounded so a wedged service can never block the host.
 func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	if a == nil {
 		return
 	}
+	config, resolvedSchema, ok := a.applyHostIdentity(raw, hostSchema)
+	if !ok {
+		return
+	}
+	a.applyServiceConfig(config, resolvedSchema)
+}
+
+// applyHostIdentity parses the lifecycle configuration and records the host identity (config and
+// host schema) so Registration reports the correct capabilities even when the service side is
+// deferred. It never touches a service lock, so it is safe on any caller stack.
+func (a *App) applyHostIdentity(raw []byte, hostSchema uint32) (Config, uint32, bool) {
 	config, errConfig := ParseConfigStrict(raw)
 	if errConfig != nil {
 		a.mu.Lock()
 		a.configErr = "plugin configuration is invalid"
 		a.mu.Unlock()
-		return
+		return Config{}, hostSchema, false
 	}
 	a.mu.RLock()
 	authDir := a.authDir
@@ -469,9 +606,18 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.mu.Lock()
 	a.config = config
 	a.configErr = ""
+	a.configureErr = ""
 	a.hostSchema = normalizeHostSchemaVersion(hostSchema)
-	hostSchema = a.hostSchema
+	resolvedSchema := a.hostSchema
 	a.mu.Unlock()
+	return config, resolvedSchema, true
+}
+
+// applyServiceConfig runs the full service configuration for one host identity. It serializes on
+// configApplyMu so a deferred configure and a host reconfigure never mutate the services at once.
+func (a *App) applyServiceConfig(config Config, hostSchema uint32) {
+	a.configApplyMu.Lock()
+	defer a.configApplyMu.Unlock()
 	a.concurrency.Configure(config, hostSchema)
 	a.runtime.Configure(config)
 	if a.runtime.Snapshot().Superseded {
@@ -526,6 +672,113 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.force.Configure(config)
 	a.usage.Configure(config)
 	a.reconcileOperationSources()
+	// A completed configure clears the diagnostic recorded by an earlier bounded-configure
+	// timeout or panic, so the status output stops reporting a degraded lifecycle.
+	a.mu.Lock()
+	a.configureErr = ""
+	a.mu.Unlock()
+}
+
+// configureHostBound is the default upper bound ConfigureHostBounded gives the service
+// configuration. It is a package var so tests can shrink it; a healthy configure finishes far
+// sooner and is therefore unaffected.
+var configureHostBound = 25 * time.Second
+
+// configureTimeoutMessage and configureFailureMessage are fixed, sanitized, operator-visible
+// diagnostics. They never contain configuration values, credentials, headers or tokens.
+const (
+	configureTimeoutMessage = "plugin configuration did not finish within the startup deadline"
+	configureFailureMessage = "plugin configuration aborted unexpectedly"
+)
+
+// ConfigureHostBounded applies a host lifecycle configuration without blocking the caller for
+// longer than bound. The host identity (config and schema version) is always applied first, so
+// Registration reports the correct capabilities; the service configuration then runs on a
+// panic-safe background goroutine that keeps going even after the bound elapses, so a later
+// reconfigure or the finishing work converges. A bound <= 0 selects configureHostBound. The
+// boolean reports whether the service configuration finished within the bound.
+func (a *App) ConfigureHostBounded(raw []byte, hostSchema uint32, bound time.Duration) bool {
+	if a == nil {
+		return false
+	}
+	config, resolvedSchema, ok := a.applyHostIdentity(raw, hostSchema)
+	if !ok {
+		return false
+	}
+	if bound <= 0 {
+		bound = configureHostBound
+	}
+	return a.applyServiceConfigBounded(config, resolvedSchema, bound)
+}
+
+// applyServiceConfigBounded runs one service configuration on a background goroutine and waits at
+// most bound for it. A panic is contained and recorded instead of crashing the host.
+func (a *App) applyServiceConfigBounded(config Config, hostSchema uint32, bound time.Duration) bool {
+	if a == nil {
+		return false
+	}
+	done := make(chan struct{})
+	go func() {
+		// Contain a panic before signalling done, so the wait below still returns and a goroutine
+		// panic can never reach the host process.
+		defer func() {
+			if recover() != nil {
+				a.noteConfigureFailure()
+			}
+			close(done)
+		}()
+		a.serviceConfigurer().applyServiceConfig(config, hostSchema)
+	}()
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		a.noteConfigureTimeout()
+		return false
+	}
+}
+
+// serviceConfigurer returns the object that runs the service configuration, honouring the test
+// seam when one is installed.
+func (a *App) serviceConfigurer() serviceConfigureApplier {
+	if a == nil {
+		return nil
+	}
+	if a.testServiceConfigurer != nil {
+		return a.testServiceConfigurer
+	}
+	return a
+}
+
+// noteConfigureTimeout records the sanitized diagnostic for a bounded configure that timed out.
+func (a *App) noteConfigureTimeout() {
+	a.noteConfigureDiagnostic(configureTimeoutMessage, "plugin_configure_timeout")
+}
+
+// noteConfigureFailure records the sanitized diagnostic for a service configuration that panicked.
+func (a *App) noteConfigureFailure() {
+	a.noteConfigureDiagnostic(configureFailureMessage, "operation_failed")
+}
+
+// noteConfigureDiagnostic publishes the operator-visible config error and journals the event. Both
+// strings are fixed and allow-listed, so no configuration value or secret can leak through here.
+func (a *App) noteConfigureDiagnostic(message, reason string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	a.configureErr = message
+	a.mu.Unlock()
+	if a.operations == nil {
+		return
+	}
+	a.operations.Record(OperationEntry{
+		Category: OperationCategoryPlugin, Action: OperationActionPluginConfigure,
+		Status: OperationStatusFailed, Source: OperationSourceBackground, Scope: OperationScopeSystem,
+		ReasonCode: reason,
+	})
 }
 
 // mergeLegacyCodexIdentityOverrides removes per-account identity overrides that
@@ -555,7 +808,10 @@ func (a *App) configError() string {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.configErr
+	if a.configErr != "" {
+		return a.configErr
+	}
+	return a.configureErr
 }
 
 // isAIProviderUsageRecord distinguishes API-key provider traffic from native

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -19,6 +20,16 @@ func writeAuthEntryWithDir(t *testing.T, dir, name string) string {
 		t.Fatalf("write auth file: %v", errWrite)
 	}
 	return path
+}
+
+// settleStateDirectory blocks until the asynchronous state-directory reconfigure has been applied.
+// DiscoverAuthStorage records the resolved directories immediately but applies the service
+// reconfiguration on a coalesced worker, so tests wait for that worker before asserting state.
+func settleStateDirectory(t *testing.T, app *App) {
+	t.Helper()
+	if !app.WaitForReconfigure(5 * time.Second) {
+		t.Fatal("state-directory reconfigure did not settle")
+	}
 }
 
 // Plugin state must not live in a directory that moves with CPA's working directory. When the
@@ -35,6 +46,7 @@ func TestPluginStateFollowsTheAuthDirectory(t *testing.T) {
 	// An implicit data directory, exactly like an installation that never configured data_dir.
 	app.ConfigureHost([]byte(""), cpaapi.SchemaVersion)
 	app.DiscoverAuthStorage(host.entries)
+	settleStateDirectory(t, app)
 
 	storage := app.opencode.Storage()
 	// macOS reports /private/var for a temporary directory created as /var, so compare resolved
@@ -108,6 +120,7 @@ func TestStateDirectoryIsReportedThroughTheRoute(t *testing.T) {
 	app := NewApp(host, nil)
 	app.ConfigureHost([]byte(""), cpaapi.SchemaVersion)
 	app.DiscoverAuthStorage(host.entries)
+	settleStateDirectory(t, app)
 
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodGet, Path: "/v0/management" + managementRoutePrefix + "/opencode/storage",

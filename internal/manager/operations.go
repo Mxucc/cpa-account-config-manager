@@ -783,6 +783,7 @@ func safeOperationReason(value string) string {
 		"management_unavailable", "delete_failed", "credential_converted", "experiment_disabled",
 		"existing_model_policy", "model_catalog_unavailable", "model_compatibility_detected",
 		"insufficient_compatibility_evidence",
+		"plugin_configure_timeout",
 		"token_refreshed_native", "token_refreshed_plugin", "refresh_provider_unsupported", "refresh_conflict", "refresh_verification_failed",
 		"login_state_not_found", "login_state_expired", "conversion_running", "session_rejected", "invalid_session":
 		return value

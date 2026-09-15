@@ -53,7 +53,12 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				return nil, fmt.Errorf("decode lifecycle request: %w", errUnmarshal)
 			}
 		}
-		pluginApp.ConfigureHost(lifecycle.ConfigYAML, lifecycle.SchemaVersion)
+		// Registration must be returned even when a service cannot be configured promptly: a
+		// synchronous configure used to be able to block CPA's HTTP startup forever. The bounded
+		// call applies the host identity first, then lets the service side finish in the
+		// background, recording an operator-visible diagnostic if it overruns. A zero bound uses
+		// the manager package default.
+		pluginApp.ConfigureHostBounded(lifecycle.ConfigYAML, lifecycle.SchemaVersion, 0)
 		return okEnvelope(pluginApp.Registration())
 	case cpaapi.MethodSchedulerPick:
 		var schedulerRequest cpaapi.SchedulerPickRequest

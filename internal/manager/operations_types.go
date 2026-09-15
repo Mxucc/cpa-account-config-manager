@@ -18,6 +18,7 @@ const (
 	OperationCategoryUpdate        = "update"
 	OperationCategoryJournal       = "journal"
 	OperationCategoryOpenCode      = "opencode"
+	OperationCategoryPlugin        = "plugin"
 
 	OperationActionDelete                 = "delete"
 	OperationActionTokenRefresh           = "token_refresh"
@@ -55,6 +56,7 @@ const (
 	OperationActionOpenCodeSave           = "opencode_save"
 	OperationActionOpenCodeRemove         = "opencode_remove"
 	OperationActionOpenCodeRefresh        = "opencode_refresh"
+	OperationActionPluginConfigure        = "plugin_configure"
 
 	OperationStatusRunning     = "running"
 	OperationStatusSucceeded   = "succeeded"
@@ -232,7 +234,7 @@ func normalizeOperationCategory(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case OperationCategoryAccount, OperationCategoryBatch, OperationCategoryImport, OperationCategoryExport,
 		OperationCategoryDefaultPolicy, OperationCategoryInspection, OperationCategoryUpdate, OperationCategoryJournal,
-		OperationCategoryOpenCode:
+		OperationCategoryOpenCode, OperationCategoryPlugin:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -249,7 +251,8 @@ func normalizeOperationAction(value string) string {
 		OperationActionDeleteCandidate, OperationActionAutoDelete, OperationActionUpdateSave,
 		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
 		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear,
-		OperationActionOpenCodeSave, OperationActionOpenCodeRemove, OperationActionOpenCodeRefresh:
+		OperationActionOpenCodeSave, OperationActionOpenCodeRemove, OperationActionOpenCodeRefresh,
+		OperationActionPluginConfigure:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""

@@ -85,10 +85,10 @@ describe("RiskControlWorkspace", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(respond());
     render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
     const workspace = await screen.findByRole("region", { name: "风控中心" });
-    await user.click(within(workspace).getByRole("tab", { name: "提示词审计" }));
+    await user.click(within(workspace).getByRole("tab", { name: "自定义审核" }));
     const list = within(workspace).getByLabelText("系统提示词列表");
     expect(within(workspace).getByRole("button", { name: "删除提示词" })).toBeDisabled();
-    expect(within(workspace).getAllByDisplayValue("Default security audit")[1]).toBeDisabled();
+    expect(within(workspace).getByDisplayValue("Default security audit")).toBeDisabled();
     await user.click(within(workspace).getByRole("button", { name: "新增提示词" }));
     expect(within(workspace).getAllByDisplayValue("新提示词")[1]).toBeInTheDocument();
     await user.type(within(workspace).getAllByDisplayValue("新提示词")[1], " custom");

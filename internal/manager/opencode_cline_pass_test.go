@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +36,9 @@ type clinePassFakeGateway struct {
 	registerBody     string
 	refreshBody      string
 	modelsBody       string
+	// chatPayload records the last chat completion request the probe sent, so a
+	// test can pin the output budget it asks for.
+	chatPayload map[string]any
 }
 
 func newClinePassFakeGateway() *clinePassFakeGateway {
@@ -84,6 +88,13 @@ func (g *clinePassFakeGateway) Do(request *http.Request) (*http.Response, error)
 		return jsonHTTPResponse(http.StatusOK, g.modelsBody), nil
 	case strings.HasSuffix(path, "/chat/completions"):
 		g.chatCalls++
+		var payload map[string]any
+		if request.Body != nil {
+			if raw, errRead := io.ReadAll(io.LimitReader(request.Body, 1<<16)); errRead == nil {
+				_ = json.Unmarshal(raw, &payload)
+			}
+		}
+		g.chatPayload = payload
 		if g.chatStatus >= 400 {
 			if g.chatStatus == http.StatusNotFound {
 				return jsonHTTPResponse(g.chatStatus, `{"error":{"message":"ModelError: not supported"}}`), nil
@@ -766,5 +777,43 @@ func TestClinePassClientVersionUsesRegistryAndFallsBack(t *testing.T) {
 	}))
 	if got := broken.clinePassClientVersion(context.Background()); got != clinePassClineVersionFallback {
 		t.Fatalf("fallback client version = %q", got)
+	}
+}
+
+// A reasoning model can spend a tiny output budget entirely on reasoning and then answer with no
+// content at all, which the upstream reports as an error such as "empty response content". The
+// probe must therefore ask for a budget that still leaves room for an actual answer.
+func TestClinePassModelProbeAsksForAReasoningTolerantOutputBudget(t *testing.T) {
+	service, gateway := newConfiguredClinePassService(t, t.TempDir())
+	if _, errSave := service.SaveAPIKeyAccount("", "budget", "http://127.0.0.1:9/v1", "sk-budget"); errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	accountID := service.ListAccounts()[0].ID
+	service.mu.Lock()
+	service.accounts[0].BaseURL = "https://api.cline.bot/api/v1"
+	service.mu.Unlock()
+
+	result, errProbe := service.ProbeModel(context.Background(), accountID, "cline-pass/deepseek-v4.1-flash", 5)
+	if errProbe != nil {
+		t.Fatalf("ProbeModel() error = %v", errProbe)
+	}
+	if result.Status != "available" || result.ReasonCode != "model_response_ok" {
+		t.Fatalf("probe result = %#v", result)
+	}
+	gateway.mu.Lock()
+	payload := gateway.chatPayload
+	gateway.mu.Unlock()
+	if payload == nil {
+		t.Fatal("the probe did not send a chat completion")
+	}
+	budget, ok := payload["max_tokens"].(float64)
+	if !ok || int(budget) != openCodeModelProbeMaxOutputTokens {
+		t.Fatalf("probe max_tokens = %#v, want %d", payload["max_tokens"], openCodeModelProbeMaxOutputTokens)
+	}
+	if openCodeModelProbeMaxOutputTokens < 128 {
+		t.Fatalf("a %d-token probe budget leaves no room for a reasoning model to answer", openCodeModelProbeMaxOutputTokens)
+	}
+	if payload["stream"] != false {
+		t.Fatalf("probe stream = %#v, want false", payload["stream"])
 	}
 }

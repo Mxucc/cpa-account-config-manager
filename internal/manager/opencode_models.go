@@ -34,6 +34,12 @@ const (
 	openCodeModelProbeMaxBytes   = 1 << 20
 	openCodeModelTestTimeout     = 30
 	openCodeModelTestMaxTimeout  = 60
+	// openCodeModelProbeMaxOutputTokens is the output budget of one availability
+	// probe. A reasoning model can spend a tiny budget entirely on reasoning and
+	// then answer with no content at all, which the upstream reports as an error
+	// such as "empty response content"; a small budget therefore made a working
+	// model look unavailable.
+	openCodeModelProbeMaxOutputTokens = 256
 )
 
 // openCodeClientUserAgent mirrors the official OpenCode client identifier. The
@@ -335,7 +341,7 @@ func openCodeProbeAttempts() []openCodeProbeAttempt {
 			name: "responses",
 			path: "/v1/responses",
 			body: func(model string) map[string]any {
-				return map[string]any{"model": model, "input": "ping", "max_output_tokens": 16, "stream": false}
+				return map[string]any{"model": model, "input": "ping", "max_output_tokens": openCodeModelProbeMaxOutputTokens, "stream": false}
 			},
 		},
 		{
@@ -345,7 +351,7 @@ func openCodeProbeAttempts() []openCodeProbeAttempt {
 				return map[string]any{
 					"model":      model,
 					"messages":   []map[string]string{{"role": "user", "content": "ping"}},
-					"max_tokens": 16,
+					"max_tokens": openCodeModelProbeMaxOutputTokens,
 					"stream":     false,
 				}
 			},
@@ -357,7 +363,7 @@ func openCodeProbeAttempts() []openCodeProbeAttempt {
 			body: func(model string) map[string]any {
 				return map[string]any{
 					"model":      model,
-					"max_tokens": 16,
+					"max_tokens": openCodeModelProbeMaxOutputTokens,
 					"messages":   []map[string]string{{"role": "user", "content": "ping"}},
 				}
 			},

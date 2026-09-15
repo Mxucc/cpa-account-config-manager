@@ -956,7 +956,7 @@ func probeClinePassModel(ctx context.Context, baseURL, accessToken, model string
 	payload, errMarshal := json.Marshal(map[string]any{
 		"model":      result.Model,
 		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
-		"max_tokens": 16,
+		"max_tokens": openCodeModelProbeMaxOutputTokens,
 		"stream":     false,
 	})
 	if errMarshal != nil {

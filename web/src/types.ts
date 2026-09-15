@@ -1581,6 +1581,95 @@ export interface OpenCodeZenProbeAccountResponse {
   result: OpenCodeZenProbeResult;
 }
 
+/**
+ * One bound Cline Pass credential. Tokens are replaced by booleans, exactly like
+ * the Zen view: the plugin never returns a stored secret to the browser.
+ */
+export interface ClinePassAccountView {
+  id: string;
+  name?: string;
+  base_url: string;
+  auth_method: "oauth" | "api_key" | "cli";
+  access_token_set: boolean;
+  refresh_token_set: boolean;
+  expires_at?: string;
+  expired: boolean;
+  models?: string[];
+  models_error?: string;
+  models_fetched_at?: string;
+  created_at?: string;
+}
+
+export interface ClinePassAccountsResponse {
+  accounts: ClinePassAccountView[];
+  storage_error?: string;
+}
+
+/** One allow-listed Cline Pass catalog model. */
+export interface ClinePassCatalogModel {
+  id: string;
+  name: string;
+  free: boolean;
+}
+
+export interface ClinePassCatalogResponse {
+  models: ClinePassCatalogModel[];
+  default_base_url: string;
+}
+
+/** One in-flight Cline Pass sign-in: the device flow, the CLI reuse or an API key. */
+export interface ClinePassLoginView {
+  session_id?: string;
+  method?: string;
+  status: "pending" | "completed" | "failed" | "expired" | "cancelled";
+  user_code?: string;
+  verification_uri?: string;
+  verification_uri_complete?: string;
+  interval_seconds?: number;
+  expires_in_seconds?: number;
+  error?: string;
+  account?: ClinePassAccountView;
+}
+
+export interface ClinePassProbeResult {
+  reachable: boolean;
+  status_code?: number;
+  detail?: string;
+}
+
+export interface ClinePassAccountSaveResponse {
+  account: ClinePassAccountView;
+  result: ClinePassProbeResult;
+}
+
+/** CPA channel written by the Cline Pass bind action so the models become routable. */
+export interface ClinePassBinding {
+  kind: string;
+  base_url: string;
+  index: number;
+  created: boolean;
+  channel_key: string;
+  models: number;
+}
+
+export interface ClinePassBindResponse {
+  binding: ClinePassBinding;
+}
+
+export interface ClinePassRefreshResponse {
+  account: ClinePassAccountView;
+  /** Present when the caller asked for the CPA channel to be republished. */
+  binding?: ClinePassBinding;
+}
+
+export interface ClinePassAccountResponse {
+  account: ClinePassAccountView;
+}
+
+export interface ClinePassLoginCancelResponse {
+  cancelled: boolean;
+}
+
 export interface OpenCodeAccountsResponse {
   accounts: OpenCodeAccountView[];
   storage_error?: string;

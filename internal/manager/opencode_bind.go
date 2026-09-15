@@ -53,7 +53,21 @@ const openCodeChannelSessionBaseline = "oc-cli-baseline"
 // credential. An existing channel with the same normalized base URL is updated in
 // place so repeated binds are idempotent and keep unrelated fields untouched.
 func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, apiKey, label string, models []string) (OpenCodeBindingResult, error) {
-	result := OpenCodeBindingResult{Kind: "openai-compatibility", BaseURL: openCodeAPIBase(baseURL) + "/v1", Index: -1}
+	return a.bindOpenAICompatibleChannel(ctx, managementKey, openCodeAPIBase(baseURL)+"/v1", apiKey, label, openCodeBoundChannelName, models, openCodeChannelHeaders())
+}
+
+// bindClinePassChannel writes the Cline Pass channel. Cline Pass is
+// OpenAI-compatible, so it uses the same channel shape as OpenCode with the
+// Cline product-surface headers the gateway (including its free tier) requires.
+func (a *App) bindClinePassChannel(ctx context.Context, managementKey, baseURL, accessToken, label string, models []string, version string) (OpenCodeBindingResult, error) {
+	return a.bindOpenAICompatibleChannel(ctx, managementKey, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version))
+}
+
+// bindOpenAICompatibleChannel upserts one OpenAI-compatible CPA channel that
+// points at an upstream base URL with a credential and its client headers, then
+// publishes the verified model catalog on the channel so CPA can route it.
+func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string) (OpenCodeBindingResult, error) {
+	result := OpenCodeBindingResult{Kind: "openai-compatibility", BaseURL: channelBaseURL, Index: -1}
 	if a == nil {
 		return result, fmt.Errorf("AI provider channel service is unavailable")
 	}
@@ -61,7 +75,7 @@ func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, a
 		return result, fmt.Errorf("management key is unavailable")
 	}
 	if strings.TrimSpace(result.BaseURL) == "" || strings.TrimSpace(apiKey) == "" {
-		return result, fmt.Errorf("an OpenCode base URL and API key are both required")
+		return result, fmt.Errorf("an upstream base URL and API key are both required")
 	}
 	listKind := "openai-compatibility"
 	entries, errRead := a.aiProviderChannelEntries(ctx, managementKey, listKind)
@@ -82,7 +96,7 @@ func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, a
 	}
 	label = strings.TrimSpace(label)
 	if label == "" {
-		label = openCodeBoundChannelName
+		label = defaultLabel
 	}
 	if target < 0 {
 		items = append(items, map[string]any{})
@@ -96,14 +110,14 @@ func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, a
 	// accepted by CPA's JSON decoder but ignored for OpenAI-compatible channels.
 	entry["api-key-entries"] = mergeOpenCodeChannelKeyEntries(entry["api-key-entries"], apiKey)
 	delete(entry, "api-key")
-	headers, _ := entry["headers"].(map[string]any)
-	if headers == nil {
-		headers = map[string]any{}
+	mergedHeaders, _ := entry["headers"].(map[string]any)
+	if mergedHeaders == nil {
+		mergedHeaders = map[string]any{}
 	}
-	for name, value := range openCodeChannelHeaders() {
-		headers[name] = value
+	for name, value := range headers {
+		mergedHeaders[name] = value
 	}
-	entry["headers"] = headers
+	entry["headers"] = mergedHeaders
 	// Publish the verified catalog on the channel: CPA matches routed requests
 	// against this list, so a channel without it cannot serve the models the
 	// operator just tested.

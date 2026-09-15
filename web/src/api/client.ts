@@ -31,6 +31,16 @@ import type {
 	OpenCodeZenAccountsResponse,
 	OpenCodeZenProbeAccountResponse,
 	OpenCodeZenProbeResponse,
+	ClinePassAccountResponse,
+	ClinePassAccountSaveResponse,
+	ClinePassAccountView,
+	ClinePassAccountsResponse,
+	ClinePassBinding,
+	ClinePassBindResponse,
+	ClinePassCatalogResponse,
+	ClinePassLoginCancelResponse,
+	ClinePassLoginView,
+	ClinePassRefreshResponse,
 	AIProviderChannelKind,
 	AIProviderChannelSnapshot,
 	AIProviderChannelEntry,
@@ -1321,6 +1331,140 @@ export async function probeOpenCodeZenAccount(accountID: string): Promise<OpenCo
 		method: "POST",
 	});
 }
+/**
+ * Cline Pass credentials. The payload shapes are the Zen ones with an auth method,
+ * so the account list is validated the same way before any row is rendered.
+ */
+function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccountsResponse {
+	if (!isRecord(response)) throw new APIError(502, "ui.invalid_api_response");
+	const accounts = nullableRecordArray(response.accounts);
+	if (accounts === undefined || accounts.some((account) =>
+		!isNonEmptyString(account.id)
+		|| !isNonEmptyString(account.base_url)
+		|| typeof account.access_token_set !== "boolean"
+		|| typeof account.refresh_token_set !== "boolean"
+		|| typeof account.expired !== "boolean"
+		|| (account.auth_method !== "oauth" && account.auth_method !== "api_key" && account.auth_method !== "cli")
+		|| (account.name !== undefined && typeof account.name !== "string")
+		|| (account.expires_at !== undefined && typeof account.expires_at !== "string")
+	)) {
+		throw new APIError(502, "ui.invalid_api_response");
+	}
+	if (response.storage_error !== undefined && typeof response.storage_error !== "string") {
+		throw new APIError(502, "ui.invalid_api_response");
+	}
+	return {
+		accounts: accounts.map((account) => {
+			const view: ClinePassAccountView = {
+				id: (account.id as string).trim(),
+				base_url: (account.base_url as string).trim(),
+				auth_method: account.auth_method as ClinePassAccountView["auth_method"],
+				access_token_set: account.access_token_set as boolean,
+				refresh_token_set: account.refresh_token_set as boolean,
+				expired: account.expired as boolean,
+			};
+			if (typeof account.name === "string" && account.name.trim()) view.name = account.name;
+			if (typeof account.expires_at === "string" && account.expires_at) view.expires_at = account.expires_at;
+			const models = stringArrayOrUndefined(account.models);
+			if (models) view.models = models;
+			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
+			if (typeof account.models_fetched_at === "string" && account.models_fetched_at) view.models_fetched_at = account.models_fetched_at;
+			if (typeof account.created_at === "string" && account.created_at) view.created_at = account.created_at;
+			return view;
+		}),
+		...(typeof response.storage_error === "string" ? { storage_error: response.storage_error } : {}),
+	};
+}
+
+export async function listClinePassAccounts(signal?: AbortSignal): Promise<ClinePassAccountsResponse> {
+	return normalizeClinePassAccountsResponse(await requestRecord<unknown>("/opencode/cline-pass/accounts", { signal }));
+}
+
+/** Save or correct one Cline Pass credential; an API key is what creates a new account. */
+export async function saveClinePassAccount(options: {
+	account_id?: string;
+	name?: string;
+	base_url?: string;
+	api_key?: string;
+	timeout_seconds?: number;
+}): Promise<ClinePassAccountSaveResponse> {
+	return requestRecord<ClinePassAccountSaveResponse>("/opencode/cline-pass/accounts", {
+		method: "POST",
+		body: JSON.stringify(options),
+	});
+}
+
+export async function removeClinePassAccount(accountID: string): Promise<void> {
+	await request<{ removed: boolean }>("/opencode/cline-pass/accounts?account_id=" + encodeURIComponent(accountID), {
+		method: "DELETE",
+	});
+}
+
+/** Read the allow-listed Cline Pass model catalog and the default gateway base URL. */
+export async function getClinePassCatalog(signal?: AbortSignal): Promise<ClinePassCatalogResponse> {
+	return requestRecord<ClinePassCatalogResponse>("/opencode/cline-pass/catalog", { signal });
+}
+
+/** Start a sign-in: the browser device flow, an existing Cline CLI sign-in or an API key. */
+export async function startClinePassLogin(options: {
+	method?: "oauth" | "cli" | "api_key";
+	name?: string;
+	api_key?: string;
+	base_url?: string;
+}): Promise<ClinePassLoginView> {
+	return requestRecord<ClinePassLoginView>("/opencode/cline-pass/login/start", {
+		method: "POST",
+		body: JSON.stringify(options),
+	});
+}
+
+/** One non-blocking poll of a pending device sign-in. An unknown session answers 404. */
+export async function pollClinePassLogin(sessionID: string): Promise<ClinePassLoginView> {
+	return requestRecord<ClinePassLoginView>("/opencode/cline-pass/login/poll", {
+		method: "POST",
+		body: JSON.stringify({ session_id: sessionID }),
+	});
+}
+
+export async function cancelClinePassLogin(sessionID: string): Promise<ClinePassLoginCancelResponse> {
+	return requestRecord<ClinePassLoginCancelResponse>("/opencode/cline-pass/login/cancel", {
+		method: "POST",
+		body: JSON.stringify({ session_id: sessionID }),
+	});
+}
+
+/** Rotate one stored token and, with `rebind`, republish its CPA channel key. */
+export async function refreshClinePassAccount(accountID: string, rebind = false): Promise<ClinePassRefreshResponse> {
+	return requestRecord<ClinePassRefreshResponse>("/opencode/cline-pass/refresh", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID, ...(rebind ? { rebind: true } : {}) }),
+	});
+}
+
+/** Validate one stored credential against the gateway catalog. A catalog failure stays on the account. */
+export async function refreshClinePassModels(accountID: string): Promise<ClinePassAccountResponse> {
+	return requestRecord<ClinePassAccountResponse>("/opencode/cline-pass/models", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID }),
+	});
+}
+
+/** Probe one Cline Pass model through the stored credential. */
+export async function testClinePassModel(accountID: string, model: string, timeoutSeconds = 30): Promise<{ result: import("../types").OpenCodeModelTestResult }> {
+	return requestRecord<{ result: import("../types").OpenCodeModelTestResult }>("/opencode/cline-pass/model-test", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID, model, timeout_seconds: timeoutSeconds }),
+	});
+}
+
+/** Publish the models of one account to CPA routing as one OpenAI-compatible channel. */
+export async function bindClinePassChannel(accountID: string): Promise<ClinePassBindResponse> {
+	return requestRecord<ClinePassBindResponse>("/opencode/cline-pass/bind", {
+		method: "POST",
+		body: JSON.stringify({ account_id: accountID }),
+	});
+}
+
 /** List the CPA AI-provider channels that belong to OpenCode so they can be imported. */
 export async function getOpenCodeChannels(signal?: AbortSignal): Promise<{ channels: import("../types").OpenCodeChannelView[] }> {
 	return requestRecord<{ channels: import("../types").OpenCodeChannelView[] }>("/opencode/channels", { signal });

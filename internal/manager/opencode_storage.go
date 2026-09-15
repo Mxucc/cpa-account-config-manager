@@ -21,6 +21,7 @@ var stateFileNames = []string{
 	"usage-snapshots.json",
 	"self-update.json",
 	"codex-model-control.json",
+	clinePassStoreFileName,
 }
 
 // openCodeQuotaStoreSearchDirs lists the places an existing store may live, most specific

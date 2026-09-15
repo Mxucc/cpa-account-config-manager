@@ -88,6 +88,7 @@ type App struct {
 	agentIdentity            *AgentIdentityExperiment
 	opencode                 *OpenCodeQuotaService
 	opencodeZen              *OpenCodeZenService
+	clinePass                *ClinePassService
 	opencodePricing          *OpenCodePricingService
 	selfUpdate               *SelfUpdateService
 	codexFingerprints        *CodexFingerprintProfileService
@@ -130,6 +131,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	quotaBootstrap := NewAccountQuotaMetadataBootstrap()
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
+	clinePass := NewClinePassService()
 	opencodePricing := NewOpenCodePricingService()
 	selfUpdate := NewSelfUpdateService(PluginVersion)
 	codexFingerprints := NewCodexFingerprintProfileService()
@@ -217,6 +219,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		agentIdentity:            agentIdentity,
 		opencode:                 opencode,
 		opencodeZen:              opencodeZen,
+		clinePass:                clinePass,
 		opencodePricing:          opencodePricing,
 		selfUpdate:               selfUpdate,
 		codexFingerprints:        codexFingerprints,
@@ -315,6 +318,7 @@ func (a *App) applyResolvedConfig(config Config) {
 	a.operations.Configure(config)
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
+	a.clinePass.Configure(config)
 	a.opencodeModelControl.Configure(config)
 	a.opencodeSession.Configure(config)
 	a.codexFingerprints.Configure(config)
@@ -483,6 +487,7 @@ func (a *App) ConfigureHost(raw []byte, hostSchema uint32) {
 	a.operations.Configure(config)
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
+	a.clinePass.Configure(config)
 	a.opencodePricing.Configure(config)
 	a.selfUpdate.SetManagementDoer(a.managementDoer)
 	a.selfUpdate.Configure(config)
@@ -966,6 +971,17 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/storage", Description: "Report the private state directory that holds the OpenCode credentials."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/model-control", Description: "List the OpenCode models and the globally disabled set."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/opencode/model-control", Description: "Replace the globally disabled OpenCode model set."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/cline-pass/accounts", Description: "List redacted bound Cline Pass accounts."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/accounts", Description: "Save or update one Cline Pass account credential."},
+			{Method: http.MethodDelete, Path: managementRoutePrefix + "/opencode/cline-pass/accounts", Description: "Remove one bound Cline Pass account."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/cline-pass/catalog", Description: "Read the allow-listed Cline Pass model catalog."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/login/start", Description: "Start a Cline Pass sign-in: browser device flow, Cline CLI reuse or API key."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/login/poll", Description: "Poll one pending Cline Pass sign-in."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/login/cancel", Description: "Cancel one pending Cline Pass sign-in."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/refresh", Description: "Rotate one Cline Pass OAuth token and optionally republish its CPA channel."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/models", Description: "Validate one Cline Pass credential against the gateway model catalog."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/model-test", Description: "Probe one Cline Pass model through a stored credential."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/bind", Description: "Create or update the OpenAI-compatible CPA channel that routes one Cline Pass account."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/self-update", Description: "Read the direct GitHub self-update state."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/overview", Description: "Read the Codex workspace counts and effective convergence mode."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Read every editable Codex fingerprint field with its default."},
@@ -1236,6 +1252,28 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeModelControl(ctx, req)
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/opencode/model-control":
 		return a.handleOpenCodeModelControlUpdate(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/accounts":
+		return a.handleClinePassAccounts(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/accounts":
+		return a.handleClinePassAccounts(ctx, req)
+	case method == http.MethodDelete && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/accounts":
+		return a.handleClinePassAccounts(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/catalog":
+		return a.handleClinePassCatalog(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/login/start":
+		return a.handleClinePassLoginStart(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/login/poll":
+		return a.handleClinePassLoginPoll(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/login/cancel":
+		return a.handleClinePassLoginCancel(req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/refresh":
+		return a.handleClinePassRefresh(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/models":
+		return a.handleClinePassModels(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/model-test":
+		return a.handleClinePassModelTest(ctx, req)
+	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/cline-pass/bind":
+		return a.handleClinePassBind(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/self-update":
 		return a.handleSelfUpdate(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/self-update/check":

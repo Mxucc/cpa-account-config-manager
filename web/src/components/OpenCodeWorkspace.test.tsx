@@ -44,6 +44,49 @@ function zenAccountView(overrides: Record<string, unknown> = {}): Record<string,
   };
 }
 
+const CLINE_PASS_ACCOUNT_ID = "cline_1";
+
+function clinePassAccountView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: CLINE_PASS_ACCOUNT_ID,
+    name: "Work laptop",
+    base_url: "https://api.cline.bot/api/v1",
+    auth_method: "oauth",
+    access_token_set: true,
+    refresh_token_set: true,
+    expires_at: "2026-09-15T02:00:00Z",
+    expired: false,
+    models: ["cline-pass/glm-5.3", "cline-pass/kimi-k2.6"],
+    models_error: "",
+    models_fetched_at: "2026-09-15T01:00:00Z",
+    created_at: "2026-09-15T01:00:00Z",
+    ...overrides,
+  };
+}
+
+/** The allow-listed catalog the backend publishes for the Cline Pass gateway. */
+function clinePassCatalogModels(): Array<Record<string, unknown>> {
+  return [
+    { id: "cline-pass/glm-5.3", name: "GLM-5.3", free: false },
+    { id: "cline-pass/kimi-k2.6", name: "Kimi K2.6", free: false },
+    { id: "cline-free/longcat-2.0", name: "LongCat 2.0", free: true },
+  ];
+}
+
+function clinePassLoginView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    session_id: "clinelogin_test",
+    method: "oauth",
+    status: "pending",
+    user_code: "CODE-1234",
+    verification_uri: "https://cline.bot/device",
+    verification_uri_complete: "https://cline.bot/device?code=CODE-1234",
+    interval_seconds: 5,
+    expires_in_seconds: 600,
+    ...overrides,
+  };
+}
+
 /** One row of `GET /opencode/channels`: an AI-provider channel that belongs to OpenCode. */
 function channelView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -132,6 +175,9 @@ interface OpenCodeFetchMockOptions {
   modelControl?: Record<string, unknown>;
   pricingRefresh?: Record<string, unknown>;
   session?: Record<string, unknown>;
+  clinePassAccounts?: Array<Record<string, unknown>>;
+  clinePassLoginStart?: Record<string, unknown>;
+  clinePassLoginPoll?: Record<string, unknown>;
 }
 
 describe("OpenCodeWorkspace", () => {
@@ -162,6 +208,41 @@ describe("OpenCodeWorkspace", () => {
         return jsonResponse({ account: zenAccountView(), result: { success: true } });
       }
       if (url.endsWith("/opencode/zen/accounts")) return jsonResponse({ accounts: options.zenAccounts ?? [] });
+      if (url.endsWith("/opencode/cline-pass/catalog")) {
+        return jsonResponse({ models: clinePassCatalogModels(), default_base_url: "https://api.cline.bot/api/v1" });
+      }
+      if (url.endsWith("/opencode/cline-pass/login/start")) {
+        return jsonResponse(options.clinePassLoginStart ?? clinePassLoginView());
+      }
+      if (url.endsWith("/opencode/cline-pass/login/poll")) {
+        return jsonResponse(
+          options.clinePassLoginPoll
+            ?? clinePassLoginView({ status: "completed", account: clinePassAccountView() }),
+        );
+      }
+      if (url.endsWith("/opencode/cline-pass/login/cancel")) return jsonResponse({ cancelled: true });
+      if (url.endsWith("/opencode/cline-pass/accounts") && init.method === "POST") {
+        return jsonResponse({ account: clinePassAccountView(), result: { reachable: true } });
+      }
+      if (url.includes("/opencode/cline-pass/accounts?") && init.method === "DELETE") return jsonResponse({ removed: true });
+      if (url.endsWith("/opencode/cline-pass/accounts")) {
+        return jsonResponse({ accounts: options.clinePassAccounts ?? [] });
+      }
+      if (url.endsWith("/opencode/cline-pass/refresh")) return jsonResponse({ account: clinePassAccountView() });
+      if (url.endsWith("/opencode/cline-pass/models")) return jsonResponse({ account: clinePassAccountView() });
+      if (url.endsWith("/opencode/cline-pass/model-test")) return jsonResponse({ result: {} });
+      if (url.endsWith("/opencode/cline-pass/bind")) {
+        return jsonResponse({
+          binding: {
+            kind: "openai-compatibility",
+            base_url: "https://api.cline.bot/api/v1",
+            index: 0,
+            created: true,
+            channel_key: "openai-compatibility:0",
+            models: 3,
+          },
+        });
+      }
       if (url.endsWith("/opencode/channels")) return jsonResponse({ channels: options.channels ?? [] });
       if (url.endsWith("/opencode/import") && init.method === "POST") {
         if (options.importStatus) {
@@ -233,7 +314,7 @@ describe("OpenCodeWorkspace", () => {
     return row as HTMLElement;
   }
 
-  it("renders the five workspace tabs and switches to the matching panel", async () => {
+  it("renders the six workspace tabs and switches to the matching panel", async () => {
     const user = userEvent.setup();
     openCodeFetchMock();
 
@@ -244,6 +325,7 @@ describe("OpenCodeWorkspace", () => {
       "总览",
       "Go 账号",
       "Zen 账号",
+      "Cline Pass 账号",
       "渠道",
       "模型与价格",
     ]);
@@ -936,5 +1018,71 @@ describe("OpenCodeWorkspace", () => {
     await selectTab(user, "模型与价格");
     const section = await screen.findByRole("region", { name: "OpenCode 官方价格" });
     expect(within(section).getByText(/官方文档同步/)).toBeInTheDocument();
+  });
+
+  it("starts a Cline Pass browser sign-in and shows the device code while polling", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({
+      clinePassAccounts: [clinePassAccountView()],
+      clinePassLoginStart: clinePassLoginView(),
+      // The poll stays pending so the assertion observes the code the operator must enter.
+      clinePassLoginPoll: clinePassLoginView({ status: "pending" }),
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
+    expect(within(panel).getByText("cline-pass/glm-5.3, cline-pass/kimi-k2.6")).toBeInTheDocument();
+
+    await user.click(within(panel).getByRole("button", { name: "使用浏览器登录" }));
+
+    const status = await within(panel).findByRole("status");
+    expect(status).toHaveTextContent("CODE-1234");
+    expect(status).toHaveTextContent("正在等待浏览器完成登录…");
+    await waitFor(() => {
+      expect(requests.some((entry) => entry.url.endsWith("/opencode/cline-pass/login/start"))).toBe(true);
+      expect(requests.some((entry) => entry.url.endsWith("/opencode/cline-pass/login/poll"))).toBe(true);
+    });
+    // The sign-in code the gateway issued is rendered, and the secret is never returned.
+    expect(requests.some((entry) => entry.url.endsWith("/opencode/cline-pass/login/cancel"))).toBe(false);
+    expect(panel.textContent).not.toContain(UNRENDERED_SECRET);
+  });
+
+  it("saves a pasted Cline Pass API key through the account endpoint", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock();
+    const onNotice = vi.fn();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const keyInput = panel.querySelector('input[type="password"]') as HTMLInputElement;
+    await user.type(keyInput, "sk-cline-pasted");
+    await user.click(within(panel).getByRole("button", { name: "保存 API 密钥" }));
+
+    await waitFor(() => {
+      const saved = requests.find((entry) => entry.url.endsWith("/opencode/cline-pass/accounts") && entry.init.method === "POST");
+      expect(saved).toBeDefined();
+      expect(String(saved?.init.body)).toContain("sk-cline-pasted");
+    });
+    expect(onNotice).toHaveBeenCalled();
+  });
+
+  it("reports a failed Cline Pass sign-in instead of leaving the dialog pending", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({
+      clinePassLoginStart: clinePassLoginView({ status: "failed", error: "the gateway rejected the device code" }),
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await user.click(within(panel).getByRole("button", { name: "使用浏览器登录" }));
+
+    expect(await within(panel).findByText(/Cline Pass 登录失败/)).toBeInTheDocument();
   });
 });

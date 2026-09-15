@@ -130,6 +130,20 @@ A dedicated **OpenCode** workspace is added to the side menu directly after **AI
 - **Reload without a restart**: CPA only reloads a native plugin after a plugin-store install, so `POST /self-update/reload` reads the store, refuses to act when the store offers an older version than the one already written (never a downgrade), and then asks CPA to reinstall this plugin. Success means the plugin is reloaded in place (refresh the page); a refusal names the reason (store unavailable, disabled, plugin not listed, older version, install failed, or a restart still required) and the Other settings → Updates panel offers a "Reload without restarting" button. When the store really is unreachable, restarting CPA stays the only way to load a new library.
 - The self-update never goes through the Plugin Store: `GET /self-update` returns the current version, the resolved version and source, the archive and checksum state, the located plugin library file, and `restart_required`; `POST /self-update/check` resolves the latest release immediately (GitHub API, then the `releases/latest` redirect, then `releases.atom`); `POST /self-update/install` downloads the archive for the running platform, verifies its SHA-256 against the release `checksums.txt`, and atomically replaces the plugin library while keeping `<library>.previous` as a backup, so a failed verification never replaces anything; `PUT /self-update/settings` with `{"plugin_file": "..."}` records the library path when the host cannot detect it. All four routes require the Management Key and answer with versions, checksums, file paths, and state only. A release also carries `ui/index.html`: the plugin serves that copy straight from its private state, so an interface change takes effect on a page refresh without a CPA restart, and the panel reports "interface updated" separately from the restart the library still needs (`ui_updated` / `interface_refresh_only`).
 
+### Cline Pass
+
+The **OpenCode** workspace gained a "Cline Pass" tab that binds a Cline Pass subscription and signs in over OAuth:
+
+- Three ways to sign in: the browser device flow (a WorkOS device authorization issues a user code, and a completed poll is exchanged for Cline tokens through `POST {base}/auth/register`), reuse of an existing Cline CLI sign-in on this host (`~/.cline/data/settings/providers.json`), or a pasted Cline Pass API key.
+- OAuth access tokens carry the `workos:` prefix. When a token nears expiry the plugin rotates it with `POST {base}/auth/refresh` (`granttype=refresh_token`) and persists the rotated refresh token immediately, because the gateway invalidates the previous one.
+- Access and refresh tokens live only in the plugin private data directory (`cline-pass.json`); the management API returns `access_token_set` / `refresh_token_set` booleans and the expiry, never a token.
+- The model catalog is an explicit allow-list (the Cline Pass paid models plus the free tier). An upstream `GET {base}/models` only validates a credential and can never expand what the plugin publishes or routes; "load models" revalidates and records `models_error` per account.
+- "Model test" sends one minimal real `POST {base}/chat/completions` request and returns the status, reason code, HTTP status, latency, test time, and a sanitized upstream response.
+- "Publish to CPA routing" upserts an `openai-compatibility` CPA channel: base URL `https://api.cline.bot/api/v1`, the access token as its key, the Cline product-surface headers (`x-client-type: cli`, `x-client-version`, `x-core-version`, and a `Cline/<version>` User-Agent with the version cached from the npm registry for 24 hours), and the allow-listed models on the channel. Binding the same account twice only updates the existing channel.
+- A rotated token invalidates the key stored on the channel, so "refresh sign-in" performs the rotation and the channel key rewrite together through `POST /opencode/cline-pass/refresh` (`rebind: true`).
+- All routes are fixed paths that require the Management Key, under `/v0/management/plugins/cpa-account-config-manager`: `GET|POST|DELETE /opencode/cline-pass/accounts`, `GET /opencode/cline-pass/catalog`, `POST /opencode/cline-pass/login/start|poll|cancel`, `POST /opencode/cline-pass/refresh`, `POST /opencode/cline-pass/models`, `POST /opencode/cline-pass/model-test`, and `POST /opencode/cline-pass/bind`.
+- A device sign-in performs exactly one poll per management request instead of blocking, and the page polls on `interval_seconds`; a `slow_down` answer raises the interval by five seconds, and a session expires after fifteen minutes.
+
 ### Audit Log, UI, And Updates
 
 - The persistent audit log covers import, export, batch changes, model tests, policy scans, inspection, automatic remediation, notifications, and plugin updates. It records success, failure, partial completion, failure basis, counts, sanitized samples, source, and time.
@@ -219,6 +233,7 @@ make package VERSION=X.Y.Z
 - Agent Identity import and login concepts: [catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
 - OpenCode Go quota monitor: [zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
 - OpenCode Zen and multi-protocol bridging: [Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
+- Cline Pass OAuth login and model catalog: [fifidayone/pi-clinepass](https://github.com/fifidayone/pi-clinepass)
 - Community link: [LINUX DO](https://linux.do/)
 
 These projects informed product behavior. Their code is not copied into this plugin unless separately identified by the repository license history.

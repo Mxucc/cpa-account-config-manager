@@ -130,6 +130,20 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 - **不重启热重载**：CPA 只会在「插件市场安装」之后重新加载原生插件，所以新增 `POST /self-update/reload`：插件自己去读市场、确认市场版本不低于已写入版本（绝不降级），再请求 CPA 重装本插件；成功即热重载（刷新页面即可），失败会给出明确原因（市场不可用/已禁用/未收录/版本更旧/重装失败/仍要求重启），「其他配置 → 更新」里有「不重启热重载」按钮。若市场确实不可用，重启 CPA 仍是加载新动态库的唯一办法。
 - 自更新不经过插件商店：`GET /self-update` 返回当前版本、已解析版本、解析来源、压缩包与校验和状态、插件库文件定位结果和 `restart_required`；`POST /self-update/check` 立即解析最新 Release（依次尝试 GitHub API、`releases/latest` 跳转、`releases.atom`）；`POST /self-update/install` 下载当前平台压缩包，用 Release 的 `checksums.txt` 校验 SHA-256 后原子替换插件库文件并保留 `<插件库>.previous` 备份，校验失败时不替换；`PUT /self-update/settings` 携带 `{"plugin_file": "..."}`，在宿主无法自动定位插件库时记录其路径。四个路由都要求 Management Key，响应只包含版本号、校验和、文件路径与状态。发布包同时携带 `ui/index.html`：安装后插件立即提供新界面（刷新页面即生效，无需重启），因此纯界面改动可以做到「不重启更新」；只有动态库本身仍需重启 CPA 才会加载，界面会分别显示「界面已更新」与「需要重启」，并给出 `ui_updated` / `interface_refresh_only` 字段。
 
+### Cline Pass
+
+侧边菜单的 **OpenCode** 工作区新增「Cline Pass 账号」标签页，用于绑定 Cline Pass 订阅并通过 OAuth 登录：
+
+- 三种登录方式：浏览器设备码登录（由 WorkOS 设备授权下发用户码，轮询完成后通过 `POST {base}/auth/register` 换取 Cline 令牌）、复用本机已有的 Cline CLI 登录（读取 `~/.cline/data/settings/providers.json`），以及直接粘贴 Cline Pass API Key。
+- OAuth 访问令牌带 `workos:` 前缀；令牌接近过期时插件用 `POST {base}/auth/refresh`（`granttype=refresh_token`）主动轮换，并立即把轮换后的 refresh token 落盘，因为网关会让上一个 refresh token 失效。
+- 访问令牌与 refresh token 只保存在插件私有数据目录的 `cline-pass.json`；管理接口只返回 `access_token_set` / `refresh_token_set` 布尔值和过期时间，绝不返回令牌本身。
+- 模型目录是显式白名单（Cline Pass 付费模型与免费档模型）。上游 `GET {base}/models` 只用于校验凭据，永远不会扩大插件发布或路由的模型集合；「加载模型」会重新校验并按账号记录 `models_error`。
+- 「模型测试」向 `POST {base}/chat/completions` 发起一次最小真实请求，返回状态、原因码、HTTP 状态、延迟、测试时间与脱敏后的上游响应。
+- 「发布到 CPA 路由」会 upsert 一个 `openai-compatibility` CPA 渠道：Base URL 为 `https://api.cline.bot/api/v1`，以访问令牌作为密钥，携带 Cline 产品面识别请求头（`x-client-type: cli`、`x-client-version`、`x-core-version`，以及 `Cline/<version>` User-Agent，版本取自 npm registry 并缓存 24 小时），并把白名单模型写入渠道模型列表。重复绑定同一账号只会更新已有渠道。
+- 令牌轮换会让渠道里保存的旧密钥失效，因此「刷新登录」通过 `POST /opencode/cline-pass/refresh`（`rebind: true`）同时完成令牌轮换与渠道密钥重写。
+- 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`GET|POST|DELETE /opencode/cline-pass/accounts`、`GET /opencode/cline-pass/catalog`、`POST /opencode/cline-pass/login/start|poll|cancel`、`POST /opencode/cline-pass/refresh`、`POST /opencode/cline-pass/models`、`POST /opencode/cline-pass/model-test`、`POST /opencode/cline-pass/bind`。
+- 设备码登录在每次管理请求内只完成一次轮询而不阻塞，由页面按 `interval_seconds` 轮询；上游返回 `slow_down` 时把间隔加 5 秒，会话 15 分钟后过期。
+
 ### 操作日志、界面与更新
 
 - 操作日志覆盖导入、导出、批量修改、模型测试、策略扫描、巡检、自动处置、通知和插件更新，记录成功/失败/部分完成、失败依据、数量、脱敏样本、来源和时间。
@@ -219,6 +233,7 @@ make package VERSION=X.Y.Z
 - Agent Identity 导入与登录思路：[catoncat/codex-agent-identity-web](https://github.com/catoncat/codex-agent-identity-web)
 - OpenCode Go 额度监控：[zcyoop/opencode-go-quota-cpa-plugin](https://cnb.cool/zcyoop/opencode-go-quota-cpa-plugin)
 - OpenCode Zen 与多协议桥接：[Kiowx/opencode-cc](https://github.com/Kiowx/opencode-cc)
+- Cline Pass OAuth 登录与模型目录：[fifidayone/pi-clinepass](https://github.com/fifidayone/pi-clinepass)
 - 社区链接：[LINUX DO](https://linux.do/)
 
 这些项目提供了产品行为参考；除非仓库许可历史另有说明，本插件没有直接复制其代码。

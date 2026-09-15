@@ -35,6 +35,8 @@ import type {
 	ClinePassAccountResponse,
 	ClinePassAccountSaveResponse,
 	ClinePassAccountView,
+	ClinePassQuotaUsage,
+	ClinePassQuotaWindow,
 	ClinePassAccountsResponse,
 	ClinePassBinding,
 	ClinePassBindResponse,
@@ -83,6 +85,7 @@ import type {
   OperationListResponse,
   OperationRetentionSettings,
   PluginInstallResult,
+  PluginStoreEntry,
   PluginStoreResponse,
   PolicySnapshot,
 	QuotaMetadataResponse,
@@ -1350,6 +1353,46 @@ export async function probeOpenCodeZenAccount(accountID: string): Promise<OpenCo
  * Cline Pass credentials. The payload shapes are the Zen ones with an auth method,
  * so the account list is validated the same way before any row is rendered.
  */
+/**
+ * Cline Pass reference rates are USD per 1M tokens and are only meaningful when the handler priced
+ * the model, so an unpriced model carries no rate at all. A partially numeric payload is treated as
+ * unpriced rather than as a free model.
+ */
+function clinePassReferenceRate(model: Record<string, unknown>): Partial<ClinePassModelView> {
+	if (model.priced !== true) return {};
+	const rate: Partial<ClinePassModelView> = {};
+	for (const field of ["input_usd_per_million", "output_usd_per_million", "cache_read_usd_per_million", "cache_write_usd_per_million"] as const) {
+		if (isFiniteNonNegativeNumber(model[field])) rate[field] = model[field] as number;
+	}
+	return rate;
+}
+
+/** One documented usage window. Every field degrades to 0 so a partial payload cannot fail a list. */
+function normalizeClinePassQuotaWindow(value: unknown): ClinePassQuotaWindow {
+	const source = isRecord(value) ? value : {};
+	return {
+		usd: isFiniteNonNegativeNumber(source.usd) ? source.usd : 0,
+		input_tokens: isFiniteNonNegativeInteger(source.input_tokens) ? source.input_tokens : 0,
+		output_tokens: isFiniteNonNegativeInteger(source.output_tokens) ? source.output_tokens : 0,
+		requests: isFiniteNonNegativeInteger(source.requests) ? source.requests : 0,
+	};
+}
+
+/**
+ * The three windows Cline documents for ClinePass. A backend that predates them omits the field, so
+ * an absent payload returns undefined and the account simply renders without a usage line.
+ */
+function normalizeClinePassQuotaUsage(value: unknown): ClinePassQuotaUsage | undefined {
+	if (!isRecord(value)) return undefined;
+	return {
+		five_hour: normalizeClinePassQuotaWindow(value.five_hour),
+		weekly: normalizeClinePassQuotaWindow(value.weekly),
+		monthly: normalizeClinePassQuotaWindow(value.monthly),
+		monthly_subscription_usd: isFiniteNonNegativeNumber(value.monthly_subscription_usd) ? value.monthly_subscription_usd : 0,
+		reference: value.reference === true,
+	};
+}
+
 function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccountsResponse {
 	if (!isRecord(response)) throw new APIError(502, "ui.invalid_api_response");
 	const accounts = nullableRecordArray(response.accounts);
@@ -1390,6 +1433,8 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
 			if (typeof account.models_fetched_at === "string" && account.models_fetched_at) view.models_fetched_at = account.models_fetched_at;
 			if (typeof account.created_at === "string" && account.created_at) view.created_at = account.created_at;
+			const quotaUsage = normalizeClinePassQuotaUsage(account.quota_usage);
+			if (quotaUsage) view.quota_usage = quotaUsage;
 			return view;
 		}),
 		...(typeof response.storage_error === "string" ? { storage_error: response.storage_error } : {}),
@@ -1430,6 +1475,8 @@ function normalizeClinePassModelsResponse(response: unknown): ClinePassModelsRes
 			upstream_id: (model.upstream_id as string).trim(),
 			client_id: (model.client_id as string).trim(),
 			published: model.published === true,
+			priced: model.priced === true,
+			...clinePassReferenceRate(model),
 		})),
 		strip_model_prefix: response.strip_model_prefix,
 		accounts: isFiniteNonNegativeInteger(response.accounts) ? response.accounts : 0,
@@ -1650,19 +1697,28 @@ export async function getPluginStore(signal?: AbortSignal): Promise<PluginStoreR
   if (source.plugins !== null && pluginValues === null) {
     throw new APIError(502, "ui.invalid_api_response");
   }
-  // Never silently drop malformed rows: the update checker could otherwise
-  // conclude that this plugin is absent and report a false "no update" state.
-  if (pluginValues !== null && pluginValues.some((plugin) => {
-    if (!isRecord(plugin)) return true;
-    return typeof plugin.id !== "string" || plugin.id.trim() === ""
-      || typeof plugin.version !== "string" || plugin.version.trim() === "";
-  })) {
-    throw new APIError(502, "ui.invalid_api_response");
+  // A row without an id is a protocol violation and still fails loudly: silently
+  // dropping it could hide this plugin and report a false "no update" state.
+  //
+  // CPA only resolves a release version for plugins it considers installed and
+  // whose update source is reachable, so a catalog row may legitimately carry an
+  // empty `version`. Failing the whole listing over such a row reported a false
+  // "no store metadata" state for every plugin, so the row is kept as-is and the
+  // caller decides whether the missing version matters.
+  const plugins: PluginStoreEntry[] = [];
+  for (const value of pluginValues ?? []) {
+    if (!isRecord(value)) throw new APIError(502, "ui.invalid_api_response");
+    const id = typeof value.id === "string" ? value.id.trim() : "";
+    if (id === "") throw new APIError(502, "ui.invalid_api_response");
+    plugins.push({
+      id,
+      version: typeof value.version === "string" ? value.version.trim() : "",
+      installed: value.installed === true,
+      installed_version: typeof value.installed_version === "string" ? value.installed_version.trim() : "",
+      update_available: value.update_available === true,
+    });
   }
-  return {
-    plugins_enabled: source.plugins_enabled,
-    plugins: (pluginValues ?? []) as unknown as NonNullable<PluginStoreResponse["plugins"]>,
-  };
+  return { plugins_enabled: source.plugins_enabled, plugins };
 }
 
 const pluginID = "cpa-account-config-manager";
@@ -1683,7 +1739,31 @@ function compareStableVersions(left: [number, number, number], right: [number, n
   return 0;
 }
 
-export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStoreResponse | null, storeError = ""): UpdateSnapshot {
+/** Reported when the store answered but does not offer this plugin at all. */
+export const pluginStoreNotListedError = "plugin store does not list this plugin";
+/** Reported when the store lists this plugin but carries no usable version for it. */
+export const pluginStoreVersionMissingError = "plugin store did not report a version for this plugin";
+/** Reported when CPA has turned its plugin store off. */
+export const pluginStoreDisabledError = "the CPA plugin store is disabled";
+
+/**
+ * Reconciles the plugin's own update-check status with the CPA plugin store.
+ *
+ * The store is only one resolver. CPA resolves a release version while listing
+ * plugins it considers installed whose update source is reachable, and otherwise
+ * falls back to the registry entry, which can be stale or absent. The plugin also
+ * resolves its own GitHub releases independently, so the newer of the two known
+ * versions wins and a store listing that reports no version cannot dress itself up
+ * as "up to date". Ties keep the store, because that is the channel an install
+ * goes through, and `directLatestVersion` is only supplied once the store has
+ * already failed to name a version.
+ */
+export function reconcileUpdateStatus(
+  status: UpdateSnapshot,
+  store: PluginStoreResponse | null,
+  storeError = "",
+  directLatestVersion = "",
+): UpdateSnapshot {
   const obsoleteDirectCheckErrors = new Set([
     "release metadata request failed",
     "release metadata response was invalid",
@@ -1695,6 +1775,12 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
   const currentVersion = normalizedStableVersion(status.current_version);
   const plugin = store?.plugins_enabled ? arrayOrEmpty(store.plugins).find((entry) => entry?.id === pluginID) : undefined;
   const storeVersion = normalizedStableVersion(plugin?.version);
+  const directVersion = normalizedStableVersion(directLatestVersion);
+  let latest: { value: string; parts: [number, number, number]; source: UpdateSnapshot["release_source"] } | null = null;
+  if (storeVersion) latest = { ...storeVersion, source: "plugin_store" };
+  if (directVersion && (!latest || compareStableVersions(directVersion.parts, latest.parts) > 0)) {
+    latest = { ...directVersion, source: "github_release" };
+  }
   const base: UpdateSnapshot = {
     policy: status.policy,
     current_version: status.current_version,
@@ -1708,33 +1794,44 @@ export function reconcileUpdateStatus(status: UpdateSnapshot, store: PluginStore
     runtime: status.runtime,
   };
 
-  if (!storeVersion) {
+  if (!latest) {
     return {
       ...base,
-      error: retainedError || "plugin store metadata is unavailable",
+      error: retainedError || unresolvedLatestVersionError(store, storeError),
     };
   }
   if (!currentVersion) {
     return {
       ...base,
-      latest_version: storeVersion.value,
-      release_url: `${pluginReleaseBaseURL}${storeVersion.value}`,
-      release_source: "plugin_store",
+      latest_version: latest.value,
+      release_url: `${pluginReleaseBaseURL}${latest.value}`,
+      release_source: latest.source,
       // Do not claim an update when the installed version is unknown.
       update_available: false,
       error: retainedError || "current plugin version is unavailable",
     };
   }
-  const storeIsNewer = compareStableVersions(storeVersion.parts, currentVersion.parts) > 0;
 
   return {
     ...base,
-    latest_version: storeVersion.value,
-    update_available: storeIsNewer,
-    release_url: `${pluginReleaseBaseURL}${storeVersion.value}`,
-    release_source: "plugin_store",
+    latest_version: latest.value,
+    update_available: compareStableVersions(latest.parts, currentVersion.parts) > 0,
+    release_url: `${pluginReleaseBaseURL}${latest.value}`,
+    release_source: latest.source,
     error: retainedError || undefined,
   };
+}
+
+/**
+ * Explains why no latest version could be resolved. "The store is unreachable" and
+ * "the store answered but carries no version for this plugin" are different
+ * problems, and a single message for both sent operators after the wrong cause.
+ */
+function unresolvedLatestVersionError(store: PluginStoreResponse | null, storeError: string): string {
+  if (storeError || !store) return "plugin store metadata is unavailable";
+  if (!store.plugins_enabled) return pluginStoreDisabledError;
+  const listed = arrayOrEmpty(store.plugins).some((entry) => entry?.id === pluginID);
+  return listed ? pluginStoreVersionMissingError : pluginStoreNotListedError;
 }
 
 async function loadPluginStore(signal?: AbortSignal): Promise<{ response: PluginStoreResponse | null; error: string }> {
@@ -1810,7 +1907,30 @@ async function getEffectiveUpdateStatusUnshared(checkNow: boolean, signal?: Abor
     }
   }
   const store = await loadPluginStore(signal);
+  const storeEntry = arrayOrEmpty(store.response?.plugins ?? null).find((entry) => entry?.id === pluginID);
+  // Only pay for a second request when the store could not answer with a version
+  // for this plugin: that is the case the plugin's own release check covers. A
+  // store version that is merely older is left to reconcileUpdateStatus.
+  if (store.response?.plugins_enabled && !normalizedStableVersion(storeEntry?.version)) {
+    return reconcileUpdateStatus(status, store.response, store.error, await loadDirectLatestVersion(signal));
+  }
   return reconcileUpdateStatus(status, store.response, store.error);
+}
+
+/**
+ * Reads the latest release the plugin resolved for itself. The direct path never
+ * depends on the CPA store, so it is the fallback whenever the store listing
+ * cannot name a version. Any failure is reported as "unknown" rather than thrown:
+ * a missing fallback must not cost the operator the store part of the status.
+ */
+async function loadDirectLatestVersion(signal?: AbortSignal): Promise<string> {
+  try {
+    const snapshot = await getSelfUpdate(signal);
+    return typeof snapshot.latest_version === "string" ? snapshot.latest_version : "";
+  } catch (error) {
+    if (error instanceof APIError && error.status === 401) throw error;
+    return "";
+  }
 }
 
 const pluginInstallInFlight = new Map<string, Promise<PluginInstallResult>>();
@@ -1836,7 +1956,15 @@ async function installPluginUpdateOnce(version: string): Promise<PluginInstallRe
     const store = await getPluginStore();
     const plugin = store.plugins_enabled ? arrayOrEmpty(store.plugins).find((entry) => entry.id === pluginID) : undefined;
     const storeVersion = normalizedStableVersion(plugin?.version);
-    if (!plugin || !storeVersion || compareStableVersions(storeVersion.parts, requestedVersion.parts) !== 0) {
+    // The store must still list the plugin, because CPA resolves the install
+    // target from its own catalog. Refuse when the store names a *different*
+    // version than the one requested: that means this page and the store disagree,
+    // and installing anyway would install a release the store did not offer. A
+    // store that reports no version at all (CPA only resolves release versions for
+    // plugins whose update source is reachable) is not evidence against an exact
+    // version the plugin already resolved for itself.
+    const storeContradicts = storeVersion !== null && compareStableVersions(storeVersion.parts, requestedVersion.parts) !== 0;
+    if (!plugin || storeContradicts) {
       throw new APIError(404, "ui.the_account_manager_plugin_was_not_found_in_the_plugin_store");
     }
     const installed = await managementRequest<PluginInstallResult>("/plugin-store/cpa-account-config-manager/install", {

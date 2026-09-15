@@ -3095,6 +3095,13 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .cline-pass-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* The client model id a caller uses and the upstream id it maps to are both shown as code. */
 .cline-pass-model-id { color: var(--text-primary); font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: calc(11px * var(--font-size-scale)); overflow-wrap: anywhere; }
+/* Cline Pass usage: the three documented windows priced at the documented standard rates. */
+.cline-pass-usage-cell { min-width: 190px; display: grid; gap: 3px; }
+.cline-pass-usage-cell small { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); line-height: 1.4; }
+.cline-pass-usage-windows { display: flex; flex-wrap: wrap; gap: 5px; }
+.cline-pass-usage-window { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 6px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-tertiary); font-size: calc(10px * var(--font-size-scale)); }
+.cline-pass-usage-window small { color: var(--text-tertiary); font-size: calc(10px * var(--font-size-scale)); }
+.cline-pass-usage-window b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
 /* The Codex workspace tabs; styled after .opencode-tabs, widened to three tabs. */
 .codex-workspace { min-width: 0; display: grid; gap: 16px; padding: 18px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-primary); box-shadow: var(--shadow-md); }

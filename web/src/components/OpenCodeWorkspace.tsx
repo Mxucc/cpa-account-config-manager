@@ -148,9 +148,14 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
   const [activeTab, setActiveTab] = useState<OpenCodeTab>(clinePassOnly ? "cline-pass" : "overview");
   // The Codex, OpenCode and Cline Pass menus render this same component, so React keeps the state
   // above when the operator switches between them. Deriving the effective tab from the focus prop
-  // makes the Cline Pass page show the Cline Pass panel no matter which OpenCode tab was selected
-  // before, instead of rendering the OpenCode overview under a Cline Pass heading.
-  const effectiveTab: OpenCodeTab = clinePassOnly ? "cline-pass" : activeTab;
+  // keeps each page on its own surface in both directions: the Cline Pass page shows the Cline Pass
+  // panel no matter which OpenCode tab was selected before, and the OpenCode page can never show the
+  // Cline Pass panel that the Cline Pass menu left behind.
+  const effectiveTab: OpenCodeTab = clinePassOnly
+    ? "cline-pass"
+    : activeTab === "cline-pass"
+      ? "overview"
+      : activeTab;
   const [adding, setAdding] = useState(false);
   const [newWorkspace, setNewWorkspace] = useState("");
   const [newCookie, setNewCookie] = useState("");
@@ -1358,6 +1363,15 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                     const bound = account.channel_bound === true;
                     const publishedModels = account.channel_models ?? 0;
                     const modelGaps = account.channel_model_gaps ?? 0;
+                    // Cline documents exactly these three ClinePass windows; the USD figures the
+                    // backend attributes to them are reference prices, never an amount owed.
+                    const usage = account.quota_usage;
+                    const usageMonthly = usage?.monthly;
+                    const usageWindows = [
+                      { key: "five_hour", label: tx("ui.opencode_rolling"), window: usage?.five_hour },
+                      { key: "weekly", label: tx("ui.opencode_weekly"), window: usage?.weekly },
+                      { key: "monthly", label: tx("ui.opencode_monthly"), window: usageMonthly },
+                    ];
                     // The catalog turns the stored ids into the names the operator knows; the ids
                     // stay visible because they are what the gateway accepts.
                     const modelNames = (account.models ?? [])
@@ -1407,6 +1421,44 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                                 <small>{tx("ui.opencode_cline_pass_routing_hint")}</small>
                               </>
                             )}
+                            {usage ? (
+                              <div className="cline-pass-usage-cell" title={tx("ui.opencode_cline_pass_usage_reference_note")}>
+                                <small className="cline-pass-usage-title">{tx("ui.opencode_cline_pass_usage")}</small>
+                                <span className="cline-pass-usage-windows">
+                                  {usageWindows.map((entry) => (
+                                    <span
+                                      key={entry.key}
+                                      className="cline-pass-usage-window"
+                                      title={entry.window ? tx("ui.opencode_cline_pass_usage_window_title", {
+                                        window: entry.label,
+                                        usd: formatPriceUSD(entry.window.usd),
+                                        input: formatNumber(entry.window.input_tokens),
+                                        output: formatNumber(entry.window.output_tokens),
+                                        requests: formatNumber(entry.window.requests),
+                                      }) : undefined}
+                                    >
+                                      <small>{entry.label}</small>
+                                      <b>{formatPriceUSD(entry.window?.usd)}</b>
+                                    </span>
+                                  ))}
+                                </span>
+                                {usageMonthly ? (
+                                  <small className="cline-pass-usage-tokens">
+                                    {tx("ui.opencode_cline_pass_usage_tokens", {
+                                      input: formatNumber(usageMonthly.input_tokens),
+                                      output: formatNumber(usageMonthly.output_tokens),
+                                      requests: formatNumber(usageMonthly.requests),
+                                    })}
+                                  </small>
+                                ) : null}
+                                <small className="cline-pass-usage-reference">
+                                  {tx("ui.opencode_cline_pass_usage_reference", {
+                                    reference: formatPriceUSD(usageMonthly?.usd),
+                                    subscription: formatAllowanceUSD(usage.monthly_subscription_usd, formatNumber),
+                                  })}
+                                </small>
+                              </div>
+                            ) : null}
                           </div>
                         </td>
                         <td className="actions-cell">
@@ -1523,7 +1575,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                     <span>{clinePassModels.channel_bound
                       ? tx("ui.opencode_cline_pass_routing_bound", { count: String(clinePassModels.channel_models) })
                       : tx("ui.opencode_cline_pass_routing_unbound")}</span>
+                    <span>{tx("ui.opencode_price_per_million")}</span>
                   </p>
+                  <p className="opencode-note">{tx("ui.opencode_cline_pass_models_prices_note")}</p>
                   {clinePassModels.accounts === 0 ? (
                     <p className="opencode-note">{tx("ui.opencode_cline_pass_models_no_account")}</p>
                   ) : clinePassModels.models.length === 0 ? (
@@ -1536,6 +1590,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                             <th>{tx("ui.model")}</th>
                             <th>{tx("ui.opencode_cline_pass_client_model_id")}</th>
                             <th>{tx("ui.status")}</th>
+                            <th>{tx("ui.opencode_price_input")}</th>
+                            <th>{tx("ui.opencode_price_output")}</th>
+                            <th>{tx("ui.opencode_price_cache_read")}</th>
                             <th className="actions-header">{tx("ui.actions")}</th>
                           </tr>
                         </thead>
@@ -1562,6 +1619,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                                       {tx(row.published ? "ui.opencode_cline_pass_published" : "ui.opencode_cline_pass_unpublished")}
                                     </span>
                                   </td>
+                                  <td>{row.priced ? formatPriceUSD(row.input_usd_per_million) : tx("ui.opencode_models_unpriced")}</td>
+                                  <td>{formatPriceUSD(row.output_usd_per_million)}</td>
+                                  <td>{formatPriceUSD(row.cache_read_usd_per_million)}</td>
                                   <td className="actions-cell">
                                     <div className="row-actions">
                                       <IconButton
@@ -1576,7 +1636,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                                 </tr>
                                 {probe ? (
                                   <tr className="opencode-credential-row">
-                                    <td colSpan={4}>
+                                    <td colSpan={7}>
                                       {probe.result ? (
                                         <ModelProbeOutcome
                                           status={probe.result.status}

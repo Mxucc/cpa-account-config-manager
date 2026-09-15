@@ -68,6 +68,21 @@ function clinePassAccountView(overrides: Record<string, unknown> = {}): Record<s
   };
 }
 
+/**
+ * The three windows Cline documents for ClinePass and the USD the documented standard API
+ * rates attribute to them. Those USD figures are reference prices, not an amount owed.
+ */
+function clinePassQuotaUsage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    five_hour: { usd: 0.42, input_tokens: 120000, output_tokens: 8000, requests: 12 },
+    weekly: { usd: 3.1, input_tokens: 900000, output_tokens: 60000, requests: 88 },
+    monthly: { usd: 7.85, input_tokens: 2100000, output_tokens: 150000, requests: 210 },
+    monthly_subscription_usd: 9.99,
+    reference: true,
+    ...overrides,
+  };
+}
+
 /** The allow-listed catalog the backend publishes for the Cline Pass gateway. */
 function clinePassCatalogModels(): Array<Record<string, unknown>> {
   return [
@@ -88,6 +103,12 @@ function clinePassModelsPayload(overrides: Record<string, unknown> = {}): Record
         upstream_id: "cline-pass/deepseek-v4.1-flash",
         client_id: "deepseek-v4.1-flash",
         published: true,
+        // The documented reference rates in USD per million tokens.
+        priced: true,
+        input_usd_per_million: 1.4,
+        output_usd_per_million: 4.4,
+        cache_read_usd_per_million: 0.26,
+        cache_write_usd_per_million: 2.5,
       },
       {
         id: "cline-pass/kimi-k2.6",
@@ -96,6 +117,8 @@ function clinePassModelsPayload(overrides: Record<string, unknown> = {}): Record
         upstream_id: "cline-pass/kimi-k2.6",
         client_id: "kimi-k2.6",
         published: false,
+        // Cline publishes no rate for this model, so the row has no price fields at all.
+        priced: false,
       },
     ],
     strip_model_prefix: true,
@@ -450,6 +473,24 @@ describe("OpenCodeWorkspace", () => {
     expect(screen.queryByText("对话会话")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenCode Zen")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenCode 模型")).not.toBeInTheDocument();
+  });
+
+  // The same reused component state leaks the other way too: opening Cline Pass first and then
+  // switching to OpenCode used to render the Cline Pass accounts/models surface inside the OpenCode
+  // menu, because the kept tab state still said "cline-pass".
+  it("never shows the Cline Pass surface inside the OpenCode menu", async () => {
+    openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+
+    const { rerender } = render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+    expect(await screen.findByRole("tabpanel", { name: "Cline Pass 账号" })).toBeInTheDocument();
+
+    rerender(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    expect(await screen.findByRole("tabpanel", { name: "总览" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "Cline Pass 账号" })).not.toBeInTheDocument();
+    const tablist = screen.getByRole("tablist", { name: "OpenCode" });
+    expect(within(tablist).queryByRole("tab", { name: "Cline Pass 账号" })).not.toBeInTheDocument();
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(5);
   });
 
   it("lists the published Cline Pass mapping with the client-facing model id", async () => {
@@ -1339,5 +1380,73 @@ describe("OpenCodeWorkspace", () => {
     expect(warning).toHaveTextContent("Cline Pass 渠道绑定失败：the CPA management key rejected the channel write");
     // The sign-in itself still succeeded, so the completed status stays on screen.
     expect(within(panel).getByText("Cline Pass 账号已登录")).toBeInTheDocument();
+  });
+
+  it("renders the three Cline Pass usage windows and the subscription context of an account", async () => {
+    openCodeFetchMock({
+      clinePassAccounts: [clinePassAccountView({ quota_usage: clinePassQuotaUsage() })],
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    // The three windows Cline documents for ClinePass, each with its reference-priced USD.
+    expect(within(row).getByText("5 小时额度")).toBeInTheDocument();
+    expect(within(row).getByText("$0.42")).toBeInTheDocument();
+    expect(within(row).getByText("7 天额度")).toBeInTheDocument();
+    expect(within(row).getByText("$3.10")).toBeInTheDocument();
+    expect(within(row).getByText("30 天额度")).toBeInTheDocument();
+    expect(within(row).getByText("$7.85")).toBeInTheDocument();
+    // The calendar-month window carries the token totals; the flat subscription sits next to it.
+    expect(within(row).getByText("本月 token：输入 2,100,000 / 输出 150,000 · 210 次请求")).toBeInTheDocument();
+    expect(within(row).getByText("参考价 $7.85 / 订阅 $9.99")).toBeInTheDocument();
+    // A window keeps its own token and request detail on hover instead of widening the cell.
+    const fiveHourWindow = within(row).getByText("5 小时额度").closest("span") as HTMLElement;
+    expect(fiveHourWindow.getAttribute("title")).toContain("120,000");
+    expect(fiveHourWindow.getAttribute("title")).toContain("8,000");
+    expect(fiveHourWindow.getAttribute("title")).toContain("12");
+  });
+
+  it("renders the Cline Pass reference rates and marks a model without a published rate", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    await user.click(within(tabs).getByRole("tab", { name: "模型" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型" });
+
+    const pricedRow = (await within(panel).findByText("DeepSeek V4.1 Flash")).closest("tr") as HTMLElement;
+    const pricedCells = within(pricedRow).getAllByRole("cell").map((cell) => cell.textContent);
+    expect(pricedCells).toContain("$1.40");
+    expect(pricedCells).toContain("$4.40");
+    expect(pricedCells).toContain("$0.26");
+    // The unit is stated once for the columns, exactly like the OpenCode price table.
+    expect(within(panel).getByText("美元 / 百万 token")).toBeInTheDocument();
+    expect(within(panel).getByText(/并非实际计费金额/)).toBeInTheDocument();
+
+    // Cline publishes no rate for this model: the row must say so instead of showing zeros.
+    const unpricedRow = within(panel).getByText("Kimi K2.6").closest("tr") as HTMLElement;
+    expect(within(unpricedRow).getByText("暂无价格")).toBeInTheDocument();
+  });
+
+  it("keeps the Cline Pass usage USD labelled as a reference price, never as an amount owed", async () => {
+    openCodeFetchMock({
+      clinePassAccounts: [clinePassAccountView({ quota_usage: clinePassQuotaUsage() })],
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    // Both words stay on screen: a change that presents the reference USD as a charge must fail here.
+    expect(within(row).getByText("参考价 $7.85 / 订阅 $9.99")).toBeInTheDocument();
+    const usageCell = row.querySelector(".cline-pass-usage-cell") as HTMLElement;
+    expect(usageCell).not.toBeNull();
+    expect(usageCell.getAttribute("title")).toContain("并非实际计费金额");
   });
 });

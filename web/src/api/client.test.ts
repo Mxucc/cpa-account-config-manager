@@ -1484,6 +1484,34 @@ describe("management API client", () => {
     });
   });
 
+  it("installs an exact version when the store lists the plugin without a version", async () => {
+    setSession("", "management-secret");
+    // CPA resolves release versions only for plugins whose update source is
+    // reachable, so the listing may name no version even though the plugin's own
+    // release check already confirmed one. That is not evidence against it.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "", installed: true, installed_version: "0.3.1434", update_available: false }] }))
+      .mockResolvedValueOnce(jsonResponse({ status: "installed", id: "cpa-account-config-manager", version: "0.3.1440", restart_required: true }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(installPluginUpdate("0.3.1440")).resolves.toEqual({
+      status: "installed", id: "cpa-account-config-manager", version: "0.3.1440", restart_required: true,
+    });
+    expect(JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body))).toEqual({ version: "0.3.1440" });
+  });
+
+  it("refuses to install when the store names a different version", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.1440", installed: true, installed_version: "0.3.1434", update_available: true }] }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(installPluginUpdate("0.3.1434")).rejects.toMatchObject({ status: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("uses authenticated plugin-store metadata as the sole update source", async () => {
     setSession("", "management-secret");
     const fetchMock = vi.fn()
@@ -1542,18 +1570,133 @@ describe("management API client", () => {
     expect(result.error).toBeUndefined();
   });
 
-  it("reports a stable plugin-store error when store metadata is missing or invalid", () => {
+  it("names the exact reason no plugin-store version could be used", () => {
     const status = {
       policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
       current_version: "0.2.3", update_available: false, checking: false, pending: false,
       error: "release metadata request failed",
     };
-    for (const store of [null, { plugins_enabled: true, plugins: null }, { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "latest", installed: true, installed_version: "0.2.3", update_available: true }] }]) {
-      const result = reconcileUpdateStatus(status, store);
-      expect(result.release_source).toBe("none");
-      expect(result.error).toBe("plugin store metadata is unavailable");
-      expect(result.update_available).toBe(false);
+    // "The store is unreachable" and "the store answered without a version for this
+    // plugin" are different problems, and one message for both sent operators after
+    // the wrong cause. Every case still reports no source and no update.
+    for (const test of [
+      { store: null, want: "plugin store metadata is unavailable" },
+      { store: { plugins_enabled: true, plugins: null } as never, want: "plugin store does not list this plugin" },
+      { store: { plugins_enabled: true, plugins: [] } as never, want: "plugin store does not list this plugin" },
+      { store: { plugins_enabled: false, plugins: [] } as never, want: "the CPA plugin store is disabled" },
+      { store: { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "", installed: true, installed_version: "0.2.3", update_available: true }] } as never, want: "plugin store did not report a version for this plugin" },
+      { store: { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "latest", installed: true, installed_version: "0.2.3", update_available: true }] } as never, want: "plugin store did not report a version for this plugin" },
+    ]) {
+      const result = reconcileUpdateStatus(status, test.store);
+      expect(result.release_source, test.want).toBe("none");
+      expect(result.error, test.want).toBe(test.want);
+      expect(result.update_available, test.want).toBe(false);
+      expect(result.latest_version, test.want).toBeUndefined();
     }
+  });
+
+  it("accepts a catalog row whose store version is unresolved", async () => {
+    setSession("", "management-secret");
+    // CPA resolves a release version only for plugins whose update source is
+    // reachable, so an uninstalled row with no registry version legitimately
+    // carries an empty version. One such row must not invalidate the listing.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({
+      plugins_enabled: true,
+      plugins: [
+        { id: "privacyfilter", version: "", installed: false, installed_version: "", update_available: false },
+        { id: "cpa-account-config-manager", version: "0.3.1434", installed: true, installed_version: "0.3.1434", update_available: false },
+      ],
+    })));
+
+    await expect(getPluginStore()).resolves.toEqual({
+      plugins_enabled: true,
+      plugins: [
+        { id: "privacyfilter", version: "", installed: false, installed_version: "", update_available: false },
+        { id: "cpa-account-config-manager", version: "0.3.1434", installed: true, installed_version: "0.3.1434", update_available: false },
+      ],
+    });
+  });
+
+  it("keeps the update panel working when other catalog rows carry no version", async () => {
+    setSession("", "management-secret");
+    // The shipped CPA changed the listing so that a plugin's version is only
+    // resolved for plugins whose update source is reachable. The upstream registry
+    // leaves `version` out for a third of its entries, so a real listing mixes
+    // rows with and without one. Before this was tolerated, a single such row made
+    // the panel report "CPA 插件商店中没有可用的版本信息" with a blank latest
+    // version, even though this plugin's own row it was about was fine.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
+        current_version: "0.3.1434", update_available: false, checking: false, pending: false,
+        checked_at: "2026-09-15T06:57:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        plugins_enabled: true,
+        plugins: [
+          { id: "privacyfilter", version: "", installed: false, installed_version: "", update_available: false },
+          { id: "model-router", version: "", installed: false, installed_version: "", update_available: false },
+          { id: "cpa-account-config-manager", version: "0.3.1440", installed: true, installed_version: "0.3.1434", update_available: true },
+        ],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getEffectiveUpdateStatus();
+
+    expect(result).toMatchObject({
+      current_version: "0.3.1434",
+      latest_version: "0.3.1440",
+      update_available: true,
+      release_source: "plugin_store",
+      checked_at: "2026-09-15T06:57:00Z",
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.store_error).toBeUndefined();
+    // The happy path stays at two requests: no fallback is fetched when the store
+    // already named a version for this plugin.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the plugin's own release check when the store names no version", async () => {
+    setSession("", "management-secret");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/updates")) {
+        return jsonResponse({ policy: { check_enabled: true, check_interval_hours: 24, auto_update: false }, current_version: "0.3.1434", update_available: false, checking: false, pending: false });
+      }
+      if (url.endsWith("/plugin-store")) {
+        return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "", installed: true, installed_version: "0.3.1434", update_available: false }] });
+      }
+      if (url.endsWith("/self-update")) {
+        return jsonResponse({ self_update: { current_version: "0.3.1434", latest_version: "0.3.1440", source: "github_api", can_install: true } });
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getEffectiveUpdateStatus()).resolves.toMatchObject({
+      current_version: "0.3.1434",
+      latest_version: "0.3.1440",
+      update_available: true,
+      release_source: "github_release",
+    });
+  });
+
+  it("prefers the newer of the store version and the plugin's own release check", () => {
+    const status = {
+      policy: { check_enabled: true, check_interval_hours: 24, auto_update: false },
+      current_version: "0.3.1434", update_available: false, checking: false, pending: false,
+    };
+    const store = { plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.3.1372", installed: true, installed_version: "0.3.1434", update_available: false }] } as never;
+
+    // A stale registry fallback in the store listing must not hide a real update.
+    expect(reconcileUpdateStatus(status, store, "", "0.3.1440")).toMatchObject({
+      latest_version: "0.3.1440", update_available: true, release_source: "github_release",
+    });
+    // A tie keeps the store, which is the channel an install goes through.
+    expect(reconcileUpdateStatus(status, store, "", "0.3.1372")).toMatchObject({
+      latest_version: "0.3.1372", update_available: false, release_source: "plugin_store",
+    });
   });
 
   it("ignores stale direct-release metadata when the plugin store has an older stable version", () => {

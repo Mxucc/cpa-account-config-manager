@@ -1135,7 +1135,7 @@ export interface UpdateSnapshot {
   pending: boolean;
   checked_at?: string;
   error?: string;
-  release_source?: "plugin_store" | "none";
+  release_source?: "plugin_store" | "github_release" | "none";
   store_error?: string;
   runtime?: {
     active: boolean;
@@ -1631,6 +1631,34 @@ export interface ClinePassAccountView {
   channel_bound: boolean;
   channel_models: number;
   channel_model_gaps: number;
+  /** Usage the Cline gateway attributes to this account; absent until Cline reports it. */
+  quota_usage?: ClinePassQuotaUsage;
+}
+
+/**
+ * One window of Cline Pass usage. `usd` is the reference price the documented standard API
+ * rates give for exactly these tokens: never an amount owed.
+ */
+export interface ClinePassQuotaWindow {
+  usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  requests: number;
+}
+
+/**
+ * The three windows Cline documents for ClinePass: a rolling 5-hour window, the calendar
+ * week and the calendar month. Every USD figure is REFERENCE-priced at the documented
+ * standard API rates (`reference: true`), not a charge: the subscription is a flat
+ * monthly fee, reported separately as `monthly_subscription_usd`.
+ */
+export interface ClinePassQuotaUsage {
+  five_hour?: ClinePassQuotaWindow;
+  weekly?: ClinePassQuotaWindow;
+  monthly?: ClinePassQuotaWindow;
+  monthly_subscription_usd?: number;
+  /** True while `usd` values are reference prices from the documented rates, not charges. */
+  reference?: boolean;
 }
 
 export interface ClinePassAccountsResponse {
@@ -1659,6 +1687,15 @@ export interface ClinePassModelView {
   /** The model id a client calls once the channel is published. */
   client_id: string;
   published: boolean;
+  /**
+   * The documented reference rates for this model, in USD per million tokens. They are
+   * omitted when the documentation publishes no rate, and `priced` is then false.
+   */
+  priced?: boolean;
+  input_usd_per_million?: number;
+  output_usd_per_million?: number;
+  cache_read_usd_per_million?: number;
+  cache_write_usd_per_million?: number;
 }
 
 export interface ClinePassModelsResponse {

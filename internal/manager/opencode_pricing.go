@@ -472,6 +472,11 @@ func (s *OpenCodePricingService) persistOpenCodePricing(table *openCodePricingTa
 	configured := s.configured
 	s.mu.Unlock()
 	if !configured || strings.TrimSpace(storePath) == "" {
+		// Background price sync: surface the missing storage path instead of pretending the
+		// catalog was written, without changing the sync control flow.
+		s.mu.Lock()
+		s.storageErr = "OpenCode price cache has no storage path yet"
+		s.mu.Unlock()
 		return
 	}
 	persisted := persistedOpenCodePricing{

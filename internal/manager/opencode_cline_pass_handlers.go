@@ -51,6 +51,48 @@ type clinePassCatalogResponse struct {
 	DefaultBaseURL string                  `json:"default_base_url"`
 }
 
+// clinePassSettings is the persisted publishing switch of the Cline Pass view.
+type clinePassSettings struct {
+	// StripModelPrefix publishes the client-facing model id without the literal
+	// cline-pass/ prefix. It defaults to on.
+	StripModelPrefix bool `json:"strip_model_prefix"`
+}
+
+type clinePassSettingsView struct {
+	Settings clinePassSettings `json:"settings"`
+}
+
+type clinePassSettingsUpdateRequest struct {
+	StripModelPrefix *bool `json:"strip_model_prefix"`
+}
+
+type clinePassSettingsUpdateResponse struct {
+	Settings     clinePassSettings `json:"settings"`
+	Rebound      int               `json:"rebound"`
+	RebindErrors int               `json:"rebind_errors"`
+}
+
+// clinePassModelView is one model row of the Cline Pass model page. The upstream
+// id is what a probe must send; the client id is what a client calls. No
+// credential is ever part of this shape.
+type clinePassModelView struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Free       bool   `json:"free"`
+	UpstreamID string `json:"upstream_id"`
+	ClientID   string `json:"client_id"`
+	Published  bool   `json:"published"`
+}
+
+type clinePassModelsResponse struct {
+	Models           []clinePassModelView `json:"models"`
+	StripModelPrefix bool                 `json:"strip_model_prefix"`
+	Accounts         int                  `json:"accounts"`
+	ChannelBound     bool                 `json:"channel_bound"`
+	ChannelModels    int                  `json:"channel_models"`
+	DefaultBaseURL   string               `json:"default_base_url"`
+}
+
 // handleClinePassAccounts lists, saves and removes Cline Pass accounts.
 func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	if a == nil || a.clinePass == nil {
@@ -377,4 +419,137 @@ func (a *App) clinePassChannelLabel(accountID string) string {
 		}
 	}
 	return clinePassBoundChannelName
+}
+
+// handleClinePassSettings reads and writes the Cline Pass publishing settings.
+// A write is persisted first, then every stored account is re-bound best-effort
+// so the mapping on the live channel follows the new setting; the per-account
+// outcome is reported as counts instead of failing the request.
+func (a *App) handleClinePassSettings(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if a == nil || a.clinePass == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	switch strings.ToUpper(strings.TrimSpace(req.Method)) {
+	case http.MethodGet:
+		return jsonResponse(http.StatusOK, clinePassSettingsView{
+			Settings: clinePassSettings{StripModelPrefix: a.clinePass.StripModelPrefix()},
+		})
+	case http.MethodPut:
+		var request clinePassSettingsUpdateRequest
+		if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil || request.StripModelPrefix == nil {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid Cline Pass settings request"})
+		}
+		if errSet := a.clinePass.SetStripModelPrefix(*request.StripModelPrefix); errSet != nil {
+			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "Cline Pass settings could not be persisted"})
+		}
+		rebound, rebindErrors := a.rebindClinePassAccounts(ctx, managementKey)
+		return jsonResponse(http.StatusOK, clinePassSettingsUpdateResponse{
+			Settings:     clinePassSettings{StripModelPrefix: a.clinePass.StripModelPrefix()},
+			Rebound:      rebound,
+			RebindErrors: rebindErrors,
+		})
+	}
+	return jsonResponse(http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+}
+
+// handleClinePassModelPage lists the models the Cline Pass view shows: the
+// allow-listed catalog, or the stored accounts' refreshed listings when any
+// exists, with the client-facing id the current setting implies and whether the
+// bound channel already publishes that alias. The channel list is read once and
+// is shared by every row; an unreadable list degrades to "nothing published"
+// instead of failing the response.
+func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if a == nil || a.clinePass == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
+	}
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	accounts := a.clinePass.ListAccounts()
+	stripPrefix := a.clinePass.StripModelPrefix()
+	routes := a.clinePassChannelRoutes(ctx, managementKey)
+	published := map[string]struct{}{}
+	channelBound := false
+	channelModels := 0
+	for _, account := range accounts {
+		route, bound := routes[canonicalProviderBaseURL(clinePassChannelBaseURL(account.BaseURL))]
+		if !bound {
+			continue
+		}
+		channelBound = true
+		// Several accounts can point at different gateways; report the largest
+		// bound channel so the scalar stays meaningful.
+		if route.models > channelModels {
+			channelModels = route.models
+		}
+		for alias := range route.aliases {
+			published[alias] = struct{}{}
+		}
+	}
+	models := make([]clinePassModelView, 0, len(clinePassCatalog))
+	for _, id := range clinePassModelPageIDs(accounts) {
+		clientID := clinePassModelAlias(id, stripPrefix)
+		view := clinePassModelView{ID: id, Name: id, UpstreamID: id, ClientID: clientID}
+		if known, ok := clinePassCatalogModelByID(id); ok {
+			view.Name = known.Name
+			view.Free = known.Free
+		}
+		_, isPublished := published[clientID]
+		view.Published = isPublished
+		models = append(models, view)
+	}
+	return jsonResponse(http.StatusOK, clinePassModelsResponse{
+		Models:           models,
+		StripModelPrefix: stripPrefix,
+		Accounts:         len(accounts),
+		ChannelBound:     channelBound,
+		ChannelModels:    channelModels,
+		DefaultBaseURL:   clinePassDefaultBaseURL,
+	})
+}
+
+// clinePassModelPageIDs lists the ids the model page shows. The allow-listed
+// catalog is the default; when at least one stored account carries a refreshed
+// listing, the union of those listings is used instead, catalog order first and
+// unknown ids after.
+func clinePassModelPageIDs(accounts []ClinePassAccountView) []string {
+	accountIDs := make([]string, 0, len(clinePassCatalog))
+	seen := make(map[string]bool, len(clinePassCatalog))
+	hasListings := false
+	for _, account := range accounts {
+		if len(account.Models) == 0 {
+			continue
+		}
+		hasListings = true
+		for _, model := range account.Models {
+			trimmed := strings.TrimSpace(model)
+			if trimmed == "" || seen[trimmed] {
+				continue
+			}
+			seen[trimmed] = true
+			accountIDs = append(accountIDs, trimmed)
+		}
+	}
+	if !hasListings {
+		return clinePassCatalogIDs()
+	}
+	known := make(map[string]bool, len(clinePassCatalog))
+	ordered := make([]string, 0, len(accountIDs))
+	for _, model := range clinePassCatalog {
+		known[model.ID] = true
+		if seen[model.ID] {
+			ordered = append(ordered, model.ID)
+		}
+	}
+	for _, id := range accountIDs {
+		if !known[id] {
+			ordered = append(ordered, id)
+		}
+	}
+	return ordered
 }

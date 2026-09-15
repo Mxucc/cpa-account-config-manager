@@ -85,9 +85,14 @@ type SelfUpdateSnapshot struct {
 	PendingRestart       bool   `json:"pending_restart"`
 	UIPath               string `json:"ui_path,omitempty"`
 	InterfaceRefreshOnly bool   `json:"interface_refresh_only"`
-	CanInstall           bool   `json:"can_install"`
-	Error                string `json:"error,omitempty"`
-	StorageError         string `json:"storage_error,omitempty"`
+	// UIOverrideNote explains why a staged interface was ignored: a fixed, sanitized message
+	// with no path or file content. It is how a stale override left by an older host
+	// plugin-store install becomes diagnosable instead of silently masking the interface the
+	// running library carries.
+	UIOverrideNote string `json:"ui_override_note,omitempty"`
+	CanInstall     bool   `json:"can_install"`
+	Error          string `json:"error,omitempty"`
+	StorageError   string `json:"storage_error,omitempty"`
 }
 
 type persistedSelfUpdate struct {
@@ -279,6 +284,7 @@ func (s *SelfUpdateService) Snapshot() SelfUpdateSnapshot {
 	snapshot := s.state
 	snapshot.CurrentVersion = firstNonEmpty(strings.TrimSpace(s.current), snapshot.CurrentVersion)
 	snapshot.StorageError = s.storageEr
+	snapshot.UIOverrideNote = uiOverrideDiagnostic()
 	pluginFile, source := s.resolvePluginFileLocked()
 	snapshot.PluginFile, snapshot.PluginFileSource = pluginFile, source
 	snapshot.PluginFileExists = selfUpdateFileExists(pluginFile)
@@ -725,9 +731,11 @@ func (s *SelfUpdateService) Install(ctx context.Context) (SelfUpdateSnapshot, er
 	stagedUI := ""
 	uiUpdated := false
 	if uiPayload, ok := selfUpdateExtractUI(archive); ok {
-		if path, errUI := stageUIOverride(s.dataDir(), uiPayload); errUI == nil {
+		if path, errUI := stageUIOverride(s.dataDir(), latest, uiPayload); errUI == nil {
 			stagedUI = path
 			uiUpdated = true
+			// The new interface supersedes any staged copy an earlier release left behind.
+			setUIOverrideNote("")
 		}
 	}
 	staged, errStage := s.stageLibrary(pluginFile, library)

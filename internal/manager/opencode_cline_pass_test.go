@@ -819,3 +819,98 @@ func TestClinePassModelProbeAsksForAReasoningTolerantOutputBudget(t *testing.T) 
 		t.Fatalf("probe stream = %#v, want false", payload["stream"])
 	}
 }
+
+// The strip_model_prefix setting persists in the Cline Pass store as an additive
+// field, defaults to on when an existing store file has no field, requires the
+// management key, and survives a service reconfigure.
+func TestClinePassSettingsPersistAndSurviveReconfigure(t *testing.T) {
+	dataDir := t.TempDir()
+	service, _ := newConfiguredClinePassService(t, dataDir)
+	if !service.StripModelPrefix() {
+		t.Fatal("strip_model_prefix must default to on")
+	}
+	if _, errSave := service.SaveAPIKeyAccount("", "settings", "", "sk-settings-secret"); errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+	settingsPath := "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/settings"
+
+	// Both methods require the management key.
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+			Method: method, Path: settingsPath, Body: []byte(`{"strip_model_prefix":false}`),
+		})
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s settings without a management key = %d", method, response.StatusCode)
+		}
+	}
+	if response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Headers: headers, Body: []byte(`{}`),
+	}); response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("settings without the field = %d body=%s", response.StatusCode, response.Body)
+	}
+
+	update := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Headers: headers,
+		Body: []byte(`{"strip_model_prefix":false}`),
+	})
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", update.StatusCode, update.Body)
+	}
+	var payload clinePassSettingsUpdateResponse
+	if errDecode := json.Unmarshal(update.Body, &payload); errDecode != nil {
+		t.Fatalf("decode update: %v", errDecode)
+	}
+	if payload.Settings.StripModelPrefix || payload.Rebound != 1 || payload.RebindErrors != 0 {
+		t.Fatalf("update payload = %+v", payload)
+	}
+	if got := string(update.Body); got != `{"settings":{"strip_model_prefix":false},"rebound":1,"rebind_errors":0}` {
+		t.Fatalf("update body = %s", got)
+	}
+	if _, writes := store.snapshot(); writes != 1 {
+		t.Fatalf("settings update did not rebind the stored account: writes=%d", writes)
+	}
+
+	// The field is persisted and a second service reading the same store sees it.
+	raw, errRead := os.ReadFile(filepath.Join(dataDir, clinePassStoreFileName))
+	if errRead != nil || !strings.Contains(string(raw), `"strip_model_prefix":false`) {
+		t.Fatalf("store does not persist the setting: err=%v raw=%s", errRead, raw)
+	}
+	reloaded := NewClinePassService()
+	reloaded.Configure(Config{DataDir: dataDir})
+	if reloaded.StripModelPrefix() {
+		t.Fatal("strip_model_prefix did not survive a reconfigure")
+	}
+	read := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: settingsPath, Headers: headers,
+	})
+	if read.StatusCode != http.StatusOK {
+		t.Fatalf("read status = %d body=%s", read.StatusCode, read.Body)
+	}
+	var view clinePassSettingsView
+	if errDecode := json.Unmarshal(read.Body, &view); errDecode != nil || view.Settings.StripModelPrefix {
+		t.Fatalf("read payload = %+v err=%v", view, errDecode)
+	}
+	if got := string(read.Body); got != `{"settings":{"strip_model_prefix":false}}` {
+		t.Fatalf("read body = %s", got)
+	}
+
+	// A store file written before the setting existed reads as the default.
+	legacyDir := t.TempDir()
+	legacy := `{"version":1,"accounts":[{"id":"legacy","base_url":"https://api.cline.bot/api/v1","access_token":"sk-legacy","refresh_token":"sk-legacy","auth_method":"api_key"}]}`
+	if errWrite := os.WriteFile(clinePassStorePath(legacyDir), []byte(legacy), 0o600); errWrite != nil {
+		t.Fatalf("write legacy store: %v", errWrite)
+	}
+	legacyService := NewClinePassService()
+	legacyService.Configure(Config{DataDir: legacyDir})
+	if !legacyService.StripModelPrefix() {
+		t.Fatal("a store file without the field must read as the default (on)")
+	}
+	if accounts := legacyService.ListAccounts(); len(accounts) != 1 {
+		t.Fatalf("legacy accounts = %+v", accounts)
+	}
+}

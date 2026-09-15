@@ -311,3 +311,266 @@ func mustEncodeAccounts(t *testing.T, payload clinePassAccountsResponse) []byte 
 	}
 	return encoded
 }
+
+// clinePassChannelAliasMap indexes the model rows of one channel entry by
+// upstream name and fails on a duplicate row.
+func clinePassChannelAliasMap(t *testing.T, entry map[string]any) map[string]string {
+	t.Helper()
+	rows, _ := entry["models"].([]any)
+	aliases := make(map[string]string, len(rows))
+	for _, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := row["name"].(string)
+		alias, _ := row["alias"].(string)
+		if _, duplicate := aliases[name]; duplicate {
+			t.Fatalf("duplicate channel row for %q", name)
+		}
+		aliases[name] = alias
+	}
+	return aliases
+}
+
+func getClinePassModelPage(t *testing.T, app *App, headers http.Header) clinePassModelsResponse {
+	t.Helper()
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/models", Headers: headers,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("model page status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload clinePassModelsResponse
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode model page: %v", errDecode)
+	}
+	return payload
+}
+
+func clinePassModelRow(t *testing.T, payload clinePassModelsResponse, id string) clinePassModelView {
+	t.Helper()
+	for _, row := range payload.Models {
+		if row.ID == id {
+			return row
+		}
+	}
+	t.Fatalf("model %q is missing from the page", id)
+	return clinePassModelView{}
+}
+
+// The strip_model_prefix setting decides the client-facing alias on the bound
+// channel: only the literal cline-pass/ prefix is stripped, and toggling the
+// setting rewrites the existing rows in place.
+func TestClinePassBindingAliasesFollowStripSetting(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+
+	// Saving an account binds automatically with the default setting (on).
+	saveResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/accounts", Headers: headers,
+		Body: []byte(`{"name":"aliases","api_key":"sk-alias-secret"}`),
+	})
+	if saveResponse.StatusCode != http.StatusOK {
+		t.Fatalf("save status = %d body=%s", saveResponse.StatusCode, saveResponse.Body)
+	}
+	entries, writes := store.snapshot()
+	if writes != 1 || len(entries) != 1 {
+		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
+	}
+	aliases := clinePassChannelAliasMap(t, entries[0])
+	if len(aliases) != len(clinePassCatalog) {
+		t.Fatalf("published rows = %d, want %d", len(aliases), len(clinePassCatalog))
+	}
+	if got := aliases["cline-pass/glm-5.3"]; got != "glm-5.3" {
+		t.Fatalf("cline-pass alias = %q, want the stripped id", got)
+	}
+	for _, id := range []string{"cline-free/longcat-2.0", "deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash", "poolside/laguna-s-2.1:free"} {
+		if got := aliases[id]; got != id {
+			t.Fatalf("alias for %q = %q, want identity", id, got)
+		}
+	}
+
+	settingsPath := "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/settings"
+	// Turning the switch off rewrites every alias back to the full id in place.
+	update := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Headers: headers, Body: []byte(`{"strip_model_prefix":false}`),
+	})
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("settings off status = %d body=%s", update.StatusCode, update.Body)
+	}
+	entries, writes = store.snapshot()
+	if writes != 2 || len(entries) != 1 {
+		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
+	}
+	aliases = clinePassChannelAliasMap(t, entries[0])
+	if len(aliases) != len(clinePassCatalog) {
+		t.Fatalf("rows after disabling = %d, want no duplicates", len(aliases))
+	}
+	for id, alias := range aliases {
+		if alias != id {
+			t.Fatalf("identity alias expected for %q, got %q", id, alias)
+		}
+	}
+
+	// Turning it on again strips only the prefixed ids, still in place.
+	update = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Headers: headers, Body: []byte(`{"strip_model_prefix":true}`),
+	})
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("settings on status = %d body=%s", update.StatusCode, update.Body)
+	}
+	entries, writes = store.snapshot()
+	if writes != 3 || len(entries) != 1 {
+		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
+	}
+	aliases = clinePassChannelAliasMap(t, entries[0])
+	if len(aliases) != len(clinePassCatalog) {
+		t.Fatalf("rows after re-enabling = %d, want no duplicates", len(aliases))
+	}
+	if got := aliases["cline-pass/kimi-k3"]; got != "kimi-k3" {
+		t.Fatalf("cline-pass/kimi-k3 alias = %q", got)
+	}
+	if got := aliases["cline-free/muse-spark-1.3-contributor"]; got != "cline-free/muse-spark-1.3-contributor" {
+		t.Fatalf("free model alias = %q", got)
+	}
+}
+
+// The model page reports the client-facing id the setting implies and whether the
+// bound channel already publishes that alias. A stale row that still carries the
+// full id does not publish the stripped client id.
+func TestClinePassModelPageReportsClientIDsAndPublication(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	accountID, errSave := service.SaveAPIKeyAccount("", "page", "", "sk-page-secret")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+
+	bindResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/bind", Headers: headers,
+		Body: []byte(`{"account_id":"` + accountID + `"}`),
+	})
+	if bindResponse.StatusCode != http.StatusOK {
+		t.Fatalf("bind status = %d body=%s", bindResponse.StatusCode, bindResponse.Body)
+	}
+
+	page := getClinePassModelPage(t, app, headers)
+	if !page.StripModelPrefix || page.Accounts != 1 || !page.ChannelBound || page.ChannelModels != len(clinePassCatalog) {
+		t.Fatalf("page summary = %+v", page)
+	}
+	if page.DefaultBaseURL != clinePassDefaultBaseURL || len(page.Models) != len(clinePassCatalog) {
+		t.Fatalf("page summary = %+v", page)
+	}
+	row := clinePassModelRow(t, page, "cline-pass/deepseek-v4.1-flash")
+	if row.Name != "DeepSeek V4.1 Flash" || row.Free || row.UpstreamID != "cline-pass/deepseek-v4.1-flash" || row.ClientID != "deepseek-v4.1-flash" || !row.Published {
+		t.Fatalf("prefixed row = %+v", row)
+	}
+	free := clinePassModelRow(t, page, "cline-free/longcat-2.0")
+	if free.Name != "LongCat 2.0" || !free.Free || free.UpstreamID != "cline-free/longcat-2.0" || free.ClientID != "cline-free/longcat-2.0" || !free.Published {
+		t.Fatalf("free row = %+v", free)
+	}
+
+	// A channel that still carries only the full id does not publish the
+	// stripped client id.
+	stale := make([]any, 0, len(clinePassCatalog))
+	for _, model := range clinePassCatalog {
+		stale = append(stale, map[string]any{"name": model.ID, "alias": model.ID})
+	}
+	store.setEntries([]map[string]any{{"base-url": clinePassDefaultBaseURL, "models": stale}})
+	staleRow := clinePassModelRow(t, getClinePassModelPage(t, app, headers), "cline-pass/deepseek-v4.1-flash")
+	if staleRow.Published || staleRow.ClientID != "deepseek-v4.1-flash" {
+		t.Fatalf("stale row = %+v", staleRow)
+	}
+
+	// Disabling the switch republishes the full ids, so the page reports them as
+	// published and no longer strips the client id.
+	update := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/settings", Headers: headers,
+		Body: []byte(`{"strip_model_prefix":false}`),
+	})
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("settings off status = %d body=%s", update.StatusCode, update.Body)
+	}
+	off := getClinePassModelPage(t, app, headers)
+	if off.StripModelPrefix {
+		t.Fatalf("page strip flag = %+v", off)
+	}
+	row = clinePassModelRow(t, off, "cline-pass/deepseek-v4.1-flash")
+	if row.ClientID != row.ID || !row.Published {
+		t.Fatalf("row with the switch off = %+v", row)
+	}
+}
+
+// An unreadable channel list degrades the model page to "nothing published"
+// instead of failing it, and the route still requires the management key.
+func TestClinePassModelPageDegradesWhenChannelReadFails(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	if _, errSave := service.SaveAPIKeyAccount("", "page", "", "sk-page-degraded"); errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	store := &clinePassChannelStore{failReads: true}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+
+	page := getClinePassModelPage(t, app, http.Header{"Authorization": []string{"Bearer management-secret"}})
+	if page.ChannelBound || page.ChannelModels != 0 || page.Accounts != 1 {
+		t.Fatalf("degraded page = %+v", page)
+	}
+	if len(page.Models) != len(clinePassCatalog) {
+		t.Fatalf("degraded rows = %d", len(page.Models))
+	}
+	for _, row := range page.Models {
+		if row.Published {
+			t.Fatalf("degraded row reports published: %+v", row)
+		}
+	}
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/models",
+	})
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("model page without a management key = %d", response.StatusCode)
+	}
+}
+
+// A model probe always sends the full upstream id, even when the publishing
+// switch strips it on the channel: the gateway only accepts the full id.
+func TestClinePassModelProbeKeepsUpstreamIDWhenStripping(t *testing.T) {
+	service, gateway := newConfiguredClinePassService(t, t.TempDir())
+	accountID, errSave := service.SaveAPIKeyAccount("", "probe", "", "sk-probe-secret")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	if !service.StripModelPrefix() {
+		t.Fatal("the probe test expects the default setting (on)")
+	}
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/model-test", Headers: headers,
+		Body: []byte(`{"account_id":"` + accountID + `","model":"cline-pass/glm-5.3"}`),
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("model-test status = %d body=%s", response.StatusCode, response.Body)
+	}
+	gateway.mu.Lock()
+	sent := gateway.chatPayload["model"]
+	gateway.mu.Unlock()
+	if sent != "cline-pass/glm-5.3" {
+		t.Fatalf("probe sent model %#v, want the full upstream id", sent)
+	}
+}

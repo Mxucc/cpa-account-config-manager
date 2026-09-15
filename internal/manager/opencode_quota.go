@@ -223,7 +223,10 @@ func loadOpenCodeQuotaState(storePath string, enabled bool) (openCodeQuotaPersis
 
 func (s *OpenCodeQuotaService) persistLocked() error {
 	if s.dataDir == "" {
-		return nil
+		// A write that cannot reach a store must fail loudly instead of reporting success:
+		// the caller would otherwise show a saved workspace that is nowhere on disk.
+		s.storageErr = "OpenCode quota state has no storage directory yet"
+		return fmt.Errorf("OpenCode quota state is not configured")
 	}
 	errPersist := savePrivateJSON(s.resolvedStorePath(), openCodeQuotaPersisted{
 		Version:        openCodeQuotaStoreVersion,

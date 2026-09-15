@@ -44,7 +44,13 @@ func (a *App) handleOpenCodeStorage(req cpaapi.ManagementRequest) cpaapi.Managem
 	if a == nil || a.opencode == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "OpenCode quota service is unavailable"})
 	}
-	return jsonResponse(http.StatusOK, map[string]any{"storage": a.opencode.Storage()})
+	payload := map[string]any{"storage": a.opencode.Storage()}
+	// A state-directory change is reported next to the storage report: counts and the target
+	// directory's sanitized base name only, never a path or a credential.
+	if note := a.stateAdoptionNoteSnapshot(); note != "" {
+		payload["storage_note"] = note
+	}
+	return jsonResponse(http.StatusOK, payload)
 }
 
 func (a *App) handleOpenCodeSession(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {

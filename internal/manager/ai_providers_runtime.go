@@ -413,7 +413,15 @@ func (t *ProviderRuntimeTracker) persistNow() {
 }
 
 func (t *ProviderRuntimeTracker) persistLocked() error {
-	if t == nil || !t.loaded || t.store == "" {
+	if t == nil {
+		return nil
+	}
+	if !t.loaded || t.store == "" {
+		// Best-effort background state: report that there is nothing to write to instead of
+		// pretending the write succeeded, but keep the caller's control flow unchanged.
+		t.mu.Lock()
+		t.storageErr = "provider runtime state has no storage path yet"
+		t.mu.Unlock()
 		return nil
 	}
 	t.mu.RLock()

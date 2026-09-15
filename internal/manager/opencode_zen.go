@@ -162,7 +162,10 @@ func normalizeOpenCodeZenAccounts(accounts []OpenCodeZenAccount) []OpenCodeZenAc
 
 func (s *OpenCodeZenService) persistLocked() error {
 	if s.dataDir == "" {
-		return nil
+		// A write that cannot reach a store must fail loudly instead of reporting success:
+		// the caller would otherwise show a saved credential that is nowhere on disk.
+		s.storageErr = "OpenCode Zen state has no storage directory yet"
+		return fmt.Errorf("OpenCode Zen state is not configured")
 	}
 	errPersist := savePrivateJSON(openCodeZenStorePath(s.dataDir), openCodeZenPersisted{
 		Version:  openCodeZenStoreVersion,

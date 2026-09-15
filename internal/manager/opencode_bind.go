@@ -53,20 +53,22 @@ const openCodeChannelSessionBaseline = "oc-cli-baseline"
 // credential. An existing channel with the same normalized base URL is updated in
 // place so repeated binds are idempotent and keep unrelated fields untouched.
 func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, apiKey, label string, models []string) (OpenCodeBindingResult, error) {
-	return a.bindOpenAICompatibleChannel(ctx, managementKey, openCodeAPIBase(baseURL)+"/v1", apiKey, label, openCodeBoundChannelName, models, openCodeChannelHeaders())
+	// OpenCode has no alias setting, so its rows keep any operator alias that is
+	// already configured and only missing ids are appended.
+	return a.bindOpenAICompatibleChannel(ctx, managementKey, openCodeAPIBase(baseURL)+"/v1", apiKey, label, openCodeBoundChannelName, models, openCodeChannelHeaders(), nil)
 }
 
 // bindClinePassChannel writes the Cline Pass channel. Cline Pass is
 // OpenAI-compatible, so it uses the same channel shape as OpenCode with the
 // Cline product-surface headers the gateway (including its free tier) requires.
 func (a *App) bindClinePassChannel(ctx context.Context, managementKey, baseURL, accessToken, label string, models []string, version string) (OpenCodeBindingResult, error) {
-	return a.bindOpenAICompatibleChannel(ctx, managementKey, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version))
+	return a.bindOpenAICompatibleChannel(ctx, managementKey, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version), clinePassChannelModelAliases(models, a.clinePassStripModelPrefix()))
 }
 
 // bindOpenAICompatibleChannel upserts one OpenAI-compatible CPA channel that
 // points at an upstream base URL with a credential and its client headers, then
 // publishes the verified model catalog on the channel so CPA can route it.
-func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string) (OpenCodeBindingResult, error) {
+func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string]string) (OpenCodeBindingResult, error) {
 	result := OpenCodeBindingResult{Kind: "openai-compatibility", BaseURL: channelBaseURL, Index: -1}
 	if a == nil {
 		return result, fmt.Errorf("AI provider channel service is unavailable")
@@ -121,7 +123,7 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	// Publish the verified catalog on the channel: CPA matches routed requests
 	// against this list, so a channel without it cannot serve the models the
 	// operator just tested.
-	channelModels := mergeOpenCodeChannelModels(entry["models"], models)
+	channelModels := mergeOpenCodeChannelModels(entry["models"], models, aliases)
 	entry["models"] = channelModels
 	result.Models = len(channelModels)
 	items[target] = entry
@@ -169,12 +171,49 @@ func mergeOpenCodeChannelKeyEntries(existing any, apiKey string) []map[string]an
 	return rows
 }
 
-// mergeOpenCodeChannelModels keeps existing rows (including operator aliases) and
-// appends the upstream catalog so the channel is immediately routable.
-func mergeOpenCodeChannelModels(existing any, models []string) []map[string]any {
-	rows := make([]map[string]any, 0, len(models)+2)
-	seen := make(map[string]bool, len(models))
+// mergeOpenCodeChannelModels publishes a model catalog on a CPA channel.
+//
+// A row is the CPA pair {"name": <upstream id>, "alias": <client-facing id>}.
+// Existing rows for ids the binding publishes are kept in place: their alias is
+// rewritten to the desired value so a settings change or a rebind takes effect
+// without leaving a stale alias or duplicating the row. Rows for ids the
+// binding does not publish are operator additions and stay untouched.
+//
+// The optional aliases map carries the desired client-facing id of every
+// published id. Without it an existing row's alias is preserved and only
+// missing ids are appended, which is what the OpenCode bindings (no prefix
+// setting) rely on.
+func mergeOpenCodeChannelModels(existing any, models []string, aliases ...map[string]string) []map[string]any {
+	managed := len(aliases) > 0 && aliases[0] != nil
+	wanted := make(map[string]string, len(models))
+	order := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, exists := wanted[model]; exists {
+			continue
+		}
+		alias := model
+		if managed {
+			if desired, ok := aliases[0][model]; ok && strings.TrimSpace(desired) != "" {
+				alias = strings.TrimSpace(desired)
+			}
+		}
+		wanted[model] = alias
+		order = append(order, model)
+	}
+	rows := make([]map[string]any, 0, len(order)+2)
+	seen := make(map[string]bool, len(order))
 	appendRow := func(row map[string]any) {
+		if managed {
+			if name, ok := row["name"].(string); ok {
+				if alias, publish := wanted[strings.TrimSpace(name)]; publish {
+					row["alias"] = alias
+				}
+			}
+		}
 		rows = append(rows, row)
 		for _, field := range []string{"name", "alias"} {
 			if value, ok := row[field].(string); ok && strings.TrimSpace(value) != "" {
@@ -208,13 +247,12 @@ func mergeOpenCodeChannelModels(existing any, models []string) []map[string]any 
 			appendRow(cloned)
 		}
 	}
-	for _, model := range models {
-		model = strings.TrimSpace(model)
-		if model == "" || seen[model] {
+	for _, model := range order {
+		if seen[model] {
 			continue
 		}
 		seen[model] = true
-		rows = append(rows, map[string]any{"name": model, "alias": model})
+		rows = append(rows, map[string]any{"name": model, "alias": wanted[model]})
 	}
 	return rows
 }

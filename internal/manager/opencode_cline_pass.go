@@ -50,6 +50,10 @@ const (
 	clinePassVersionFetchTimeout  = 5 * time.Second
 	clinePassNPMRegistryURL       = "https://registry.npmjs.org/cline/latest"
 	clinePassBoundChannelName     = "Cline Pass"
+	// clinePassModelPrefix is the literal prefix stripped from the client-facing
+	// model id when the strip_model_prefix setting is on. Only this prefix is
+	// stripped; every other id is published unchanged.
+	clinePassModelPrefix = "cline-pass/"
 )
 
 // Authentication methods an account can be created with.
@@ -117,6 +121,48 @@ func clinePassAllowsModel(id string) bool {
 	return false
 }
 
+// clinePassCatalogModelByID returns the allow-listed catalog entry for one id.
+func clinePassCatalogModelByID(id string) (clinePassCatalogModel, bool) {
+	trimmed := strings.TrimSpace(id)
+	for _, model := range clinePassCatalog {
+		if model.ID == trimmed {
+			return model, true
+		}
+	}
+	return clinePassCatalogModel{}, false
+}
+
+// clinePassModelAlias returns the client-facing id of one published model: the
+// full upstream id with the literal cline-pass/ prefix removed when the switch
+// is on, otherwise the id unchanged. Any other prefix is left alone.
+func clinePassModelAlias(id string, stripPrefix bool) string {
+	trimmed := strings.TrimSpace(id)
+	if !stripPrefix || !strings.HasPrefix(trimmed, clinePassModelPrefix) {
+		return trimmed
+	}
+	stripped := strings.TrimPrefix(trimmed, clinePassModelPrefix)
+	if stripped == "" {
+		return trimmed
+	}
+	return stripped
+}
+
+// clinePassChannelModelAliases derives the authoritative client-facing id of
+// every model a channel publishes. The non-nil map makes the channel merge
+// rewrite an existing row's alias in place, which is what lets a settings
+// change take effect on the next bind without duplicating the row.
+func clinePassChannelModelAliases(models []string, stripPrefix bool) map[string]string {
+	aliases := make(map[string]string, len(models))
+	for _, model := range models {
+		trimmed := strings.TrimSpace(model)
+		if trimmed == "" {
+			continue
+		}
+		aliases[trimmed] = clinePassModelAlias(trimmed, stripPrefix)
+	}
+	return aliases
+}
+
 // ClinePassAccount is one bound Cline Pass credential. Tokens are persisted only
 // in the plugin private data directory and are never returned by the management
 // API. An account created from a static API key carries the key in both the
@@ -164,6 +210,10 @@ type ClinePassAccountView struct {
 type clinePassPersisted struct {
 	Version  int                `json:"version"`
 	Accounts []ClinePassAccount `json:"accounts"`
+	// StripModelPrefix is additive: a store file written before the setting
+	// existed has no field, which reads as the documented default (on). The
+	// store version is not bumped so an existing file still loads.
+	StripModelPrefix *bool `json:"strip_model_prefix,omitempty"`
 }
 
 // ClinePassProbeResult reports whether the gateway accepted a credential.
@@ -236,12 +286,18 @@ type ClinePassService struct {
 	versionMu   sync.Mutex
 	version     string
 	versionedAt time.Time
+	// stripModelPrefix is the persisted publishing switch: it decides whether
+	// the client-facing model id drops the literal cline-pass/ prefix.
+	stripModelPrefix bool
 }
 
 func NewClinePassService() *ClinePassService {
 	return &ClinePassService{
-		now:    func() time.Time { return time.Now() },
-		logins: map[string]*clinePassLoginSession{},
+		now: func() time.Time { return time.Now() },
+		// strip_model_prefix is documented as on by default, including for an
+		// existing store file that predates the setting.
+		stripModelPrefix: true,
+		logins:           map[string]*clinePassLoginSession{},
 	}
 }
 
@@ -295,6 +351,9 @@ func (s *ClinePassService) Configure(config Config) {
 	}
 	s.dataDir = config.DataDir
 	s.accounts = normalizeClinePassAccounts(loaded.Accounts)
+	// A missing field reads as the documented default (on) so an existing store
+	// file keeps loading with the new behaviour.
+	s.stripModelPrefix = loaded.StripModelPrefix == nil || *loaded.StripModelPrefix
 	s.loaded = true
 	s.loadFailed = false
 	s.storageErr = ""
@@ -404,11 +463,16 @@ func normalizeClinePassModels(models []string) []string {
 
 func (s *ClinePassService) persistLocked() error {
 	if s.dataDir == "" {
-		return nil
+		// A write that cannot reach a store must fail loudly instead of reporting success:
+		// the caller would otherwise show a saved account that is nowhere on disk.
+		s.storageErr = "Cline Pass state has no storage directory yet"
+		return fmt.Errorf("Cline Pass state is not configured")
 	}
+	stripModelPrefix := s.stripModelPrefix
 	errPersist := savePrivateJSON(clinePassStorePath(s.dataDir), clinePassPersisted{
-		Version:  clinePassStoreVersion,
-		Accounts: append([]ClinePassAccount(nil), s.accounts...),
+		Version:          clinePassStoreVersion,
+		Accounts:         append([]ClinePassAccount(nil), s.accounts...),
+		StripModelPrefix: &stripModelPrefix,
 	})
 	if errPersist != nil {
 		s.storageErr = "Cline Pass state could not be persisted"
@@ -427,6 +491,36 @@ func (s *ClinePassService) StorageError() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.storageErr
+}
+
+// StripModelPrefix reports whether the client-facing model id drops the literal
+// cline-pass/ prefix. The default is on, also for a service that never loaded a
+// store file.
+func (s *ClinePassService) StripModelPrefix() bool {
+	if s == nil {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stripModelPrefix
+}
+
+// SetStripModelPrefix persists the publishing switch. The in-memory value is
+// reverted when the store write fails so a later restart cannot disagree with
+// what the caller was told.
+func (s *ClinePassService) SetStripModelPrefix(value bool) error {
+	if s == nil {
+		return fmt.Errorf("Cline Pass service is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.stripModelPrefix
+	s.stripModelPrefix = value
+	if errPersist := s.persistLocked(); errPersist != nil {
+		s.stripModelPrefix = previous
+		return errPersist
+	}
+	return nil
 }
 
 // ListAccounts returns the redacted account list.

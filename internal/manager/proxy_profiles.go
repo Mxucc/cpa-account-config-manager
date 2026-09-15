@@ -349,7 +349,10 @@ func (s *ProxyProfileService) Unbind(accounts []Account) error {
 }
 func (s *ProxyProfileService) persistLocked() error {
 	if strings.TrimSpace(s.dataDir) == "" {
-		return nil
+		// A profile change that cannot reach a store must fail loudly instead of reporting
+		// success, or the UI would show a profile that is nowhere on disk.
+		s.storageErr = "proxy profile state has no storage directory yet"
+		return fmt.Errorf("proxy profile state is not configured")
 	}
 	profiles := make([]ProxyProfile, 0, len(s.profiles))
 	for _, p := range s.profiles {

@@ -15,7 +15,10 @@ const clinePassRoutingBindTimeout = 20 * time.Second
 // Pass base URL: the model ids it advertises and how many it holds.
 type clinePassChannelRoute struct {
 	published map[string]struct{}
-	models    int
+	// aliases holds only the client-facing alias of each row, which is the id a
+	// client calls. It is what the model page compares a client id against.
+	aliases map[string]struct{}
+	models  int
 }
 
 // clinePassChannelRoutes reads the OpenAI-compatible channel list once and
@@ -41,6 +44,7 @@ func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) 
 		}
 		routes[key] = clinePassChannelRoute{
 			published: aiProviderChannelPublishedModels(entry),
+			aliases:   aiProviderChannelModelAliases(entry),
 			models:    aiProviderChannelModelCount(entry),
 		}
 	}
@@ -74,6 +78,34 @@ func aiProviderChannelPublishedModels(entry map[string]any) map[string]struct{} 
 		}
 	}
 	return published
+}
+
+// aiProviderChannelModelAliases collects the client-facing ids one live channel
+// advertises: the alias field only, because that is what CPA exposes to
+// clients. A legacy string row is its own alias.
+func aiProviderChannelModelAliases(entry map[string]any) map[string]struct{} {
+	aliases := map[string]struct{}{}
+	list, ok := entry["models"].([]any)
+	if !ok {
+		return aliases
+	}
+	for _, item := range list {
+		switch row := item.(type) {
+		case string:
+			if id := strings.TrimSpace(row); id != "" {
+				aliases[id] = struct{}{}
+			}
+		case map[string]any:
+			value, ok := row["alias"].(string)
+			if !ok {
+				continue
+			}
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				aliases[trimmed] = struct{}{}
+			}
+		}
+	}
+	return aliases
 }
 
 // clinePassAccountModelIDs returns the models an account publishes, falling back
@@ -234,4 +266,34 @@ func (a *App) completeClinePassLogin(ctx context.Context, managementKey string, 
 	} else if outcome.ErrorText != "" {
 		view.BindingError = outcome.ErrorText
 	}
+}
+
+// clinePassStripModelPrefix reports the current publishing setting; an app
+// without a Cline Pass service keeps the documented default (on).
+func (a *App) clinePassStripModelPrefix() bool {
+	if a == nil || a.clinePass == nil {
+		return true
+	}
+	return a.clinePass.StripModelPrefix()
+}
+
+// rebindClinePassAccounts republishes every stored account after a settings
+// change so the live channel follows the new alias mapping. The binds run
+// sequentially on the request goroutine under the per-bind timeout and are
+// best-effort: the counts let the caller report a partial failure instead of
+// failing the settings write.
+func (a *App) rebindClinePassAccounts(ctx context.Context, managementKey string) (int, int) {
+	if a == nil || a.clinePass == nil || strings.TrimSpace(managementKey) == "" {
+		return 0, 0
+	}
+	rebound := 0
+	failed := 0
+	for _, account := range a.clinePass.ListAccounts() {
+		if a.bindClinePassAccountBestEffort(ctx, managementKey, account.ID).Bound {
+			rebound++
+			continue
+		}
+		failed++
+	}
+	return rebound, failed
 }

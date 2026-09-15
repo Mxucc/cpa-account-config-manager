@@ -63,8 +63,11 @@ func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, a
 // bindClinePassChannel writes the Cline Pass channel. Cline Pass is
 // OpenAI-compatible, so it uses the same channel shape as OpenCode with the
 // Cline product-surface headers the gateway (including its free tier) requires.
-func (a *App) bindClinePassChannel(ctx context.Context, managementKey, baseURL, accessToken, label string, models []string, version string) (OpenCodeBindingResult, error) {
-	return a.bindOpenAICompatibleChannel(ctx, managementKey, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version), clinePassChannelModelAliases(models, a.clinePassStripModelPrefix()))
+// accountID is the stored account whose row this write owns: CPA assigns the
+// auth-index of that row, and the re-read records it so a usage callback can be
+// attributed to this account.
+func (a *App) bindClinePassChannel(ctx context.Context, managementKey, accountID, baseURL, accessToken, label string, models []string, version string) (OpenCodeBindingResult, error) {
+	return a.bindOpenAICompatibleChannelForAccount(ctx, managementKey, accountID, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version), clinePassChannelModelAliases(models, a.clinePassStripModelPrefix()))
 }
 
 // bindOpenAICompatibleChannel upserts one OpenAI-compatible CPA channel that
@@ -77,8 +80,17 @@ func (a *App) bindClinePassChannel(ctx context.Context, managementKey, baseURL, 
 // every sibling on a rename and let the last bind replace the other accounts'
 // keys. The label is written when this call creates a row; a plain re-bind of an
 // existing row keeps the operator's name.
-
 func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string][]string) (OpenCodeBindingResult, error) {
+	return a.bindOpenAICompatibleChannelForAccount(ctx, managementKey, "", channelBaseURL, apiKey, label, defaultLabel, models, headers, aliases)
+}
+
+// bindOpenAICompatibleChannelForAccount is bindOpenAICompatibleChannel for a bind
+// whose row belongs to a stored account (Cline Pass). The live channel list is
+// re-read after the write anyway, and the CPA auth indexes that row carries are
+// recorded for that account there, so a usage callback that only names the index
+// CPA assigned is still attributed to the account whose figures the operator
+// reads. The OpenCode path passes no account id and records nothing.
+func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managementKey, accountID, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string][]string) (OpenCodeBindingResult, error) {
 	result := OpenCodeBindingResult{Kind: "openai-compatibility", BaseURL: channelBaseURL, Index: -1}
 	if a == nil {
 		return result, fmt.Errorf("AI provider channel service is unavailable")
@@ -195,10 +207,73 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	// recorded for session attribution immediately after binding.
 	if entries, errEntries := a.aiProviderChannelEntries(ctx, managementKey, listKind); errEntries == nil {
 		_ = a.syncAIProviderChannelBindings(listKind, entries)
+		// CPA assigns the auth index on write and can change it, so the account
+		// whose row this bind owns records every index the row now carries. That is
+		// what attributes a usage callback that only names the index.
+		if accountID != "" && a.clinePass != nil {
+			a.clinePass.SetRouteAuthIndexes(accountID, clinePassRouteAuthIndexes(entries, result.BaseURL, apiKey, label))
+		}
 	}
 	result.Index = target
 	result.ChannelKey = fmt.Sprintf("%s:%d", listKind, target)
 	return result, nil
+}
+
+// clinePassRouteAuthIndexes collects the CPA auth indexes the account's own row
+// carries in a live channel list, using the same matching the bind itself uses:
+// the canonical base URL plus either the credential this bind just wrote or the
+// label it publishes. A row is only read when it already belongs to this bind's
+// account, so a sibling account's index is never recorded for this one.
+func clinePassRouteAuthIndexes(entries []map[string]any, baseURL, apiKey, label string) []string {
+	channelBase := canonicalProviderBaseURL(baseURL)
+	if channelBase == "" {
+		return nil
+	}
+	credential := strings.TrimSpace(apiKey)
+	wantedLabel := strings.TrimSpace(label)
+	indexes := make([]string, 0, 2)
+	for _, entry := range entries {
+		if canonicalProviderBaseURL(aiProviderChannelBaseURL(entry)) != channelBase {
+			continue
+		}
+		matched := credential != "" && openCodeChannelHoldsCredential(entry, credential)
+		if !matched && wantedLabel != "" {
+			matched = strings.EqualFold(strings.TrimSpace(aiProviderChannelName(entry)), wantedLabel)
+		}
+		if !matched {
+			continue
+		}
+		indexes = append(indexes, clinePassChannelAuthIndexes(entry)...)
+	}
+	return indexes
+}
+
+// clinePassChannelAuthIndexes reads every CPA auth index one channel entry
+// carries: the row's own index and the index of each weighted key entry. CPA
+// assigns them when the row is written, and a usage callback can name either.
+func clinePassChannelAuthIndexes(entry map[string]any) []string {
+	indexes := make([]string, 0, 2)
+	if index, isText := entry["auth-index"].(string); isText {
+		if trimmed := strings.TrimSpace(index); trimmed != "" {
+			indexes = append(indexes, trimmed)
+		}
+	}
+	list, isList := entry["api-key-entries"].([]any)
+	if !isList {
+		return indexes
+	}
+	for _, item := range list {
+		record, isRecord := item.(map[string]any)
+		if !isRecord {
+			continue
+		}
+		if index, isText := record["auth-index"].(string); isText {
+			if trimmed := strings.TrimSpace(index); trimmed != "" {
+				indexes = append(indexes, trimmed)
+			}
+		}
+	}
+	return indexes
 }
 
 // mergeOpenCodeChannelKeyEntries upserts one credential in the weighted key list

@@ -3,12 +3,15 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
 )
@@ -23,6 +26,10 @@ type clinePassChannelStore struct {
 	writes     int
 	failReads  bool
 	failWrites bool
+	// assignAuthIndex mimics CPA's own write: it stamps an auth index onto the
+	// entries of write number n, so the plugin's re-read sees the index CPA would
+	// have assigned.
+	assignAuthIndex func(entries []map[string]any, write int)
 }
 
 func (s *clinePassChannelStore) doer() HTTPDoer {
@@ -47,8 +54,14 @@ func (s *clinePassChannelStore) doer() HTTPDoer {
 			if errDecode := json.NewDecoder(request.Body).Decode(&items); errDecode != nil {
 				return jsonHTTPResponse(http.StatusBadRequest, `{"error":"bad"}`), nil
 			}
-			s.entries = items
 			s.writes++
+			// CPA assigns the auth-index of a channel row when the row is written,
+			// so a fake that stores the payload verbatim would never exercise the
+			// re-read that records it.
+			if s.assignAuthIndex != nil {
+				s.assignAuthIndex(items, s.writes)
+			}
+			s.entries = items
 			return jsonHTTPResponse(http.StatusOK, `{}`), nil
 		default:
 			return jsonHTTPResponse(http.StatusNotFound, `{}`), nil
@@ -840,5 +853,123 @@ func TestClinePassBindingModelCountAndModelPagePublication(t *testing.T) {
 	}
 	if row := clinePassModelRow(t, off, "cline-pass/glm-5.3"); row.ClientID != row.ID || !row.Published {
 		t.Fatalf("switch-off row = %+v", row)
+	}
+}
+
+// clinePassAuthIndexStamp mimics CPA's channel write: it stamps an auth index on
+// the row and on each weighted key entry of the payload it receives.
+func clinePassAuthIndexStamp(entries []map[string]any, write int) {
+	for _, entry := range entries {
+		entry["auth-index"] = fmt.Sprintf("row-index-%d", write)
+		rows, _ := entry["api-key-entries"].([]any)
+		for _, item := range rows {
+			row, isRow := item.(map[string]any)
+			if !isRow {
+				continue
+			}
+			row["auth-index"] = fmt.Sprintf("key-index-%d", write)
+		}
+	}
+}
+
+// Binding records the auth indexes CPA assigned to the account's own channel row,
+// including the per-key-row index, so a usage callback that names one of them is
+// attributed to the account whose windows the operator reads. Re-binding replaces
+// the recorded set, because CPA can change the index on every write.
+func TestClinePassBindRecordsChannelAuthIndexes(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	accountID, errSave := service.SaveAPIKeyAccount("", "auth indexes", "", "sk-auth-index-bind")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	store := &clinePassChannelStore{assignAuthIndex: clinePassAuthIndexStamp}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	bindClinePassPublicationAccount(t, app, headers, accountID)
+	want := []string{"key-index-1", "row-index-1"}
+	if got := recordedClinePassRouteIndexes(service, accountID); !reflect.DeepEqual(got, want) {
+		t.Fatalf("recorded auth indexes = %#v, want %#v", got, want)
+	}
+	// Both the row index and the per-key-row index attribute traffic to the account.
+	for _, authIndex := range want {
+		service.ObserveUsage(cpaapi.UsageRecord{
+			Provider: "openai-compatible-cline pass", AuthType: "apikey", AuthIndex: authIndex,
+			Model: "cline-pass/glm-5.3", RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 1_000_000},
+		})
+	}
+	view, _ := service.AccountView(accountID)
+	if view.QuotaUsage.Monthly.Requests != 2 || view.QuotaUsage.Monthly.InputTokens != 2_000_000 {
+		t.Fatalf("binding recorded indexes did not attribute traffic: %+v", view.QuotaUsage.Monthly)
+	}
+	if math.Abs(view.QuotaUsage.Monthly.USD-2.80) > 1e-6 {
+		t.Fatalf("monthly USD = %v, want 2.80", view.QuotaUsage.Monthly.USD)
+	}
+
+	// A rebind refreshes the recorded set: the indexes of the previous write are
+	// gone, so traffic that still names one is no longer attributed to this account.
+	bindClinePassPublicationAccount(t, app, headers, accountID)
+	want = []string{"key-index-2", "row-index-2"}
+	if got := recordedClinePassRouteIndexes(service, accountID); !reflect.DeepEqual(got, want) {
+		t.Fatalf("recorded auth indexes after a rebind = %#v, want %#v", got, want)
+	}
+	service.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai-compatible-cline pass", AuthType: "apikey", AuthIndex: "row-index-1",
+		Model: "cline-pass/glm-5.3", RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 1_000_000},
+	})
+	after, _ := service.AccountView(accountID)
+	if after.QuotaUsage.Monthly.InputTokens != 2_000_000 {
+		t.Fatalf("a stale auth index still attributed traffic: %+v", after.QuotaUsage.Monthly)
+	}
+}
+
+// Two accounts on one gateway are two channel rows, so each bind records only its
+// own row's indexes: a record that names one account's index never reaches the
+// other account's windows.
+func TestClinePassBindRecordsAuthIndexesPerAccount(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	firstID, errFirst := service.SaveAPIKeyAccount("", "first", "", "sk-first-secret")
+	if errFirst != nil {
+		t.Fatalf("SaveAPIKeyAccount(first) error = %v", errFirst)
+	}
+	secondID, errSecond := service.SaveAPIKeyAccount("", "second", "", "sk-second-secret")
+	if errSecond != nil {
+		t.Fatalf("SaveAPIKeyAccount(second) error = %v", errSecond)
+	}
+	if firstID == secondID {
+		t.Fatal("the two accounts must be distinct")
+	}
+	store := &clinePassChannelStore{assignAuthIndex: clinePassAuthIndexStamp}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	bindClinePassPublicationAccount(t, app, headers, firstID)
+	bindClinePassPublicationAccount(t, app, headers, secondID)
+	if got, want := recordedClinePassRouteIndexes(service, firstID), []string{"key-index-1", "row-index-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first account indexes = %#v, want %#v", got, want)
+	}
+	if got, want := recordedClinePassRouteIndexes(service, secondID), []string{"key-index-2", "row-index-2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second account indexes = %#v, want %#v", got, want)
+	}
+
+	service.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai-compatible-cline pass", AuthType: "apikey", AuthIndex: "row-index-2",
+		Model: "cline-pass/glm-5.3", RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 1_000_000},
+	})
+	first, _ := service.AccountView(firstID)
+	if first.QuotaUsage.Monthly.Requests != 0 {
+		t.Fatalf("the first account took the second account's traffic: %+v", first.QuotaUsage.Monthly)
+	}
+	second, _ := service.AccountView(secondID)
+	if second.QuotaUsage.Monthly.Requests != 1 || second.QuotaUsage.Monthly.InputTokens != 1_000_000 {
+		t.Fatalf("the second account did not take its own traffic: %+v", second.QuotaUsage.Monthly)
 	}
 }

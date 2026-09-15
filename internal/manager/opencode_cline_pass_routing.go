@@ -276,7 +276,7 @@ func (a *App) bindClinePassAccountBestEffort(ctx context.Context, managementKey,
 	if len(models) == 0 {
 		models = clinePassCatalogIDs()
 	}
-	result, errBind := a.bindClinePassChannel(bindCtx, managementKey, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), models, a.clinePass.clinePassClientVersion(bindCtx))
+	result, errBind := a.bindClinePassChannel(bindCtx, managementKey, credential.ID, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), models, a.clinePass.clinePassClientVersion(bindCtx))
 	if errBind != nil {
 		a.recordClinePassBinding(startedAt, false)
 		return clinePassBindOutcome{ErrorText: sanitizeClinePassError(errBind.Error())}

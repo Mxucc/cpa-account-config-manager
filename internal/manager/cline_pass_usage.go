@@ -273,34 +273,90 @@ func (s *ClinePassService) ObserveUsage(record cpaapi.UsageRecord) {
 	})
 }
 
-// clinePassUsageKey resolves the ledger key of one usage record. A record whose
-// credential is the token of a stored account is keyed by that account id, which is
-// the primary identity. A record that names a published Cline Pass model but whose
-// account row is not stored is keyed by the bound channel's credential identity
-// instead, so the traffic is recorded under the identity CPA reports for the
-// channel and attaches to the account as soon as it is stored. Anything else is not
-// Cline Pass traffic and is ignored.
+// clinePassUsageKey resolves the ledger key of one usage record. A record that
+// belongs to a stored account is keyed by that account id, which is the key the
+// account's own view reads. The matches are tried in the order CPA makes them
+// reliable:
+//
+//  1. the CPA auth index the account's own channel row carries, and the host's
+//     auth id;
+//  2. the raw channel credential as it was written to that row, which does not
+//     depend on the provider string a callback reports;
+//  3. the credential digest this plugin computes for the channel;
+//  4. a published Cline Pass model, attributed to the stored account only while
+//     exactly one account can claim it, and otherwise kept under the digest the
+//     callback reports so nothing is mixed between accounts.
+//
+// A record two stored accounts claim is dropped instead of being counted twice,
+// and a record that matches nothing is not Cline Pass traffic and is ignored.
 func (s *ClinePassService) clinePassUsageKey(record cpaapi.UsageRecord) (string, bool) {
 	identity := runtimeCredentialIdentity(record)
 	token := strings.TrimSpace(record.APIKey)
+	authIndex := strings.TrimSpace(record.AuthIndex)
+	authID := strings.TrimSpace(record.AuthID)
 	s.mu.RLock()
-	for _, account := range s.accounts {
-		if identity != "" && identity == clinePassChannelCredentialIdentity(account.AccessToken) {
-			s.mu.RUnlock()
-			return account.ID, true
-		}
-		// A host that reports a different provider string for the same channel still
-		// presents the channel credential, so the raw token is the fallback match.
-		if token != "" && token == strings.TrimSpace(account.AccessToken) {
-			s.mu.RUnlock()
-			return account.ID, true
+	defer s.mu.RUnlock()
+	// CPA reports its own provider string for the channel, so the digest computed
+	// from the channel kind cannot match a live callback; the auth index CPA
+	// assigned to the account's own row can, and it is the primary identity.
+	if accountID := s.routeAccountForAuthIndexLocked(authIndex); accountID != "" {
+		if _, stored := s.accountLocked(accountID); stored {
+			return accountID, true
 		}
 	}
-	s.mu.RUnlock()
+	tiers := []func(account ClinePassAccount) bool{
+		func(account ClinePassAccount) bool {
+			// A host that reports the auth file id rather than the index still
+			// names the account by its id or by its credential identity.
+			return authID != "" && (authID == account.ID || authID == clinePassChannelCredentialIdentity(account.AccessToken))
+		},
+		func(account ClinePassAccount) bool {
+			return token != "" && token == strings.TrimSpace(account.AccessToken)
+		},
+		func(account ClinePassAccount) bool {
+			return identity != "" && identity == clinePassChannelCredentialIdentity(account.AccessToken)
+		},
+	}
+	for _, tier := range tiers {
+		accountID, ambiguous := s.clinePassUsageAccountLocked(tier)
+		if ambiguous {
+			// Two stored accounts claim the same record, so attributing it to
+			// either one would double count: it is dropped.
+			return "", false
+		}
+		if accountID != "" {
+			return accountID, true
+		}
+	}
 	if identity != "" && clinePassIsPublishedModel(firstNonEmpty(record.Model, record.Alias)) {
+		// Last resort: a published Cline Pass model whose credential matches no
+		// stored account. Exactly one stored account can only be the one that
+		// served it, so the event still follows that account; with several
+		// candidates the digest key is kept so nothing is mixed between accounts.
+		if accountID, ambiguous := s.clinePassUsageAccountLocked(func(ClinePassAccount) bool { return true }); accountID != "" && !ambiguous {
+			return accountID, true
+		}
 		return identity, true
 	}
 	return "", false
+}
+
+// clinePassUsageAccountLocked resolves the single stored account one usage record
+// matches. An empty id with ambiguous=false means no stored account matched;
+// ambiguous=true means two different accounts matched, which must never be
+// attributed to one of them. The caller must hold at least a read lock.
+func (s *ClinePassService) clinePassUsageAccountLocked(match func(account ClinePassAccount) bool) (string, bool) {
+	found := ""
+	for _, account := range s.accounts {
+		if account.ID == found || !match(account) {
+			continue
+		}
+		if found != "" {
+			return "", true
+		}
+		found = account.ID
+	}
+	return found, false
 }
 
 // clinePassQuotaUsageLocked builds the additive quota block of one account view.

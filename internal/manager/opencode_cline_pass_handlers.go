@@ -317,7 +317,7 @@ func (a *App) handleClinePassRefresh(ctx context.Context, req cpaapi.ManagementR
 		if errCredential != nil {
 			return jsonResponse(http.StatusBadGateway, map[string]any{"error": errCredential.Error()})
 		}
-		result, errBind := a.bindClinePassChannel(ctx, managementKey, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), credential.Models, a.clinePass.clinePassClientVersion(ctx))
+		result, errBind := a.bindClinePassChannel(ctx, managementKey, credential.ID, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), credential.Models, a.clinePass.clinePassClientVersion(ctx))
 		if errBind != nil {
 			a.operations.Record(OperationEntry{
 				Category: OperationCategoryOpenCode, Action: OperationActionOpenCodeRefresh,
@@ -409,7 +409,7 @@ func (a *App) handleClinePassBind(ctx context.Context, req cpaapi.ManagementRequ
 	if len(models) == 0 {
 		models = clinePassCatalogIDs()
 	}
-	result, errBind := a.bindClinePassChannel(ctx, managementKey, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), models, a.clinePass.clinePassClientVersion(ctx))
+	result, errBind := a.bindClinePassChannel(ctx, managementKey, credential.ID, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), models, a.clinePass.clinePassClientVersion(ctx))
 	if errBind != nil {
 		return jsonResponse(http.StatusBadGateway, map[string]any{"error": errBind.Error()})
 	}

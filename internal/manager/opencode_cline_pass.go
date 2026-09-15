@@ -50,6 +50,14 @@ const (
 	clinePassVersionFetchTimeout  = 5 * time.Second
 	clinePassNPMRegistryURL       = "https://registry.npmjs.org/cline/latest"
 	clinePassBoundChannelName     = "Cline Pass"
+	// clinePassMaxRouteAuthIndexes bounds the auth-index → account index that
+	// attributes Cline Pass usage callbacks to a stored account. One account has a
+	// handful of channel rows, so the cap only stops a pathological channel list
+	// from growing the map for ever.
+	clinePassMaxRouteAuthIndexes = 256
+	// clinePassMaxRouteAuthIndexesPerAccount bounds the channel rows recorded for
+	// one account for the same reason.
+	clinePassMaxRouteAuthIndexesPerAccount = 16
 	// clinePassModelPrefix is the literal prefix stripped from the client-facing
 	// model id when the strip_model_prefix setting is on. Only this prefix is
 	// stripped; every other id is published unchanged.
@@ -304,6 +312,11 @@ type ClinePassService struct {
 	// usage keeps the reference-priced events of the documented quota windows in
 	// memory. It is fed by the CPA usage callback the plugin already consumes.
 	usage *clinePassUsageLedger
+	// routeAuthIndexes maps a CPA auth index to the id of the stored account whose
+	// channel row carries it. CPA assigns the index when the channel is written,
+	// so it is the identity a usage callback reports for Cline Pass traffic; the
+	// map is refreshed from the live channel list on every bind.
+	routeAuthIndexes map[string]string
 }
 
 func NewClinePassService() *ClinePassService {
@@ -314,6 +327,7 @@ func NewClinePassService() *ClinePassService {
 		stripModelPrefix: true,
 		logins:           map[string]*clinePassLoginSession{},
 		usage:            newClinePassUsageLedger(),
+		routeAuthIndexes: map[string]string{},
 	}
 }
 
@@ -332,6 +346,70 @@ func (s *ClinePassService) httpDoer() HTTPDoer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.doer
+}
+
+// SetRouteAuthIndexes records the CPA auth indexes the account's channel rows
+// carry, replacing the set recorded for that account before. CPA assigns an
+// auth-index when a channel row is written and can change it, so the caller
+// re-reads the live channel list after every write and reports what it found;
+// the index is then what attributes a Cline Pass usage callback to this account.
+// Empty values and duplicates are ignored, and both the per-account and the
+// whole set are bounded, so a pathological channel list cannot grow the map
+// without bound.
+func (s *ClinePassService) SetRouteAuthIndexes(accountID string, indexes []string) {
+	if s == nil {
+		return
+	}
+	id := strings.TrimSpace(accountID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routeAuthIndexes == nil {
+		s.routeAuthIndexes = map[string]string{}
+	}
+	s.removeRouteAuthIndexesLocked(id)
+	if id == "" {
+		return
+	}
+	recorded := 0
+	for _, index := range indexes {
+		trimmed := strings.TrimSpace(index)
+		if trimmed == "" || recorded >= clinePassMaxRouteAuthIndexesPerAccount {
+			continue
+		}
+		if _, exists := s.routeAuthIndexes[trimmed]; exists {
+			continue
+		}
+		if len(s.routeAuthIndexes) >= clinePassMaxRouteAuthIndexes {
+			return
+		}
+		s.routeAuthIndexes[trimmed] = id
+		recorded++
+	}
+}
+
+// routeAccountForAuthIndexLocked resolves the stored account id one CPA auth
+// index belongs to. The caller must hold the service mutex, so the matcher can
+// read the index without taking it again.
+func (s *ClinePassService) routeAccountForAuthIndexLocked(authIndex string) string {
+	if s == nil || len(s.routeAuthIndexes) == 0 {
+		return ""
+	}
+	index := strings.TrimSpace(authIndex)
+	if index == "" {
+		return ""
+	}
+	return s.routeAuthIndexes[index]
+}
+
+// removeRouteAuthIndexesLocked drops every index recorded for one account. A
+// removed account must not keep attributing traffic to an id that no longer has
+// a view to show it on. The caller must hold the service mutex.
+func (s *ClinePassService) removeRouteAuthIndexesLocked(accountID string) {
+	for index, owner := range s.routeAuthIndexes {
+		if owner == accountID {
+			delete(s.routeAuthIndexes, index)
+		}
+	}
 }
 
 func clinePassStorePath(dataDir string) string {
@@ -718,6 +796,7 @@ func (s *ClinePassService) RemoveAccount(id string) error {
 			s.accounts[index] = removed
 			return errPersist
 		}
+		s.removeRouteAuthIndexesLocked(id)
 		s.cancelLoginsForAccountLocked(id)
 		return nil
 	}

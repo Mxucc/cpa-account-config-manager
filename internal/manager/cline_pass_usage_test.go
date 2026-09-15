@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -284,6 +285,245 @@ func TestClinePassModelsPayloadCarriesReferencePrices(t *testing.T) {
 	for _, field := range []string{"input_usd_per_million", "output_usd_per_million", "cache_read_usd_per_million", "cache_write_usd_per_million"} {
 		if _, exists := free[field]; exists {
 			t.Fatalf("unpriced row published %q: %#v", field, free)
+		}
+	}
+}
+
+// recordedClinePassRouteIndexes reports the auth indexes one account currently
+// claims, as the matcher sees them.
+func recordedClinePassRouteIndexes(service *ClinePassService, accountID string) []string {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	indexes := make([]string, 0, 2)
+	for index, owner := range service.routeAuthIndexes {
+		if owner == accountID {
+			indexes = append(indexes, index)
+		}
+	}
+	sort.Strings(indexes)
+	return indexes
+}
+
+// A usage callback that carries only the auth index CPA assigned to the account's
+// own channel row is attributed to that account: every documented window reports
+// the tokens, the request and the reference-priced USD. The record names the
+// provider string CPA reports live, which is not the one this plugin computes for
+// the channel kind, and carries no credential at all.
+func TestClinePassQuotaUsageAttributesByChannelAuthIndex(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	accountID, errSave := service.SaveAPIKeyAccount("", "auth index", "", "sk-auth-index-secret")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	// Empty values and duplicates are ignored, and the recorded value is trimmed.
+	service.SetRouteAuthIndexes(accountID, []string{" b0b53977f3d9925b ", "b0b53977f3d9925b", ""})
+
+	service.ObserveUsage(cpaapi.UsageRecord{
+		Provider:    "openai-compatible-cline pass",
+		AuthType:    "apikey",
+		AuthIndex:   "b0b53977f3d9925b",
+		Model:       "glm-5.3",
+		RequestedAt: now.Add(-time.Minute),
+		Detail:      cpaapi.UsageDetail{InputTokens: 1_000_000, OutputTokens: 500_000},
+	})
+
+	view, ok := service.AccountView(accountID)
+	if !ok {
+		t.Fatalf("account %q is missing", accountID)
+	}
+	// glm-5.3 with 1M uncached input and 500K output: 1*1.40 + 0.5*4.40 = 3.60 USD.
+	windows := map[string]ClinePassQuotaWindowUsage{
+		"five_hour": view.QuotaUsage.FiveHour,
+		"weekly":    view.QuotaUsage.Weekly,
+		"monthly":   view.QuotaUsage.Monthly,
+	}
+	for name, window := range windows {
+		if window.InputTokens != 1_000_000 || window.OutputTokens != 500_000 || window.Requests != 1 {
+			t.Fatalf("%s window = %+v, want the record's tokens over one request", name, window)
+		}
+		if math.Abs(window.USD-3.60) > 1e-6 || window.UnpricedRequests != 0 {
+			t.Fatalf("%s window USD = %v, want 3.60", name, window.USD)
+		}
+	}
+}
+
+// The other identity a callback can carry is the host's auth id: it names the
+// account by its id or by the credential identity this plugin computes.
+func TestClinePassQuotaUsageAttributesByAuthID(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	accountID, errSave := service.SaveAPIKeyAccount("", "auth id", "", "sk-auth-id-secret")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+
+	byID := clinePassQuotaRecord("", "cline-pass/glm-5.2", now.Add(-time.Minute), cpaapi.UsageDetail{InputTokens: 1_000_000})
+	byID.Provider = "openai-compatible-cline pass"
+	byID.AuthID = accountID
+	service.ObserveUsage(byID)
+
+	byIdentity := clinePassQuotaRecord("", "cline-pass/glm-5.2", now.Add(-time.Minute), cpaapi.UsageDetail{InputTokens: 1_000_000})
+	byIdentity.Provider = "openai-compatible-cline pass"
+	byIdentity.AuthID = clinePassChannelCredentialIdentity("sk-auth-id-secret")
+	service.ObserveUsage(byIdentity)
+
+	view, _ := service.AccountView(accountID)
+	monthly := view.QuotaUsage.Monthly
+	if monthly.InputTokens != 2_000_000 || monthly.Requests != 2 {
+		t.Fatalf("the auth id did not attribute both records: %+v", monthly)
+	}
+	if math.Abs(monthly.USD-2.80) > 1e-6 {
+		t.Fatalf("monthly USD = %v, want 2.80", monthly.USD)
+	}
+}
+
+// Two accounts on the same gateway carry different auth indexes, which is what
+// tells their traffic apart: each record lands on the account whose channel row
+// it names, and the per-account channel rows are the reason the index is recorded
+// per account rather than per gateway.
+func TestClinePassQuotaUsageSeparatesAccountsByAuthIndex(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	// The accounts are saved before the clock is frozen: an account id is derived
+	// from the wall clock, so two accounts created at the same instant would share
+	// one id.
+	firstID, errFirst := service.SaveAPIKeyAccount("", "first", "", "sk-first-secret")
+	if errFirst != nil {
+		t.Fatalf("SaveAPIKeyAccount(first) error = %v", errFirst)
+	}
+	secondID, errSecond := service.SaveAPIKeyAccount("", "second", "", "sk-second-secret")
+	if errSecond != nil {
+		t.Fatalf("SaveAPIKeyAccount(second) error = %v", errSecond)
+	}
+	service.now = func() time.Time { return now }
+	if firstID == secondID {
+		t.Fatal("the two accounts must be distinct")
+	}
+	service.SetRouteAuthIndexes(firstID, []string{"index-first"})
+	service.SetRouteAuthIndexes(secondID, []string{"index-second"})
+
+	service.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai-compatible-cline pass", AuthType: "apikey", AuthIndex: "index-first",
+		Model: "cline-pass/glm-5.3", RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 1_000_000},
+	})
+	service.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai-compatible-cline pass", AuthType: "apikey", AuthIndex: "index-second",
+		Model: "cline-pass/glm-5.2", RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 2_000_000},
+	})
+
+	first, _ := service.AccountView(firstID)
+	if first.QuotaUsage.Monthly.InputTokens != 1_000_000 || first.QuotaUsage.Monthly.Requests != 1 {
+		t.Fatalf("first account took the wrong traffic: %+v", first.QuotaUsage.Monthly)
+	}
+	if math.Abs(first.QuotaUsage.Monthly.USD-1.40) > 1e-6 {
+		t.Fatalf("first account USD = %v, want 1.40", first.QuotaUsage.Monthly.USD)
+	}
+	second, _ := service.AccountView(secondID)
+	if second.QuotaUsage.Monthly.InputTokens != 2_000_000 || second.QuotaUsage.Monthly.Requests != 1 {
+		t.Fatalf("second account took the wrong traffic: %+v", second.QuotaUsage.Monthly)
+	}
+	if math.Abs(second.QuotaUsage.Monthly.USD-2.80) > 1e-6 {
+		t.Fatalf("second account USD = %v, want 2.80", second.QuotaUsage.Monthly.USD)
+	}
+}
+
+// An auth index no stored account claims is not attributed to an arbitrary
+// account. Two accounts are stored, so the last-resort identity keeps the event
+// where the callback reported it instead of mixing it into one of them, and a
+// record without any credential is dropped entirely.
+func TestClinePassQuotaUsageIgnoresUnknownAuthIndex(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	firstID, errFirst := service.SaveAPIKeyAccount("", "first", "", "sk-first-secret")
+	if errFirst != nil {
+		t.Fatalf("SaveAPIKeyAccount(first) error = %v", errFirst)
+	}
+	secondID, errSecond := service.SaveAPIKeyAccount("", "second", "", "sk-second-secret")
+	if errSecond != nil {
+		t.Fatalf("SaveAPIKeyAccount(second) error = %v", errSecond)
+	}
+	service.now = func() time.Time { return now }
+	if firstID == secondID {
+		t.Fatal("the two accounts must be distinct")
+	}
+	service.SetRouteAuthIndexes(firstID, []string{"index-first"})
+	service.SetRouteAuthIndexes(secondID, []string{"index-second"})
+
+	foreign := cpaapi.UsageRecord{
+		Provider: "openai-compatible-cline pass", AuthType: "apikey", APIKey: "sk-foreign-secret",
+		AuthIndex: "index-foreign", Model: "glm-5.3",
+		RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 1_000_000},
+	}
+	service.ObserveUsage(foreign)
+	// The same unknown index without any credential cannot be attributed either.
+	service.ObserveUsage(cpaapi.UsageRecord{
+		Provider: "openai-compatible-cline pass", AuthType: "apikey",
+		AuthIndex: "index-foreign", Model: "glm-5.3",
+		RequestedAt: now.Add(-time.Minute), Detail: cpaapi.UsageDetail{InputTokens: 4_000_000},
+	})
+
+	for name, id := range map[string]string{"first": firstID, "second": secondID} {
+		view, _ := service.AccountView(id)
+		if view.QuotaUsage.Monthly.Requests != 0 || view.QuotaUsage.Monthly.InputTokens != 0 {
+			t.Fatalf("%s account took a record of a foreign auth index: %+v", name, view.QuotaUsage.Monthly)
+		}
+		if view.QuotaUsage.Weekly.Requests != 0 || view.QuotaUsage.FiveHour.Requests != 0 {
+			t.Fatalf("%s account took a foreign record in another window: %+v", name, view.QuotaUsage)
+		}
+	}
+	// Nothing is lost either: the credentialled record stays under the identity the
+	// callback reported.
+	kept := service.usage.usage(now, runtimeCredentialIdentity(foreign))
+	if kept.Monthly.Requests != 1 || kept.Monthly.InputTokens != 1_000_000 {
+		t.Fatalf("the foreign record was not kept under its own identity: %+v", kept.Monthly)
+	}
+}
+
+// A record two stored accounts claim is dropped rather than counted twice.
+func TestClinePassQuotaUsageDropsRecordTwoAccountsClaim(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	firstID, errFirst := service.SaveAPIKeyAccount("", "shared one", "", "sk-shared-secret")
+	if errFirst != nil {
+		t.Fatalf("SaveAPIKeyAccount(first) error = %v", errFirst)
+	}
+	secondID, errSecond := service.SaveAPIKeyAccount("", "shared two", "", "sk-shared-secret")
+	if errSecond != nil {
+		t.Fatalf("SaveAPIKeyAccount(second) error = %v", errSecond)
+	}
+	service.now = func() time.Time { return now }
+	if firstID == secondID {
+		t.Fatal("the two accounts must be distinct")
+	}
+
+	service.ObserveUsage(clinePassQuotaRecord("sk-shared-secret", "cline-pass/glm-5.3", now.Add(-time.Minute), cpaapi.UsageDetail{InputTokens: 1_000_000}))
+
+	for name, id := range map[string]string{"first": firstID, "second": secondID} {
+		view, _ := service.AccountView(id)
+		if view.QuotaUsage.Monthly.Requests != 0 {
+			t.Fatalf("%s account counted an ambiguous record: %+v", name, view.QuotaUsage.Monthly)
+		}
+	}
+	if kept := service.usage.usage(now, clinePassChannelCredentialIdentity("sk-shared-secret")); kept.Monthly.Requests != 0 {
+		t.Fatalf("the ambiguous record was stashed under the credential identity: %+v", kept.Monthly)
+	}
+}
+
+// The client-facing stripped alias of a catalog model counts as a published
+// Cline Pass model, which is what lets the last-resort match recognise traffic
+// named by the id a client actually calls.
+func TestClinePassPublishedModelAcceptsClientAlias(t *testing.T) {
+	for _, model := range []string{"cline-pass/deepseek-v4.1-flash", "deepseek-v4.1-flash", "cline-pass/glm-5.3", "glm-5.3"} {
+		if !clinePassIsPublishedModel(model) {
+			t.Fatalf("model %q must count as published", model)
+		}
+	}
+	for _, model := range []string{"gpt-5.3-codex", ""} {
+		if clinePassIsPublishedModel(model) {
+			t.Fatalf("model %q must not count as published", model)
 		}
 	}
 }

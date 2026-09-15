@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api/client";
+import { listClinePassAccounts } from "./api/clinePass";
 import pluginLogo from "./assets/cpama.svg";
 import { AccountDetailsDialog } from "./components/AccountDetailsDialog";
 import { AccountActionsMenu } from "./components/AccountActionsMenu";
@@ -257,6 +258,8 @@ function AccountManagerApp() {
   const [sidebarProviderChannels, setSidebarProviderChannels] = useState<AIProviderChannelSnapshot[]>([]);
   const [sidebarProviderRuntime, setSidebarProviderRuntime] = useState<AIProviderRuntimeSnapshot[]>([]);
   const [loading, setLoading] = useState(false);
+  const [openCodeQuota, setOpenCodeQuota] = useState<Record<string, import("./types").OpenCodeQuotaResult>>({});
+  const [clinePassQuota, setClinePassQuota] = useState<Record<string, import("./api/clinePassTypes").ClinePassQuotaUsage>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scopeMode, setScopeMode] = useState<"selected" | "filtered">("filtered");
   const [editorContext, setEditorContext] = useState<EditorContext | null>(null);
@@ -481,6 +484,32 @@ function AccountManagerApp() {
     if (authState !== "ready") {
       setWeeklyOverdraftEnabled(false);
     }
+  }, [authState]);
+
+  useEffect(() => {
+    if (authState !== "ready") return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const refreshProviderUsage = async () => {
+      try {
+        const [openCodeResult, clinePassResult] = await Promise.allSettled([
+          api.getOpenCodeQuota(controller.signal),
+          listClinePassAccounts(controller.signal),
+        ]);
+        if (cancelled) return;
+        if (openCodeResult.status === "fulfilled") setOpenCodeQuota(openCodeResult.value.results ?? {});
+        if (clinePassResult.status === "fulfilled") {
+          const next: Record<string, import("./api/clinePassTypes").ClinePassQuotaUsage> = {};
+          for (const account of clinePassResult.value.accounts) if (account.quota_usage) next[account.id] = account.quota_usage;
+          setClinePassQuota(next);
+        }
+      } catch {
+        if (!cancelled) { setOpenCodeQuota({}); setClinePassQuota({}); }
+      }
+    };
+    void refreshProviderUsage();
+    const timer = window.setInterval(() => void refreshProviderUsage(), 30_000);
+    return () => { cancelled = true; controller.abort(); window.clearInterval(timer); };
   }, [authState]);
 
   const refreshAccounts = useCallback(async (silent = false, requestedPage = page, requestedFilters: AccountFilters = apiFilters, requestedSort: AccountSort = accountSort, signal?: AbortSignal) => {
@@ -1437,8 +1466,8 @@ function AccountManagerApp() {
         <div className="table-scroll">
           <table className="account-table">
             <colgroup>
-              <col className="col-select" /><col className="col-identity" /><col className="col-provider" />
-								<col className="col-type" /><col className="col-activity" /><col className="col-active-reset" /><col className="col-concurrency" /><col className="col-created" /><col className="col-disabled-at" /><col className="col-access" />
+              <col className="col-select" /><col className="col-identity" /><col className="col-activity" /><col className="col-provider" />
+								<col className="col-type" /><col className="col-active-reset" /><col className="col-concurrency" /><col className="col-created" /><col className="col-disabled-at" /><col className="col-access" />
               <col className="col-state" /><col className="col-priority" /><col className="col-routing" /><col className="col-actions" />
             </colgroup>
             <thead>
@@ -1473,9 +1502,9 @@ function AccountManagerApp() {
                       {account.note ? <small>{account.note}</small> : null}
                     </div>
                   </td>
+                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled openCodeQuota={openCodeQuota[account.id] || (account.auth_id ? openCodeQuota[account.auth_id] : undefined)} clinePassQuota={clinePassQuota[account.id] || (account.auth_id ? clinePassQuota[account.auth_id] : undefined)} /></td>
                   <td><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
                   <td><AccountTypeCell account={account} /></td>
-                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled /></td>
 									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
 									<td><AccountConcurrencyCell account={account} /></td>
 									<td><AccountLifecycleTime value={account.created_at} /></td>

@@ -1,10 +1,11 @@
 import { Activity, AlertTriangle, Gauge } from "lucide-react";
-import type { Account, UsageWindowSnapshot } from "../types";
+import type { Account, OpenCodeQuotaResult, UsageWindowSnapshot } from "../types";
+import type { ClinePassQuotaUsage } from "../api/clinePassTypes";
 import { localeFormats, useI18n, type Locale } from "../i18n";
 import { formatCreditUSD } from "../format/currency";
 import type { UIMessageKey } from "../i18n/uiText";
 
-export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, creditUsageEnabled = false }: { account: Account; weeklyOverdraftEnabled?: boolean; creditUsageEnabled?: boolean }) {
+export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, creditUsageEnabled = false, openCodeQuota, clinePassQuota }: { account: Account; weeklyOverdraftEnabled?: boolean; creditUsageEnabled?: boolean; openCodeQuota?: OpenCodeQuotaResult; clinePassQuota?: ClinePassQuotaUsage }) {
   const { locale, t, tx, formatDateTime, formatNumber } = useI18n();
   const usage = account.usage;
   const agentIdentity = String(account.provider || account.type).trim().toLowerCase() === "codex-agent-identity";
@@ -56,6 +57,8 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
       ? tx("ui.last_request_time", { time: formatDateTime(usage.last_request_at) })
       : tx("ui.no_recent_cpa_request_windows");
   const codex = usage?.codex;
+  const providerQuota = openCodeQuota?.success ? openCodeQuota : undefined;
+  const hasProviderQuota = Boolean(providerQuota?.rolling || providerQuota?.weekly || providerQuota?.monthly || clinePassQuota?.five_hour || clinePassQuota?.weekly || clinePassQuota?.monthly);
   const hasQuota = Boolean(codex?.five_hour || codex?.seven_day);
   const fiveHourExhausted = safePercent(codex?.five_hour?.used_percent ?? 0) >= 100;
   const longWindowExhausted = safePercent(codex?.seven_day?.used_percent ?? 0) >= 100;
@@ -117,10 +120,16 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
           <AlertTriangle size={10} aria-hidden="true" /><b>{tx("ui.unrated_requests_count", { count: formatNumber(credit?.unrated_requests ?? 0) })}</b>
         </div>
       ) : null}
-      {hasQuota ? (
+      {hasQuota || hasProviderQuota ? (
         <div className="usage-quota-list">
           {codex?.five_hour ? <UsageQuota label="5h" window={codex.five_hour} /> : null}
           {codex?.seven_day ? <UsageQuota label="7d" window={codex.seven_day} /> : null}
+          {providerQuota?.rolling ? <ProviderUsageQuota label="5h" window={providerQuota.rolling} /> : null}
+          {providerQuota?.weekly ? <ProviderUsageQuota label="7d" window={providerQuota.weekly} /> : null}
+          {providerQuota?.monthly ? <ProviderUsageQuota label="30d" window={providerQuota.monthly} /> : null}
+          {clinePassQuota?.five_hour ? <ClinePassUsageQuota label="5h" window={clinePassQuota.five_hour} /> : null}
+          {clinePassQuota?.weekly ? <ClinePassUsageQuota label="7d" window={clinePassQuota.weekly} /> : null}
+          {clinePassQuota?.monthly ? <ClinePassUsageQuota label="30d" window={clinePassQuota.monthly} /> : null}
           {overdraftWindows.length > 0 ? (
             <div
               className="usage-overdraft-panel"
@@ -186,6 +195,20 @@ export function AccountUsageCell({ account, weeklyOverdraftEnabled = false, cred
   );
 }
 
+
+function ProviderUsageQuota({ label, window }: { label: string; window: { usage_percent: number; reset_at: string } }) {
+  const { formatDateTime } = useI18n();
+  const percent = safePercent(window.usage_percent);
+  const width = Math.min(100, percent);
+  const tone = percent >= 90 ? "danger" : percent >= 70 ? "warning" : "normal";
+  return <div className={`usage-quota-row quota-${tone}`} title={`${label}: ${formatPercent(percent)}% used · ${window.reset_at ? formatDateTime(window.reset_at) : ""}`}><span>{label}</span><span className="usage-quota-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={width}><span style={{ width: `${width}%` }} /></span><b>{formatPercent(percent)}%</b></div>;
+}
+
+function ClinePassUsageQuota({ label, window }: { label: string; window: { usd: number; input_tokens: number; output_tokens: number; requests: number } }) {
+  const { locale, formatNumber } = useI18n();
+  const tokens = safeCount(window.input_tokens) + safeCount(window.output_tokens);
+  return <div className="usage-quota-row" title={`${formatNumber(window.requests)} requests · ${formatNumber(tokens)} tokens`}><span>{label}</span><span className="usage-quota-track" role="meter" aria-valuemin={0} aria-valuemax={1} aria-valuenow={Math.min(1, safeCount(window.usd))}><span style={{ width: `${Math.min(100, safeCount(window.usd) * 100)}%` }} /></span><b>{formatCreditUSD(window.usd, locale)}</b></div>;
+}
 
 function overdraftStatusLabel(status: string | undefined, tx: (key: UIMessageKey) => string): string {
   switch (status) {

@@ -152,6 +152,13 @@ type ClinePassAccountView struct {
 	ModelsError     string     `json:"models_error,omitempty"`
 	ModelsFetchedAt time.Time  `json:"models_fetched_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at,omitempty"`
+	// Routing state: whether a CPA OpenAI-compatible channel publishes this
+	// account's base URL, how many models that channel advertises, and how many
+	// of this account's models it is missing. The values are derived from the
+	// live channel list at request time and never carry a credential.
+	ChannelBound     bool `json:"channel_bound"`
+	ChannelModels    int  `json:"channel_models"`
+	ChannelModelGaps int  `json:"channel_model_gaps"`
 }
 
 type clinePassPersisted struct {
@@ -198,6 +205,11 @@ type ClinePassLoginView struct {
 	Error                   string                 `json:"error,omitempty"`
 	Account                 *ClinePassAccountView  `json:"account,omitempty"`
 	Accounts                []ClinePassAccountView `json:"accounts,omitempty"`
+	// Binding reports the automatic bind attempted when a sign-in completed so
+	// the client can tell whether the new account is already routable. Exactly
+	// one of the two fields is set. Neither carries a credential.
+	Binding      *OpenCodeBindingResult `json:"binding,omitempty"`
+	BindingError string                 `json:"binding_error,omitempty"`
 }
 
 // clinePassLogin statuses reported to the UI.

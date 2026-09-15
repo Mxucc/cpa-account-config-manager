@@ -785,6 +785,7 @@ func safeOperationReason(value string) string {
 		"insufficient_compatibility_evidence",
 		"plugin_configure_timeout",
 		"token_refreshed_native", "token_refreshed_plugin", "refresh_provider_unsupported", "refresh_conflict", "refresh_verification_failed",
+		"channel_bound", "channel_bind_failed",
 		"login_state_not_found", "login_state_expired", "conversion_running", "session_rejected", "invalid_session":
 		return value
 	case "notification_delivered", "notification_failed", "notification_rejected", "notification_queue_full", "notification_superseded":

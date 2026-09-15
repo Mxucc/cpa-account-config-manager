@@ -567,10 +567,12 @@ func TestClinePassManagementRoutes(t *testing.T) {
 	if bindResponse.StatusCode != http.StatusOK {
 		t.Fatalf("bind status = %d body=%s", bindResponse.StatusCode, bindResponse.Body)
 	}
-	if len(channelWrites) != 1 || len(channelWrites[0]) != 1 {
+	// The save above already bound the account once, so the explicit bind is the
+	// second channel write.
+	if len(channelWrites) != 2 || len(channelWrites[1]) != 1 {
 		t.Fatalf("channel writes = %#v", channelWrites)
 	}
-	entry := channelWrites[0][0]
+	entry := channelWrites[1][0]
 	if entry["base-url"] != clinePassDefaultBaseURL {
 		t.Fatalf("bound base-url = %#v", entry["base-url"])
 	}
@@ -602,7 +604,7 @@ func TestClinePassManagementRoutes(t *testing.T) {
 	if refreshResponse.StatusCode != http.StatusOK {
 		t.Fatalf("refresh status = %d body=%s", refreshResponse.StatusCode, refreshResponse.Body)
 	}
-	if len(channelWrites) != 2 || len(channelWrites[1]) != 1 {
+	if len(channelWrites) != 3 || len(channelWrites[2]) != 1 {
 		t.Fatalf("rebind did not update the channel in place: %#v", channelWrites)
 	}
 

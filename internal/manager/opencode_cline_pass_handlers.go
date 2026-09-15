@@ -57,12 +57,22 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
 	}
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	managementKey := resolveManagementKey(req.Headers)
 	if method == http.MethodGet {
+		accounts := a.clinePass.ListAccounts()
+		views := make([]*ClinePassAccountView, 0, len(accounts))
+		for index := range accounts {
+			views = append(views, &accounts[index])
+		}
+		// The routing state comes from one channel-list read and never fails the
+		// list: an unreadable channel list or a missing management key degrades
+		// every account to the unbound state.
+		a.annotateClinePassRouteState(ctx, managementKey, views...)
 		return jsonResponse(http.StatusOK, clinePassAccountsResponse{
-			Accounts: a.clinePass.ListAccounts(), StorageError: a.clinePass.StorageError(),
+			Accounts: accounts, StorageError: a.clinePass.StorageError(),
 		})
 	}
-	if resolveManagementKey(req.Headers) == "" {
+	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	switch method {
@@ -93,7 +103,15 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 			Status: OperationStatusSucceeded, Source: OperationSourceManual, Scope: OperationScopeSingle,
 			TargetCount: 1, Succeeded: 1, StartedAt: startedAt, FinishedAt: time.Now().UTC(), ReasonCode: "account_saved",
 		})
-		return jsonResponse(http.StatusOK, map[string]any{"account": view, "result": result})
+		// The account is saved either way; binding is best-effort and its outcome
+		// is reported on the response instead of failing the save.
+		outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, accountID)
+		applyClinePassBindOutcome(&view, outcome)
+		response := map[string]any{"account": view, "result": result}
+		for key, value := range outcome.fields() {
+			response[key] = value
+		}
+		return jsonResponse(http.StatusOK, response)
 	case http.MethodDelete:
 		accountID := strings.TrimSpace(firstQueryValue(req.Query, "account_id"))
 		if accountID == "" {
@@ -137,7 +155,8 @@ func (a *App) handleClinePassLoginStart(ctx context.Context, req cpaapi.Manageme
 	if a == nil || a.clinePass == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
 	}
-	if resolveManagementKey(req.Headers) == "" {
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	var request clinePassLoginStartRequest
@@ -151,12 +170,15 @@ func (a *App) handleClinePassLoginStart(ctx context.Context, req cpaapi.Manageme
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
 		}
 		view, _ := a.clinePass.AccountView(accountID)
-		return jsonResponse(http.StatusOK, ClinePassLoginView{Method: clinePassAuthMethodAPIKey, Status: clinePassLoginCompleted, Account: &view})
+		loginView := ClinePassLoginView{Method: clinePassAuthMethodAPIKey, Status: clinePassLoginCompleted, Account: &view}
+		a.completeClinePassLogin(ctx, managementKey, &loginView)
+		return jsonResponse(http.StatusOK, loginView)
 	case "cli":
 		view, errLogin := a.clinePass.CompleteClineCLILogin(ctx, request.Name)
 		if errLogin != nil {
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errLogin.Error()})
 		}
+		a.completeClinePassLogin(ctx, managementKey, &view)
 		return jsonResponse(http.StatusOK, view)
 	default:
 		view, errStart := a.clinePass.StartDeviceLogin(ctx, request.Name)
@@ -172,7 +194,8 @@ func (a *App) handleClinePassLoginPoll(ctx context.Context, req cpaapi.Managemen
 	if a == nil || a.clinePass == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
 	}
-	if resolveManagementKey(req.Headers) == "" {
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	var request clinePassLoginPollRequest
@@ -182,6 +205,11 @@ func (a *App) handleClinePassLoginPoll(ctx context.Context, req cpaapi.Managemen
 	view, errPoll := a.clinePass.PollDeviceLogin(ctx, request.SessionID)
 	if errPoll != nil {
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": errPoll.Error()})
+	}
+	// A completed sign-in binds the account best-effort so the new credential is
+	// routable immediately; a bind failure is reported on the view.
+	if view.Status == clinePassLoginCompleted {
+		a.completeClinePassLogin(ctx, managementKey, &view)
 	}
 	return jsonResponse(http.StatusOK, view)
 }

@@ -29,6 +29,9 @@ func openCodeChannelTestApp(t *testing.T, entries []map[string]any) (*App, *[][]
 	t.Helper()
 	app := NewApp(&fakeAuthHost{}, nil)
 	app.Configure([]byte("data_dir: " + t.TempDir()))
+	// The app starts background persistence and usage writers that target the data
+	// directory, so it must be closed before the temp directory is removed.
+	t.Cleanup(app.Close)
 	writes := make([][]map[string]any, 0, 1)
 	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
 		payload, errEncode := json.Marshal(map[string]any{"openai-compatibility": entries})

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -199,8 +200,7 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 			},
 		},
 	}
-	models := make([]string, 0, 3)
-	var modelPolicyPayload map[string]any
+	recorder := &probeRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -210,9 +210,11 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 			}})
 			return
 		case "/v0/management/auth-files/fields":
-			if errDecode := json.NewDecoder(request.Body).Decode(&modelPolicyPayload); errDecode != nil {
+			var payload map[string]any
+			if errDecode := json.NewDecoder(request.Body).Decode(&payload); errDecode != nil {
 				t.Errorf("decode model policy request: %v", errDecode)
 			}
+			recorder.setPolicyPayload(payload)
 			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
 			return
 		case "/v0/management/api-call":
@@ -238,7 +240,7 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 				t.Errorf("decode model payload: %v", errDecode)
 			}
 			model := modelTestStringValue(payload, "model")
-			models = append(models, model)
+			recorder.addProbedModel(model)
 			if model == defaultOpenAIProbeModel {
 				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
 					StatusCode: http.StatusBadRequest,
@@ -277,12 +279,12 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
 		t.Fatalf("decode result: %v", errDecode)
 	}
-	probed := append([]string(nil), models...)
+	probed := recorder.probedModels()
 	sort.Strings(probed)
 	wantProbed := []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, codexCompatibilityMiniModel, "gpt-5.4"}
 	sort.Strings(wantProbed)
 	if !reflect.DeepEqual(probed, wantProbed) {
-		t.Fatalf("probed catalog models = %#v, want %#v", models, wantProbed)
+		t.Fatalf("probed catalog models = %#v, want %#v", probed, wantProbed)
 	}
 	if result.Status != "available" || result.ReasonCode != "model_response_ok" || result.Model != defaultCodexFallbackModel ||
 		result.PrimaryModel != defaultOpenAIProbeModel || result.FallbackModel != defaultCodexFallbackModel ||
@@ -304,12 +306,12 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 		!reflect.DeepEqual(result.ModelPolicy.Models, wantCompatible) {
 		t.Fatalf("model policy adjustment = %#v", result.ModelPolicy)
 	}
-	if modelPolicyPayload == nil {
+	if recorder.policyPayload() == nil {
 		t.Fatal("auto model whitelist was not written")
 	}
-	persistedPolicy, ok := modelPolicyPayload["cpa_account_config_manager.model_policy"].(map[string]any)
+	persistedPolicy, ok := recorder.policyPayload()["cpa_account_config_manager.model_policy"].(map[string]any)
 	if !ok {
-		t.Fatalf("model policy payload = %#v", modelPolicyPayload)
+		t.Fatalf("model policy payload = %#v", recorder.policyPayload())
 	}
 	if !equalDecodedStringSlice(persistedPolicy["models"], wantCompatible) {
 		t.Fatalf("written policy models = %#v, want %#v", persistedPolicy["models"], wantCompatible)
@@ -358,8 +360,7 @@ func TestRunNewAccountModelProbeUsesFallbackAndBackgroundOperations(t *testing.T
 			},
 		},
 	}
-	models := make([]string, 0, 3)
-	var modelPolicyPayload map[string]any
+	recorder := &probeRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -369,9 +370,11 @@ func TestRunNewAccountModelProbeUsesFallbackAndBackgroundOperations(t *testing.T
 			}})
 			return
 		case "/v0/management/auth-files/fields":
-			if errDecode := json.NewDecoder(request.Body).Decode(&modelPolicyPayload); errDecode != nil {
+			var payload map[string]any
+			if errDecode := json.NewDecoder(request.Body).Decode(&payload); errDecode != nil {
 				t.Errorf("decode model policy request: %v", errDecode)
 			}
+			recorder.setPolicyPayload(payload)
 			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
 			return
 		case "/v0/management/api-call":
@@ -397,7 +400,7 @@ func TestRunNewAccountModelProbeUsesFallbackAndBackgroundOperations(t *testing.T
 				t.Errorf("decode model payload: %v", errDecode)
 			}
 			model := modelTestStringValue(payload, "model")
-			models = append(models, model)
+			recorder.addProbedModel(model)
 			if model == defaultOpenAIProbeModel {
 				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
 					StatusCode: http.StatusBadRequest,
@@ -430,15 +433,15 @@ func TestRunNewAccountModelProbeUsesFallbackAndBackgroundOperations(t *testing.T
 	if errRun != nil {
 		t.Fatalf("runNewAccountModelProbe() error = %v", errRun)
 	}
-	if !reflect.DeepEqual(models, []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, codexCompatibilityMiniModel}) {
-		t.Fatalf("automatic model attempt order = %#v", models)
+	if !reflect.DeepEqual(recorder.probedModels(), []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, codexCompatibilityMiniModel}) {
+		t.Fatalf("automatic model attempt order = %#v", recorder.probedModels())
 	}
 	if result.Status != "available" || result.Model != defaultCodexFallbackModel || !result.FallbackUsed ||
 		!reflect.DeepEqual(result.CompatibleModels, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}) {
 		t.Fatalf("automatic fallback result = %#v", result)
 	}
-	if result.ModelPolicy == nil || result.ModelPolicy.Status != "applied" || modelPolicyPayload == nil {
-		t.Fatalf("automatic model policy = %#v, payload = %#v", result.ModelPolicy, modelPolicyPayload)
+	if result.ModelPolicy == nil || result.ModelPolicy.Status != "applied" || recorder.policyPayload() == nil {
+		t.Fatalf("automatic model policy = %#v, payload = %#v", result.ModelPolicy, recorder.policyPayload())
 	}
 	operations := app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations
 	wanted := map[string]bool{OperationActionModelTest: false, OperationActionAutoModelWhitelist: false}
@@ -1312,7 +1315,7 @@ func TestHandleCodexModelTestWithholdsAllowListOnInconclusiveEvidence(t *testing
 			},
 		},
 	}
-	var modelPolicyPayload map[string]any
+	recorder := &probeRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -1322,9 +1325,11 @@ func TestHandleCodexModelTestWithholdsAllowListOnInconclusiveEvidence(t *testing
 			}})
 			return
 		case "/v0/management/auth-files/fields":
-			if errDecode := json.NewDecoder(request.Body).Decode(&modelPolicyPayload); errDecode != nil {
+			var payload map[string]any
+			if errDecode := json.NewDecoder(request.Body).Decode(&payload); errDecode != nil {
 				t.Errorf("decode model policy request: %v", errDecode)
 			}
+			recorder.setPolicyPayload(payload)
 			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
 			return
 		case "/v0/management/api-call":
@@ -1409,8 +1414,8 @@ func TestHandleCodexModelTestWithholdsAllowListOnInconclusiveEvidence(t *testing
 	if len(result.CompatibleModels) != 0 || result.ModelPolicy != nil {
 		t.Fatalf("partial compatibility evidence produced an allow-list: %#v", result)
 	}
-	if modelPolicyPayload != nil || len(host.saves) != 0 {
-		t.Fatalf("a model policy was written without compatibility evidence: payload=%#v saves=%#v", modelPolicyPayload, host.saves)
+	if recorder.policyPayload() != nil || len(host.saves) != 0 {
+		t.Fatalf("a model policy was written without compatibility evidence: payload=%#v saves=%#v", recorder.policyPayload(), host.saves)
 	}
 	var policyOperation *OperationEntry
 	for _, operation := range app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations {
@@ -1653,4 +1658,37 @@ func TestHandleAutoModelWhitelistStatusReportsDetections(t *testing.T) {
 	if len(empty.Recent) != 0 {
 		t.Fatalf("out-of-range recent = %#v", empty.Recent)
 	}
+}
+
+// probeRecorder records what a test probe server answered. The catalog
+// verification probes a catalog concurrently, so every handler-side record needs
+// its own mutex; the race detector treats an unguarded append here as a defect.
+type probeRecorder struct {
+	mu     sync.Mutex
+	models []string
+	policy map[string]any
+}
+
+func (r *probeRecorder) addProbedModel(model string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.models = append(r.models, model)
+}
+
+func (r *probeRecorder) setPolicyPayload(payload map[string]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.policy = payload
+}
+
+func (r *probeRecorder) probedModels() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.models...)
+}
+
+func (r *probeRecorder) policyPayload() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.policy
 }

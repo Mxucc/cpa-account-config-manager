@@ -41,7 +41,12 @@ import type {
 	ClinePassCatalogResponse,
 	ClinePassLoginCancelResponse,
 	ClinePassLoginView,
+	ClinePassModelsResponse,
+	ClinePassModelView,
 	ClinePassRefreshResponse,
+	ClinePassSettings,
+	ClinePassSettingsResponse,
+	ClinePassSettingsSaveResponse,
 	AIProviderChannelKind,
 	AIProviderChannelSnapshot,
 	AIProviderChannelEntry,
@@ -1391,6 +1396,49 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 	};
 }
 
+/** The published Cline Pass settings; only the prefix rule exists today. */
+function normalizeClinePassSettings(value: unknown): ClinePassSettings {
+	if (!isRecord(value) || typeof value.strip_model_prefix !== "boolean") {
+		throw new APIError(502, "ui.invalid_api_response");
+	}
+	return { strip_model_prefix: value.strip_model_prefix };
+}
+
+/**
+ * The model mapping the Cline Pass channel publishes. The rows drive the table, so a row
+ * without the ids the probe or the client needs is a broken payload; the binding summary
+ * degrades to "unbound" for a pre-binding backend, exactly like the account list does.
+ */
+function normalizeClinePassModelsResponse(response: unknown): ClinePassModelsResponse {
+	if (!isRecord(response) || typeof response.strip_model_prefix !== "boolean") {
+		throw new APIError(502, "ui.invalid_api_response");
+	}
+	const models = nullableRecordArray(response.models);
+	if (models === undefined || models.some((model) =>
+		!isNonEmptyString(model.id)
+		|| !isNonEmptyString(model.upstream_id)
+		|| !isNonEmptyString(model.client_id)
+		|| typeof model.published !== "boolean"
+	)) {
+		throw new APIError(502, "ui.invalid_api_response");
+	}
+	return {
+		models: models.map((model): ClinePassModelView => ({
+			id: (model.id as string).trim(),
+			name: isNonEmptyString(model.name) ? model.name.trim() : (model.client_id as string).trim(),
+			free: model.free === true,
+			upstream_id: (model.upstream_id as string).trim(),
+			client_id: (model.client_id as string).trim(),
+			published: model.published === true,
+		})),
+		strip_model_prefix: response.strip_model_prefix,
+		accounts: isFiniteNonNegativeInteger(response.accounts) ? response.accounts : 0,
+		channel_bound: response.channel_bound === true,
+		channel_models: isFiniteNonNegativeInteger(response.channel_models) ? response.channel_models : 0,
+		default_base_url: typeof response.default_base_url === "string" ? response.default_base_url : "",
+	};
+}
+
 export async function listClinePassAccounts(signal?: AbortSignal): Promise<ClinePassAccountsResponse> {
 	return normalizeClinePassAccountsResponse(await requestRecord<unknown>("/opencode/cline-pass/accounts", { signal }));
 }
@@ -1418,6 +1466,34 @@ export async function removeClinePassAccount(accountID: string): Promise<void> {
 /** Read the allow-listed Cline Pass model catalog and the default gateway base URL. */
 export async function getClinePassCatalog(signal?: AbortSignal): Promise<ClinePassCatalogResponse> {
 	return requestRecord<ClinePassCatalogResponse>("/opencode/cline-pass/catalog", { signal });
+}
+
+/** Read the Cline Pass publishing settings; currently only the model-id prefix rule. */
+export async function getClinePassSettings(signal?: AbortSignal): Promise<ClinePassSettingsResponse> {
+	const response = await requestRecord<Record<string, unknown>>("/opencode/cline-pass/settings", { signal });
+	return { settings: normalizeClinePassSettings(response.settings) };
+}
+
+/**
+ * Persist the prefix setting. Saving re-binds the Cline Pass channel, so the published
+ * mapping changes immediately; `rebound`/`rebind_errors` report that re-bind. A re-bind
+ * error does not fail the save: the setting itself is stored either way.
+ */
+export async function saveClinePassSettings(stripModelPrefix: boolean): Promise<ClinePassSettingsSaveResponse> {
+	const response = await requestRecord<Record<string, unknown>>("/opencode/cline-pass/settings", {
+		method: "PUT",
+		body: JSON.stringify({ strip_model_prefix: stripModelPrefix }),
+	});
+	return {
+		settings: normalizeClinePassSettings(response.settings),
+		rebound: isFiniteNonNegativeInteger(response.rebound) ? response.rebound : 0,
+		rebind_errors: isFiniteNonNegativeInteger(response.rebind_errors) ? response.rebind_errors : 0,
+	};
+}
+
+/** Read the model mapping the Cline Pass channel publishes, with its binding summary. */
+export async function listClinePassModels(signal?: AbortSignal): Promise<ClinePassModelsResponse> {
+	return normalizeClinePassModelsResponse(await requestRecord<unknown>("/opencode/cline-pass/models", { signal }));
 }
 
 /** Start a sign-in: the browser device flow, an existing Cline CLI sign-in or an API key. */

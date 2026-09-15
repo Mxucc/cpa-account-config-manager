@@ -153,6 +153,14 @@ The **OpenCode** workspace gained a "Cline Pass" tab that binds a Cline Pass sub
 - Table sorting, page size, filters, and manual model selections persist.
 - The plugin can check and install updates through the CPA Plugin Store and display current/latest CPA versions. It only detects CPA program updates and never replaces the CPA executable. When the Plugin Store request cannot return data, Other Settings → Updates also updates the plugin directly from its own GitHub releases: it resolves the latest tag, selects the archive for the running platform, verifies its SHA-256 against the release `checksums.txt`, and only then atomically replaces the plugin library while keeping the previous file as a backup. Downloads are restricted to GitHub hosts and bounded in size.
 
+
+### Cline Pass
+
+**Cline Pass** is a top-level sidebar workspace next to Codex and OpenCode. Cline Pass accounts are deliberately not shown on any OpenCode page.
+
+- The **Accounts** tab adds an account through the OAuth device flow, by reusing an existing Cline CLI sign-in, or with a pasted API key, and shows each account's credential state plus its **routing** state: bound (with how many models the channel publishes), N models unpublished, or not bound (with a hint that clients then receive `unknown provider for model`). Signing in or saving an account binds it to a CPA channel automatically; a failed bind is only reported as a warning and never blocks saving.
+- The **Models** tab lists the mapping the CPA channel publishes for Cline Pass: the model name, the **client model id** (the id a client calls), the upstream id, whether it is published, and a per-row **Test** action (the probe always sends the upstream id straight to the Cline gateway).
+- The switch at the top of the Models tab controls whether the published mapping drops the `cline-pass/` prefix, and it is on by default: with it on clients can call the short model name (for example `deepseek-v4.1-flash`), with it off they must use the prefixed id. Changing it re-binds every account immediately. Only the literal `cline-pass/` prefix is stripped; other ids such as `cline-free/…` and `z-ai/…` are untouched.
 ## Experimental Features
 
 The remaining opt-in experiments are:

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/client";
 import { _resetSessionForTest, setSession } from "../store/session";
+import { takePendingNotice } from "../store/pendingNotice";
 import type { SelfUpdateSnapshot } from "../types";
 import { SelfUpdatePanel, reloadPollTiming } from "./SelfUpdatePanel";
 
@@ -33,6 +34,7 @@ describe("SelfUpdatePanel", () => {
   beforeEach(() => {
     _resetSessionForTest();
     localStorage.clear();
+    sessionStorage.clear();
     setSession("", "management-secret");
     vi.restoreAllMocks();
   });
@@ -96,28 +98,38 @@ describe("SelfUpdatePanel", () => {
   it("asks CPA to reload in place instead of waiting for a restart", async () => {
     const user = userEvent.setup();
     const onNotice = vi.fn();
-    // The library is already replaced, so the panel offers the one action CPA watches for a
-    // native plugin reload.
-    vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({
-      update_available: false,
-      applied_version: "0.3.1420",
-      restart_required: true,
-      pending_restart: true,
-    }));
-    const reloadSpy = vi.spyOn(api, "reloadSelfUpdateThroughStore").mockResolvedValue({
-      reloaded: true,
-      store_version: "0.3.1420",
-      applied_version: "0.3.1420",
-      restart_required: false,
-    });
+    // Keep the refresh that follows instant instead of waiting for the real delay.
+    const originalDelay = reloadPollTiming.refreshDelayMS;
+    reloadPollTiming.refreshDelayMS = 10;
+    try {
+      // The library is already replaced, so the panel offers the one action CPA watches for a
+      // native plugin reload.
+      vi.spyOn(api, "getSelfUpdate").mockResolvedValue(snapshot({
+        update_available: false,
+        applied_version: "0.3.1420",
+        restart_required: true,
+        pending_restart: true,
+      }));
+      const reloadSpy = vi.spyOn(api, "reloadSelfUpdateThroughStore").mockResolvedValue({
+        reloaded: true,
+        store_version: "0.3.1420",
+        applied_version: "0.3.1420",
+        restart_required: false,
+      });
 
-    render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
+      render(<SelfUpdatePanel onAPIError={() => undefined} onNotice={onNotice} />);
 
-    const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
-    await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
+      const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
+      await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
 
-    await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
-    expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，刷新本页即可使用新版本。");
+      await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
+      expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，新版本已在本页生效。");
+      // The refresh the panel asks for drops every notice the page shows, so the outcome is stored
+      // right before navigating and read back by the page that loads next.
+      await waitFor(() => expect(takePendingNotice()).toBe("CPA 已重新加载插件，新版本已在本页生效。"));
+    } finally {
+      reloadPollTiming.refreshDelayMS = originalDelay;
+    }
   });
 
   it("treats a dropped reload connection as success once the new version answers", async () => {
@@ -136,7 +148,7 @@ describe("SelfUpdatePanel", () => {
     const panel = await screen.findByRole("region", { name: "GitHub 直连自更新" });
     await user.click(within(panel).getByRole("button", { name: "不重启热重载" }));
 
-    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，刷新本页即可使用新版本。"), { timeout: 15_000 });
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("CPA 已重新加载插件，新版本已在本页生效。"), { timeout: 15_000 });
     expect(getSpy.mock.calls.length).toBeGreaterThan(1);
   }, 20_000);
 

@@ -100,6 +100,8 @@ import {
 } from "./store/accountSort";
 import { readPanelAuth } from "./store/panelAuth";
 import { clearSession, setSession } from "./store/session";
+import { takePendingNotice } from "./store/pendingNotice";
+import { isSidebarTelemetryVisible, nextSidebarTelemetryDelay, sidebarTelemetrySignature, sidebarTelemetryTiming } from "./sidebarTelemetry";
 import type {
   Account,
   AccountDeletePreview,
@@ -389,12 +391,28 @@ function AccountManagerApp() {
     setNotice(errorText(error, locale));
   }, [locale]);
 
+  // A successful hot reload refreshes this page as soon as CPA swapped the plugin, which would
+  // also drop the notice explaining it. The panel stores that notice before refreshing, and the
+  // reloaded page shows it here.
+  useEffect(() => {
+    const pending = takePendingNotice();
+    if (pending !== "") setNotice(pending);
+  }, []);
+
   useEffect(() => {
     if (authState !== "ready") return;
     let cancelled = false;
     let timer = 0;
+    let inFlight = false;
+    let signature = "";
+    let unchangedPolls = 0;
     const controller = new AbortController();
     const refreshSidebarTelemetry = async () => {
+      if (cancelled || inFlight) return;
+      // A read scheduled before the page was hidden is never issued: the sidebar cannot be seen,
+      // and the visibility handler reads again when the page comes back.
+      if (!isSidebarTelemetryVisible()) return;
+      inFlight = true;
       try {
         // Load accounts first: the account endpoint discovers CPA auth identities
         // and purges legacy provider aggregates that used the same auth index.
@@ -411,17 +429,49 @@ function AccountManagerApp() {
         setSidebarAccounts(accounts.accounts);
         setSidebarProviderChannels(channels);
         setSidebarProviderRuntime(runtime.snapshots);
+        // Totals the operator already sees buy a slower cadence instead of another read.
+        const next = sidebarTelemetrySignature(accounts.accounts, channels, runtime.snapshots);
+        unchangedPolls = next === signature ? unchangedPolls + 1 : 0;
+        signature = next;
       } catch (error) {
+        // A failed read must not be retried sooner than an unchanged one: repeated failures back
+        // off exactly like identical totals, so an endpoint that keeps answering 5xx is not read
+        // every ten seconds.
+        unchangedPolls = Math.min(unchangedPolls + 1, sidebarTelemetryTiming.idleAfterPolls);
         // The sidebar is observability-only. Keep the last good snapshot when a
         // transient provider/account endpoint fails, rather than disrupting the
         // authenticated shell or replacing useful values with zeros.
         if (!cancelled && error instanceof api.APIError && error.status === 401) handleAPIError(error);
       } finally {
-        if (!cancelled) timer = window.setTimeout(refreshSidebarTelemetry, 10000);
+        inFlight = false;
+        schedule();
       }
     };
+    const schedule = () => {
+      if (cancelled) return;
+      const delay = nextSidebarTelemetryDelay({ visible: isSidebarTelemetryVisible(), unchangedPolls });
+      // A hidden page shows no totals at all, so wait for the visibility change instead of
+      // polling a background tab around the clock.
+      if (delay === null) return;
+      timer = window.setTimeout(() => void refreshSidebarTelemetry(), delay);
+    };
+    const onVisibilityChange = () => {
+      // Hiding the page cancels the read that was already scheduled: the totals cannot be seen,
+      // and the resume below reads again as soon as the page comes back.
+      window.clearTimeout(timer);
+      if (!isSidebarTelemetryVisible()) return;
+      // The operator is looking at the sidebar again, so read it at the fast cadence.
+      unchangedPolls = 0;
+      void refreshSidebarTelemetry();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     void refreshSidebarTelemetry();
-    return () => { cancelled = true; controller.abort(); window.clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [authState, handleAPIError]);
   const handleExperimentalSettingsChange = useCallback((settings: ExperimentalSettings) => {
     setWeeklyOverdraftEnabled(settings.weekly_overdraft_enabled === true);

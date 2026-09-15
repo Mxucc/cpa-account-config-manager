@@ -1649,6 +1649,41 @@ export interface ClinePassCatalogResponse {
   models: ClinePassCatalogModel[];
   default_base_url: string;
 }
+/** One row of the published Cline Pass mapping: what a client calls and what the gateway receives. */
+export interface ClinePassModelView {
+  id: string;
+  name: string;
+  free: boolean;
+  /** The model id the Cline gateway accepts; the probe must send this one. */
+  upstream_id: string;
+  /** The model id a client calls once the channel is published. */
+  client_id: string;
+  published: boolean;
+}
+
+export interface ClinePassModelsResponse {
+  models: ClinePassModelView[];
+  strip_model_prefix: boolean;
+  accounts: number;
+  channel_bound: boolean;
+  channel_models: number;
+  default_base_url: string;
+}
+
+/** Publishing settings for the Cline Pass channel. */
+export interface ClinePassSettings {
+  strip_model_prefix: boolean;
+}
+
+export interface ClinePassSettingsResponse {
+  settings: ClinePassSettings;
+}
+
+/** Saving settings re-binds the channel; the counts report that re-bind. */
+export interface ClinePassSettingsSaveResponse extends ClinePassSettingsResponse {
+  rebound: number;
+  rebind_errors: number;
+}
 
 /** One in-flight Cline Pass sign-in: the device flow, the CLI reuse or an API key. */
 export interface ClinePassLoginView {

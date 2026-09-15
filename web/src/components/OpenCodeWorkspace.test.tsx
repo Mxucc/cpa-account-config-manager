@@ -77,6 +77,36 @@ function clinePassCatalogModels(): Array<Record<string, unknown>> {
   ];
 }
 
+/** One row of `GET /opencode/cline-pass/models`: the mapping the CPA channel publishes. */
+function clinePassModelsPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    models: [
+      {
+        id: "cline-pass/deepseek-v4.1-flash",
+        name: "DeepSeek V4.1 Flash",
+        free: false,
+        upstream_id: "cline-pass/deepseek-v4.1-flash",
+        client_id: "deepseek-v4.1-flash",
+        published: true,
+      },
+      {
+        id: "cline-pass/kimi-k2.6",
+        name: "Kimi K2.6",
+        free: false,
+        upstream_id: "cline-pass/kimi-k2.6",
+        client_id: "kimi-k2.6",
+        published: false,
+      },
+    ],
+    strip_model_prefix: true,
+    accounts: 1,
+    channel_bound: true,
+    channel_models: 2,
+    default_base_url: "https://api.cline.bot/api/v1",
+    ...overrides,
+  };
+}
+
 function clinePassLoginView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     session_id: "clinelogin_test",
@@ -182,6 +212,13 @@ interface OpenCodeFetchMockOptions {
   clinePassAccounts?: Array<Record<string, unknown>>;
   clinePassLoginStart?: Record<string, unknown>;
   clinePassLoginPoll?: Record<string, unknown>;
+  /** The initial `strip_model_prefix` the mock serves; a PUT flips it for later GETs. */
+  clinePassStripPrefix?: boolean;
+  clinePassModels?: Record<string, unknown>;
+  clinePassModelsStatus?: number;
+  clinePassSettingsStatus?: number;
+  clinePassSettingsRebound?: number;
+  clinePassModelTest?: Record<string, unknown>;
 }
 
 describe("OpenCodeWorkspace", () => {
@@ -195,6 +232,7 @@ describe("OpenCodeWorkspace", () => {
   function openCodeFetchMock(options: OpenCodeFetchMockOptions = {}) {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     let disabledModels = [...((options.modelControl?.disabled as string[] | undefined) ?? [])];
+    let stripModelPrefix = options.clinePassStripPrefix ?? true;
     const controlRows = (disabled: string[]) => [
       { id: "qwen3.7-max", disabled: disabled.includes("qwen3.7-max"), accounts: 1, channels: 1, priced: true, input_usd_per_million: 2.5, output_usd_per_million: 7.5 },
       { id: "gpt-5.6-luna", disabled: disabled.includes("gpt-5.6-luna"), accounts: 1, channels: 0, priced: true, input_usd_per_million: 0.2, output_usd_per_million: 1.2 },
@@ -233,8 +271,32 @@ describe("OpenCodeWorkspace", () => {
         return jsonResponse({ accounts: options.clinePassAccounts ?? [] });
       }
       if (url.endsWith("/opencode/cline-pass/refresh")) return jsonResponse({ account: clinePassAccountView() });
-      if (url.endsWith("/opencode/cline-pass/models")) return jsonResponse({ account: clinePassAccountView() });
-      if (url.endsWith("/opencode/cline-pass/model-test")) return jsonResponse({ result: {} });
+      if (url.endsWith("/opencode/cline-pass/models") && init.method === "POST") {
+        return jsonResponse({ account: clinePassAccountView() });
+      }
+      if (url.endsWith("/opencode/cline-pass/models")) {
+        if (options.clinePassModelsStatus) {
+          return jsonResponse({ error: "cline pass models failed" }, options.clinePassModelsStatus);
+        }
+        // The served mapping follows the last PUT so a save-and-reload is observable.
+        return jsonResponse({ ...clinePassModelsPayload(), ...(options.clinePassModels ?? {}), strip_model_prefix: stripModelPrefix });
+      }
+      if (url.endsWith("/opencode/cline-pass/settings") && init.method === "PUT") {
+        if (options.clinePassSettingsStatus) {
+          return jsonResponse({ error: "cline pass settings failed" }, options.clinePassSettingsStatus);
+        }
+        const body = JSON.parse(String(init.body ?? "{}")) as { strip_model_prefix?: boolean };
+        stripModelPrefix = body.strip_model_prefix === true;
+        return jsonResponse({
+          settings: { strip_model_prefix: stripModelPrefix },
+          rebound: options.clinePassSettingsRebound ?? 0,
+          rebind_errors: 0,
+        });
+      }
+      if (url.endsWith("/opencode/cline-pass/settings")) {
+        return jsonResponse({ settings: { strip_model_prefix: stripModelPrefix } });
+      }
+      if (url.endsWith("/opencode/cline-pass/model-test")) return jsonResponse(options.clinePassModelTest ?? { result: {} });
       if (url.endsWith("/opencode/cline-pass/bind")) {
         return jsonResponse({
           binding: {
@@ -318,21 +380,22 @@ describe("OpenCodeWorkspace", () => {
     return row as HTMLElement;
   }
 
-  it("renders the six workspace tabs and switches to the matching panel", async () => {
+  it("renders the five workspace tabs and switches to the matching panel", async () => {
     const user = userEvent.setup();
     openCodeFetchMock();
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
     const tablist = await screen.findByRole("tablist", { name: "OpenCode" });
+    // Cline Pass has its own top-level menu, so an OpenCode page must not offer its tab.
     expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "总览",
       "Go 账号",
       "Zen 账号",
-      "Cline Pass 账号",
       "渠道",
       "模型与价格",
     ]);
+    expect(within(tablist).queryByRole("tab", { name: "Cline Pass 账号" })).not.toBeInTheDocument();
     expect(within(tablist).getByRole("tab", { name: "总览" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel", { name: "总览" })).toBeInTheDocument();
     expect(screen.queryByRole("tabpanel", { name: "Go 账号" })).not.toBeInTheDocument();
@@ -352,8 +415,12 @@ describe("OpenCodeWorkspace", () => {
     // Cline Pass is its own product menu, so this view must not offer the OpenCode tab strip
     // (nor its OpenCode-only links and heading).
     expect(await screen.findByRole("tabpanel", { name: "Cline Pass" })).toBeInTheDocument();
-    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    // The OpenCode strip must not appear, but Cline Pass now offers its own accounts/models tabs.
+    expect(screen.queryByRole("tablist", { name: "OpenCode" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "总览" })).not.toBeInTheDocument();
+    const clinePassTabs = screen.getByRole("tablist", { name: "Cline Pass" });
+    expect(within(clinePassTabs).getAllByRole("tab")).toHaveLength(2);
+    expect(within(clinePassTabs).getByRole("tab", { name: "模型" })).toBeInTheDocument();
     expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
     expect(screen.queryByText("OpenCode Go 与 Zen 控制器")).not.toBeInTheDocument();
     expect(screen.queryByText(/OpenCode Go · /)).not.toBeInTheDocument();
@@ -363,6 +430,81 @@ describe("OpenCodeWorkspace", () => {
     expect(within(panel).getByText("cline-pass/glm-5.3, cline-pass/kimi-k2.6")).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "使用浏览器登录" })).toBeInTheDocument();
     expect(requests.some(({ url }) => url.endsWith("/opencode/cline-pass/accounts"))).toBe(true);
+  });
+
+  it("lists the published Cline Pass mapping with the client-facing model id", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    await user.click(within(tabs).getByRole("tab", { name: "模型" }));
+
+    const panel = await screen.findByRole("tabpanel", { name: "模型" });
+    // The client calls the short id; the upstream id stays visible for reference.
+    expect(within(panel).getByText("deepseek-v4.1-flash")).toBeInTheDocument();
+    expect(within(panel).getByText("cline-pass/deepseek-v4.1-flash")).toBeInTheDocument();
+    expect(within(panel).getByText("已发布")).toBeInTheDocument();
+    expect(within(panel).getByText("未发布")).toBeInTheDocument();
+    expect(within(panel).getByText("已发布 1 / 2 个模型")).toBeInTheDocument();
+    expect(requests.some(({ url }) => url.endsWith("/opencode/cline-pass/models"))).toBe(true);
+  });
+
+  it("saves the Cline Pass prefix setting and reloads the mapping", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()], clinePassSettingsRebound: 1 });
+    const onNotice = vi.fn();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} focus="cline-pass" />);
+
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    await user.click(within(tabs).getByRole("tab", { name: "模型" }));
+
+    const switcher = await screen.findByRole("checkbox", { name: "发布模型 ID 时不带 cline-pass/ 前缀" });
+    expect(switcher).toBeChecked();
+    await user.click(switcher);
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/cline-pass/settings") && init.method === "PUT")).toBe(true));
+    const save = requests.find(({ url, init }) => url.endsWith("/opencode/cline-pass/settings") && init.method === "PUT");
+    expect(JSON.parse(String(save?.init.body))).toEqual({ strip_model_prefix: false });
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("Cline Pass 前缀设置已保存 · 已重新绑定 1 个账号"));
+    // The mapping is re-read so the table reflects the new client-facing ids.
+    await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/opencode/cline-pass/models")).length).toBeGreaterThan(1));
+  });
+
+  it("probes a Cline Pass model with its upstream id even when the prefix is stripped", async () => {
+    const user = userEvent.setup();
+    const requests = openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    await user.click(within(tabs).getByRole("tab", { name: "模型" }));
+
+    const panel = await screen.findByRole("tabpanel", { name: "模型" });
+    await user.click(within(panel).getByRole("button", { name: "测试 DeepSeek V4.1 Flash" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/cline-pass/model-test") && init.method === "POST")).toBe(true));
+    const probe = requests.find(({ url, init }) => url.endsWith("/opencode/cline-pass/model-test") && init.method === "POST");
+    // The probe talks to the Cline gateway, so it must send the id the gateway accepts.
+    expect(JSON.parse(String(probe?.init.body))).toMatchObject({ model: "cline-pass/deepseek-v4.1-flash" });
+  });
+
+  it("keeps the accounts tab usable when the Cline Pass mapping cannot be read", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()], clinePassModelsStatus: 502 });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    await user.click(within(tabs).getByRole("tab", { name: "模型" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    // Switching back must still show the unchanged accounts surface.
+    await user.click(within(tabs).getByRole("tab", { name: "账号" }));
+    const accounts = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    expect(within(accounts).getByText("Work laptop")).toBeInTheDocument();
   });
 
   it("renders a Go workspace row with its quota windows and model count from the initial load", async () => {
@@ -1054,9 +1196,8 @@ describe("OpenCodeWorkspace", () => {
       clinePassLoginPoll: clinePassLoginView({ status: "pending" }),
     });
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
 
-    await selectTab(user, "Cline Pass 账号");
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
     expect(within(panel).getByText("cline-pass/glm-5.3, cline-pass/kimi-k2.6")).toBeInTheDocument();
@@ -1080,9 +1221,8 @@ describe("OpenCodeWorkspace", () => {
     const requests = openCodeFetchMock();
     const onNotice = vi.fn();
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} focus="cline-pass" />);
 
-    await selectTab(user, "Cline Pass 账号");
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     const keyInput = panel.querySelector('input[type="password"]') as HTMLInputElement;
     await user.type(keyInput, "sk-cline-pasted");
@@ -1102,9 +1242,8 @@ describe("OpenCodeWorkspace", () => {
       clinePassLoginStart: clinePassLoginView({ status: "failed", error: "the gateway rejected the device code" }),
     });
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
 
-    await selectTab(user, "Cline Pass 账号");
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     await user.click(within(panel).getByRole("button", { name: "使用浏览器登录" }));
 
@@ -1118,8 +1257,7 @@ describe("OpenCodeWorkspace", () => {
       clinePassAccounts: [clinePassAccountView({ channel_bound: false, channel_models: 0, channel_model_gaps: 2 })],
     });
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
-    await selectTab(user, "Cline Pass 账号");
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
 
@@ -1137,8 +1275,7 @@ describe("OpenCodeWorkspace", () => {
       clinePassAccounts: [clinePassAccountView({ channel_bound: true, channel_models: 1, channel_model_gaps: 1 })],
     });
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
-    await selectTab(user, "Cline Pass 账号");
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
 
@@ -1157,8 +1294,7 @@ describe("OpenCodeWorkspace", () => {
     });
     const onNotice = vi.fn();
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
-    await selectTab(user, "Cline Pass 账号");
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} focus="cline-pass" />);
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     await user.click(within(panel).getByRole("button", { name: "复用已有的 Cline CLI 登录" }));
 
@@ -1175,8 +1311,7 @@ describe("OpenCodeWorkspace", () => {
       }),
     });
 
-    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
-    await selectTab(user, "Cline Pass 账号");
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
     const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
     await user.click(within(panel).getByRole("button", { name: "复用已有的 Cline CLI 登录" }));
 

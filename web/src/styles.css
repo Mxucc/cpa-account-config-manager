@@ -3091,6 +3091,11 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .opencode-channels .actions-cell .button { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 480px) { .opencode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .opencode-tabs button { min-height: 36px; } }
 
+/* The Cline Pass surface splits into its own two tabs inside the OpenCode panel. */
+.cline-pass-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* The client model id a caller uses and the upstream id it maps to are both shown as code. */
+.cline-pass-model-id { color: var(--text-primary); font-family: "IBM Plex Mono", "SFMono-Regular", monospace; font-size: calc(11px * var(--font-size-scale)); overflow-wrap: anywhere; }
+
 /* The Codex workspace tabs; styled after .opencode-tabs, widened to three tabs. */
 .codex-workspace { min-width: 0; display: grid; gap: 16px; padding: 18px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-primary); box-shadow: var(--shadow-md); }
 .codex-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }

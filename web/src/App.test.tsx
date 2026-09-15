@@ -6,6 +6,7 @@ import { formatDateTimeForLocale } from "./i18n/I18nProvider";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
 import { ACCOUNT_SORT_STORAGE_KEY, writeAccountSort } from "./store/accountSort";
+import { takePendingNotice, writePendingNotice } from "./store/pendingNotice";
 import { readPanelAuth } from "./store/panelAuth";
 import { _resetSessionForTest } from "./store/session";
 import type { BatchPatch } from "./types";
@@ -110,6 +111,51 @@ describe("primary account batch flow", () => {
     expect(primaryAccountRequests[0]).toContain("page_size=50");
     expect(primaryAccountRequests[0]).not.toContain("page_size=1");
 
+  });
+
+  it("shows the hot-reload outcome that was recorded before the page refreshed", async () => {
+    // The self-update panel stores its notice just before CPA's plugin swap refreshes the page,
+    // and the reloaded page is what proves the operator ever saw it.
+    vi.mocked(readPanelAuth).mockReturnValue({ apiBase: "http://localhost:8317", managementKey: "management-secret" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/accounts")) return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      return jsonResponse({});
+    }));
+    writePendingNotice("CPA 已重新加载插件，新版本已在本页生效。");
+
+    render(<App />);
+
+    expect(await screen.findByText("CPA 已重新加载插件，新版本已在本页生效。")).toBeInTheDocument();
+    // One-shot: the next load of this tab must not repeat a reload that is long over.
+    expect(takePendingNotice()).toBe("");
+  });
+
+  it("leaves the sidebar totals alone while the page is hidden and reads them again on return", async () => {
+    vi.mocked(readPanelAuth).mockReturnValue({ apiBase: "http://localhost:8317", managementKey: "management-secret" });
+    const telemetryReads: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/accounts")) {
+        if (new URL(url, "http://localhost").searchParams.get("page_size") === "1000") telemetryReads.push(url);
+        return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      return jsonResponse({});
+    }));
+    // A page that loads hidden is the case the round-the-clock polling wasted the most on.
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    try {
+      render(<App />);
+      expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(telemetryReads).toEqual([]);
+
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await waitFor(() => expect(telemetryReads.length).toBeGreaterThan(0));
+    } finally {
+      delete (document as unknown as Record<string, unknown>)["hidden"];
+    }
   });
 
   it("runs plugin-store auto-update from the accounts view after authentication", async () => {

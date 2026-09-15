@@ -4,7 +4,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { openCodeProbeHintKey, openCodeReasonKey } from "../format/openCodeModelTest";
 import { useI18n } from "../i18n";
-import type { ClinePassAccountView, ClinePassBinding, ClinePassCatalogModel, ClinePassLoginView, OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
+import type { ClinePassAccountView, ClinePassBinding, ClinePassCatalogModel, ClinePassLoginView, ClinePassModelsResponse, ClinePassModelView, OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 
@@ -46,6 +46,16 @@ interface ClinePassProbeTarget {
   label: string;
   model: string;
   models: string[];
+}
+
+/** The Cline Pass surface splits into the credential list and the published model mapping. */
+type ClinePassTab = "accounts" | "models";
+
+/** One inline row probe: the row it belongs to and its pending or finished result. */
+interface ClinePassRowProbe {
+  clientID: string;
+  result: OpenCodeModelTestResult | null;
+  error: string;
 }
 
 /** Device-flow cadence: the gateway interval, clamped so a bad value cannot hammer it. */
@@ -154,6 +164,13 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
   const [clinePassProbe, setClinePassProbe] = useState<ClinePassProbeTarget | null>(null);
   const [clinePassProbeResult, setClinePassProbeResult] = useState<OpenCodeModelTestResult | null>(null);
   const [clinePassProbeError, setClinePassProbeError] = useState("");
+  // The published mapping is its own surface: it loads when its tab opens and never blocks
+  // the accounts tab, so a broken models endpoint only shows its own error state.
+  const [clinePassTab, setClinePassTab] = useState<ClinePassTab>("accounts");
+  const [clinePassModels, setClinePassModels] = useState<ClinePassModelsResponse | null>(null);
+  const [clinePassModelsLoading, setClinePassModelsLoading] = useState(false);
+  const [clinePassModelsError, setClinePassModelsError] = useState("");
+  const [clinePassRowProbe, setClinePassRowProbe] = useState<ClinePassRowProbe | null>(null);
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
   const [target, setTarget] = useState<ModelTarget | null>(null);
   const [testModel, setTestModel] = useState("");
@@ -183,6 +200,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
   const clinePassPollInFlight = useRef(false);
   const clinePassPollMounted = useRef(true);
   const clinePassCatalogLoaded = useRef(false);
+  // The models tab loads its payload the first time it is opened; refresh re-reads on demand.
+  const clinePassModelsLoaded = useRef(false);
   const handleError = useCallback((caught: unknown) => {
     if (caught instanceof api.APIError && caught.status === 401) {
       onAPIError(caught);
@@ -516,6 +535,90 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
     }
   })();
 
+  /** The mapping test uses one credential, preferring an account whose channel is already bound. */
+  const clinePassProbeAccount = clinePassAccounts.find((account) => account.channel_bound) ?? clinePassAccounts[0];
+
+  /**
+   * The published mapping is read from its own endpoint. A failure only sets this panel's
+   * error state: the accounts tab and the rest of the workspace keep working.
+   */
+  const loadClinePassModels = useCallback(async () => {
+    setClinePassModelsLoading(true);
+    setClinePassModelsError("");
+    try {
+      setClinePassModels(await api.listClinePassModels());
+    } catch (caught) {
+      if (caught instanceof api.APIError && caught.status === 401) {
+        onAPIError(caught);
+        return;
+      }
+      setClinePassModelsError(tx("ui.opencode_cline_pass_models_error", {
+        error: operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale),
+      }));
+    } finally {
+      setClinePassModelsLoading(false);
+    }
+  }, [locale, onAPIError, tx]);
+
+  // Opening the models tab is what reads the mapping; the ref keeps a rerender from re-reading.
+  useEffect(() => {
+    if (clinePassTab !== "models" || clinePassModelsLoaded.current) return;
+    clinePassModelsLoaded.current = true;
+    void loadClinePassModels();
+  }, [clinePassTab, loadClinePassModels]);
+
+  /**
+   * Saving the prefix rule re-binds the channel, so the reply reports the rebound accounts and
+   * a failed re-bind is only a warning: the setting is stored and the mapping still reloads.
+   */
+  const saveClinePassPrefixSetting = (stripModelPrefix: boolean) => void (async () => {
+    setBusy("cline-pass-settings");
+    setClinePassModelsError("");
+    try {
+      const response = await api.saveClinePassSettings(stripModelPrefix);
+      onNotice(tx("ui.opencode_cline_pass_prefix_saved", { count: String(response.rebound) }));
+      await loadClinePassModels();
+      if (response.rebind_errors > 0) {
+        setClinePassModelsError(tx("ui.opencode_cline_pass_prefix_rebind_errors", { count: String(response.rebind_errors) }));
+      }
+    } catch (caught) {
+      if (caught instanceof api.APIError && caught.status === 401) {
+        onAPIError(caught);
+        return;
+      }
+      setClinePassModelsError(tx("ui.opencode_cline_pass_settings_error", {
+        error: operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale),
+      }));
+    } finally {
+      setBusy("");
+    }
+  })();
+
+  /**
+   * One row of the mapping tests through the stored credential with the row's upstream id:
+   * the published client id is only what CPA exposes, while the gateway knows the upstream one.
+   */
+  const runClinePassModelRowProbe = (row: ClinePassModelView) => void (async () => {
+    const account = clinePassProbeAccount;
+    if (!account) return;
+    setBusy("cline-pass-model-row-test");
+    setClinePassRowProbe({ clientID: row.client_id, result: null, error: "" });
+    try {
+      const response = await api.testClinePassModel(account.id, row.upstream_id);
+      setClinePassRowProbe((current) => (current && current.clientID === row.client_id ? { ...current, result: response.result } : current));
+    } catch (caught) {
+      if (caught instanceof api.APIError && caught.status === 401) {
+        onAPIError(caught);
+        return;
+      }
+      setClinePassRowProbe((current) => (current && current.clientID === row.client_id
+        ? { ...current, error: operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale) }
+        : current));
+    } finally {
+      setBusy("");
+    }
+  })();
+
   /** The auth method of an account is reported as a label, never as a raw enum. */
   const clinePassAuthLabel = (method: ClinePassAccountView["auth_method"]): string => {
     switch (method) {
@@ -734,17 +837,23 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
   const goFiveHourFraction = goBilling?.five_hour_fraction ?? 0.2;
   const goWeeklyFraction = goBilling?.weekly_fraction ?? 0.5;
   const modelCount = [...goAccounts, ...zenAccounts].reduce((total, account) => total + (account.models?.length ?? 0), 0);
+  // Cline Pass is its own top-level menu, so it is deliberately not part of this strip: an
+  // OpenCode page must not show Cline Pass accounts.
   const tabs: Array<{ id: OpenCodeTab; label: string }> = [
     { id: "overview", label: tx("ui.opencode_tab_overview") },
     { id: "go", label: tx("ui.opencode_tab_go") },
     { id: "zen", label: tx("ui.opencode_tab_zen") },
-    { id: "cline-pass", label: tx("ui.opencode_tab_cline_pass") },
     { id: "channels", label: tx("ui.opencode_tab_channels") },
     { id: "models", label: tx("ui.opencode_tab_models") },
   ];
   /** The device flow completes the sign-in in the browser, so the complete URI is preferred. */
   const clinePassVerificationURI = clinePassLogin?.verification_uri_complete || clinePassLogin?.verification_uri || "";
-  const tabLabel = (id: OpenCodeTab) => tabs.find((tab) => tab.id === id)?.label ?? "";
+  /** The mapping summary counts the rows the channel actually publishes. */
+  const clinePassPublishedModels = (clinePassModels?.models ?? []).filter((model) => model.published).length;
+  // The Cline Pass panel keeps its own label even though the tab is no longer in the strip.
+  const tabLabel = (id: OpenCodeTab) => id === "cline-pass"
+    ? tx("ui.opencode_tab_cline_pass")
+    : tabs.find((tab) => tab.id === id)?.label ?? "";
 
   const statusLabel = (status: OpenCodeModelTestResult["status"]): string => {
     switch (status) {
@@ -1133,6 +1242,29 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
 
       {activeTab === "cline-pass" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("cline-pass")}>
+          {/* Cline Pass owns its own two-tab surface: the credential list and the published mapping. */}
+          <div className="codex-tabs cline-pass-tabs" role="tablist" aria-label={tx("ui.cline_pass_menu")}>
+            <button
+              type="button"
+              role="tab"
+              className={clinePassTab === "accounts" ? "active" : ""}
+              aria-selected={clinePassTab === "accounts"}
+              onClick={() => setClinePassTab("accounts")}
+            >
+              {tx("ui.opencode_cline_pass_tab_accounts")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={clinePassTab === "models" ? "active" : ""}
+              aria-selected={clinePassTab === "models"}
+              onClick={() => setClinePassTab("models")}
+            >
+              {tx("ui.opencode_cline_pass_tab_models")}
+            </button>
+          </div>
+          {clinePassTab === "accounts" ? (
+          <section className="codex-tab-panel" role="tabpanel" aria-label={tx("ui.opencode_cline_pass_tab_accounts")}>
           <section className="opencode-section" aria-label={tx("ui.opencode_cline_pass_accounts")}>
             <div className="opencode-section-heading">
               <div>
@@ -1343,6 +1475,139 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
               </ModelProbeDialog>
             ) : null}
           </section>
+          </section>
+          ) : null}
+
+          {clinePassTab === "models" ? (
+          <section className="codex-tab-panel" role="tabpanel" aria-label={tx("ui.opencode_cline_pass_tab_models")}>
+            <section className="opencode-section opencode-cline-pass-models" aria-label={tx("ui.opencode_cline_pass_models_title")}>
+              <div className="opencode-section-heading">
+                <div>
+                  <strong>{tx("ui.opencode_cline_pass_models_title")}</strong>
+                  <span>{tx("ui.opencode_cline_pass_models_description")}</span>
+                </div>
+                <button className="button button-quiet" type="button" disabled={clinePassModelsLoading} onClick={() => void loadClinePassModels()}>
+                  <RefreshCw className={clinePassModelsLoading ? "spin" : ""} size={15} />{tx("ui.refresh")}
+                </button>
+              </div>
+
+              {clinePassModelsError ? (
+                <p className="opencode-credential-warning" role="alert"><AlertTriangle size={14} />{clinePassModelsError}</p>
+              ) : null}
+
+              {clinePassModels ? (
+                <>
+                  <div className="opencode-section-heading">
+                    <div>
+                      <strong>{tx("ui.opencode_cline_pass_strip_prefix")}</strong>
+                      <span>{tx("ui.opencode_cline_pass_strip_prefix_hint")}</span>
+                    </div>
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={clinePassModels.strip_model_prefix}
+                        disabled={busy === "cline-pass-settings"}
+                        aria-label={tx("ui.opencode_cline_pass_strip_prefix")}
+                        onChange={(event) => saveClinePassPrefixSetting(event.target.checked)}
+                      />
+                      <span><b>{tx(clinePassModels.strip_model_prefix ? "ui.on_2" : "ui.off_2")}</b></span>
+                    </label>
+                  </div>
+                  <p className="opencode-price-meta">
+                    <span>{tx("ui.opencode_cline_pass_models_summary", { published: String(clinePassPublishedModels), total: String(clinePassModels.models.length) })}</span>
+                    <span>{clinePassModels.channel_bound
+                      ? tx("ui.opencode_cline_pass_routing_bound", { count: String(clinePassModels.channel_models) })
+                      : tx("ui.opencode_cline_pass_routing_unbound")}</span>
+                  </p>
+                  {clinePassModels.accounts === 0 ? (
+                    <p className="opencode-note">{tx("ui.opencode_cline_pass_models_no_account")}</p>
+                  ) : clinePassModels.models.length === 0 ? (
+                    <p className="opencode-note">{tx("ui.opencode_cline_pass_models_empty")}</p>
+                  ) : (
+                    <div className="opencode-table-wrap">
+                      <table className="account-table opencode-table">
+                        <thead>
+                          <tr>
+                            <th>{tx("ui.model")}</th>
+                            <th>{tx("ui.opencode_cline_pass_client_model_id")}</th>
+                            <th>{tx("ui.status")}</th>
+                            <th className="actions-header">{tx("ui.actions")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {clinePassModels.models.map((row) => {
+                            const probe = clinePassRowProbe?.clientID === row.client_id ? clinePassRowProbe : null;
+                            const testing = probe !== null && probe.result === null && probe.error === "";
+                            return (
+                              <Fragment key={row.id}>
+                                <tr>
+                                  <td><strong>{row.name || row.client_id}</strong></td>
+                                  <td>
+                                    <div className="opencode-models-cell">
+                                      <code className="cline-pass-model-id">{row.client_id}</code>
+                                      {row.client_id !== row.upstream_id ? (
+                                        <small>
+                                          {tx("ui.opencode_cline_pass_upstream_id")}: <code className="cline-pass-model-id">{row.upstream_id}</code>
+                                        </small>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <span className={row.published ? "opencode-model-state enabled" : "opencode-model-state disabled"}>
+                                      {tx(row.published ? "ui.opencode_cline_pass_published" : "ui.opencode_cline_pass_unpublished")}
+                                    </span>
+                                  </td>
+                                  <td className="actions-cell">
+                                    <div className="row-actions">
+                                      <IconButton
+                                        label={tx("ui.model_test_action", { model: row.name || row.client_id })}
+                                        disabled={!clinePassProbeAccount || busy === "cline-pass-model-row-test"}
+                                        onClick={() => runClinePassModelRowProbe(row)}
+                                      >
+                                        {testing ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}
+                                      </IconButton>
+                                    </div>
+                                  </td>
+                                </tr>
+                                {probe ? (
+                                  <tr className="opencode-credential-row">
+                                    <td colSpan={4}>
+                                      {probe.result ? (
+                                        <ModelProbeOutcome
+                                          status={probe.result.status}
+                                          model={probe.result.model || row.upstream_id}
+                                          reasonCode={probe.result.reason_code}
+                                          statusCode={probe.result.status_code}
+                                          latencyMs={probe.result.latency_ms}
+                                          testedAt={probe.result.tested_at}
+                                          endpoint={probe.result.endpoint}
+                                          triedEndpoints={probe.result.tried_endpoints}
+                                          probeKind={probe.result.probe_kind ?? "model"}
+                                          response={probe.result.response}
+                                          detail={probe.result.detail}
+                                        />
+                                      ) : probe.error ? (
+                                        <p className="opencode-credential-warning" role="alert"><AlertTriangle size={14} />{probe.error}</p>
+                                      ) : (
+                                        <p className="opencode-note" role="status"><LoaderCircle className="spin" size={14} />{tx("ui.testing")}</p>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              ) : clinePassModelsLoading ? (
+                <p className="opencode-note" role="status"><LoaderCircle className="spin" size={14} />{tx("ui.loading_models")}</p>
+              ) : null}
+            </section>
+          </section>
+          ) : null}
         </section>
       ) : null}
       {activeTab === "channels" ? (

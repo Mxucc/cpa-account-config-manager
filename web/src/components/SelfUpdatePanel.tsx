@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
+import { writePendingNotice } from "../store/pendingNotice";
 import type { UIMessageKey } from "../i18n/uiText";
 import type { SelfUpdateReloadResult, SelfUpdateSnapshot } from "../types";
 
@@ -22,11 +23,16 @@ interface SelfUpdatePanelProps {
 // can shorten the window instead of waiting for the real one.
 export const reloadPollTiming = { intervalMS: 3000, windowMS: 90_000, refreshDelayMS: 1200 };
 
-// schedulePageRefresh reloads the page once the notice had a moment to register. In a test
-// environment (no navigation) it does nothing.
-function schedulePageRefresh(): void {
+// schedulePageRefresh reloads the page once the notice had a moment to register. That refresh
+// drops every notice the page already shows, so the outcome of the reload is stored at the last
+// possible moment and read back by the page that loads next. In a test environment (no
+// navigation) nothing reloads and nothing is stored.
+function schedulePageRefresh(notice: string): void {
   if (typeof window === "undefined" || typeof window.location?.reload !== "function") return;
-  setTimeout(() => { window.location.reload(); }, reloadPollTiming.refreshDelayMS);
+  setTimeout(() => {
+    writePendingNotice(notice);
+    window.location.reload();
+  }, reloadPollTiming.refreshDelayMS);
 }
 
 /** Explains a refused reload in operator terms. */
@@ -195,19 +201,24 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
    * the swap happened. Polling the version is the only reliable signal, because the reloaded
    * instance answers with its own version.
    */
-  const waitForReload = useCallback(async (previousVersion: string): Promise<boolean> => {
+  const waitForReload = useCallback(async (previousVersion: string, request: number): Promise<boolean> => {
     const deadline = Date.now() + reloadPollTiming.windowMS;
     while (Date.now() < deadline) {
       await new Promise((resolve) => { setTimeout(resolve, reloadPollTiming.intervalMS); });
+      // The panel can be unmounted while the host swaps the plugin, and a panel that is gone must
+      // not re-render, report, or arm the page refresh for a reload nobody is waiting for.
+      if (request !== sequence.current) return false;
       try {
         const next = await api.getSelfUpdate();
         if (next.current_version && next.current_version !== previousVersion) {
+          if (request !== sequence.current) return false;
           setSnapshot(next);
           setReloadResult({ reloaded: true, restart_required: false, store_version: next.current_version });
-          onNotice(tx("ui.self_update_reloaded_refresh_page"));
+          const reloadedNotice = tx("ui.self_update_reloaded_refresh_page");
+          onNotice(reloadedNotice);
           // The reload replaced the interface as well, so the page is refreshed automatically
           // instead of asking the operator to do it.
-          schedulePageRefresh();
+          schedulePageRefresh(reloadedNotice);
           return true;
         }
       } catch {
@@ -228,8 +239,9 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
       if (current !== sequence.current) return;
       setReloadResult(result);
       if (result.reloaded) {
-        onNotice(tx("ui.self_update_reloaded_refresh_page"));
-        schedulePageRefresh();
+        const reloadedNotice = tx("ui.self_update_reloaded_refresh_page");
+        onNotice(reloadedNotice);
+        schedulePageRefresh(reloadedNotice);
         return;
       }
       handleReloadRefusal(result);
@@ -237,7 +249,7 @@ export function SelfUpdatePanel({ onAPIError, onNotice }: SelfUpdatePanelProps) 
       if (current !== sequence.current) return;
       // A closed connection is expected while the plugin is replaced, so ask the host instead of
       // reporting a failure the operator cannot act on.
-      const reloaded = await waitForReload(previousVersion);
+      const reloaded = await waitForReload(previousVersion, current);
       if (current !== sequence.current) return;
       if (!reloaded) {
         setReloadResult({ reloaded: false, restart_required: true, reason: "reload_not_confirmed" });

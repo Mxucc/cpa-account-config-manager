@@ -74,14 +74,22 @@ type clinePassSettingsUpdateResponse struct {
 
 // clinePassModelView is one model row of the Cline Pass model page. The upstream
 // id is what a probe must send; the client id is what a client calls. No
-// credential is ever part of this shape.
+// credential is ever part of this shape. The price fields carry the documented
+// reference rates (USD per 1M tokens) rather than a charge: Priced reports whether
+// the documentation prices the model at all, and the cache-write field is omitted
+// when the documentation publishes no cache-write rate.
 type clinePassModelView struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Free       bool   `json:"free"`
-	UpstreamID string `json:"upstream_id"`
-	ClientID   string `json:"client_id"`
-	Published  bool   `json:"published"`
+	ID                      string  `json:"id"`
+	Name                    string  `json:"name"`
+	Free                    bool    `json:"free"`
+	UpstreamID              string  `json:"upstream_id"`
+	ClientID                string  `json:"client_id"`
+	Published               bool    `json:"published"`
+	Priced                  bool    `json:"priced"`
+	InputUSDPerMillion      float64 `json:"input_usd_per_million,omitempty"`
+	OutputUSDPerMillion     float64 `json:"output_usd_per_million,omitempty"`
+	CacheReadUSDPerMillion  float64 `json:"cache_read_usd_per_million,omitempty"`
+	CacheWriteUSDPerMillion float64 `json:"cache_write_usd_per_million,omitempty"`
 }
 
 type clinePassModelsResponse struct {
@@ -501,6 +509,7 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 		}
 		_, isPublished := published[clientID]
 		view.Published = isPublished
+		applyClinePassModelPrice(&view, id)
 		models = append(models, view)
 	}
 	return jsonResponse(http.StatusOK, clinePassModelsResponse{

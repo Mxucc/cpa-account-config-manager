@@ -21,10 +21,26 @@ type clinePassChannelRoute struct {
 	models  int
 }
 
-// clinePassChannelRoutes reads the OpenAI-compatible channel list once and
-// indexes it by canonical base URL. A read failure or a missing management key
-// returns an empty index so every caller degrades to the unbound state instead
-// of failing the request. The management key is never logged or returned.
+// clinePassChannelRouteKey indexes one channel row by its base URL and, when it has one, by its
+// credential. Several accounts of one kind share the gateway base URL, so the credential is what
+// tells their rows apart.
+func clinePassChannelRouteKey(baseURL, apiKey string) string {
+	key := canonicalProviderBaseURL(baseURL)
+	if key == "" {
+		return ""
+	}
+	if trimmed := strings.TrimSpace(apiKey); trimmed != "" {
+		return key + "\x00" + trimmed
+	}
+	return key
+}
+
+// clinePassChannelRoutes reads the OpenAI-compatible channel list once and indexes it twice: by
+// canonical base URL (first row wins, which is what a summary over every account needs) and by
+// base URL plus credential (which is what one account needs, now that each account has its own
+// row). A read failure or a missing management key returns an empty index so every caller degrades
+// to the unbound state instead of failing the request. The management key is never logged or
+// returned.
 func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) map[string]clinePassChannelRoute {
 	routes := map[string]clinePassChannelRoute{}
 	if a == nil || strings.TrimSpace(managementKey) == "" {
@@ -35,20 +51,40 @@ func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) 
 		return routes
 	}
 	for _, entry := range entries {
-		key := canonicalProviderBaseURL(aiProviderChannelBaseURL(entry))
-		if key == "" {
+		baseKey := canonicalProviderBaseURL(aiProviderChannelBaseURL(entry))
+		if baseKey == "" {
 			continue
 		}
-		if _, exists := routes[key]; exists {
-			continue
-		}
-		routes[key] = clinePassChannelRoute{
+		route := clinePassChannelRoute{
 			published: aiProviderChannelPublishedModels(entry),
 			aliases:   aiProviderChannelModelAliases(entry),
 			models:    clinePassChannelModelCount(entry),
 		}
+		if _, exists := routes[baseKey]; !exists {
+			routes[baseKey] = route
+		}
+		if credentialKey := clinePassChannelRouteKey(aiProviderChannelBaseURL(entry), aiProviderChannelCredential(entry)); credentialKey != "" {
+			routes[credentialKey] = route
+		}
 	}
 	return routes
+}
+
+// clinePassChannelRouteLookup prefers the account's own row (base URL plus its credential) and
+// falls back to the base-URL row, which is what a deployment that has not re-bound yet still has.
+func clinePassChannelRouteLookup(view ClinePassAccountView, apiKey string, routes map[string]clinePassChannelRoute) (clinePassChannelRoute, bool) {
+	baseURL := clinePassChannelBaseURL(view.BaseURL)
+	if credentialKey := clinePassChannelRouteKey(baseURL, apiKey); credentialKey != "" {
+		if route, ok := routes[credentialKey]; ok {
+			return route, true
+		}
+	}
+	baseKey := canonicalProviderBaseURL(baseURL)
+	if baseKey == "" {
+		return clinePassChannelRoute{}, false
+	}
+	route, ok := routes[baseKey]
+	return route, ok
 }
 
 // aiProviderChannelPublishedModels collects every model id one live channel
@@ -148,12 +184,13 @@ func clinePassAccountModelIDs(view ClinePassAccountView) []string {
 	return clinePassCatalogIDs()
 }
 
-// applyClinePassRouteState fills the routing fields of one account view from the
-// channel index. An unbound account reports channel_models=0 and a gap equal to
-// its model count, so "not bound" can never be mistaken for "all models routed".
-func applyClinePassRouteState(view ClinePassAccountView, routes map[string]clinePassChannelRoute) ClinePassAccountView {
+// applyClinePassRouteState fills the routing fields of one account view from the channel index.
+// The account's own credential selects its own row when the deployment already gave every account
+// one; without it the base-URL row is used. An unbound account reports channel_models=0 and a gap
+// equal to its model count, so "not bound" can never be mistaken for "all models routed".
+func applyClinePassRouteState(view ClinePassAccountView, apiKey string, routes map[string]clinePassChannelRoute) ClinePassAccountView {
 	models := clinePassAccountModelIDs(view)
-	route, bound := routes[canonicalProviderBaseURL(clinePassChannelBaseURL(view.BaseURL))]
+	route, bound := clinePassChannelRouteLookup(view, apiKey, routes)
 	if !bound {
 		view.ChannelBound = false
 		view.ChannelModels = 0
@@ -187,7 +224,13 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 	}
 	routes := a.clinePassChannelRoutes(ctx, managementKey)
 	for _, view := range targets {
-		*view = applyClinePassRouteState(*view, routes)
+		// The stored credential is what identifies this account's own channel row; it is read
+		// without any refresh or network call and never leaves this function.
+		credential := ""
+		if a.clinePass != nil {
+			credential = a.clinePass.accessToken(view.ID)
+		}
+		*view = applyClinePassRouteState(*view, credential, routes)
 	}
 }
 

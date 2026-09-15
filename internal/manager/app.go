@@ -875,6 +875,13 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	if a.runtimeSuperseded() {
 		return
 	}
+	if a.clinePass != nil {
+		// Cline Pass is an OpenAI-compatible channel, so its traffic arrives on
+		// this same usage callback. The record feeds the reference-priced quota
+		// windows; no additional host callback or observer is registered, and the
+		// tracker itself decides whether the record is Cline Pass traffic.
+		a.clinePass.ObserveUsage(record)
+	}
 	if isAIProviderUsageRecord(record) {
 		// Provider credentials and native OAuth accounts share CPA's usage
 		// callback. Never put provider traffic into the account usage store: an

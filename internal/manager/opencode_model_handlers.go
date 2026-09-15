@@ -144,7 +144,9 @@ func (a *App) handleOpenCodeBind(ctx context.Context, req cpaapi.ManagementReque
 			return jsonResponse(http.StatusNotFound, map[string]any{"error": errCredential.Error()})
 		}
 		credential = resolved
-		label = openCodeBoundChannelName + " Zen"
+		// One Zen account among several must be identifiable on the channel row:
+		// every account of a kind shares the same gateway base URL.
+		label = openCodeZenChannelLabel(a.opencodeZen, request.AccountID)
 	default:
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "kind must be go or zen"})
 	}

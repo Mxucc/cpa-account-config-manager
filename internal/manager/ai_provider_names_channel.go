@@ -292,15 +292,37 @@ func (a *App) assignAIProviderChannelName(ctx context.Context, managementKey, ki
 		return errAIProviderNameEntryStale
 	}
 	// Reconcile first so the binding exists with its current identity, then write
-	// the label onto both the credential and URL records.
+	// the label onto the record that belongs to this entry.
 	a.syncAIProviderChannelBindings(kind, entries)
 	identity := a.channelIdentityFor(kind, entry)
 	keys := []string{identity.credentialKey}
 	if aiProviderChannelCredential(entry) == "" {
+		// Only a channel with no credential at all is identified by its base URL.
 		keys = []string{identity.urlKey}
-	} else {
+	} else if aiProviderChannelBaseURLOwners(entries, entry) == 1 {
+		// The URL record is what lets a rotated credential inherit the name the
+		// operator gave this channel earlier. It is shared by every channel with
+		// that base URL, so it may only be written while exactly one channel owns
+		// it: writing it while siblings share the base URL renamed all of them,
+		// which is the bug this guards against.
 		keys = append(keys, identity.urlKey)
 	}
 	_, errAssign := a.aiProviderNames.Assign(keys, name)
 	return errAssign
+}
+
+// aiProviderChannelBaseURLOwners counts the channel entries that share one entry's canonical base
+// URL. It answers whether that base URL identifies this channel unambiguously.
+func aiProviderChannelBaseURLOwners(entries []map[string]any, entry map[string]any) int {
+	target := canonicalProviderBaseURL(aiProviderChannelBaseURL(entry))
+	if target == "" {
+		return 0
+	}
+	owners := 0
+	for _, candidate := range entries {
+		if canonicalProviderBaseURL(aiProviderChannelBaseURL(candidate)) == target {
+			owners++
+		}
+	}
+	return owners
 }

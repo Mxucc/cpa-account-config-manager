@@ -50,8 +50,10 @@ func openCodeChannelHeaders() map[string]string {
 const openCodeChannelSessionBaseline = "oc-cli-baseline"
 
 // bindOpenCodeChannel writes one OpenAI-compatible CPA channel for an OpenCode
-// credential. An existing channel with the same normalized base URL is updated in
-// place so repeated binds are idempotent and keep unrelated fields untouched.
+// credential. The row that already carries this credential is updated in place so
+// repeated binds are idempotent and keep unrelated fields untouched; another
+// account of the same kind (same gateway base URL, other credential) gets its own
+// row instead of sharing this one.
 func (a *App) bindOpenCodeChannel(ctx context.Context, managementKey, baseURL, apiKey, label string, models []string) (OpenCodeBindingResult, error) {
 	// OpenCode has no alias setting, so its rows keep any operator alias that is
 	// already configured and only missing ids are appended.
@@ -68,6 +70,14 @@ func (a *App) bindClinePassChannel(ctx context.Context, managementKey, baseURL, 
 // bindOpenAICompatibleChannel upserts one OpenAI-compatible CPA channel that
 // points at an upstream base URL with a credential and its client headers, then
 // publishes the verified model catalog on the channel so CPA can route it.
+//
+// One row belongs to one credential. Several accounts of a kind share the same
+// gateway base URL, so the target row is selected by base URL AND credential:
+// selecting by base URL alone collapsed every account into one row, which renamed
+// every sibling on a rename and let the last bind replace the other accounts'
+// keys. The label is written when this call creates a row; a plain re-bind of an
+// existing row keeps the operator's name.
+
 func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string][]string) (OpenCodeBindingResult, error) {
 	result := OpenCodeBindingResult{Kind: "openai-compatibility", BaseURL: channelBaseURL, Index: -1}
 	if a == nil {
@@ -86,28 +96,51 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	}
 	items := make([]map[string]any, 0, len(entries)+1)
 	target := -1
+	// unclaimed is a row for the same gateway that carries no credential at all. It is what an
+	// older release left behind before every account got its own row, so this account adopts it
+	// instead of adding a duplicate. A row that already holds another account's credential is
+	// never adopted.
+	unclaimed := -1
+	channelBase := canonicalProviderBaseURL(result.BaseURL)
 	for index, entry := range entries {
 		cloned := make(map[string]any, len(entry)+1)
 		for key, value := range entry {
 			cloned[key] = value
 		}
-		if target < 0 && canonicalProviderBaseURL(aiProviderChannelBaseURL(cloned)) == canonicalProviderBaseURL(result.BaseURL) {
-			target = index
+		if canonicalProviderBaseURL(aiProviderChannelBaseURL(cloned)) == channelBase {
+			switch {
+			case openCodeChannelHoldsCredential(cloned, apiKey):
+				if target < 0 {
+					target = index
+				}
+			case !openCodeChannelHoldsAnyCredential(cloned) && unclaimed < 0:
+				unclaimed = index
+			}
 		}
 		items = append(items, cloned)
+	}
+	if target < 0 {
+		target = unclaimed
 	}
 	label = strings.TrimSpace(label)
 	if label == "" {
 		label = defaultLabel
 	}
 	if target < 0 {
+		// No row carries this credential and no row is free to adopt, so this account gets its
+		// own row even though other accounts already publish the same base URL.
 		items = append(items, map[string]any{})
 		target = len(items) - 1
 		result.Created = true
 	}
 	entry := items[target]
 	entry["base-url"] = result.BaseURL
-	entry["name"] = label
+	// Only a row this bind created (or a row that carries no label at all yet) is
+	// named: the operator's name has to survive a plain re-bind, and a bind must
+	// never rename a sibling account's row.
+	if result.Created || strings.TrimSpace(aiProviderChannelName(entry)) == "" {
+		entry["name"] = label
+	}
 	// The credential lives in the weighted key list; the legacy top-level field is
 	// accepted by CPA's JSON decoder but ignored for OpenAI-compatible channels.
 	entry["api-key-entries"] = mergeOpenCodeChannelKeyEntries(entry["api-key-entries"], apiKey)
@@ -148,10 +181,15 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	return result, nil
 }
 
-// mergeOpenCodeChannelKeyEntries updates the first credential row in place and
-// keeps any additional weighted rows, so binding does not discard a key pool the
-// operator already configured for that channel.
+// mergeOpenCodeChannelKeyEntries upserts one credential in the weighted key list
+// of a channel row. The row that already carries the credential is updated in
+// place, so any extra weighted rows the operator added for that credential
+// survive; a credential the row does not carry yet is appended as its own
+// weighted row. One row belongs to one account, so binding a second account must
+// never overwrite the first account's key: that would leave the first account
+// unroutable and unattributable.
 func mergeOpenCodeChannelKeyEntries(existing any, apiKey string) []map[string]any {
+	wanted := strings.TrimSpace(apiKey)
 	rows := make([]map[string]any, 0, 2)
 	if list, ok := existing.([]any); ok {
 		for _, item := range list {
@@ -166,11 +204,86 @@ func mergeOpenCodeChannelKeyEntries(existing any, apiKey string) []map[string]an
 			rows = append(rows, cloned)
 		}
 	}
-	if len(rows) == 0 {
-		return []map[string]any{{"api-key": strings.TrimSpace(apiKey)}}
+	for _, row := range rows {
+		if key, ok := row["api-key"].(string); ok && strings.TrimSpace(key) == wanted {
+			row["api-key"] = wanted
+			return rows
+		}
 	}
-	rows[0]["api-key"] = strings.TrimSpace(apiKey)
-	return rows
+	return append(rows, map[string]any{"api-key": wanted})
+}
+
+// openCodeChannelHoldsCredential reports whether one channel row carries the
+// supplied credential in its weighted key list. The credential identifies the row
+// of one account among the rows that share a base URL, and a credential that
+// appears in a later weighted row still identifies the row.
+func openCodeChannelHoldsCredential(entry map[string]any, apiKey string) bool {
+	wanted := strings.TrimSpace(apiKey)
+	if wanted == "" {
+		return false
+	}
+	if list, ok := entry["api-key-entries"].([]any); ok {
+		for _, item := range list {
+			record, isRecord := item.(map[string]any)
+			if !isRecord {
+				continue
+			}
+			if key, isText := record["api-key"].(string); isText && strings.TrimSpace(key) == wanted {
+				return true
+			}
+		}
+	}
+	if key, isText := entry["api-key"].(string); isText && strings.TrimSpace(key) == wanted {
+		return true
+	}
+	return false
+}
+
+// openCodeChannelHoldsAnyCredential reports whether a channel row already owns a credential, so an
+// adoption never steals a row that belongs to another account.
+func openCodeChannelHoldsAnyCredential(entry map[string]any) bool {
+	if key, isText := entry["api-key"].(string); isText && strings.TrimSpace(key) != "" {
+		return true
+	}
+	list, ok := entry["api-key-entries"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range list {
+		record, isRecord := item.(map[string]any)
+		if !isRecord {
+			continue
+		}
+		if key, isText := record["api-key"].(string); isText && strings.TrimSpace(key) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// openCodeZenChannelLabel names the CPA channel of one OpenCode Zen account. Every
+// Zen account may share the same gateway base URL, so the label carries the
+// account identity (its operator name, else its id) to keep the bound rows
+// distinguishable; the bare constant remains the fallback when neither is known.
+func openCodeZenChannelLabel(service *OpenCodeZenService, accountID string) string {
+	label := openCodeBoundChannelName + " Zen"
+	if service == nil {
+		return label
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return label
+	}
+	for _, account := range service.ListAccounts() {
+		if account.ID != id {
+			continue
+		}
+		if name := strings.TrimSpace(account.Name); name != "" {
+			return label + " " + name
+		}
+		break
+	}
+	return label + " " + id
 }
 
 // mergeOpenCodeChannelModels publishes a model catalog on a CPA channel.

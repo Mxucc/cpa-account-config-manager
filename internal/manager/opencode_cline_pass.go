@@ -212,6 +212,11 @@ type ClinePassAccountView struct {
 	ChannelBound     bool `json:"channel_bound"`
 	ChannelModels    int  `json:"channel_models"`
 	ChannelModelGaps int  `json:"channel_model_gaps"`
+	// QuotaUsage is the reference-priced usage of this account over the three
+	// documented Cline Pass windows. It carries token counts and reference-priced
+	// USD amounts only, never a credential, and it is additive: existing keys are
+	// untouched.
+	QuotaUsage ClinePassQuotaUsage `json:"quota_usage"`
 }
 
 type clinePassPersisted struct {
@@ -296,6 +301,9 @@ type ClinePassService struct {
 	// stripModelPrefix is the persisted publishing switch: it decides whether
 	// the client-facing model id drops the literal cline-pass/ prefix.
 	stripModelPrefix bool
+	// usage keeps the reference-priced events of the documented quota windows in
+	// memory. It is fed by the CPA usage callback the plugin already consumes.
+	usage *clinePassUsageLedger
 }
 
 func NewClinePassService() *ClinePassService {
@@ -305,6 +313,7 @@ func NewClinePassService() *ClinePassService {
 		// existing store file that predates the setting.
 		stripModelPrefix: true,
 		logins:           map[string]*clinePassLoginSession{},
+		usage:            newClinePassUsageLedger(),
 	}
 }
 
@@ -563,6 +572,7 @@ func (s *ClinePassService) clinePassViewOfLocked(account ClinePassAccount) Cline
 		view.ExpiresAt = &expires
 		view.Expired = !expires.After(s.now().UTC())
 	}
+	view.QuotaUsage = s.clinePassQuotaUsageLocked(account)
 	return view
 }
 
@@ -582,6 +592,27 @@ func (s *ClinePassService) AccountView(id string) (ClinePassAccountView, bool) {
 	return ClinePassAccountView{}, false
 }
 
+// accessToken reports the stored credential of one account without any side effect: no refresh, no
+// network. Callers that need to prove which channel row belongs to an account use it, so routing
+// state can be read for several accounts that share one gateway base URL.
+func (s *ClinePassService) accessToken(id string) string {
+	if s == nil {
+		return ""
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID == id {
+			return strings.TrimSpace(account.AccessToken)
+		}
+	}
+	return ""
+}
+
 // accountLocked returns a copy of one stored account.
 func (s *ClinePassService) accountLocked(id string) (ClinePassAccount, bool) {
 	id = strings.TrimSpace(id)
@@ -592,6 +623,13 @@ func (s *ClinePassService) accountLocked(id string) (ClinePassAccount, bool) {
 	}
 	return ClinePassAccount{}, false
 }
+
+// AccountCredential returns the credential the plugin publishes for one account:
+// the stored access token, which is the API key of that account's CPA channel row.
+// Several accounts of a kind share one gateway base URL, so this value is what
+// tells their channel rows apart. It never refreshes an OAuth token (a caller that
+// only reads routing state must not perform upstream I/O) and never leaves the
+// process. An unknown account reports an empty string.
 
 // SaveAPIKeyAccount adds or replaces a credential submitted as a static API key.
 // When accountID matches an existing entry only the name and base URL change and

@@ -1372,6 +1372,11 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 				access_token_set: account.access_token_set as boolean,
 				refresh_token_set: account.refresh_token_set as boolean,
 				expired: account.expired as boolean,
+				// A pre-binding backend omits the routing fields, so an absent value degrades to
+				// "unbound" instead of failing the whole account list.
+				channel_bound: account.channel_bound === true,
+				channel_models: isFiniteNonNegativeNumber(account.channel_models) ? account.channel_models : 0,
+				channel_model_gaps: isFiniteNonNegativeNumber(account.channel_model_gaps) ? account.channel_model_gaps : 0,
 			};
 			if (typeof account.name === "string" && account.name.trim()) view.name = account.name;
 			if (typeof account.expires_at === "string" && account.expires_at) view.expires_at = account.expires_at;

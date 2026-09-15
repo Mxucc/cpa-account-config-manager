@@ -4,7 +4,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { openCodeProbeHintKey, openCodeReasonKey } from "../format/openCodeModelTest";
 import { useI18n } from "../i18n";
-import type { ClinePassAccountView, ClinePassCatalogModel, ClinePassLoginView, OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
+import type { ClinePassAccountView, ClinePassBinding, ClinePassCatalogModel, ClinePassLoginView, OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 
@@ -366,7 +366,14 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
           return;
         }
         if (view.status === "completed") {
-          onNotice(tx("ui.opencode_cline_pass_login_ok"));
+          // The completed sign-in binds the account to a CPA channel: report that channel
+          // instead of a bare success, or warn about it without failing the sign-in.
+          if (view.binding) {
+            onNotice(`${tx("ui.opencode_cline_pass_bound")} · ${tx("ui.opencode_channel_models", { count: String(view.binding.models ?? 0) })}`);
+          } else {
+            onNotice(tx("ui.opencode_cline_pass_login_ok"));
+            if (view.binding_error) setClinePassError(tx("ui.opencode_cline_pass_binding_error", { error: operatorMessage(view.binding_error, locale) }));
+          }
           const listed = await api.listClinePassAccounts();
           if (clinePassPollMounted.current) setClinePassAccounts(listed.accounts);
         }
@@ -401,7 +408,15 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
       return;
     }
     setClinePassAccounts((await api.listClinePassAccounts()).accounts);
-    if (view.status === "completed") onNotice(tx("ui.opencode_cline_pass_login_ok"));
+    if (view.status === "completed") {
+      // The CLI reuse finishes in one round trip and may already have bound the account.
+      if (view.binding) {
+        onNotice(`${tx("ui.opencode_cline_pass_bound")} · ${tx("ui.opencode_channel_models", { count: String(view.binding.models ?? 0) })}`);
+      } else {
+        onNotice(tx("ui.opencode_cline_pass_login_ok"));
+        if (view.binding_error) setClinePassError(tx("ui.opencode_cline_pass_binding_error", { error: operatorMessage(view.binding_error, locale) }));
+      }
+    }
   });
 
   const cancelClinePassSignIn = () => void withBusy("cline-pass-cancel", async () => {
@@ -428,8 +443,12 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
     });
     setNewClinePassKey("");
     applyClinePassAccount(response.account);
-    onNotice(tx("ui.opencode_account_saved"));
-    if (!response.result.reachable && response.result.detail) setClinePassError(operatorMessage(response.result.detail, locale));
+    onNotice(response.binding
+      ? `${tx("ui.opencode_cline_pass_bound")} · ${tx("ui.opencode_channel_models", { count: String(response.binding.models ?? 0) })}`
+      : tx("ui.opencode_account_saved"));
+    // A failed bind is a warning: the credential itself was saved and stays usable for a retry.
+    if (response.binding_error) setClinePassError(tx("ui.opencode_cline_pass_binding_error", { error: operatorMessage(response.binding_error, locale) }));
+    if (!response.binding_error && !response.result.reachable && response.result.detail) setClinePassError(operatorMessage(response.result.detail, locale));
   });
 
   const refreshClinePassCatalogFor = (accountID: string) => void withBusy(`cline-pass-models-${accountID}`, async () => {
@@ -1189,6 +1208,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                     <th>{tx("ui.opencode_channel_kind")}</th>
                     <th>{tx("ui.opencode_cline_pass_token_state")}</th>
                     <th>{tx("ui.models")}</th>
+                    <th>{tx("ui.opencode_cline_pass_routing")}</th>
                     <th className="actions-header">{tx("ui.actions")}</th>
                   </tr>
                 </thead>
@@ -1196,6 +1216,11 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                   {clinePassAccounts.map((account) => {
                     const label = account.name || account.id;
                     const credentialed = account.access_token_set || account.refresh_token_set;
+                    // CPA routing: the account is reachable only once a channel carries its base
+                    // URL, and a partially published channel leaves some models unroutable.
+                    const bound = account.channel_bound === true;
+                    const publishedModels = account.channel_models ?? 0;
+                    const modelGaps = account.channel_model_gaps ?? 0;
                     // The catalog turns the stored ids into the names the operator knows; the ids
                     // stay visible because they are what the gateway accepts.
                     const modelNames = (account.models ?? [])
@@ -1233,6 +1258,20 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                             </div>
                           )}
                         </td>
+                        <td>
+                          <div className="opencode-routing-cell">
+                            {bound && modelGaps > 0 ? (
+                              <span className="opencode-routing-badge is-warning">{tx("ui.opencode_cline_pass_routing_gaps", { count: String(modelGaps) })}</span>
+                            ) : bound ? (
+                              <span className="opencode-routing-badge is-bound">{tx("ui.opencode_cline_pass_routing_bound", { count: String(publishedModels) })}</span>
+                            ) : (
+                              <>
+                                <span className="opencode-routing-badge is-unbound">{tx("ui.opencode_cline_pass_routing_unbound")}</span>
+                                <small>{tx("ui.opencode_cline_pass_routing_hint")}</small>
+                              </>
+                            )}
+                          </div>
+                        </td>
                         <td className="actions-cell">
                           <div className="row-actions">
                             <IconButton label={tx("ui.opencode_load_models_for", { account: label })} disabled={busy === `cline-pass-models-${account.id}`} onClick={() => refreshClinePassCatalogFor(account.id)}>
@@ -1243,7 +1282,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                                 <IconButton label={tx("ui.opencode_test_models_for", { account: label })} disabled={!account.models?.length} onClick={() => openClinePassProbe(account)}>
                                   <Activity size={15} />
                                 </IconButton>
-                                <IconButton label={tx("ui.opencode_bind_for", { account: label })} disabled={busy === `cline-pass-bind-${account.id}`} onClick={() => bindClinePass(account.id)}>
+                                <IconButton className={bound ? "" : "opencode-bind-attention"} label={tx("ui.opencode_bind_for", { account: label })} disabled={busy === `cline-pass-bind-${account.id}`} onClick={() => bindClinePass(account.id)}>
                                   {busy === `cline-pass-bind-${account.id}` ? <LoaderCircle className="spin" size={15} /> : <Link2 size={15} />}
                                 </IconButton>
                                 <IconButton label={tx("ui.opencode_cline_pass_refresh")} disabled={busy === `cline-pass-refresh-${account.id}`} onClick={() => refreshClinePassSignIn(account.id)}>
@@ -1261,7 +1300,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                       </tr>
                     );
                   })}
-                  {!loading && clinePassAccounts.length === 0 ? <tr><td colSpan={5}>{tx("ui.opencode_cline_pass_no_accounts")}</td></tr> : null}
+                  {!loading && clinePassAccounts.length === 0 ? <tr><td colSpan={6}>{tx("ui.opencode_cline_pass_no_accounts")}</td></tr> : null}
                 </tbody>
               </table>
             </div>

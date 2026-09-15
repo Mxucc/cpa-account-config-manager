@@ -3080,6 +3080,14 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 .opencode-channel-state { font-size: calc(11px * var(--font-size-scale)); font-weight: 700; }
 .opencode-channel-state.imported { color: var(--success); }
 .opencode-channel-state.not-imported { color: var(--text-tertiary); }
+/* Cline Pass CPA routing state: whether a bound channel makes the account's models routable. */
+.opencode-routing-cell { min-width: 160px; display: grid; gap: 3px; }
+.opencode-routing-cell small { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); line-height: 1.4; }
+.opencode-routing-badge { justify-self: start; display: inline-flex; align-items: center; padding: 1px 7px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-primary); font-size: calc(10px * var(--font-size-scale)); font-weight: 700; letter-spacing: .04em; }
+.opencode-routing-badge.is-bound { color: var(--success); border-color: color-mix(in srgb, var(--success) 34%, var(--border-color)); background: var(--bg-tertiary); }
+.opencode-routing-badge.is-warning { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 32%, var(--border-color)); background: var(--warning-soft); }
+.opencode-routing-badge.is-unbound { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 28%, var(--border-color)); background: var(--danger-soft); }
+.opencode-bind-attention { color: var(--primary-active); border-color: color-mix(in srgb, var(--primary-active) 42%, var(--border-color)); }
 .opencode-channels .actions-cell .button { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 480px) { .opencode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .opencode-tabs button { min-height: 36px; } }
 

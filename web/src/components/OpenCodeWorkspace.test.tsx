@@ -60,6 +60,10 @@ function clinePassAccountView(overrides: Record<string, unknown> = {}): Record<s
     models_error: "",
     models_fetched_at: "2026-09-15T01:00:00Z",
     created_at: "2026-09-15T01:00:00Z",
+    // CPA routing state attached by the backend once the account is listed.
+    channel_bound: true,
+    channel_models: 2,
+    channel_model_gaps: 0,
     ...overrides,
   };
 }
@@ -1105,5 +1109,80 @@ describe("OpenCodeWorkspace", () => {
     await user.click(within(panel).getByRole("button", { name: "使用浏览器登录" }));
 
     expect(await within(panel).findByText(/Cline Pass 登录失败/)).toBeInTheDocument();
+  });
+  it("warns that an unbound Cline Pass account is unroutable and points at the bind action", async () => {
+    const user = userEvent.setup();
+    // A working credential is not routable until a CPA channel carries its base URL: the row
+    // must say so instead of looking merely incomplete.
+    openCodeFetchMock({
+      clinePassAccounts: [clinePassAccountView({ channel_bound: false, channel_models: 0, channel_model_gaps: 2 })],
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("尚未绑定 CPA 渠道")).toBeInTheDocument();
+    expect(within(row).getByText(/unknown provider for model/)).toBeInTheDocument();
+    // The bind action is the obvious next step: it stays enabled and is highlighted.
+    const bind = within(row).getByRole("button", { name: "将 Work laptop 的模型发布到 CPA 路由" });
+    expect(bind).toBeEnabled();
+    expect(bind.className).toContain("opencode-bind-attention");
+  });
+
+  it("names the model gap when the CPA channel publishes only part of an account", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({
+      clinePassAccounts: [clinePassAccountView({ channel_bound: true, channel_models: 1, channel_model_gaps: 1 })],
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("还有 1 个模型未发布")).toBeInTheDocument();
+    expect(within(row).queryByText("尚未绑定 CPA 渠道")).not.toBeInTheDocument();
+  });
+
+  it("announces the CPA channel a completed Cline Pass sign-in bound", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({
+      clinePassLoginStart: clinePassLoginView({
+        status: "completed",
+        account: clinePassAccountView(),
+        binding: { kind: "openai-compatibility", base_url: "https://api.cline.bot/api/v1", index: 0, created: true, channel_key: "openai-compatibility:0", models: 4 },
+      }),
+    });
+    const onNotice = vi.fn();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await user.click(within(panel).getByRole("button", { name: "复用已有的 Cline CLI 登录" }));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("已发布 4 个模型")));
+  });
+
+  it("warns about a failed bind from a completed sign-in without failing the sign-in", async () => {
+    const user = userEvent.setup();
+    openCodeFetchMock({
+      clinePassLoginStart: clinePassLoginView({
+        status: "completed",
+        account: clinePassAccountView(),
+        binding_error: "the CPA management key rejected the channel write",
+      }),
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await selectTab(user, "Cline Pass 账号");
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await user.click(within(panel).getByRole("button", { name: "复用已有的 Cline CLI 登录" }));
+
+    const warning = await within(panel).findByRole("alert");
+    expect(warning).toHaveTextContent("Cline Pass 渠道绑定失败：the CPA management key rejected the channel write");
+    // The sign-in itself still succeeded, so the completed status stays on screen.
+    expect(within(panel).getByText("Cline Pass 账号已登录")).toBeInTheDocument();
   });
 });

@@ -1623,6 +1623,14 @@ export interface ClinePassAccountView {
   models_error?: string;
   models_fetched_at?: string;
   created_at?: string;
+  /**
+   * CPA routing state. The credential is only routable once a CPA channel carries this
+   * account's base URL; `channel_model_gaps` counts the account models that channel omits
+   * and equals the whole model list while the account is unbound.
+   */
+  channel_bound: boolean;
+  channel_models: number;
+  channel_model_gaps: number;
 }
 
 export interface ClinePassAccountsResponse {
@@ -1654,6 +1662,12 @@ export interface ClinePassLoginView {
   expires_in_seconds?: number;
   error?: string;
   account?: ClinePassAccountView;
+  /**
+   * The CPA channel the automatic bind wrote on a completed sign-in, and why that bind
+   * failed. The sign-in itself still succeeds when only `binding_error` is set.
+   */
+  binding?: ClinePassBinding;
+  binding_error?: string;
 }
 
 export interface ClinePassProbeResult {
@@ -1665,6 +1679,9 @@ export interface ClinePassProbeResult {
 export interface ClinePassAccountSaveResponse {
   account: ClinePassAccountView;
   result: ClinePassProbeResult;
+  /** The CPA channel the automatic bind wrote, and why that bind failed; the save still succeeded. */
+  binding?: ClinePassBinding;
+  binding_error?: string;
 }
 
 /** CPA channel written by the Cline Pass bind action so the models become routable. */

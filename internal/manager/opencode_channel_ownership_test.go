@@ -231,3 +231,77 @@ func TestClinePassRoutingStateIsPerAccount(t *testing.T) {
 		t.Fatalf("an account without its own row lost the shared-gateway fallback: %#v", got)
 	}
 }
+
+// A rotated credential must not add a second row for the same account: the row is matched by its
+// per-account label when the token it holds is no longer the current one.
+func TestClinePassBindingReusesItsRowAfterACredentialRotation(t *testing.T) {
+	app, store, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3"})
+	// The row an earlier bind wrote for this same account, still holding the superseded token.
+	store.setEntries([]map[string]any{{
+		"base-url":        clinePassDefaultBaseURL,
+		"name":            "Cline Pass publication",
+		"api-key-entries": []any{map[string]any{"api-key": "sk-superseded-secret"}},
+		"models":          []any{map[string]any{"name": "cline-pass/glm-5.3", "alias": "cline-pass/glm-5.3"}},
+	}})
+
+	result := bindClinePassPublicationAccount(t, app, headers, accountID)
+	if result.Created {
+		t.Fatalf("a rotated credential created a second row: %#v", result)
+	}
+	entries, _ := store.snapshot()
+	if len(entries) != 1 {
+		t.Fatalf("rows after a credential rotation = %d, want the account's single row", len(entries))
+	}
+	if got := channelCredentialKey(t, entries[0]); got != "sk-publication-secret" {
+		t.Fatalf("the rotated row credential = %q", got)
+	}
+	if got := channelName(t, entries[0]); got != "Cline Pass publication" {
+		t.Fatalf("the rotated row lost its name: %q", got)
+	}
+}
+
+// The models page reports publication from each account's own row, so the alias a client calls is
+// marked published even while an older sibling row for the same gateway publishes only the full id.
+func TestClinePassModelPageReadsTheAccountsOwnRow(t *testing.T) {
+	app, store, _, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3"})
+	store.setEntries([]map[string]any{
+		{
+			"base-url":        clinePassDefaultBaseURL,
+			"name":            "Cline Pass legacy",
+			"api-key-entries": []any{map[string]any{"api-key": "sk-legacy-secret"}},
+			"models":          []any{map[string]any{"name": "cline-pass/glm-5.3", "alias": "cline-pass/glm-5.3"}},
+		},
+		{
+			"base-url":        clinePassDefaultBaseURL,
+			"name":            "Cline Pass publication",
+			"api-key-entries": []any{map[string]any{"api-key": "sk-publication-secret"}},
+			"models": []any{
+				map[string]any{"name": "cline-pass/glm-5.3", "alias": "cline-pass/glm-5.3"},
+				map[string]any{"name": "cline-pass/glm-5.3", "alias": "glm-5.3"},
+			},
+		},
+	})
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/models", Headers: headers,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("models status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload struct {
+		Models []clinePassModelView `json:"models"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode models: %v", errDecode)
+	}
+	for _, row := range payload.Models {
+		if row.ID != "cline-pass/glm-5.3" {
+			continue
+		}
+		if !row.Published || row.ClientID != "glm-5.3" {
+			t.Fatalf("the account's own published alias was not reported: %#v", row)
+		}
+		return
+	}
+	t.Fatalf("the model row is missing from the page: %#v", payload.Models)
+}

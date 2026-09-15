@@ -96,12 +96,22 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	}
 	items := make([]map[string]any, 0, len(entries)+1)
 	target := -1
+	// An account keeps ONE row across credential rotations. A rotated token must not append a
+	// second row for the same account, so the row is matched by its credential first and by its
+	// label second: the label is per account (for example "Cline Pass work laptop"), which is the
+	// only stable identity a channel row carries, since CPA drops fields it does not know when the
+	// list is written back.
+	byLabel := -1
 	// unclaimed is a row for the same gateway that carries no credential at all. It is what an
 	// older release left behind before every account got its own row, so this account adopts it
 	// instead of adding a duplicate. A row that already holds another account's credential is
 	// never adopted.
 	unclaimed := -1
 	channelBase := canonicalProviderBaseURL(result.BaseURL)
+	wantedLabel := strings.TrimSpace(defaultLabel)
+	if trimmed := strings.TrimSpace(label); trimmed != "" {
+		wantedLabel = trimmed
+	}
 	for index, entry := range entries {
 		cloned := make(map[string]any, len(entry)+1)
 		for key, value := range entry {
@@ -113,14 +123,24 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 				if target < 0 {
 					target = index
 				}
+			case strings.EqualFold(strings.TrimSpace(aiProviderChannelName(cloned)), wantedLabel) && byLabel < 0:
+				byLabel = index
 			case !openCodeChannelHoldsAnyCredential(cloned) && unclaimed < 0:
 				unclaimed = index
 			}
 		}
 		items = append(items, cloned)
 	}
+	// An adopted row belonged to this account but holds a superseded credential, so the credential
+	// is replaced rather than added next to the stale one.
+	adopted := false
+	if target < 0 {
+		target = byLabel
+		adopted = target >= 0
+	}
 	if target < 0 {
 		target = unclaimed
+		adopted = target >= 0
 	}
 	label = strings.TrimSpace(label)
 	if label == "" {
@@ -143,7 +163,7 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	}
 	// The credential lives in the weighted key list; the legacy top-level field is
 	// accepted by CPA's JSON decoder but ignored for OpenAI-compatible channels.
-	entry["api-key-entries"] = mergeOpenCodeChannelKeyEntries(entry["api-key-entries"], apiKey)
+	entry["api-key-entries"] = mergeOpenCodeChannelKeyEntries(entry["api-key-entries"], apiKey, adopted)
 	delete(entry, "api-key")
 	mergedHeaders, _ := entry["headers"].(map[string]any)
 	if mergedHeaders == nil {
@@ -188,7 +208,7 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 // weighted row. One row belongs to one account, so binding a second account must
 // never overwrite the first account's key: that would leave the first account
 // unroutable and unattributable.
-func mergeOpenCodeChannelKeyEntries(existing any, apiKey string) []map[string]any {
+func mergeOpenCodeChannelKeyEntries(existing any, apiKey string, replaceStale bool) []map[string]any {
 	wanted := strings.TrimSpace(apiKey)
 	rows := make([]map[string]any, 0, 2)
 	if list, ok := existing.([]any); ok {
@@ -209,6 +229,12 @@ func mergeOpenCodeChannelKeyEntries(existing any, apiKey string) []map[string]an
 			row["api-key"] = wanted
 			return rows
 		}
+	}
+	if replaceStale && len(rows) > 0 {
+		// One account, one row: the credential this row held was superseded by a rotation, so it is
+		// replaced. Extra rows the operator added for the same row are kept as they are.
+		rows[0]["api-key"] = wanted
+		return rows
 	}
 	return append(rows, map[string]any{"api-key": wanted})
 }

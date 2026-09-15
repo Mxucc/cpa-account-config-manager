@@ -485,7 +485,9 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 	channelBound := false
 	channelModels := 0
 	for _, account := range accounts {
-		route, bound := routes[canonicalProviderBaseURL(clinePassChannelBaseURL(account.BaseURL))]
+		// Each account owns a row, so its own credential selects the row that publishes it; a
+		// deployment that has not re-bound yet still resolves through the shared gateway row.
+		route, bound := clinePassChannelRouteLookup(account, a.clinePass.accessToken(account.ID), routes)
 		if !bound {
 			continue
 		}

@@ -47,7 +47,11 @@ export function ModelProbeDialog({
   children,
 }: ModelProbeDialogProps) {
   const { tx } = useI18n();
-  const runnable = targets.length > 0 && targetID !== "" && !testing;
+  // The caller owns targetID, so it can outlive the list it was picked from. An id that is no
+  // longer offered is neither claimed as the selection nor run: a select whose value matches no
+  // option would display the first target while the dialog ran something else.
+  const selectedTargetID = targets.some((target) => target.id === targetID) ? targetID : "";
+  const runnable = selectedTargetID !== "" && !testing;
   return (
     <Modal
       title={tx("ui.model_availability_test")}
@@ -76,13 +80,18 @@ export function ModelProbeDialog({
           ) : targets.length === 1 ? (
             <input value={targets[0].label} readOnly aria-label={tx("ui.model_test_target")} />
           ) : (
-            <select aria-label={tx("ui.model_test_target")} value={targetID} onChange={(event) => onSelectTarget(event.target.value)}>
+            <select aria-label={tx("ui.model_test_target")} value={selectedTargetID} onChange={(event) => onSelectTarget(event.target.value)}>
+              {/* Keeps the control honest while nothing is selected: without this option the select
+                  would display the first target as if the dialog had chosen it. */}
+              {selectedTargetID === "" ? <option value="">{tx("ui.model_test_target_unselected")}</option> : null}
               {targets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
             </select>
           )}
         </label>
 
-        {targets.length === 0 ? (
+        {/* Only a completed load with no target at all is an empty state; while the targets are
+            still being resolved the dialog must not claim none exist. */}
+        {targets.length === 0 && !testing ? (
           <div className="model-test-error" role="status"><AlertTriangle size={18} /><span>{tx("ui.model_test_no_credentials")}</span></div>
         ) : null}
         {fallbackHint && targets.length > 0 ? (

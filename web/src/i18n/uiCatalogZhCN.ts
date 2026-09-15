@@ -130,6 +130,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.models_disable_selected": "禁用所选",
   "ui.models_enable_selected": "启用所选",
   "ui.model_test_target": "测试目标",
+  "ui.model_test_target_unselected": "请选择凭据",
   "ui.model_test_result_status": "状态",
   "ui.model_test_result_reason": "原因代码",
   "ui.model_test_result_http": "HTTP 状态",

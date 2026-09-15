@@ -130,6 +130,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.models_disable_selected": "停用所選",
   "ui.models_enable_selected": "啟用所選",
   "ui.model_test_target": "測試目標",
+  "ui.model_test_target_unselected": "請選擇憑證",
   "ui.model_test_result_status": "狀態",
   "ui.model_test_result_reason": "原因代碼",
   "ui.model_test_result_http": "HTTP 狀態",

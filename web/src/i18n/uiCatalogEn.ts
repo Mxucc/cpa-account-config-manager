@@ -128,6 +128,7 @@ export const enUI = {
   "ui.models_disable_selected": "Disable selected",
   "ui.models_enable_selected": "Enable selected",
   "ui.model_test_target": "Test target",
+  "ui.model_test_target_unselected": "Select a credential",
   "ui.model_test_result_status": "Status",
   "ui.model_test_result_reason": "Reason code",
   "ui.model_test_result_http": "HTTP status",

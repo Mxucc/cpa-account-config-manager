@@ -130,6 +130,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.models_disable_selected": "Отключить выбранные",
   "ui.models_enable_selected": "Включить выбранные",
   "ui.model_test_target": "Цель теста",
+  "ui.model_test_target_unselected": "Выберите данные доступа",
   "ui.model_test_result_status": "Статус",
   "ui.model_test_result_reason": "Код причины",
   "ui.model_test_result_http": "Статус HTTP",

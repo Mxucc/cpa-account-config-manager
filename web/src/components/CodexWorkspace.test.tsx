@@ -259,6 +259,54 @@ describe("CodexWorkspace", () => {
     expect(await within(dialog).findByText("模型可用")).toBeInTheDocument();
   });
 
+  // The reported case: an installation with a Codex account AND a Codex channel offers two
+  // targets, and the dialog opened with no target selected while the picker displayed the first
+  // one, so the start button stayed disabled until the operator re-picked the target already shown.
+  it("starts on the first target and keeps the start button usable", async () => {
+    const user = userEvent.setup();
+    const requests = codexFetchMock({ channels: ["my-codex-channel"] });
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.4-codex" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    // Two credentials are offered, so the picker is a select and it starts on a real selection.
+    const picker = await within(dialog).findByRole("combobox", { name: "测试目标" });
+    expect(picker).toHaveValue("account:acct-codex-1");
+    expect((picker as HTMLSelectElement).selectedOptions[0].textContent).toContain("codex-one.json");
+
+    // The button must already be usable without touching the picker.
+    const start = within(dialog).getByRole("button", { name: "开始测试" });
+    expect(start).toBeEnabled();
+    await user.click(start);
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/accounts/model-test") && init.method === "POST")).toBe(true));
+    const probe = requests.find(({ url, init }) => url.endsWith("/accounts/model-test") && init.method === "POST");
+    expect(JSON.parse(String(probe?.init.body))).toMatchObject({ account_id: "acct-codex-1", model: "gpt-5.4-codex" });
+  });
+
+  // Switching the picker still probes the credential the operator chose.
+  it("probes the target the operator picks", async () => {
+    const user = userEvent.setup();
+    const requests = codexFetchMock({ channels: ["my-codex-channel"] });
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "模型与价格" }));
+    const panel = await screen.findByRole("tabpanel", { name: "模型与价格" });
+    await user.click(within(panel).getByRole("button", { name: "测试 gpt-5.4-codex" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    const picker = await within(dialog).findByRole("combobox", { name: "测试目标" });
+    await user.selectOptions(picker, "channel:0");
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/codex/model-test") && init.method === "POST")).toBe(true));
+    const probe = requests.find(({ url, init }) => url.endsWith("/codex/model-test") && init.method === "POST");
+    expect(JSON.parse(String(probe?.init.body))).toEqual({ channel_index: 0, model: "gpt-5.4-codex" });
+  });
+
   it("shows the plugin price table rates and marks an unpriced model", async () => {
     const user = userEvent.setup();
     codexFetchMock();

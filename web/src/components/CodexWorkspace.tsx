@@ -277,9 +277,14 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
         .map((target) => ({ id: target.id, label: `${target.label} · ${tx("ui.codex_test_channel_suffix")}` }));
       const candidates = [...accountTargets, ...channelTargets];
       setTestAccounts(candidates);
-      if (candidates.length === 1) {
-        setTestAccountID(candidates[0].id);
-        runModelTest(model, candidates[0].id);
+      // The target list is a picker, so it must start on a real credential: leaving the selection
+      // empty showed the first option's label while the start button stayed disabled, and the
+      // operator had to re-pick the very target the dialog already displayed. With a single
+      // credential the probe also runs immediately, which is what the operator asked for.
+      const [preferred] = candidates;
+      if (preferred) {
+        setTestAccountID(preferred.id);
+        if (candidates.length === 1) runModelTest(model, preferred.id);
       }
     } catch (caught) {
       setTestAccounts([]);

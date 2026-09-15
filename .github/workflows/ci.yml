@@ -38,8 +38,23 @@ jobs:
         working-directory: web
         run: npm ci
 
+      # A failing verify writes its tail to the job summary, so a red run explains itself
+      # without downloading logs (which needs repository admin).
       - name: Verify
-        run: make verify
+        shell: bash
+        run: |
+          set -o pipefail
+          if make verify 2>&1 | tee verify.log; then
+            exit 0
+          fi
+          status=$?
+          {
+            echo "### Verify failed"
+            echo '```text'
+            tail -80 verify.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
   package:
     name: Package ${{ matrix.goos }}/${{ matrix.goarch }}

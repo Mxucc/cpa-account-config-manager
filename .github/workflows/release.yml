@@ -56,8 +56,23 @@ jobs:
         working-directory: web
         run: npm ci
 
+      # Verify with full output captured: when a verify step fails, the reason is written to the
+      # job summary so it is readable without downloading logs (which needs repository admin).
       - name: Verify release
-        run: make verify VERSION=${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -o pipefail
+          if make verify VERSION=${{ steps.release.outputs.version }} 2>&1 | tee verify.log; then
+            exit 0
+          fi
+          status=$?
+          {
+            echo "### Verify release failed"
+            echo '```text'
+            tail -80 verify.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}

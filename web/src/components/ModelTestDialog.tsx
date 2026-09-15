@@ -55,10 +55,12 @@ const reasonLabels: Record<string, UIMessageKey> = {
   transient_failure: "ui.upstream_service_is_temporarily_unavailable",
 };
 
-const modelPolicyReasonLabels: Record<string, UIMessageKey> = {
+/** Model-policy reason codes shared with the automatic allow-list observability panel. */
+export const modelPolicyReasonLabels: Record<string, UIMessageKey> = {
   model_compatibility_detected: "ui.model_compatibility_detected",
   existing_model_policy: "ui.existing_model_policy_preserved",
   model_catalog_unavailable: "ui.model_catalog_unavailable",
+  insufficient_compatibility_evidence: "ui.insufficient_compatibility_evidence",
   mutation_busy: "ui.another_account_change_is_running",
   management_unavailable: "ui.cpa_management_api_unavailable",
 };

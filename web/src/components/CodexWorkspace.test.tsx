@@ -31,6 +31,8 @@ interface CodexFetchMockOptions {
   disabled?: string[];
   fields?: Array<Record<string, unknown>>;
   overview?: Record<string, unknown>;
+  /** Answer the experiments snapshot with nothing, like an unreadable payload. */
+  noExperiments?: boolean;
 }
 
 describe("CodexWorkspace", () => {
@@ -118,16 +120,18 @@ describe("CodexWorkspace", () => {
       if (url.endsWith("/codex/fingerprint")) {
         return jsonResponse({ profile: { overridden_fields: 1, fields: options.fields ?? fingerprintFields } });
       }
+      if (options.noExperiments && url.endsWith("/experiments")) return jsonResponse({});
       if (url.endsWith("/experiments") && init.method === "PUT") {
         return jsonResponse({ settings: {
-          weekly_overdraft_enabled: true, agent_identity_enabled: false, auto_model_whitelist_enabled: true,
+          weekly_overdraft_enabled: true, agent_identity_enabled: false, auto_model_whitelist_enabled: false,
           sub2api_credit_usage_enabled: true,
           codex_identity: { outbound_convergence_enabled: true, convergence_mode: "session", ingress_gate_enabled: false, allow_app_server_clients: false },
         } });
       }
       if (url.endsWith("/experiments")) {
         return jsonResponse({ settings: {
-          weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true,
+          // The automatic allow-list is off in the served snapshot; the view must echo it unchanged.
+          weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false,
           sub2api_credit_usage_enabled: true,
           codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false },
         } });
@@ -351,10 +355,28 @@ describe("CodexWorkspace", () => {
     const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
     const body = JSON.parse(String(saveRequest?.init.body)) as Record<string, unknown>;
     // The experiment values are echoed from the snapshot so saving here cannot
-    // clear what the experimental settings panel configured.
-    expect(body).toMatchObject({ weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: true });
+    // clear (or enable) what the experimental settings panel configured; the
+    // served snapshot leaves the automatic allow-list off.
+    expect(body).toMatchObject({ weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false });
     expect((body.codex_identity as Record<string, unknown>).outbound_convergence_enabled).toBe(false);
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith("实验性设置已保存"));
+  });
+
+  it("never enables the automatic allow-list experiment from an unread snapshot", async () => {
+    const user = userEvent.setup();
+    // The experiments payload is unreadable, so the view has no value to echo and
+    // cannot save the identity policy at all.
+    const requests = codexFetchMock({ noExperiments: true });
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "总览" });
+    const save = within(panel).getByRole("button", { name: "保存设置" });
+    await waitFor(() => expect(save).toBeDisabled());
+    await user.click(save);
+
+    // Without a save request there is no payload that could switch the experiment on.
+    expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(false);
   });
 });
 

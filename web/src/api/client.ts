@@ -23,6 +23,7 @@ import type {
 	GlobalPolicySnapshot,
 	ExperimentalSettings,
 	ExperimentalSettingsSnapshot,
+	AutoModelWhitelistResponse,
 	AgentIdentitySessionLoginResponse,
 	OpenCodeAccountSaveResponse,
 	OpenCodeAccountsResponse,
@@ -1082,6 +1083,15 @@ export async function saveExperimentalSettings(settings: Partial<ExperimentalSet
 		method: "PUT",
 		body: JSON.stringify(settings),
 	});
+}
+
+/**
+ * Read-only activity of the experimental automatic Codex model allow-list. The endpoint is
+ * paginated; the panel only renders the newest page, so the query keeps the contract defaults.
+ */
+export async function getAutoModelWhitelist(signal?: AbortSignal, page = 1, pageSize = 20): Promise<AutoModelWhitelistResponse> {
+	const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+	return requestRecord<AutoModelWhitelistResponse>("/experiments/auto-model-whitelist", { signal }, query);
 }
 
 export async function completeAgentIdentitySessionLogin(state: string, sessionJSON: string): Promise<AgentIdentitySessionLoginResponse> {

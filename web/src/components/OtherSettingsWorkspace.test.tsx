@@ -40,6 +40,10 @@ describe("OtherSettingsWorkspace", () => {
         codex_identity: { outbound_convergence_enabled: true, convergence_mode: "session", ingress_gate_enabled: true, allow_app_server_clients: false },
       },
     });
+    // The read-only observability panel issues its own request; keep it deterministic here.
+    vi.spyOn(api, "getAutoModelWhitelist").mockResolvedValue({
+      auto_model_whitelist: { enabled: true, accounts: 2, limited: 1, last_detected_at: "2026-09-15T01:02:00Z", recent: [] },
+    });
 
     render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
 
@@ -49,6 +53,7 @@ describe("OtherSettingsWorkspace", () => {
     // Both experiments load from the snapshot and can be toggled here.
     await user.click(within(panel).getByRole("checkbox", { name: "Codex 5h / 7d 额度透支续用" }));
     await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity / PAT" }));
+    await user.click(within(panel).getByRole("checkbox", { name: "Codex 自动模型白名单" }));
     // The identity policy editor moved to the Codex view, but the two Codex
     // experiments still live here.
     expect(within(panel).queryByRole("region", { name: "Codex 身份兼容" })).not.toBeInTheDocument();
@@ -61,6 +66,8 @@ describe("OtherSettingsWorkspace", () => {
     // Both experiment toggles are owned here again.
     expect(payload?.weekly_overdraft_enabled).toBe(true);
     expect(payload?.agent_identity_enabled).toBe(true);
+    // The automatic allow-list is a real toggle: it loads enabled and is turned off here.
+    expect(payload?.auto_model_whitelist_enabled).toBe(false);
     // The identity policy is echoed from the loaded snapshot, not cleared.
     expect(payload?.codex_identity).toMatchObject({ outbound_convergence_enabled: true, convergence_mode: "session", ingress_gate_enabled: true });
   });
@@ -204,7 +211,7 @@ describe("OtherSettingsWorkspace", () => {
         return jsonResponse({ plugins_enabled: true, plugins: [{ id: "cpa-account-config-manager", version: "0.2.991", installed: true, installed_version: "0.2.991", update_available: false }] });
       }
       if (url.endsWith("/experiments") && init.method === "PUT") {
-        return jsonResponse({ settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
+        return jsonResponse({ settings: { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
       }
       if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
       if (url.endsWith("/config") && init.method === "PATCH") return jsonResponse({});
@@ -222,7 +229,8 @@ describe("OtherSettingsWorkspace", () => {
     expect(within(panel).getByText("Codex 5h / 7d 额度透支续用")).toBeInTheDocument();
     expect(within(panel).getByText("Codex Agent Identity / PAT")).toBeInTheDocument();
     expect(within(panel).queryByText("Sub2API 额度计费用量")).not.toBeInTheDocument();
-    expect(within(panel).queryByText("Codex 自动模型白名单")).not.toBeInTheDocument();
+    // The automatic allow-list is a real toggle loaded from the snapshot, so it stays off here.
+    expect(within(panel).getByRole("checkbox", { name: "Codex 自动模型白名单" })).not.toBeChecked();
 
     await user.click(within(panel).getByRole("checkbox", { name: "Codex 5h / 7d 额度透支续用" }));
     await user.click(within(panel).getByRole("checkbox", { name: "Codex Agent Identity / PAT" }));
@@ -233,11 +241,11 @@ describe("OtherSettingsWorkspace", () => {
     const saveRequest = requests.find(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT");
     // The toggles carry the panel's own state while the Codex identity policy is
     // echoed from the snapshot this test loaded, so it is never cleared here.
-    const expected = { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } };
+    const expected = { weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } };
     expect(JSON.parse(String(configRequest?.init.body))).toEqual({ experimental_settings: expected });
     expect(JSON.parse(String(saveRequest?.init.body))).toEqual(expected);
     // The callback receives the saved snapshot returned by the API.
-    expect(onExperimentalSettingsChange).toHaveBeenLastCalledWith({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: true, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } });
+    expect(onExperimentalSettingsChange).toHaveBeenLastCalledWith({ weekly_overdraft_enabled: true, agent_identity_enabled: true, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } });
     expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
   });
 
@@ -270,5 +278,53 @@ describe("OtherSettingsWorkspace", () => {
     const body = JSON.parse(String(request?.init.body));
     expect(body.codex_identity.convergence_mode).toBe("device");
     expect(onNotice).toHaveBeenCalledWith("实验性设置已保存");
+  });
+
+  it("sends the automatic allow-list experiment state chosen here and refreshes its panel", async () => {
+    const user = userEvent.setup();
+    const saveSpy = vi.spyOn(api, "saveExperimentalSettings").mockImplementation(async (settings) => ({
+      settings: {
+        weekly_overdraft_enabled: false,
+        agent_identity_enabled: false,
+        auto_model_whitelist_enabled: false,
+        sub2api_credit_usage_enabled: true,
+        codex_identity: { outbound_convergence_enabled: true, convergence_mode: "device", ingress_gate_enabled: false, allow_app_server_clients: false },
+        ...settings,
+      },
+    }));
+    vi.spyOn(api, "getExperimentalSettings").mockResolvedValue({
+      settings: {
+        weekly_overdraft_enabled: false,
+        agent_identity_enabled: false,
+        auto_model_whitelist_enabled: false,
+        sub2api_credit_usage_enabled: true,
+        codex_identity: { outbound_convergence_enabled: true, convergence_mode: "device", ingress_gate_enabled: false, allow_app_server_clients: false },
+      },
+    });
+    const whitelistSpy = vi.spyOn(api, "getAutoModelWhitelist").mockResolvedValue({
+      auto_model_whitelist: { enabled: false, accounts: 4, limited: 1, recent: [] },
+    });
+
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const workspace = await screen.findByRole("region", { name: "其他配置" });
+    await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
+    const panel = await within(workspace).findByRole("tabpanel", { name: "实验性功能" });
+    const toggle = within(panel).getByRole("checkbox", { name: "Codex 自动模型白名单" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    await user.click(within(panel).getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(saveSpy).toHaveBeenCalled());
+    const payload = saveSpy.mock.calls.at(-1)?.[0];
+    expect(payload?.auto_model_whitelist_enabled).toBe(true);
+    // No regression to the other experiments this card owns.
+    expect(payload?.weekly_overdraft_enabled).toBe(false);
+    expect(payload?.agent_identity_enabled).toBe(false);
+    expect(payload?.codex_identity).toMatchObject({ outbound_convergence_enabled: true, convergence_mode: "device" });
+
+    // The read-only panel is refreshed after the toggle is saved.
+    await waitFor(() => expect(whitelistSpy.mock.calls.length).toBeGreaterThan(1));
   });
 });

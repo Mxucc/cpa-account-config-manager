@@ -176,7 +176,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
       // Their current values are echoed back so saving here never clears them.
       weekly_overdraft_enabled: experiments?.weekly_overdraft_enabled ?? false,
       agent_identity_enabled: experiments?.agent_identity_enabled ?? false,
-      auto_model_whitelist_enabled: experiments?.auto_model_whitelist_enabled ?? true,
+      auto_model_whitelist_enabled: experiments?.auto_model_whitelist_enabled ?? false,
       sub2api_credit_usage_enabled: experiments?.sub2api_credit_usage_enabled ?? true,
       codex_identity: codexIdentity,
     });

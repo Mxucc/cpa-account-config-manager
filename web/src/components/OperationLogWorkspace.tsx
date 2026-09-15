@@ -167,6 +167,7 @@ const reasonLabels: Record<string, UIMessageKey> = {
   management_unavailable: "ui.cpa_management_api_unavailable",
   existing_model_policy: "ui.existing_model_policy_preserved",
   model_catalog_unavailable: "ui.model_catalog_unavailable",
+  insufficient_compatibility_evidence: "ui.insufficient_compatibility_evidence",
   model_compatibility_detected: "ui.model_compatibility_detected",
   delete_failed: "ui.account_deletion_failed",
   model_response_ok: "ui.model_response_is_healthy",

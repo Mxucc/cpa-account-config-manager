@@ -31,6 +31,7 @@ import {
 import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { ProxyProfilesSettings } from "./ProxyProfilesSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
+import { AutoModelWhitelistPanel } from "./AutoModelWhitelistPanel";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
 import { SelfUpdatePanel } from "./SelfUpdatePanel";
 import { readPluginDensity, readPluginTheme, readPluginThemeEnabled, resetPluginTheme, setPluginDensity, setPluginTheme, setPluginThemeEnabled, type PluginDensity, type PluginThemePreset } from "../store/pluginTheme";
@@ -66,6 +67,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [notificationRefreshRevision, setNotificationRefreshRevision] = useState(0);
   const [automationRefreshRevision, setAutomationRefreshRevision] = useState(0);
   const [proxyProfilesRefreshRevision, setProxyProfilesRefreshRevision] = useState(0);
+  const [experimentalRefreshRevision, setExperimentalRefreshRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [checkingPlugin, setCheckingPlugin] = useState(false);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -74,6 +76,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
   const [savingExperiment, setSavingExperiment] = useState(false);
   const [weeklyOverdraftEnabled, setWeeklyOverdraftEnabled] = useState(false);
   const [agentIdentityEnabled, setAgentIdentityEnabled] = useState(false);
+  const [autoModelWhitelistEnabled, setAutoModelWhitelistEnabled] = useState(false);
   const [checkEnabled, setCheckEnabled] = useState(true);
   const [checkInterval, setCheckInterval] = useState("24");
   const [autoUpdate, setAutoUpdate] = useState(false);
@@ -92,6 +95,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     if (!experiments) return;
     setWeeklyOverdraftEnabled(experiments.settings.weekly_overdraft_enabled === true);
     setAgentIdentityEnabled(experiments.settings.agent_identity_enabled === true);
+    setAutoModelWhitelistEnabled(experiments.settings.auto_model_whitelist_enabled === true);
   }, [experiments]);
 
   const refreshPlugin = useCallback(async (checkNow = false, signal?: AbortSignal) => {
@@ -229,13 +233,13 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     setError("");
     try {
       const next = await api.saveExperimentalSettings({
-        // The two Codex experiments are edited here. The Codex identity policy is
+        // The Codex experiments are edited here. The Codex identity policy is
         // edited in the Codex view, so its current value is echoed back to avoid
         // clearing what that view configured.
         weekly_overdraft_enabled: weeklyOverdraftEnabled,
         agent_identity_enabled: agentIdentityEnabled,
         codex_identity: experiments?.settings.codex_identity ?? EMPTY_CODEX_IDENTITY,
-        auto_model_whitelist_enabled: true,
+        auto_model_whitelist_enabled: autoModelWhitelistEnabled,
         // Kept in the request for older runtimes; credit pricing is now a
         // permanent built-in behavior and is always normalized to true.
         sub2api_credit_usage_enabled: true,
@@ -243,6 +247,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
       setExperiments(next);
       onExperimentalSettingsChange(next.settings);
       onNotice(tx("ui.experimental_settings_saved"));
+      setExperimentalRefreshRevision((current) => current + 1);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -281,7 +286,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
     <section className="other-settings-panel" aria-label={tx("ui.other_settings")}>
       <header className="other-settings-toolbar">
         <div><strong>{tx("ui.other_settings")}</strong><span>{tx("ui.other_settings_description")}</span></div>
-        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); setProxyProfilesRefreshRevision((current) => current + 1); void refreshAll(); }}>
+        <button className="button button-quiet" type="button" disabled={loading} onClick={() => { setNotificationRefreshRevision((current) => current + 1); setAutomationRefreshRevision((current) => current + 1); setProxyProfilesRefreshRevision((current) => current + 1); setExperimentalRefreshRevision((current) => current + 1); void refreshAll(); }}>
           <RefreshCw className={loading ? "spin" : ""} size={16} />{tx("ui.refresh")}
         </button>
       </header>
@@ -452,6 +457,33 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
               <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.agent_identity_security_notice")}</span></div>
             </div>
           </div>
+          <div className="experimental-feature-block">
+            <div className="experimental-feature-row">
+              <div className="experimental-feature-copy">
+                <span className="experimental-feature-icon"><ShieldCheck size={18} /></span>
+                <div>
+                  <strong>{tx("ui.codex_auto_model_whitelist")}</strong>
+                  <span>{tx("ui.codex_auto_model_whitelist_description")}</span>
+                </div>
+              </div>
+              <label className="switch-control experimental-feature-switch">
+                <input
+                  type="checkbox"
+                  checked={autoModelWhitelistEnabled}
+                  disabled={loading || savingExperiment || !experiments}
+                  onChange={(event) => setAutoModelWhitelistEnabled(event.target.checked)}
+                  aria-label={tx("ui.codex_auto_model_whitelist")}
+                />
+                <b>{tx(autoModelWhitelistEnabled ? "ui.on_2" : "ui.off_2")}</b>
+              </label>
+            </div>
+            <div className="experimental-behavior-list">
+              <div><strong>{tx("ui.detection_evidence")}</strong><span>{tx("ui.auto_model_whitelist_detection_behavior")}</span></div>
+              <div><strong>{tx("ui.policy_write_behavior")}</strong><span>{tx("ui.auto_model_whitelist_policy_behavior")}</span></div>
+              <div><strong>{tx("ui.security_notice")}</strong><span>{tx("ui.auto_model_whitelist_safety_notice")}</span></div>
+            </div>
+          </div>
+          <AutoModelWhitelistPanel refreshRevision={experimentalRefreshRevision} onAPIError={onAPIError} />
           <p className="experimental-moved-note">{tx("ui.codex_settings_moved_note")}</p>
           <div className="settings-section-actions experimental-actions">
             <button className="button button-primary" type="button" disabled={loading || savingExperiment || !experiments} onClick={() => void saveExperimentalSettings()}>

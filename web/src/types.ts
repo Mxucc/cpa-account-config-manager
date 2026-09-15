@@ -1278,6 +1278,31 @@ export interface ExperimentalSettingsSnapshot {
   storage_error?: string;
 }
 
+/** One recorded automatic model allow-list detection shown by the observability panel. */
+export interface AutoModelWhitelistEvent {
+  account_id: string;
+  /** Display label (usually the account email); the panel falls back to the id when it is empty. */
+  label?: string;
+  /** "applied" when the allow-list was written; any other value means the policy was left unchanged. */
+  status: string;
+  reason_code?: string;
+  at?: string;
+}
+
+export interface AutoModelWhitelistSnapshot {
+  enabled: boolean;
+  /** Codex accounts the experiment considered. */
+  accounts: number;
+  /** Codex accounts currently limited by the automatic allow-list. */
+  limited: number;
+  last_detected_at?: string;
+  recent: AutoModelWhitelistEvent[];
+}
+
+export interface AutoModelWhitelistResponse {
+  auto_model_whitelist: AutoModelWhitelistSnapshot;
+}
+
 /** One editable Codex request-fingerprint field returned by GET /codex/fingerprint. */
 export interface CodexFingerprintField {
   key: string;

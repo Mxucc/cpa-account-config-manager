@@ -11,12 +11,15 @@ import (
 	"cpa-account-config-manager/internal/cpaapi"
 )
 
-// keepCodexChannelModelsSnapshot restores the package-level channel scan after the test, so
-// the shared cache cannot leak into other tests.
+// keepCodexChannelModelsSnapshot isolates the package-level Codex inventory cache:
+// the test starts from an empty cache and the real state is restored afterwards.
+// Without the reset, a cached inventory scanned by an earlier test makes
+// codexInventoryNeedsAccountScan skip the scan this test expects.
 func keepCodexChannelModelsSnapshot(t *testing.T) {
 	t.Helper()
 	codexChannelModelsMu.Lock()
 	previous := codexChannelModelsState
+	codexChannelModelsState = codexChannelModelsCache{}
 	codexChannelModelsMu.Unlock()
 	t.Cleanup(func() {
 		codexChannelModelsMu.Lock()
@@ -58,6 +61,7 @@ func TestModelControlWriteDoesNotWaitForTheChannelScan(t *testing.T) {
 
 	app := NewApp(&fakeAuthHost{}, nil)
 	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
 	app.managementDoer = httpDoerFunc(func(*http.Request) (*http.Response, error) {
 		return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[]}`), nil
 	})
@@ -130,6 +134,7 @@ func TestModelControlReadIsBoundedByTheRefreshTimeout(t *testing.T) {
 
 	app := NewApp(&fakeAuthHost{}, nil)
 	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
 	blocked := make(chan struct{})
 	var closeOnce sync.Once
 	releaseScan := func() { closeOnce.Do(func() { close(blocked) }) }

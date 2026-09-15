@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -95,6 +96,7 @@ func TestCodexModelControlPersistsAndSurvivesReconfigure(t *testing.T) {
 func TestCodexModelControlRowsMergeObservedAndConfiguredModels(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, nil)
 	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
 	if _, errSet := app.codexModelControl.Set([]string{"gpt-5.4-codex"}); errSet != nil {
 		t.Fatalf("set: %v", errSet)
 	}
@@ -130,6 +132,7 @@ func TestCodexModelControlRowsMergeObservedAndConfiguredModels(t *testing.T) {
 func TestCodexModelRowsCarryPricesFromTheBillingTable(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, nil)
 	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
 	// $3 in / $15 out / $0.30 cache read per million tokens.
 	app.creditUsage.table.Store(&creditPricingTable{
 		Models: map[string]creditModelPricing{
@@ -220,6 +223,7 @@ func TestCodexModelRowsCarryPricesFromTheBillingTable(t *testing.T) {
 func TestCodexModelControlRoutesRequireKeyAndApply(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, nil)
 	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
 	app.managementDoer = httpDoerFunc(func(*http.Request) (*http.Response, error) {
 		return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[]}`), nil
 	})
@@ -272,5 +276,193 @@ func TestCodexModelControlRoutesRequireKeyAndApply(t *testing.T) {
 	}
 	if overviewPayload.Overview.DisabledModels != 1 || !overviewPayload.Overview.ModelControlActive {
 		t.Fatalf("overview = %#v", overviewPayload.Overview)
+	}
+}
+
+// The workspace overview must count the Codex credentials the host lists, not the
+// provider-runtime identities: native Codex OAuth accounts are deliberately
+// excluded from that tracker, which made the counts read zero on a real server.
+func TestCodexOverviewCountsHostCodexAccountsAndChannels(t *testing.T) {
+	keepCodexChannelModelsSnapshot(t)
+	host := &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{
+		{AuthIndex: "codex-a", Name: "codex-a.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/codex-a.json"},
+		{AuthIndex: "codex-b", Name: "codex-b.json", Provider: "codex-agent-identity", Type: "codex-agent-identity", Source: "file", Path: "/auths/codex-b.json"},
+		{AuthIndex: "claude-a", Name: "claude-a.json", Provider: "claude", Type: "claude", Source: "file", Path: "/auths/claude-a.json"},
+	}}
+	app := NewApp(host, nil)
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
+	// No Codex channel is configured, but the Codex accounts still count.
+	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v0/management/codex-api-key":
+			return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[]}`), nil
+		case "/v0/management/auth-files/models":
+			return jsonHTTPResponse(http.StatusOK, `{"models":[{"id":"gpt-5.5"}]}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected management path %q", request.URL.Path)
+		}
+	})
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: "/v0/management" + managementRoutePrefix + "/codex/overview",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("overview status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload struct {
+		Overview struct {
+			Accounts int `json:"accounts"`
+			Channels int `json:"channels"`
+		} `json:"overview"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode overview: %v", errDecode)
+	}
+	if payload.Overview.Accounts != 2 {
+		t.Fatalf("accounts = %d, want the 2 Codex-family host credentials", payload.Overview.Accounts)
+	}
+	if payload.Overview.Channels != 0 {
+		t.Fatalf("channels = %d, want 0", payload.Overview.Channels)
+	}
+}
+
+// The models tab must list a model that only exists in a Codex account catalog,
+// with the account count, and keep the disabled mark.
+func TestCodexModelControlRowsIncludeCodexAccountCatalogs(t *testing.T) {
+	keepCodexChannelModelsSnapshot(t)
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "codex-a", Name: "codex-a.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/codex-a.json"},
+			{AuthIndex: "codex-b", Name: "codex-b.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/codex-b.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"codex-a": {AuthIndex: "codex-a", Name: "codex-a.json", Path: "/auths/codex-a.json", JSON: json.RawMessage(`{"type":"codex"}`)},
+			"codex-b": {AuthIndex: "codex-b", Name: "codex-b.json", Path: "/auths/codex-b.json", JSON: json.RawMessage(`{"type":"codex"}`)},
+		},
+	}
+	app := NewApp(host, nil)
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
+	if _, errSet := app.codexModelControl.Set([]string{"gpt-5.6-luna"}); errSet != nil {
+		t.Fatalf("set: %v", errSet)
+	}
+	// No Codex channel lists anything: gpt-5.6-luna comes only from the catalogs.
+	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v0/management/codex-api-key":
+			return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[]}`), nil
+		case "/v0/management/auth-files/models":
+			models := []any{map[string]any{"id": "gpt-5.6-luna"}}
+			if request.URL.Query().Get("name") == "codex-a.json" {
+				models = append(models, map[string]any{"id": "gpt-5.5"})
+			}
+			body, _ := json.Marshal(map[string]any{"models": models})
+			return jsonHTTPResponse(http.StatusOK, string(body)), nil
+		default:
+			return nil, fmt.Errorf("unexpected management path %q", request.URL.Path)
+		}
+	})
+	app.refreshCodexChannelModels(context.Background(), "management-secret")
+
+	byID := map[string]CodexModelControlRow{}
+	for _, row := range app.codexModelControlRows() {
+		byID[row.ID] = row
+	}
+	luna, ok := byID["gpt-5.6-luna"]
+	if !ok {
+		t.Fatalf("a model only present in the Codex account catalogs is missing: %#v", byID)
+	}
+	if luna.Accounts != 2 {
+		t.Fatalf("gpt-5.6-luna accounts = %d, want 2", luna.Accounts)
+	}
+	if !luna.Disabled {
+		t.Fatalf("the disabled catalog model was not marked disabled: %#v", luna)
+	}
+	fallback, ok := byID["gpt-5.5"]
+	if !ok || fallback.Accounts != 1 || fallback.Disabled {
+		t.Fatalf("gpt-5.5 row = %#v (present=%v)", fallback, ok)
+	}
+}
+
+// The account half of the inventory refreshes on its own TTL: a read inside the
+// TTL reuses the published scan, a failed rescan keeps the rows an operator has
+// already seen, and the scan runs again once the TTL has elapsed.
+func TestCodexInventoryCacheKeepsRowsAndRescansOnlyAfterTTL(t *testing.T) {
+	keepCodexChannelModelsSnapshot(t)
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{
+			{AuthIndex: "codex-a", Name: "codex-a.json", Provider: "codex", Type: "codex", AccountType: "oauth", Source: "file", Path: "/auths/codex-a.json"},
+		},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"codex-a": {AuthIndex: "codex-a", Name: "codex-a.json", Path: "/auths/codex-a.json", JSON: json.RawMessage(`{"type":"codex"}`)},
+		},
+	}
+	app := NewApp(host, nil)
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	defer app.Close()
+
+	catalogCalls := 0
+	failing := false
+	current := "gpt-5.6-luna"
+	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v0/management/codex-api-key":
+			return jsonHTTPResponse(http.StatusOK, `{"codex-api-key":[]}`), nil
+		case "/v0/management/auth-files/models":
+			catalogCalls++
+			if failing {
+				return jsonHTTPResponse(http.StatusInternalServerError, `{"error":"catalog unavailable"}`), nil
+			}
+			body, _ := json.Marshal(map[string]any{"models": []any{map[string]any{"id": current}}})
+			return jsonHTTPResponse(http.StatusOK, string(body)), nil
+		default:
+			return nil, fmt.Errorf("unexpected management path %q", request.URL.Path)
+		}
+	})
+	rows := func() map[string]CodexModelControlRow {
+		t.Helper()
+		out := map[string]CodexModelControlRow{}
+		for _, row := range app.codexModelControlRows() {
+			out[row.ID] = row
+		}
+		return out
+	}
+	expireAccountScan := func() {
+		codexChannelModelsMu.Lock()
+		codexChannelModelsState.accountScannedAt = time.Now().Add(-codexChannelModelsTTL - time.Second)
+		codexChannelModelsMu.Unlock()
+	}
+
+	app.refreshCodexChannelModels(context.Background(), "management-secret")
+	if _, ok := rows()[current]; !ok {
+		t.Fatalf("the first inventory scan did not publish the account catalog: %#v", rows())
+	}
+	firstCalls := catalogCalls
+	if firstCalls == 0 {
+		t.Fatal("the first inventory scan never read an account catalog")
+	}
+
+	// Inside the TTL the published scan is reused instead of hammering CPA.
+	current = "gpt-5.6-terra"
+	app.refreshCodexChannelModels(context.Background(), "management-secret")
+	if catalogCalls != firstCalls {
+		t.Fatalf("the account catalog was rescanned inside the TTL: %d -> %d calls", firstCalls, catalogCalls)
+	}
+
+	// A failed rescan must keep the rows the operator already saw.
+	expireAccountScan()
+	failing = true
+	app.refreshCodexChannelModels(context.Background(), "management-secret")
+	if _, ok := rows()["gpt-5.6-luna"]; !ok {
+		t.Fatalf("a failed rescan dropped the previous account catalog rows: %#v", rows())
+	}
+
+	// Once the TTL has elapsed a healthy rescan publishes the new catalog.
+	failing = false
+	expireAccountScan()
+	app.refreshCodexChannelModels(context.Background(), "management-secret")
+	if _, ok := rows()["gpt-5.6-terra"]; !ok {
+		t.Fatalf("the account catalog was not refreshed after the TTL: %#v", rows())
 	}
 }

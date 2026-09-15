@@ -348,6 +348,18 @@ func (a *App) codexModelControlRows() []CodexModelControlRow {
 			}
 		}
 	}
+	// Models the Codex accounts actually list in their effective catalogs. The
+	// catalog count and the observed-identity count are both per account, so the
+	// larger one is reported instead of double counting a shared account.
+	for id, count := range a.cachedCodexAccountModels() {
+		row := ensure(id)
+		if row == nil {
+			continue
+		}
+		if count > row.Accounts {
+			row.Accounts = count
+		}
+	}
 	list := make([]CodexModelControlRow, 0, len(rows))
 	for _, row := range rows {
 		pricing, priced := a.codexModelPriceFor(row.ID)
@@ -400,13 +412,23 @@ func providerIsCodexFamily(provider string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(provider)), "codex")
 }
 
-// codexChannelModelsCache holds the last channel model scan so the models tab does
-// not call CPA on every refresh.
+// codexChannelModelsCache holds the last Codex inventory scan so the models tab
+// does not call CPA on every refresh. One scan records both the codex-api-key
+// channels and the effective model catalogs of the Codex accounts.
 var codexChannelModelsMu sync.Mutex
 
 type codexChannelModelsCache struct {
-	models    map[string]int
-	fetchedAt time.Time
+	models map[string]int
+	// channels counts the codex-api-key channel entries of the last successful scan.
+	channels int
+	// accountModels maps a model id to the number of Codex accounts whose
+	// effective catalog lists it. It keeps the last successful scan, so a failed
+	// rescan never empties the model table.
+	accountModels map[string]int
+	// fetchedAt stamps the channel half and accountScannedAt the account half:
+	// the two halves refresh on independent TTLs.
+	fetchedAt        time.Time
+	accountScannedAt time.Time
 }
 
 var codexChannelModelsState codexChannelModelsCache
@@ -420,18 +442,142 @@ func (a *App) cachedCodexChannelModels() map[string]int {
 	}
 	codexChannelModelsMu.Lock()
 	defer codexChannelModelsMu.Unlock()
-	if codexChannelModelsState.models == nil {
-		return nil
-	}
-	if time.Since(codexChannelModelsState.fetchedAt) >= codexChannelModelsTTL {
-		// A stale scan is still better than blocking the UI on a CPA call.
-		return codexChannelModelsState.models
-	}
+	// A stale scan is still better than blocking the UI on a CPA call.
 	return codexChannelModelsState.models
 }
 
-// refreshCodexChannelModels scans the CPA Codex channels and stores the model
-// ids they list. A failed read keeps the previous scan.
+// cachedCodexChannelEntryCount returns the codex-api-key channel count of the last
+// inventory scan. It stays zero until the first successful scan.
+func (a *App) cachedCodexChannelEntryCount() int {
+	if a == nil {
+		return 0
+	}
+	codexChannelModelsMu.Lock()
+	defer codexChannelModelsMu.Unlock()
+	return codexChannelModelsState.channels
+}
+
+// cachedCodexAccountModels returns model id -> Codex account count from the last
+// inventory scan.
+func (a *App) cachedCodexAccountModels() map[string]int {
+	if a == nil {
+		return nil
+	}
+	codexChannelModelsMu.Lock()
+	defer codexChannelModelsMu.Unlock()
+	return codexChannelModelsState.accountModels
+}
+
+// codexInventoryNeedsAccountScan reports whether the catalog half of the inventory
+// has never run or is older than the TTL. It is keyed on its own timestamp, so a
+// tab that keeps re-reading the channel half cannot starve the catalog half.
+func codexInventoryNeedsAccountScan() bool {
+	codexChannelModelsMu.Lock()
+	defer codexChannelModelsMu.Unlock()
+	return codexChannelModelsState.accountScannedAt.IsZero() ||
+		time.Since(codexChannelModelsState.accountScannedAt) >= codexChannelModelsTTL
+}
+
+// cachedCodexAccountScan returns the last account catalog scan with its timestamp.
+func (a *App) cachedCodexAccountScan() (map[string]int, time.Time) {
+	if a == nil {
+		return nil, time.Time{}
+	}
+	codexChannelModelsMu.Lock()
+	defer codexChannelModelsMu.Unlock()
+	return codexChannelModelsState.accountModels, codexChannelModelsState.accountScannedAt
+}
+
+// codexInventoryAccounts lists the Codex-family host credentials with distinct
+// ids. A failed host listing degrades to no accounts instead of failing the
+// caller, because the workspace must still render its other counts.
+func (a *App) codexInventoryAccounts(ctx context.Context) []Account {
+	if a == nil || a.accounts == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	accounts, errList := a.accounts.baseAccounts(ctx)
+	if errList != nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(accounts))
+	codex := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if !providerIsCodexFamily(account.Provider) && !providerIsCodexFamily(account.Type) {
+			continue
+		}
+		// The projection id is the host auth index; fall back to the other identity
+		// fields only when a host omits it, and never count one credential twice.
+		identity := firstNonEmpty(strings.TrimSpace(account.ID), strings.TrimSpace(account.AuthID), strings.TrimSpace(account.Name))
+		if identity == "" {
+			continue
+		}
+		if _, exists := seen[identity]; exists {
+			continue
+		}
+		seen[identity] = struct{}{}
+		codex = append(codex, account)
+	}
+	return codex
+}
+
+// codexAccountModelCounts loads the effective model catalog of every Codex
+// account and returns model id -> account count. It runs inside the caller's
+// bounded context and never fails the caller: an incomplete scan degrades to the
+// catalogs it could read (nil when it could read none).
+func (a *App) codexAccountModelCounts(ctx context.Context, managementKey string) map[string]int {
+	if a == nil || a.accounts == nil {
+		return nil
+	}
+	targets := a.codexInventoryAccounts(ctx)
+	if len(targets) == 0 {
+		return nil
+	}
+	// Cap the fan-out at the same target limit the catalog route enforces, so a
+	// huge host listing cannot start unbounded per-account work.
+	if len(targets) > maxModelCatalogTargets {
+		targets = targets[:maxModelCatalogTargets]
+	}
+	config := a.configSnapshot()
+	client, errClient := newManagementClient(resolveManagementBaseURL(config.ManagementBaseURL), managementKey, a.managementDoer)
+	if errClient != nil {
+		return nil
+	}
+	defer client.clearSecrets()
+	catalogs, _ := loadCommonAccountModels(ctx, a.accounts, targets, client, config.Workers)
+	return countCodexAccountModels(catalogs)
+}
+
+// countCodexAccountModels turns per-account catalogs into a model id -> account
+// count map, counting a model once per account even when a catalog repeats it.
+func countCodexAccountModels(catalogs [][]AccountModelOption) map[string]int {
+	counts := map[string]int{}
+	for _, catalog := range catalogs {
+		seen := make(map[string]struct{}, len(catalog))
+		for _, option := range catalog {
+			key := normalizeCodexModelID(option.ID)
+			if key == "" {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		for key := range seen {
+			counts[key]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+// refreshCodexChannelModels runs one Codex inventory scan: it reads the
+// codex-api-key channels and the effective model catalog of every Codex account,
+// then stores both counts behind one shared TTL. A failed channel read keeps the
+// previous scan, and a failed or partial account read degrades to the models it
+// could read.
 func (a *App) refreshCodexChannelModels(ctx context.Context, managementKey string) map[string]int {
 	if a == nil {
 		return nil
@@ -472,14 +618,27 @@ func (a *App) refreshCodexChannelModels(ctx context.Context, managementKey strin
 			models[id]++
 		}
 	}
+	// The per-account catalog scan is the expensive half of the inventory, so it
+	// runs at most once per TTL. A failed scan keeps the previous rows and still
+	// stamps accountScannedAt, which bounds the next retry to the TTL.
+	accountModels, accountScannedAt := a.cachedCodexAccountScan()
+	if codexInventoryNeedsAccountScan() {
+		if scanned := a.codexAccountModelCounts(ctx, managementKey); scanned != nil {
+			accountModels = scanned
+		}
+		accountScannedAt = time.Now()
+	}
 	codexChannelModelsMu.Lock()
-	codexChannelModelsState = codexChannelModelsCache{models: models, fetchedAt: time.Now()}
+	codexChannelModelsState = codexChannelModelsCache{models: models, channels: len(entries), accountModels: accountModels, fetchedAt: time.Now(), accountScannedAt: accountScannedAt}
 	codexChannelModelsMu.Unlock()
 	return models
 }
 
-// codexOverview reports the counts the Codex workspace shows.
-func (a *App) codexOverview() map[string]any {
+// codexOverview reports the counts the Codex workspace shows. The account count
+// comes from the host auth listing and the channel count from the shared channel
+// scan cache, because the provider-runtime tracker deliberately excludes native
+// OAuth accounts and their traffic.
+func (a *App) codexOverview(ctx context.Context) map[string]any {
 	overview := map[string]any{
 		"accounts":                      0,
 		"channels":                      0,
@@ -493,25 +652,8 @@ func (a *App) codexOverview() map[string]any {
 	if a == nil {
 		return overview
 	}
-	if a.providerRuntime != nil {
-		counted := map[string]struct{}{}
-		channels := map[string]struct{}{}
-		for _, snapshot := range a.providerRuntime.Snapshot() {
-			if !providerIsCodexFamily(snapshot.Provider) {
-				continue
-			}
-			identity := strings.TrimSpace(snapshot.Identity)
-			if identity == "" {
-				identity = snapshot.AuthIndex
-			}
-			counted[snapshot.Provider+"\x00"+identity] = struct{}{}
-			if snapshot.CredentialBacked {
-				channels[snapshot.Provider+"\x00"+identity] = struct{}{}
-			}
-		}
-		overview["accounts"] = len(counted)
-		overview["channels"] = len(channels)
-	}
+	overview["accounts"] = len(a.codexInventoryAccounts(ctx))
+	overview["channels"] = a.cachedCodexChannelEntryCount()
 	if a.codexModelControl != nil {
 		overview["disabled_models"] = a.codexModelControl.Count()
 		overview["model_control_active"] = a.codexModelControl.Count() > 0

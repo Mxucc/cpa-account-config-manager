@@ -23,15 +23,23 @@ type codexModelsUpdateRequest struct {
 	Disabled []string `json:"disabled"`
 }
 
-// handleCodexOverview reports the workspace counts and the effective mode.
-func (a *App) handleCodexOverview(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
-	if resolveManagementKey(req.Headers) == "" {
+// handleCodexOverview reports the workspace counts and the effective mode. The
+// channel/account-model inventory scan is refreshed here so the counts reflect
+// the live CPA channels, but only up to the refresh bound: an unreachable CPA
+// management API must degrade the counts, not hang the tab.
+func (a *App) handleCodexOverview(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	if a == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Codex services are unavailable"})
 	}
-	return jsonResponse(http.StatusOK, map[string]any{"overview": a.codexOverview()})
+	scanContext, cancelScan := boundedModelControlContext(ctx)
+	a.refreshCodexChannelModels(scanContext, managementKey)
+	overview := a.codexOverview(scanContext)
+	cancelScan()
+	return jsonResponse(http.StatusOK, map[string]any{"overview": overview})
 }
 
 // handleCodexFingerprint lists every editable field with its default.

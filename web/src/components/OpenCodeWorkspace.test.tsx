@@ -534,9 +534,24 @@ describe("OpenCodeWorkspace", () => {
     await waitFor(() => expect(requests.filter(({ url }) => url.endsWith("/opencode/cline-pass/models")).length).toBeGreaterThan(1));
   });
 
-  it("probes a Cline Pass model with its upstream id even when the prefix is stripped", async () => {
+  it("probes a Cline Pass mapping row with its upstream id in the shared dialog", async () => {
     const user = userEvent.setup();
-    const requests = openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+    const requests = openCodeFetchMock({
+      clinePassAccounts: [clinePassAccountView()],
+      clinePassModelTest: {
+        result: {
+          reachable: true,
+          status: "available",
+          reason_code: "model_response_ok",
+          status_code: 200,
+          latency_ms: 18,
+          model: "cline-pass/deepseek-v4.1-flash",
+          endpoint: "chat",
+          probe_kind: "model",
+          tested_at: "2026-09-12T00:00:00Z",
+        },
+      },
+    });
 
     render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
 
@@ -544,12 +559,20 @@ describe("OpenCodeWorkspace", () => {
     await user.click(within(tabs).getByRole("tab", { name: "模型" }));
 
     const panel = await screen.findByRole("tabpanel", { name: "模型" });
-    await user.click(within(panel).getByRole("button", { name: "测试 DeepSeek V4.1 Flash" }));
+    const row = (await within(panel).findByText("DeepSeek V4.1 Flash")).closest("tr") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: "测试 DeepSeek V4.1 Flash" }));
 
+    // The result belongs to the dialog every other model page uses, never to a row of the mapping.
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    expect(within(panel).queryByRole("region", { name: "模型测试" })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("测试目标")).toHaveValue("Work laptop");
+
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/cline-pass/model-test") && init.method === "POST")).toBe(true));
     const probe = requests.find(({ url, init }) => url.endsWith("/opencode/cline-pass/model-test") && init.method === "POST");
     // The probe talks to the Cline gateway, so it must send the id the gateway accepts.
     expect(JSON.parse(String(probe?.init.body))).toMatchObject({ model: "cline-pass/deepseek-v4.1-flash" });
+    expect(await within(dialog).findByText("模型可用")).toBeInTheDocument();
   });
 
   it("keeps the accounts tab usable when the Cline Pass mapping cannot be read", async () => {
@@ -879,13 +902,15 @@ describe("OpenCodeWorkspace", () => {
     await user.click(within(row).getByRole("button", { name: `拉取 ${GO_WORKSPACE} 的模型列表` }));
     await waitFor(() => expect(within(row).getByText("2")).toBeInTheDocument());
 
+
     await user.click(within(row).getByRole("button", { name: `测试 ${GO_WORKSPACE} 的模型` }));
 
-    // The tester lives on the Models tab, so opening it switches the active tab.
+    // The tester is the same dialog every other model page uses, and it lives on the Models tab,
+    // so opening it switches the active tab.
     expect(screen.getByRole("tab", { name: "模型与价格" })).toHaveAttribute("aria-selected", "true");
-    const tester = await screen.findByRole("region", { name: "模型测试" });
-    expect(within(tester).getByRole("combobox")).toHaveValue("gpt-5.1");
-    await user.click(within(tester).getByRole("button", { name: "测试" }));
+    const dialog = await screen.findByRole("dialog", { name: "模型可用性测试" });
+    expect(within(dialog).getByRole("combobox")).toHaveValue("gpt-5.1");
+    await user.click(within(dialog).getByRole("button", { name: "开始测试" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST")).toBe(true));
     const request = requests.find(({ url, init }) => url.endsWith("/opencode/model-test") && init.method === "POST");
@@ -895,8 +920,8 @@ describe("OpenCodeWorkspace", () => {
       model: "gpt-5.1",
       timeout_seconds: 30,
     });
-    expect(await within(tester).findByText("模型不可用")).toBeInTheDocument();
-    expect(within(tester).getByText(/model_not_found/)).toBeInTheDocument();
+    expect(await within(dialog).findByText("模型不可用")).toBeInTheDocument();
+    expect(within(dialog).getByText(/model_not_found/)).toBeInTheDocument();
   });
 
   it("binds a Go workspace through the bind route and reports the channel base URL", async () => {

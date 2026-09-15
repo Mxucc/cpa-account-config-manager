@@ -51,9 +51,14 @@ interface ClinePassProbeTarget {
 /** The Cline Pass surface splits into the credential list and the published model mapping. */
 type ClinePassTab = "accounts" | "models";
 
-/** One inline row probe: the row it belongs to and its pending or finished result. */
+/** One mapping row waiting in the shared model-test dialog, with its finished result. */
 interface ClinePassRowProbe {
+  /** The published client id of the clicked row, so its button knows it owns the open dialog. */
   clientID: string;
+  /** The row as the table labels it: what the dialog header shows. */
+  label: string;
+  /** The id the Cline gateway accepts, which is what the probe sends. */
+  model: string;
   result: OpenCodeModelTestResult | null;
   error: string;
 }
@@ -605,23 +610,31 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
   })();
 
   /**
-   * One row of the mapping tests through the stored credential with the row's upstream id:
-   * the published client id is only what CPA exposes, while the gateway knows the upstream one.
+   * One row of the mapping is tested through the same dialog every other model page uses, so the
+   * outcome never needs a row of its own in the table. The probe sends the row's upstream id: the
+   * published client id is only what CPA exposes, while the gateway knows the upstream one.
    */
-  const runClinePassModelRowProbe = (row: ClinePassModelView) => void (async () => {
+  const openClinePassRowProbe = (row: ClinePassModelView) => {
+    setClinePassRowProbe({ clientID: row.client_id, label: row.name || row.client_id, model: row.upstream_id, result: null, error: "" });
+  };
+
+  const closeClinePassRowProbe = () => setClinePassRowProbe(null);
+
+  const runClinePassRowProbe = () => void (async () => {
+    const probe = clinePassRowProbe;
     const account = clinePassProbeAccount;
-    if (!account) return;
+    if (!probe || !account) return;
     setBusy("cline-pass-model-row-test");
-    setClinePassRowProbe({ clientID: row.client_id, result: null, error: "" });
+    setClinePassRowProbe((current) => (current && current.clientID === probe.clientID ? { ...current, result: null, error: "" } : current));
     try {
-      const response = await api.testClinePassModel(account.id, row.upstream_id);
-      setClinePassRowProbe((current) => (current && current.clientID === row.client_id ? { ...current, result: response.result } : current));
+      const response = await api.testClinePassModel(account.id, probe.model);
+      setClinePassRowProbe((current) => (current && current.clientID === probe.clientID ? { ...current, result: response.result } : current));
     } catch (caught) {
       if (caught instanceof api.APIError && caught.status === 401) {
         onAPIError(caught);
         return;
       }
-      setClinePassRowProbe((current) => (current && current.clientID === row.client_id
+      setClinePassRowProbe((current) => (current && current.clientID === probe.clientID
         ? { ...current, error: operatorMessage(caught instanceof Error ? caught.message : tx("ui.request_failed"), locale) }
         : current));
     } finally {
@@ -678,6 +691,12 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
     setTestModel(models[0] ?? "");
     setTestResult(null);
     setActiveTab("models");
+  };
+
+  /** The probe is a dialog now, so closing it only drops the target and its result. */
+  const closeModelTester = () => {
+    setTarget(null);
+    setTestResult(null);
   };
 
   /**
@@ -1597,75 +1616,74 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                           </tr>
                         </thead>
                         <tbody>
-                          {clinePassModels.models.map((row) => {
-                            const probe = clinePassRowProbe?.clientID === row.client_id ? clinePassRowProbe : null;
-                            const testing = probe !== null && probe.result === null && probe.error === "";
-                            return (
-                              <Fragment key={row.id}>
-                                <tr>
-                                  <td><strong>{row.name || row.client_id}</strong></td>
-                                  <td>
-                                    <div className="opencode-models-cell">
-                                      <code className="cline-pass-model-id">{row.client_id}</code>
-                                      {row.client_id !== row.upstream_id ? (
-                                        <small>
-                                          {tx("ui.opencode_cline_pass_upstream_id")}: <code className="cline-pass-model-id">{row.upstream_id}</code>
-                                        </small>
-                                      ) : null}
-                                    </div>
-                                  </td>
-                                  <td>
-                                    <span className={row.published ? "opencode-model-state enabled" : "opencode-model-state disabled"}>
-                                      {tx(row.published ? "ui.opencode_cline_pass_published" : "ui.opencode_cline_pass_unpublished")}
-                                    </span>
-                                  </td>
-                                  <td>{row.priced ? formatPriceUSD(row.input_usd_per_million) : tx("ui.opencode_models_unpriced")}</td>
-                                  <td>{formatPriceUSD(row.output_usd_per_million)}</td>
-                                  <td>{formatPriceUSD(row.cache_read_usd_per_million)}</td>
-                                  <td className="actions-cell">
-                                    <div className="row-actions">
-                                      <IconButton
-                                        label={tx("ui.model_test_action", { model: row.name || row.client_id })}
-                                        disabled={!clinePassProbeAccount || busy === "cline-pass-model-row-test"}
-                                        onClick={() => runClinePassModelRowProbe(row)}
-                                      >
-                                        {testing ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}
-                                      </IconButton>
-                                    </div>
-                                  </td>
-                                </tr>
-                                {probe ? (
-                                  <tr className="opencode-credential-row">
-                                    <td colSpan={7}>
-                                      {probe.result ? (
-                                        <ModelProbeOutcome
-                                          status={probe.result.status}
-                                          model={probe.result.model || row.upstream_id}
-                                          reasonCode={probe.result.reason_code}
-                                          statusCode={probe.result.status_code}
-                                          latencyMs={probe.result.latency_ms}
-                                          testedAt={probe.result.tested_at}
-                                          endpoint={probe.result.endpoint}
-                                          triedEndpoints={probe.result.tried_endpoints}
-                                          probeKind={probe.result.probe_kind ?? "model"}
-                                          response={probe.result.response}
-                                          detail={probe.result.detail}
-                                        />
-                                      ) : probe.error ? (
-                                        <p className="opencode-credential-warning" role="alert"><AlertTriangle size={14} />{probe.error}</p>
-                                      ) : (
-                                        <p className="opencode-note" role="status"><LoaderCircle className="spin" size={14} />{tx("ui.testing")}</p>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ) : null}
-                              </Fragment>
-                            );
-                          })}
+                          {clinePassModels.models.map((row) => (
+                            <tr key={row.id}>
+                              <td><strong>{row.name || row.client_id}</strong></td>
+                              <td>
+                                <div className="opencode-models-cell">
+                                  <code className="cline-pass-model-id">{row.client_id}</code>
+                                  {row.client_id !== row.upstream_id ? (
+                                    <small>
+                                      {tx("ui.opencode_cline_pass_upstream_id")}: <code className="cline-pass-model-id">{row.upstream_id}</code>
+                                    </small>
+                                  ) : null}
+                                </div>
+                              </td>
+                              <td>
+                                <span className={row.published ? "opencode-model-state enabled" : "opencode-model-state disabled"}>
+                                  {tx(row.published ? "ui.opencode_cline_pass_published" : "ui.opencode_cline_pass_unpublished")}
+                                </span>
+                              </td>
+                              <td>{row.priced ? formatPriceUSD(row.input_usd_per_million) : tx("ui.opencode_models_unpriced")}</td>
+                              <td>{formatPriceUSD(row.output_usd_per_million)}</td>
+                              <td>{formatPriceUSD(row.cache_read_usd_per_million)}</td>
+                              <td className="actions-cell">
+                                <div className="row-actions">
+                                  <IconButton
+                                    label={tx("ui.model_test_action", { model: row.name || row.client_id })}
+                                    disabled={!clinePassProbeAccount || busy === "cline-pass-model-row-test"}
+                                    onClick={() => openClinePassRowProbe(row)}
+                                  >
+                                    {busy === "cline-pass-model-row-test" && clinePassRowProbe?.clientID === row.client_id
+                                      ? <LoaderCircle className="spin" size={15} />
+                                      : <Activity size={15} />}
+                                  </IconButton>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
                   )}
+                  {clinePassRowProbe ? (
+                    <ModelProbeDialog
+                      model={clinePassRowProbe.label}
+                      targets={clinePassProbeAccount ? [{ id: clinePassProbeAccount.id, label: clinePassProbeAccount.name || clinePassProbeAccount.id }] : []}
+                      targetID={clinePassProbeAccount?.id ?? ""}
+                      onSelectTarget={() => undefined}
+                      onRun={runClinePassRowProbe}
+                      onClose={closeClinePassRowProbe}
+                      testing={busy === "cline-pass-model-row-test"}
+                      error={clinePassRowProbe.error}
+                    >
+                      {clinePassRowProbe.result ? (
+                        <ModelProbeOutcome
+                          status={clinePassRowProbe.result.status}
+                          model={clinePassRowProbe.result.model || clinePassRowProbe.model}
+                          reasonCode={clinePassRowProbe.result.reason_code}
+                          statusCode={clinePassRowProbe.result.status_code}
+                          latencyMs={clinePassRowProbe.result.latency_ms}
+                          testedAt={clinePassRowProbe.result.tested_at}
+                          endpoint={clinePassRowProbe.result.endpoint}
+                          triedEndpoints={clinePassRowProbe.result.tried_endpoints}
+                          probeKind={clinePassRowProbe.result.probe_kind ?? "model"}
+                          response={clinePassRowProbe.result.response}
+                          detail={clinePassRowProbe.result.detail}
+                        />
+                      ) : null}
+                    </ModelProbeDialog>
+                  ) : null}
                 </>
               ) : clinePassModelsLoading ? (
                 <p className="opencode-note" role="status"><LoaderCircle className="spin" size={14} />{tx("ui.loading_models")}</p>
@@ -1961,27 +1979,23 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
           </section>
 
           {target ? (
-            <section className="opencode-section opencode-model-tester" aria-label={tx("ui.opencode_model_test")}>
-              <div className="opencode-section-heading">
-                <div>
-                  <strong>{tx("ui.opencode_model_test")}</strong>
-                  <span>{tx("ui.opencode_model_test_description", { account: target.label })}</span>
-                </div>
-                <button className="button button-quiet" type="button" onClick={() => { setTarget(null); setTestResult(null); }}>{tx("ui.close")}</button>
-              </div>
-              <div className="opencode-form">
-                <label className="field-block">
-                  <span>{tx("ui.model")}</span>
-                  <select value={testModel} onChange={(event) => setTestModel(event.target.value)}>
-                    {target.models.map((model) => <option key={model} value={model}>{model}</option>)}
-                  </select>
-                </label>
-                <div className="opencode-form-actions">
-                  <button className="button button-primary" type="button" disabled={busy === "model-test" || !testModel} onClick={runModelTest}>
-                    {busy === "model-test" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}{tx("ui.test")}
-                  </button>
-                </div>
-              </div>
+            <ModelProbeDialog
+              model={testModel || target.label}
+              targets={[{ id: `${target.kind}:${target.accountID}`, label: target.label }]}
+              targetID={`${target.kind}:${target.accountID}`}
+              onSelectTarget={() => undefined}
+              onRun={runModelTest}
+              onClose={closeModelTester}
+              testing={busy === "model-test"}
+            >
+              {/* The model is picked inside the dialog: the family decides which gateway answers,
+                  so the probe offers the chosen credential's own catalog. */}
+              <label className="model-test-field">
+                <span>{tx("ui.model")}</span>
+                <select value={testModel} onChange={(event) => setTestModel(event.target.value)}>
+                  {target.models.map((model) => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </label>
               <p className="opencode-note">
                 {tx("ui.opencode_model_price")}: {selectedPrice
                   ? `${formatPriceUSD(selectedPrice.input_usd_per_million)} / ${formatPriceUSD(selectedPrice.output_usd_per_million)} · ${tx("ui.opencode_price_per_million")}`
@@ -2007,7 +2021,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
                   ) : null}
                 </>
               ) : null}
-            </section>
+            </ModelProbeDialog>
           ) : null}
         </section>
       ) : null}

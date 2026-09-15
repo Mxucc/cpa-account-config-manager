@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -29,6 +30,12 @@ type AccountModelPolicySummary struct {
 	Mode          string   `json:"mode"`
 	Models        []string `json:"models,omitempty"`
 	ExcludedCount int      `json:"excluded_count"`
+	// AutoDetected marks a policy written by the automatic allow-list detection
+	// experiment; DetectedAt is its RFC3339 detection time and VerifiedCount the
+	// number of models the detection verified as compatible.
+	AutoDetected  bool   `json:"auto_detected,omitempty"`
+	DetectedAt    string `json:"detected_at,omitempty"`
+	VerifiedCount int    `json:"verified_count,omitempty"`
 }
 
 type accountProbeModelResolution struct {
@@ -43,6 +50,11 @@ type storedModelPolicy struct {
 	Models                []string `json:"models,omitempty"`
 	ManagedExcludedModels []string `json:"managed_excluded_models,omitempty"`
 	BaseExcludedModels    []string `json:"base_excluded_models,omitempty"`
+	// The following fields are optional metadata added by the automatic
+	// allow-list detection. Older policies simply omit them and still load.
+	AutoDetected   bool       `json:"auto_detected,omitempty"`
+	DetectedAt     *time.Time `json:"detected_at,omitempty"`
+	VerifiedModels []string   `json:"verified_models,omitempty"`
 }
 
 type AccountModelOption struct {
@@ -147,11 +159,17 @@ func modelPolicySummary(metadata map[string]any) *AccountModelPolicySummary {
 	if !ok {
 		return nil
 	}
-	return &AccountModelPolicySummary{
+	summary := &AccountModelPolicySummary{
 		Mode:          policy.Mode,
 		Models:        append([]string(nil), policy.Models...),
 		ExcludedCount: len(policy.ManagedExcludedModels),
+		AutoDetected:  policy.AutoDetected,
+		VerifiedCount: len(policy.VerifiedModels),
 	}
+	if policy.DetectedAt != nil && !policy.DetectedAt.IsZero() {
+		summary.DetectedAt = policy.DetectedAt.UTC().Format(time.RFC3339)
+	}
+	return summary
 }
 
 func readStoredModelPolicy(metadata map[string]any) (storedModelPolicy, bool) {
@@ -179,6 +197,7 @@ func readStoredModelPolicy(metadata map[string]any) (storedModelPolicy, bool) {
 	policy.Models = normalized.Models
 	policy.ManagedExcludedModels = safeStoredModelIdentifiers(policy.ManagedExcludedModels)
 	policy.BaseExcludedModels = safeStoredModelIdentifiers(policy.BaseExcludedModels)
+	policy.VerifiedModels = safeStoredModelIdentifiers(policy.VerifiedModels)
 	return policy, true
 }
 

@@ -37,8 +37,13 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": errTest.Error()})
 		}
 	}
-	if request.DetectRestrictedModels && len(result.CompatibleModels) > 0 {
-		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey, OperationSourceManual)
+	if request.DetectRestrictedModels {
+		switch {
+		case len(result.CompatibleModels) > 0:
+			result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey, OperationSourceManual)
+		case result.PolicySkipReason != "":
+			a.recordAutoModelWhitelistSkip(result.AccountID, result.PolicySkipReason, OperationSourceManual)
+		}
 	}
 	managementKey = ""
 	inspectionErr := a.inspection.RecordManualModelTest(ctx, result)
@@ -93,8 +98,13 @@ func (a *App) runNewAccountModelProbe(ctx context.Context, account Account, mana
 	if errRun != nil {
 		return result, errRun
 	}
-	if a.experiments.AutoModelWhitelistEnabled() && len(result.CompatibleModels) > 0 {
-		result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, a.configSnapshot(), managementKey, OperationSourceBackground)
+	if a.experiments.AutoModelWhitelistEnabled() {
+		switch {
+		case len(result.CompatibleModels) > 0:
+			result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, a.configSnapshot(), managementKey, OperationSourceBackground)
+		case result.PolicySkipReason != "":
+			a.recordAutoModelWhitelistSkip(result.AccountID, result.PolicySkipReason, OperationSourceBackground)
+		}
 	}
 	inspectionErr := a.inspection.RecordModelTest(ctx, result, InspectionProbeSourceScan)
 	a.recordModelTest(result, OperationSourceBackground, inspectionErr)

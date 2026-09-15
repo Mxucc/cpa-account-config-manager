@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -275,29 +277,51 @@ func TestHandleCodexModelTestDetectsRestrictedChatGPTCompatibilityModels(t *test
 	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
 		t.Fatalf("decode result: %v", errDecode)
 	}
-	if len(models) != 3 || models[0] != defaultOpenAIProbeModel || models[1] != defaultCodexFallbackModel || models[2] != codexCompatibilityMiniModel {
-		t.Fatalf("model attempt order = %#v", models)
+	probed := append([]string(nil), models...)
+	sort.Strings(probed)
+	wantProbed := []string{defaultOpenAIProbeModel, defaultCodexFallbackModel, codexCompatibilityMiniModel, "gpt-5.4"}
+	sort.Strings(wantProbed)
+	if !reflect.DeepEqual(probed, wantProbed) {
+		t.Fatalf("probed catalog models = %#v, want %#v", models, wantProbed)
 	}
 	if result.Status != "available" || result.ReasonCode != "model_response_ok" || result.Model != defaultCodexFallbackModel ||
 		result.PrimaryModel != defaultOpenAIProbeModel || result.FallbackModel != defaultCodexFallbackModel ||
 		result.SelectedModel != defaultCodexFallbackModel || !result.FallbackUsed {
 		t.Fatalf("fallback result = %#v", result)
 	}
-	if len(result.Attempts) != 3 || result.Attempts[0].Role != "primary" || result.Attempts[0].StatusCode != http.StatusBadRequest ||
+	if len(result.Attempts) != 4 || result.Attempts[0].Role != "primary" || result.Attempts[0].StatusCode != http.StatusBadRequest ||
 		result.Attempts[0].ReasonCode != "model_not_found" || result.Attempts[1].Role != "fallback" ||
 		result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].Status != "available" ||
-		result.Attempts[2].Role != "compatibility" || result.Attempts[2].Model != codexCompatibilityMiniModel || result.Attempts[2].Status != "available" {
+		result.Attempts[2].Role != autoModelWhitelistProbeRole || result.Attempts[2].Status != "available" ||
+		result.Attempts[3].Role != autoModelWhitelistProbeRole || result.Attempts[3].Status != "available" {
 		t.Fatalf("fallback attempts = %#v", result.Attempts)
 	}
-	if !reflect.DeepEqual(result.CompatibleModels, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}) {
+	wantCompatible := []string{"gpt-5.4", codexCompatibilityMiniModel, defaultCodexFallbackModel}
+	if !reflect.DeepEqual(result.CompatibleModels, wantCompatible) {
 		t.Fatalf("compatible models = %#v", result.CompatibleModels)
 	}
 	if result.ModelPolicy == nil || result.ModelPolicy.Status != "applied" || result.ModelPolicy.Mode != ModelPolicyModeAllowOnly ||
-		!reflect.DeepEqual(result.ModelPolicy.Models, []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}) {
+		!reflect.DeepEqual(result.ModelPolicy.Models, wantCompatible) {
 		t.Fatalf("model policy adjustment = %#v", result.ModelPolicy)
 	}
 	if modelPolicyPayload == nil {
 		t.Fatal("auto model whitelist was not written")
+	}
+	persistedPolicy, ok := modelPolicyPayload["cpa_account_config_manager.model_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("model policy payload = %#v", modelPolicyPayload)
+	}
+	if !equalDecodedStringSlice(persistedPolicy["models"], wantCompatible) {
+		t.Fatalf("written policy models = %#v, want %#v", persistedPolicy["models"], wantCompatible)
+	}
+	if persistedPolicy["auto_detected"] != true {
+		t.Fatalf("written policy auto_detected = %#v", persistedPolicy["auto_detected"])
+	}
+	if !equalDecodedStringSlice(persistedPolicy["verified_models"], wantCompatible) {
+		t.Fatalf("written policy verified_models = %#v, want %#v", persistedPolicy["verified_models"], wantCompatible)
+	}
+	if detectedAt, _ := persistedPolicy["detected_at"].(string); detectedAt == "" {
+		t.Fatalf("written policy detected_at = %#v", persistedPolicy["detected_at"])
 	}
 	if result.Attempts[0].Response == nil || !strings.Contains(result.Attempts[0].Response.Body, "not supported") ||
 		result.Response == nil || result.Response.Format != "sse" || !strings.Contains(result.Response.Body, "event: response.completed") {
@@ -1269,5 +1293,364 @@ func TestRecordModelTestSurfacesSanitizedInspectionRecordFailure(t *testing.T) {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("operation leaked %q: %s", secret, raw)
 		}
+	}
+}
+
+// The automatic allow-list must not narrow an account on partial evidence: when a
+// catalog probe answers with a transient upstream failure, nothing is written and
+// the withheld detection is journalled instead of silently skipped.
+func TestHandleCodexModelTestWithholdsAllowListOnInconclusiveEvidence(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-partial", Name: "partial.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/partial.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-partial": {
+				AuthIndex: "auth-partial", Name: "partial.json", Path: "/auths/partial.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-partial"}`),
+			},
+		},
+	}
+	var modelPolicyPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v0/management/auth-files/models":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"models": []map[string]any{
+				{"id": defaultOpenAIProbeModel}, {"id": defaultCodexFallbackModel}, {"id": codexCompatibilityMiniModel}, {"id": "gpt-5.6-luna"},
+			}})
+			return
+		case "/v0/management/auth-files/fields":
+			if errDecode := json.NewDecoder(request.Body).Decode(&modelPolicyPayload); errDecode != nil {
+				t.Errorf("decode model policy request: %v", errDecode)
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
+			return
+		case "/v0/management/api-call":
+		default:
+			t.Errorf("unexpected management path %q", request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var received managementAPICallRequest
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		switch received.URL {
+		case "https://chatgpt.com/backend-api/wham/usage":
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"application/json"}},
+				Body:       `{"rate_limit":{"allowed":true,"primary_window":{"used_percent":18,"limit_window_seconds":18000}}}`,
+			})
+		case "https://chatgpt.com/backend-api/codex/responses":
+			var payload map[string]any
+			if errDecode := json.Unmarshal([]byte(received.Data), &payload); errDecode != nil {
+				t.Errorf("decode model payload: %v", errDecode)
+			}
+			switch modelTestStringValue(payload, "model") {
+			case defaultOpenAIProbeModel:
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusBadRequest,
+					Header:     map[string][]string{"Content-Type": {"application/json"}},
+					Body:       `{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}`,
+				})
+			case codexCompatibilityMiniModel:
+				// A definitive rejection: that model is not available.
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusNotFound,
+					Header:     map[string][]string{"Content-Type": {"application/json"}},
+					Body:       `{"detail":"model gpt-5.4-mini not found"}`,
+				})
+			case defaultCodexFallbackModel:
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusOK,
+					Header:     map[string][]string{"Content-Type": {"text/event-stream"}},
+					Body:       "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fallback-response\"}}\n\n",
+				})
+			default:
+				// A transient upstream failure makes the catalog verdict
+				// inconclusive, so no allow-list may be written.
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     map[string][]string{"Content-Type": {"application/json"}},
+					Body:       `{"error":"upstream temporarily unavailable"}`,
+				})
+			}
+		default:
+			t.Errorf("unexpected probe URL %q", received.URL)
+		}
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	if _, errSet := app.experiments.Set(ExperimentalSettings{AutoModelWhitelistEnabled: true}); errSet != nil {
+		t.Fatalf("enable auto model whitelist: %v", errSet)
+	}
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-partial", Model: defaultOpenAIProbeModel})
+	response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}}, Body: body,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("model test = %d %s", response.StatusCode, response.Body)
+	}
+	var result ModelTestResult
+	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	if !result.FallbackUsed || result.Status != "available" {
+		t.Fatalf("fallback result = %#v", result)
+	}
+	if len(result.CompatibleModels) != 0 || result.ModelPolicy != nil {
+		t.Fatalf("partial compatibility evidence produced an allow-list: %#v", result)
+	}
+	if modelPolicyPayload != nil || len(host.saves) != 0 {
+		t.Fatalf("a model policy was written without compatibility evidence: payload=%#v saves=%#v", modelPolicyPayload, host.saves)
+	}
+	var policyOperation *OperationEntry
+	for _, operation := range app.operations.List(OperationQuery{Page: 1, PageSize: 20}).Operations {
+		if operation.Action != OperationActionAutoModelWhitelist {
+			continue
+		}
+		candidate := operation
+		policyOperation = &candidate
+	}
+	if policyOperation == nil || policyOperation.Status != OperationStatusSkipped || policyOperation.ReasonCode != autoModelWhitelistInsufficientEvidence {
+		t.Fatalf("policy operation = %#v", policyOperation)
+	}
+}
+
+// equalDecodedStringSlice compares a JSON-decoded []any of strings with a
+// []string in order.
+func equalDecodedStringSlice(value any, want []string) bool {
+	values, ok := value.([]any)
+	if !ok || len(values) != len(want) {
+		return false
+	}
+	for index, candidate := range values {
+		text, okText := candidate.(string)
+		if !okText || text != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestRunAutoModelWhitelistProbesWholeCatalogWithinCap checks that the detection
+// probes every catalog model up to the hard cap and never clobbers the
+// primary/fallback outcome that the top-level result reports.
+func TestRunAutoModelWhitelistProbesWholeCatalogWithinCap(t *testing.T) {
+	const catalogExtraModels = maxAutoWhitelistProbeModels + 8
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auth-cap", Name: "cap.json", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/cap.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auth-cap": {
+				AuthIndex: "auth-cap", Name: "cap.json", Path: "/auths/cap.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"upstream-secret","account_id":"workspace-cap"}`),
+			},
+		},
+	}
+	models := make([]string, 0, catalogExtraModels+2)
+	for index := 0; index < catalogExtraModels; index++ {
+		models = append(models, fmt.Sprintf("cap-model-%02d", index))
+	}
+	var catalogProbes atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v0/management/auth-files/models":
+			entries := []map[string]any{{"id": defaultOpenAIProbeModel}, {"id": defaultCodexFallbackModel}}
+			for _, model := range models {
+				entries = append(entries, map[string]any{"id": model})
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"models": entries})
+			return
+		case "/v0/management/auth-files/fields":
+			var payload map[string]any
+			if errDecode := json.NewDecoder(request.Body).Decode(&payload); errDecode != nil {
+				t.Errorf("decode model policy request: %v", errDecode)
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok"})
+			return
+		case "/v0/management/api-call":
+		default:
+			t.Errorf("unexpected management path %q", request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var received managementAPICallRequest
+		if errDecode := json.NewDecoder(request.Body).Decode(&received); errDecode != nil {
+			t.Errorf("decode management request: %v", errDecode)
+		}
+		switch received.URL {
+		case "https://chatgpt.com/backend-api/wham/usage":
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"application/json"}},
+				Body:       `{"rate_limit":{"allowed":true}}`,
+			})
+		case "https://chatgpt.com/backend-api/codex/responses":
+			var payload map[string]any
+			if errDecode := json.Unmarshal([]byte(received.Data), &payload); errDecode != nil {
+				t.Errorf("decode model payload: %v", errDecode)
+			}
+			model := modelTestStringValue(payload, "model")
+			if model == defaultOpenAIProbeModel {
+				_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+					StatusCode: http.StatusBadRequest,
+					Header:     map[string][]string{"Content-Type": {"application/json"}},
+					Body:       `{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}`,
+				})
+				return
+			}
+			if model != defaultCodexFallbackModel {
+				catalogProbes.Add(1)
+			}
+			_ = json.NewEncoder(writer).Encode(managementAPICallResponse{
+				StatusCode: http.StatusOK,
+				Header:     map[string][]string{"Content-Type": {"text/event-stream"}},
+				Body:       "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"catalog-response\"}}\n\n",
+			})
+		default:
+			t.Errorf("unexpected probe URL %q", received.URL)
+		}
+	}))
+	defer server.Close()
+
+	app := NewApp(host, []byte("index"))
+	app.modelTests.doer = server.Client()
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\nmanagement_base_url: " + server.URL + "\n"))
+	defer app.Close()
+	if _, errSet := app.experiments.Set(ExperimentalSettings{AutoModelWhitelistEnabled: true}); errSet != nil {
+		t.Fatalf("enable auto model whitelist: %v", errSet)
+	}
+	body, _ := json.Marshal(ModelTestRequest{AccountID: "auth-cap", Model: defaultOpenAIProbeModel})
+	response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/model-test",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}}, Body: body,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("model test = %d %s", response.StatusCode, response.Body)
+	}
+	var result ModelTestResult
+	if errDecode := json.Unmarshal(response.Body, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	// The auxiliary catalog probes must never overwrite the primary outcome.
+	if result.Model != defaultCodexFallbackModel || result.Status != "available" || result.ReasonCode != "model_response_ok" ||
+		result.PrimaryModel != defaultOpenAIProbeModel || result.FallbackModel != defaultCodexFallbackModel || !result.FallbackUsed {
+		t.Fatalf("primary outcome was clobbered: %#v", result)
+	}
+	catalogAttempts := 0
+	for _, attempt := range result.Attempts {
+		if attempt.Role == autoModelWhitelistProbeRole {
+			catalogAttempts++
+		}
+	}
+	if catalogAttempts != maxAutoWhitelistProbeModels {
+		t.Fatalf("catalog attempts = %d, want %d", catalogAttempts, maxAutoWhitelistProbeModels)
+	}
+	if catalogProbes.Load() != maxAutoWhitelistProbeModels {
+		t.Fatalf("catalog probes = %d, want %d", catalogProbes.Load(), maxAutoWhitelistProbeModels)
+	}
+	if len(result.CompatibleModels) != 1+maxAutoWhitelistProbeModels {
+		t.Fatalf("compatible models = %d, want %d", len(result.CompatibleModels), 1+maxAutoWhitelistProbeModels)
+	}
+	for _, model := range result.CompatibleModels {
+		if model == defaultOpenAIProbeModel {
+			t.Fatalf("rejected primary model leaked into compatible models: %#v", result.CompatibleModels)
+		}
+	}
+}
+
+// TestHandleAutoModelWhitelistStatusReportsDetections covers the authenticated
+// observability route: it requires the Management key, reports the experiment
+// switch and Codex-account counts, and serves the newest journal entries with a
+// clamped page.
+func TestHandleAutoModelWhitelistStatusReportsDetections(t *testing.T) {
+	host := &fakeAuthHost{
+		entries: []cpaapi.HostAuthFileEntry{{
+			AuthIndex: "auto-detected", Name: "auto.json", Label: "Detected Account", Provider: "codex", Type: "codex",
+			AccountType: "oauth", Source: "file", Path: "/auths/auto.json",
+		}},
+		details: map[string]cpaapi.HostAuthGetResponse{
+			"auto-detected": {
+				AuthIndex: "auto-detected", Name: "auto.json", Path: "/auths/auto.json",
+				JSON: json.RawMessage(`{"type":"codex","cpa_account_config_manager":{"model_policy":{"schema":1,"mode":"allow_only","models":["gpt-5.5"],"managed_excluded_models":["gpt-5.4"],"auto_detected":true,"detected_at":"2026-01-02T03:04:05Z","verified_models":["gpt-5.5"]}}}`),
+			},
+		},
+	}
+	app := NewApp(host, []byte("index"))
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\n"))
+	defer app.Close()
+	if _, errSet := app.experiments.Set(ExperimentalSettings{AutoModelWhitelistEnabled: true}); errSet != nil {
+		t.Fatalf("enable auto model whitelist: %v", errSet)
+	}
+	earlier := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	later := earlier.Add(time.Hour)
+	app.operations.Record(OperationEntry{
+		Category: OperationCategoryAccount, Action: OperationActionAutoModelWhitelist, Status: OperationStatusSkipped,
+		Source: OperationSourceManual, Scope: OperationScopeSingle, TargetID: "auto-detected", TargetCount: 1,
+		Skipped: 1, StartedAt: earlier, FinishedAt: earlier, ReasonCode: autoModelWhitelistInsufficientEvidence,
+	})
+	app.operations.Record(OperationEntry{
+		Category: OperationCategoryAccount, Action: OperationActionAutoModelWhitelist, Status: OperationStatusSucceeded,
+		Source: OperationSourceManual, Scope: OperationScopeSingle, TargetID: "auto-detected", TargetCount: 1,
+		Succeeded: 1, StartedAt: later, FinishedAt: later, ReasonCode: "model_compatibility_detected",
+	})
+
+	unauthorized := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+		Method: http.MethodGet, Path: managementRoutePrefix + "/experiments/auto-model-whitelist",
+	})
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d %s", unauthorized.StatusCode, unauthorized.Body)
+	}
+
+	fetch := func(query map[string][]string) autoModelWhitelistStatusResponse {
+		t.Helper()
+		response := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
+			Method: http.MethodGet, Path: managementRoutePrefix + "/experiments/auto-model-whitelist",
+			Headers: http.Header{"Authorization": []string{"Bearer management-secret"}}, Query: query,
+		})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d %s", response.StatusCode, response.Body)
+		}
+		var decoded autoModelWhitelistStatusResponse
+		if errDecode := json.Unmarshal(response.Body, &decoded); errDecode != nil {
+			t.Fatalf("decode status: %v", errDecode)
+		}
+		return decoded
+	}
+
+	first := fetch(map[string][]string{"page": {"1"}, "page_size": {"1"}}).AutoModelWhitelist
+	if !first.Enabled || first.Accounts != 1 || first.Limited != 1 || first.LastDetectedAt != "2026-01-02T03:04:05Z" {
+		t.Fatalf("status = %#v", first)
+	}
+	if len(first.Recent) != 1 || first.Recent[0].Status != "applied" ||
+		first.Recent[0].ReasonCode != "model_compatibility_detected" || first.Recent[0].Label != "Detected Account" ||
+		first.Recent[0].AccountID != "auto-detected" || first.Recent[0].At != later.Format(time.RFC3339) {
+		t.Fatalf("recent = %#v", first.Recent)
+	}
+	// page=0 is clamped to the first page and returns the same newest entry.
+	clamped := fetch(map[string][]string{"page": {"0"}, "page_size": {"1"}}).AutoModelWhitelist
+	if len(clamped.Recent) != 1 || clamped.Recent[0].Status != "applied" {
+		t.Fatalf("clamped recent = %#v", clamped.Recent)
+	}
+	second := fetch(map[string][]string{"page": {"2"}, "page_size": {"1"}}).AutoModelWhitelist
+	if len(second.Recent) != 1 || second.Recent[0].Status != "skipped" ||
+		second.Recent[0].ReasonCode != autoModelWhitelistInsufficientEvidence {
+		t.Fatalf("second page recent = %#v", second.Recent)
+	}
+	empty := fetch(map[string][]string{"page": {"99"}, "page_size": {"20"}}).AutoModelWhitelist
+	if len(empty.Recent) != 0 {
+		t.Fatalf("out-of-range recent = %#v", empty.Recent)
 	}
 }

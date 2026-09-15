@@ -8,6 +8,11 @@ import (
 
 const autoModelWhitelistMutationPrefix = "auto-model-whitelist:"
 
+// autoModelWhitelistInsufficientEvidence is the journal reason for an automatic
+// allow-list that was withheld because the whole-catalog verification did not
+// return a verdict for every model. Nothing was written in that case.
+const autoModelWhitelistInsufficientEvidence = "insufficient_compatibility_evidence"
+
 func (a *App) applyDetectedModelWhitelist(ctx context.Context, accountID string, models []string, config Config, managementKey string, requestedSource ...string) *ModelTestPolicyAdjustment {
 	source := OperationSourceManual
 	if len(requestedSource) > 0 && normalizeOperationSource(requestedSource[0]) != "" {
@@ -74,6 +79,15 @@ func (a *App) applyDetectedModelWhitelist(ctx context.Context, accountID string,
 		a.recordAutoModelWhitelist(account.ID, adjustment, source)
 		return adjustment
 	}
+	// Stamp the auto-detection provenance so the account list and the
+	// observability route can show that this policy was machine-detected.
+	if persisted, ok := fields["cpa_account_config_manager.model_policy"].(storedModelPolicy); ok {
+		detectedAt := time.Now().UTC()
+		persisted.AutoDetected = true
+		persisted.DetectedAt = &detectedAt
+		persisted.VerifiedModels = append([]string(nil), validated.Models...)
+		fields["cpa_account_config_manager.model_policy"] = persisted
+	}
 	patch := BatchPatch{ModelPolicy: &validated, resolvedModelFields: fields}
 	if errPatch := client.PatchFields(ctx, account.Name, patch); errPatch != nil {
 		adjustment.ReasonCode = "management_unavailable"
@@ -109,4 +123,16 @@ func (a *App) recordAutoModelWhitelist(accountID string, adjustment *ModelTestPo
 		Succeeded: succeeded, Failed: failed, Skipped: skipped, StartedAt: now, FinishedAt: now,
 		ReasonCode: adjustment.ReasonCode,
 	})
+}
+
+// recordAutoModelWhitelistSkip journals a detected allow-list that was withheld.
+// It reuses the applied-list journal so an operator sees the skipped detection
+// instead of a silent no-op.
+func (a *App) recordAutoModelWhitelistSkip(accountID, reasonCode, requestedSource string) {
+	if a == nil || strings.TrimSpace(reasonCode) == "" {
+		return
+	}
+	a.recordAutoModelWhitelist(accountID, &ModelTestPolicyAdjustment{
+		Mode: ModelPolicyModeAllowOnly, Status: "skipped", ReasonCode: reasonCode,
+	}, requestedSource)
 }

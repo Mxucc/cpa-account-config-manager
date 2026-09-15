@@ -937,6 +937,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/updates/check", Description: "Record an immediate CPA plugin-store update check."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/experiments", Description: "Read removable experimental feature settings."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/experiments", Description: "Persist removable experimental feature settings."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/experiments/auto-model-whitelist", Description: "Read the Codex automatic model allow-list experiment status and recent detections."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/experiments/agent-identity/session-login", Description: "Convert one explicitly submitted ChatGPT Session JSON into a pending Agent Identity login credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/risk-control", Description: "Read the redacted plugin-native risk-control configuration, status, and events."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/risk-control", Description: "Validate and persist plugin-native risk-control settings."},
@@ -983,7 +984,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/model-test", Description: "Probe one Cline Pass model through a stored credential."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/cline-pass/bind", Description: "Create or update the OpenAI-compatible CPA channel that routes one Cline Pass account."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/self-update", Description: "Read the direct GitHub self-update state."},
-			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/overview", Description: "Read the Codex workspace counts and effective convergence mode."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/overview", Description: "Read the Codex workspace counts: host Codex accounts, Codex channels, and effective convergence mode."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Read every editable Codex fingerprint field with its default."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/codex/fingerprint", Description: "Update Codex fingerprint fields; an empty value restores a field default."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/codex/fingerprint/reset", Description: "Restore Codex fingerprint fields to their defaults."},
@@ -1178,6 +1179,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return jsonResponse(http.StatusOK, a.experiments.Snapshot())
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/experiments":
 		return a.handlePutExperimentalSettings(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/experiments/auto-model-whitelist":
+		return a.handleAutoModelWhitelistStatus(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/experiments/agent-identity/session-login":
 		return a.handleAgentIdentitySessionLogin(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/risk-control":
@@ -1285,7 +1288,7 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/self-update/reload":
 		return a.handleSelfUpdateReload(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/overview":
-		return a.handleCodexOverview(req)
+		return a.handleCodexOverview(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint":
 		return a.handleCodexFingerprint(req)
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/codex/fingerprint":

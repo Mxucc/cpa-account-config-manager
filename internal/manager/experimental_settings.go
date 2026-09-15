@@ -43,12 +43,23 @@ func (s *ExperimentalSettingsService) AgentIdentityEnabled() bool {
 	return enabled
 }
 
+// AutoModelWhitelistEnabled reports the operator's experimental setting. The
+// automatic allow-list rewrites an account's model policy, so it stays an opt-in
+// experiment: the Experimental settings page shows the toggle and the detections
+// this switch has produced.
 func (s *ExperimentalSettingsService) AutoModelWhitelistEnabled() bool {
-	return true
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	enabled := s.settings.AutoModelWhitelistEnabled
+	s.mu.RUnlock()
+	return enabled
 }
 
 func normalizeExperimentalSettings(settings ExperimentalSettings) ExperimentalSettings {
-	settings.AutoModelWhitelistEnabled = true
+	// The automatic allow-list is an operator experiment, so its stored value is
+	// honoured instead of being forced on.
 	// Sub2API-compatible credit pricing is a permanent built-in behavior. Keep
 	// the legacy field in the persisted/API shape for older clients, but ignore
 	// its historical value so upgrades cannot silently disable billing data.

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -26,7 +27,20 @@ const (
 	maxModelIdentifierLength    = 128
 	defaultCodexFallbackModel   = "gpt-5.5"
 	codexCompatibilityMiniModel = "gpt-5.4-mini"
+	// maxAutoWhitelistProbeModels bounds how many catalog models one automatic
+	// allow-list detection may probe so a large catalog cannot fan out without
+	// limit. The cap is enforced on the sorted, deduplicated catalog list.
+	maxAutoWhitelistProbeModels = 32
+	// maxAutoWhitelistProbeConcurrency bounds the parallel catalog probes.
+	maxAutoWhitelistProbeConcurrency = 3
+	// autoModelWhitelistProbeRole labels catalog verification attempts so they
+	// stay distinguishable from the primary and fallback attempts.
+	autoModelWhitelistProbeRole = "catalog"
 )
+
+// autoModelWhitelistVerificationTimeout is the whole-catalog verification
+// budget. It is a package variable so tests can shrink it.
+var autoModelWhitelistVerificationTimeout = 60 * time.Second
 
 var (
 	ErrModelTestBusy            = errors.New("too many model tests are running")
@@ -43,24 +57,27 @@ type ModelTestRequest struct {
 }
 
 type ModelTestResult struct {
-	AccountID        string                     `json:"account_id"`
-	Provider         string                     `json:"provider"`
-	Model            string                     `json:"model"`
-	PrimaryModel     string                     `json:"primary_model,omitempty"`
-	FallbackModel    string                     `json:"fallback_model,omitempty"`
-	SelectedModel    string                     `json:"selected_model,omitempty"`
-	FallbackUsed     bool                       `json:"fallback_used,omitempty"`
-	Status           string                     `json:"status"`
-	ProbeKind        string                     `json:"probe_kind"`
-	ReasonCode       string                     `json:"reason_code"`
-	StatusCode       int                        `json:"status_code,omitempty"`
-	QuotaWindow      string                     `json:"quota_window,omitempty"`
-	LatencyMS        int64                      `json:"latency_ms"`
-	TestedAt         time.Time                  `json:"tested_at"`
-	Response         *ModelTestResponsePreview  `json:"response,omitempty"`
-	Experiment       *ModelTestExperiment       `json:"experiment,omitempty"`
-	Attempts         []ModelTestAttempt         `json:"attempts,omitempty"`
-	CompatibleModels []string                   `json:"compatible_models,omitempty"`
+	AccountID        string                    `json:"account_id"`
+	Provider         string                    `json:"provider"`
+	Model            string                    `json:"model"`
+	PrimaryModel     string                    `json:"primary_model,omitempty"`
+	FallbackModel    string                    `json:"fallback_model,omitempty"`
+	SelectedModel    string                    `json:"selected_model,omitempty"`
+	FallbackUsed     bool                      `json:"fallback_used,omitempty"`
+	Status           string                    `json:"status"`
+	ProbeKind        string                    `json:"probe_kind"`
+	ReasonCode       string                    `json:"reason_code"`
+	StatusCode       int                       `json:"status_code,omitempty"`
+	QuotaWindow      string                    `json:"quota_window,omitempty"`
+	LatencyMS        int64                     `json:"latency_ms"`
+	TestedAt         time.Time                 `json:"tested_at"`
+	Response         *ModelTestResponsePreview `json:"response,omitempty"`
+	Experiment       *ModelTestExperiment      `json:"experiment,omitempty"`
+	Attempts         []ModelTestAttempt        `json:"attempts,omitempty"`
+	CompatibleModels []string                  `json:"compatible_models,omitempty"`
+	// PolicySkipReason carries, to the handler only, why an automatic allow-list
+	// was withheld. It is never serialized because no client acts on it.
+	PolicySkipReason string                     `json:"-"`
 	ModelPolicy      *ModelTestPolicyAdjustment `json:"model_policy,omitempty"`
 }
 
@@ -511,18 +528,146 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 	if !request.DetectRestrictedModels || !result.FallbackUsed {
 		return result, nil
 	}
-	compatibilityProbe, compatibilityModel, compatibilitySupported, errCompatibility := buildModelProbe(probeProvider, codexCompatibilityMiniModel, metadata)
-	if errCompatibility != nil || !compatibilitySupported || !accountModelPolicyAllows(account.ModelPolicy, compatibilityModel) {
-		return result, nil
-	}
-	compatibilityAttempt, _, _ := runAttempt("compatibility", compatibilityModel, compatibilityProbe, nil)
-	result.Attempts = append(result.Attempts, compatibilityAttempt)
+	// Verify the account's whole effective catalog before narrowing it. Probing
+	// only the gpt-5.5 fallback and one compatibility model used to exclude every
+	// other model the account really has, so the allow-list is written only from
+	// fully verified catalog evidence now.
+	s.verifyAutoModelWhitelistCatalog(ctx, &result, account, metadata, probeProvider, managementBaseURL, managementKey, callbackID, request.Inspection)
 	result.LatencyMS = maxInt64(0, s.currentTime().Sub(startedAt).Milliseconds())
-	result.CompatibleModels = []string{defaultCodexFallbackModel}
-	if compatibilityAttempt.Status == "available" {
-		result.CompatibleModels = []string{codexCompatibilityMiniModel, defaultCodexFallbackModel}
-	}
 	return result, nil
+}
+
+// probeCatalogModel runs one catalog verification probe with the caller's
+// verification context. It only builds an attempt and never mutates the primary
+// result, so an auxiliary probe cannot clobber the primary/fallback outcome.
+func (s *ModelTestService) probeCatalogModel(ctx context.Context, managementBaseURL, managementKey, callbackID string, account Account, model string, probe modelProbe, inspection bool) ModelTestAttempt {
+	attemptStartedAt := s.currentTime()
+	upstreamResponse, errCall := s.callAccountProbe(ctx, managementBaseURL, managementKey, callbackID, account, probe)
+	attempt := ModelTestAttempt{
+		Model: model, Role: autoModelWhitelistProbeRole, ProbeKind: InspectionProbeKindModel,
+		LatencyMS: maxInt64(0, s.currentTime().Sub(attemptStartedAt).Milliseconds()), TestedAt: attemptStartedAt,
+	}
+	if errCall != nil {
+		attempt.Status = "review"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(errCall, context.DeadlineExceeded) {
+			attempt.ReasonCode = "request_timeout"
+		} else {
+			attempt.ReasonCode = "upstream_unavailable"
+		}
+		return attempt
+	}
+	attempt.Status, attempt.ReasonCode = classifyModelProbe(probe.kind, upstreamResponse.StatusCode, upstreamResponse.Body)
+	attempt.StatusCode = boundedHTTPStatus(upstreamResponse.StatusCode)
+	if attempt.StatusCode == http.StatusUnauthorized && attempt.ReasonCode == "authentication_failed" {
+		attempt.ProbeKind = InspectionProbeKindCredential
+	}
+	if !inspection {
+		attempt.Response = sanitizeModelTestResponsePreview(upstreamResponse)
+	}
+	return attempt
+}
+
+// verifyAutoModelWhitelistCatalog probes every distinct model in the account's
+// effective catalog that the current policy allows and that the primary and
+// fallback attempts did not already cover. It writes CompatibleModels only when
+// every probe is conclusive and at least one model verified available; an
+// inconclusive probe withholds the allow-list instead of narrowing the account.
+func (s *ModelTestService) verifyAutoModelWhitelistCatalog(ctx context.Context, result *ModelTestResult, account Account, metadata modelTestAuthMetadata, probeProvider, managementBaseURL, managementKey, callbackID string, inspection bool) {
+	if s == nil || result == nil {
+		return
+	}
+	skip := func() {
+		result.PolicySkipReason = autoModelWhitelistInsufficientEvidence
+	}
+	if s.accounts == nil {
+		skip()
+		return
+	}
+	client, errClient := newManagementClient(resolveManagementBaseURL(managementBaseURL), managementKey, s.doer)
+	if errClient != nil {
+		skip()
+		return
+	}
+	defer client.clearSecrets()
+	catalog, errCatalog := client.GetAuthFileModels(ctx, account.Name)
+	if errCatalog != nil || len(catalog) == 0 {
+		skip()
+		return
+	}
+	document, errDocument := s.accounts.CurrentAuthDocument(ctx, account)
+	if errDocument != nil {
+		skip()
+		return
+	}
+	catalog = mergeAccountModelCatalog(catalog, document.Metadata)
+	if len(catalog) == 0 {
+		skip()
+		return
+	}
+	// The catalog is already sorted and deduplicated by mergeAccountModelCatalog,
+	// which keeps the cap and the attempt order deterministic.
+	covered := modelIdentifierSet([]string{result.PrimaryModel, result.FallbackModel})
+	candidates := make([]string, 0, len(catalog))
+	for _, option := range catalog {
+		if _, exists := covered[strings.ToLower(option.ID)]; exists {
+			continue
+		}
+		if !accountModelPolicyAllows(account.ModelPolicy, option.ID) {
+			continue
+		}
+		candidates = append(candidates, option.ID)
+	}
+	if len(candidates) > maxAutoWhitelistProbeModels {
+		candidates = candidates[:maxAutoWhitelistProbeModels]
+	}
+	if len(candidates) > 0 {
+		verifyCtx, cancel := context.WithTimeout(ctx, autoModelWhitelistVerificationTimeout)
+		defer cancel()
+		attempts := make([]ModelTestAttempt, len(candidates))
+		slots := make(chan struct{}, maxAutoWhitelistProbeConcurrency)
+		var group sync.WaitGroup
+		for index, model := range candidates {
+			probe, normalized, supported, errProbe := buildModelProbe(probeProvider, model, metadata)
+			if errProbe != nil || !supported {
+				attempts[index] = ModelTestAttempt{
+					Model: model, Role: autoModelWhitelistProbeRole, Status: "review", ProbeKind: InspectionProbeKindModel,
+					ReasonCode: "unsupported_provider", TestedAt: s.currentTime(),
+				}
+				continue
+			}
+			group.Add(1)
+			slots <- struct{}{}
+			go func(index int, normalized string, probe modelProbe) {
+				defer group.Done()
+				defer func() { <-slots }()
+				attempts[index] = s.probeCatalogModel(verifyCtx, managementBaseURL, managementKey, callbackID, account, normalized, probe, inspection)
+			}(index, normalized, probe)
+		}
+		group.Wait()
+		result.Attempts = append(result.Attempts, attempts...)
+	}
+	compatible := make([]string, 0, len(result.Attempts))
+	inconclusive := false
+	for _, attempt := range result.Attempts {
+		switch attempt.Status {
+		case "available":
+			compatible = append(compatible, attempt.Model)
+		case "unavailable":
+			// A definitive rejection is verified incompatible evidence.
+		default:
+			inconclusive = true
+		}
+	}
+	if inconclusive || len(compatible) == 0 {
+		skip()
+		return
+	}
+	verified, errNormalize := normalizeModelIdentifiers(compatible)
+	if errNormalize != nil || len(verified) == 0 {
+		skip()
+		return
+	}
+	result.CompatibleModels = verified
 }
 
 func (s *ModelTestService) observeNormalQuotaFailure(accountID, quotaWindow, reason string, testedAt time.Time, experimental bool) {

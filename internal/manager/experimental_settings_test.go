@@ -18,7 +18,7 @@ func TestExperimentalSettingsDefaultDisabledAndPersistAcrossRestart(t *testing.T
 	first := NewExperimentalSettingsService()
 	first.Configure(Config{DataDir: dataDir})
 	if snapshot := first.Snapshot(); snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled ||
-		!snapshot.Settings.AutoModelWhitelistEnabled || !snapshot.Settings.Sub2APICreditUsageEnabled || snapshot.StorageError != "" {
+		snapshot.Settings.AutoModelWhitelistEnabled || !snapshot.Settings.Sub2APICreditUsageEnabled || snapshot.StorageError != "" {
 		t.Fatalf("default snapshot = %#v", snapshot)
 	}
 	if _, errSet := first.Set(ExperimentalSettings{WeeklyOverdraftEnabled: true, AgentIdentityEnabled: true, AutoModelWhitelistEnabled: true, Sub2APICreditUsageEnabled: true}); errSet != nil {
@@ -72,8 +72,8 @@ func TestExperimentalSettingsCorruptStateFailsClosed(t *testing.T) {
 	service := NewExperimentalSettingsService()
 	service.Configure(Config{DataDir: dataDir})
 	snapshot := service.Snapshot()
-	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || !snapshot.Settings.AutoModelWhitelistEnabled || !snapshot.Settings.Sub2APICreditUsageEnabled {
-		t.Fatal("corrupt state changed built-in model discovery or enabled an experiment")
+	if snapshot.Settings.WeeklyOverdraftEnabled || snapshot.Settings.AgentIdentityEnabled || snapshot.Settings.AutoModelWhitelistEnabled || !snapshot.Settings.Sub2APICreditUsageEnabled {
+		t.Fatal("corrupt state enabled an experiment or disabled built-in credit pricing")
 	}
 	if snapshot.StorageError != "experimental settings could not be loaded" {
 		t.Fatalf("storage_error = %q", snapshot.StorageError)
@@ -95,7 +95,7 @@ func TestExperimentalSettingsManagementRoutesPersistAndValidate(t *testing.T) {
 	if errDecode := json.Unmarshal(response.Body, &initial); errDecode != nil {
 		t.Fatalf("decode GET response: %v", errDecode)
 	}
-	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled || !initial.Settings.AutoModelWhitelistEnabled || !initial.Settings.Sub2APICreditUsageEnabled {
+	if initial.Settings.WeeklyOverdraftEnabled || initial.Settings.AgentIdentityEnabled || initial.Settings.AutoModelWhitelistEnabled || !initial.Settings.Sub2APICreditUsageEnabled {
 		t.Fatal("GET returned invalid default settings")
 	}
 

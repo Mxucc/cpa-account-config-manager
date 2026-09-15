@@ -8,10 +8,18 @@ import type { ClinePassAccountView, ClinePassCatalogModel, ClinePassLoginView, O
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 
+/** Which surface a workspace instance owns. Cline Pass is its own product menu, not an OpenCode tab. */
+type OpenCodeWorkspaceFocus = "workspace" | "cline-pass";
+
 interface OpenCodeWorkspaceProps {
   refreshRevision: number;
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
+  /**
+   * "cline-pass" is used by the top-level Cline Pass menu: the workspace opens on the Cline Pass
+   * tab and hides the OpenCode heading, links and tab strip. Defaults to the OpenCode workspace.
+   */
+  focus?: OpenCodeWorkspaceFocus;
 }
 
 type OpenCodeKind = "go" | "zen";
@@ -114,8 +122,10 @@ function formatWindow(window: { usage_percent: number; reset_in_sec: number } | 
  * Zen credentials, including the model catalog, a real model test, and the action
  * that makes the models routable through CPA.
  */
-export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: OpenCodeWorkspaceProps) {
+export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus = "workspace" }: OpenCodeWorkspaceProps) {
   const { locale, tx, formatDateTime, formatNumber } = useI18n();
+  // The Cline Pass top-level menu reuses this workspace but must not look like an OpenCode surface.
+  const clinePassOnly = focus === "cline-pass";
   const [goAccounts, setGoAccounts] = useState<OpenCodeAccountView[]>([]);
   const [zenAccounts, setZenAccounts] = useState<OpenCodeZenAccountView[]>([]);
   const [channels, setChannels] = useState<OpenCodeChannelView[]>([]);
@@ -125,7 +135,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [error, setError] = useState("");
   const [storageError, setStorageError] = useState("");
   const [importNotice, setImportNotice] = useState("");
-  const [activeTab, setActiveTab] = useState<OpenCodeTab>("overview");
+  const [activeTab, setActiveTab] = useState<OpenCodeTab>(clinePassOnly ? "cline-pass" : "overview");
   const [adding, setAdding] = useState(false);
   const [newWorkspace, setNewWorkspace] = useState("");
   const [newCookie, setNewCookie] = useState("");
@@ -727,17 +737,19 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   };
 
   return (
-    <section className="opencode-workspace" role="tabpanel" aria-label={tx("ui.opencode_menu")}>
+    <section className="opencode-workspace" role="tabpanel" aria-label={clinePassOnly ? tx("ui.cline_pass_menu") : tx("ui.opencode_menu")}>
       <header className="opencode-header">
         <div>
-          <div className="eyebrow"><Link2 size={15} />{tx("ui.opencode")}</div>
-          <h2>{tx("ui.opencode_title")}</h2>
-          <p>{tx("ui.opencode_description")}</p>
+          <div className="eyebrow"><Link2 size={15} />{clinePassOnly ? tx("ui.cline_pass_menu") : tx("ui.opencode")}</div>
+          <h2>{clinePassOnly ? tx("ui.opencode_cline_pass_accounts") : tx("ui.opencode_title")}</h2>
+          <p>{clinePassOnly ? tx("ui.opencode_cline_pass_description") : tx("ui.opencode_description")}</p>
         </div>
         <div className="opencode-header-actions">
-          <a className="button button-quiet" href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">
-            <ExternalLink size={15} />{tx("ui.opencode_open_auth")}
-          </a>
+          {clinePassOnly ? null : (
+            <a className="button button-quiet" href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">
+              <ExternalLink size={15} />{tx("ui.opencode_open_auth")}
+            </a>
+          )}
           <button className="button button-quiet" type="button" disabled={loading} onClick={() => void refresh()}>
             <RefreshCw className={loading ? "spin" : ""} size={15} />{tx("ui.refresh")}
           </button>
@@ -748,26 +760,30 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       {error ? <div className="notice-bar" role="alert"><AlertTriangle size={16} />{error}</div> : null}
       {importNotice ? <div className="notice-bar warning-notice" role="status"><AlertTriangle size={16} />{importNotice}</div> : null}
 
-      <div className="opencode-links">
-        <a href="https://opencode.ai/workspace" target="_blank" rel="noopener noreferrer">OpenCode Go · {tx("ui.opencode_open_workspace")}</a>
-        <a href="https://opencode.ai/zen" target="_blank" rel="noopener noreferrer">OpenCode Zen · {tx("ui.opencode_open_zen")}</a>
-        <a href="/v0/resource/plugins/cpa-account-config-manager/opencode-status" target="_blank" rel="noopener noreferrer">{tx("ui.opencode_open_status_page")}</a>
-      </div>
+      {clinePassOnly ? null : (
+        <div className="opencode-links">
+          <a href="https://opencode.ai/workspace" target="_blank" rel="noopener noreferrer">OpenCode Go · {tx("ui.opencode_open_workspace")}</a>
+          <a href="https://opencode.ai/zen" target="_blank" rel="noopener noreferrer">OpenCode Zen · {tx("ui.opencode_open_zen")}</a>
+          <a href="/v0/resource/plugins/cpa-account-config-manager/opencode-status" target="_blank" rel="noopener noreferrer">{tx("ui.opencode_open_status_page")}</a>
+        </div>
+      )}
 
-      <div className="opencode-tabs" role="tablist" aria-label={tx("ui.opencode_menu")}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            className={activeTab === tab.id ? "active" : ""}
-            aria-selected={activeTab === tab.id}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {clinePassOnly ? null : (
+        <div className="opencode-tabs" role="tablist" aria-label={tx("ui.opencode_menu")}>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              className={activeTab === tab.id ? "active" : ""}
+              aria-selected={activeTab === tab.id}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {activeTab === "overview" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("overview")}>

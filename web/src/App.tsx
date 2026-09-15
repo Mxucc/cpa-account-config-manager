@@ -30,6 +30,7 @@ import {
   ShieldAlert,
   CircleDollarSign,
   SlidersHorizontal,
+  Terminal,
   Trash2,
   UserPlus,
   Sparkles,
@@ -241,7 +242,7 @@ export default function App() {
 function AccountManagerApp() {
   const { locale, tx, formatDateTime } = useI18n();
   const [authState, setAuthState] = useState<"booting" | "login" | "ready">("booting");
-  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "codex" | "opencode" | "operations" | "risk" | "automation" | "proxy_profiles" | "notifications" | "settings">("accounts");
+  const [activeView, setActiveView] = useState<"dashboard" | "accounts" | "inspection" | "providers" | "codex" | "opencode" | "cline_pass" | "operations" | "risk" | "automation" | "proxy_profiles" | "notifications" | "settings">("accounts");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [filters, setFilters] = useState<FilterState>(readAccountFilters);
@@ -1243,6 +1244,7 @@ function AccountManagerApp() {
           <button type="button" className={activeView === "providers" ? "active" : ""} aria-current={activeView === "providers" ? "page" : undefined} onClick={() => setActiveView("providers")}><Boxes size={16} /><span>{tx("ui.ai_providers")}</span></button>
           <button type="button" className={activeView === "codex" ? "active" : ""} aria-current={activeView === "codex" ? "page" : undefined} onClick={() => setActiveView("codex")}><Fingerprint size={16} /><span>{tx("ui.codex_menu")}</span></button>
           <button type="button" className={activeView === "opencode" ? "active" : ""} aria-current={activeView === "opencode" ? "page" : undefined} onClick={() => setActiveView("opencode")}><Sparkles size={16} /><span>{tx("ui.opencode_menu")}</span></button>
+          <button type="button" className={activeView === "cline_pass" ? "active" : ""} aria-current={activeView === "cline_pass" ? "page" : undefined} onClick={() => setActiveView("cline_pass")}><Terminal size={16} /><span>{tx("ui.cline_pass_menu")}</span></button>
           <button type="button" className={activeView === "operations" ? "active" : ""} aria-current={activeView === "operations" ? "page" : undefined} onClick={() => setActiveView("operations")}><ScrollText size={16} /><span>{tx("ui.operation_log")}</span></button>
           <button type="button" className={activeView === "risk" ? "active" : ""} aria-current={activeView === "risk" ? "page" : undefined} onClick={() => setActiveView("risk")}><ShieldAlert size={16} /><span>{tx("ui.risk_control_center")}</span></button>
           <button type="button" className={activeView === "automation" ? "active" : ""} aria-current={activeView === "automation" ? "page" : undefined} onClick={() => setActiveView("automation")}><Workflow size={16} /><span>{tx("ui.automation_policy")}</span></button>
@@ -1277,6 +1279,8 @@ function AccountManagerApp() {
                       ? tx("ui.codex_menu")
                       : activeView === "opencode"
                       ? tx("ui.opencode_menu")
+                      : activeView === "cline_pass"
+                      ? tx("ui.cline_pass_menu")
                       : activeView === "operations"
                       ? tx("ui.operation_log")
                       : activeView === "risk"
@@ -1497,6 +1501,8 @@ function AccountManagerApp() {
           <CodexWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "opencode" ? (
           <OpenCodeWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
+        ) : activeView === "cline_pass" ? (
+          <OpenCodeWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} focus="cline-pass" />
         ) : activeView === "operations" ? (
           <OperationLogWorkspace
             activeJobIDs={[job?.id, forceJob?.id].filter((id): id is string => Boolean(id))}

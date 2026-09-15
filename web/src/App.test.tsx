@@ -1763,7 +1763,7 @@ describe("primary navigation order", () => {
 
     const nav = await screen.findByRole("navigation", { name: "账号管理视图" });
     const tabs = within(nav).getAllByRole("button").map((button) => button.textContent);
-    expect(tabs).toEqual(["概览", "账号", "巡检与自动化", "AI 提供商", "Codex", "OpenCode", "操作日志", "风控中心", "自动策略", "代理档案", "外部通知", "其他配置"]);
+    expect(tabs).toEqual(["概览", "账号", "巡检与自动化", "AI 提供商", "Codex", "OpenCode", "Cline Pass", "操作日志", "风控中心", "自动策略", "代理档案", "外部通知", "其他配置"]);
 
     await user.click(within(nav).getByRole("button", { name: "AI 提供商" }));
     expect(await screen.findByRole("tabpanel", { name: "AI 提供商" })).toBeInTheDocument();
@@ -1781,5 +1781,60 @@ describe("primary navigation order", () => {
     await user.click(within(nav).getByRole("button", { name: "其他配置" }));
     const otherSettings = await screen.findByRole("region", { name: "其他配置" });
     expect(within(otherSettings).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["插件配置与版本", "实验性功能"]);
+  });
+
+  it("opens the Cline Pass top-level menu without the OpenCode tab strip", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/accounts?")) {
+        return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      if (url.endsWith("/opencode/zen/accounts")) return jsonResponse({ accounts: [] });
+      if (url.endsWith("/opencode/cline-pass/catalog")) {
+        return jsonResponse({ models: [{ id: "cline-pass/glm-5.3", name: "GLM-5.3", free: false }], default_base_url: "https://api.cline.bot/api/v1" });
+      }
+      if (url.endsWith("/opencode/cline-pass/accounts")) {
+        return jsonResponse({
+          accounts: [{
+            id: "cline_1",
+            name: "Work laptop",
+            base_url: "https://api.cline.bot/api/v1",
+            auth_method: "oauth",
+            access_token_set: true,
+            refresh_token_set: true,
+            expires_at: "2026-09-15T02:00:00Z",
+            expired: false,
+            models: ["cline-pass/glm-5.3"],
+          }],
+        });
+      }
+      if (url.endsWith("/opencode/accounts")) return jsonResponse({ accounts: [] });
+      if (url.endsWith("/opencode/quota")) return jsonResponse({ results: {}, storage_error: "" });
+      if (url.endsWith("/opencode/pricing")) return jsonResponse({ pricing: {} });
+      if (url.endsWith("/opencode/session")) return jsonResponse({ session: {} });
+      if (url.endsWith("/opencode/channels")) return jsonResponse({ channels: [] });
+      if (url.endsWith("/opencode/model-control")) return jsonResponse({ storage_error: "", disabled: [], models: [] });
+      if (url.endsWith("/opencode/storage")) return jsonResponse({ storage: {} });
+      return persistedSettingsResponse(url);
+    }));
+
+    render(<App />);
+    await user.type(await screen.findByLabelText("Management Key"), "management-secret");
+    await user.click(screen.getByRole("button", { name: "验证并进入" }));
+
+    const nav = await screen.findByRole("navigation", { name: "账号管理视图" });
+    const clinePassMenu = within(nav).getByRole("button", { name: "Cline Pass" });
+    await user.click(clinePassMenu);
+
+    // The top-level Cline Pass entry owns the Cline Pass surface, not an OpenCode tab strip.
+    expect(await screen.findByRole("tabpanel", { name: "Cline Pass" })).toBeInTheDocument();
+    expect(clinePassMenu).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("button", { name: "OpenCode" })).not.toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("tablist", { name: "OpenCode" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/OpenCode Go · /)).not.toBeInTheDocument();
+
+    const panel = screen.getByRole("tabpanel", { name: "Cline Pass 账号" });
+    expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
   });
 });

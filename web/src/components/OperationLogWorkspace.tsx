@@ -69,6 +69,7 @@ const categoryLabels: Record<OperationCategory, UIMessageKey> = {
   update: "ui.plugin_updates",
   journal: "ui.log_management",
   opencode: "ui.opencode",
+  plugin: "ui.plugin_lifecycle",
 };
 
 const statusLabels: Record<OperationStatus, UIMessageKey> = {
@@ -124,12 +125,14 @@ const actionLabels: Record<string, UIMessageKey> = {
   opencode_save: "ui.opencode_save_action",
   opencode_remove: "ui.opencode_remove_action",
   opencode_refresh: "ui.opencode_refresh_action",
+  plugin_configure: "ui.plugin_configure_action",
 };
 
 const reasonLabels: Record<string, UIMessageKey> = {
   completed: "ui.completed_2",
   partial_failure: "ui.some_operations_failed",
   operation_failed: "ui.operation_failed",
+  plugin_configure_timeout: "ui.plugin_configure_timeout",
 	host_refresh_unsupported: "ui.host_refresh_unsupported",
 	refresh_credential_missing: "ui.refresh_credential_missing",
 	refresh_rejected: "ui.refresh_rejected",

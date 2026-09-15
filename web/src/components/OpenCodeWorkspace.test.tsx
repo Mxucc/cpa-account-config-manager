@@ -340,6 +340,27 @@ describe("OpenCodeWorkspace", () => {
     expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
   });
 
+  it("renders the Cline Pass focus on its own surface without the OpenCode tab strip", async () => {
+    const requests = openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    // Cline Pass is its own product menu, so this view must not offer the OpenCode tab strip
+    // (nor its OpenCode-only links and heading).
+    expect(await screen.findByRole("tabpanel", { name: "Cline Pass" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenCode Go 与 Zen 控制器")).not.toBeInTheDocument();
+    expect(screen.queryByText(/OpenCode Go · /)).not.toBeInTheDocument();
+
+    const panel = screen.getByRole("tabpanel", { name: "Cline Pass 账号" });
+    expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
+    expect(within(panel).getByText("cline-pass/glm-5.3, cline-pass/kimi-k2.6")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "使用浏览器登录" })).toBeInTheDocument();
+    expect(requests.some(({ url }) => url.endsWith("/opencode/cline-pass/accounts"))).toBe(true);
+  });
+
   it("renders a Go workspace row with its quota windows and model count from the initial load", async () => {
     const user = userEvent.setup();
     const requests = openCodeFetchMock({

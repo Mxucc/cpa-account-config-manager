@@ -442,7 +442,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.opencode_cline_pass_models_title": "Опубликованное сопоставление моделей",
   "ui.opencode_cline_pass_models_description": "Что канал CPA публикует для Cline Pass и какой идентификатор модели вызывает каждый клиент.",
   "ui.opencode_cline_pass_strip_prefix": "Публиковать идентификаторы моделей без префикса cline-pass/",
-  "ui.opencode_cline_pass_strip_prefix_hint": "Вкл.: клиенты могут вызывать короткое имя модели. Выкл.: клиенты должны использовать идентификатор с префиксом cline-pass/.",
+  "ui.opencode_cline_pass_strip_prefix_hint": "Вкл.: /v1/models публикует только короткое имя модели, идентификатор с префиксом cline-pass/ больше не появляется в списке. Выкл.: публикуется идентификатор с префиксом cline-pass/.",
   "ui.opencode_cline_pass_prefix_saved": "Настройка префикса Cline Pass сохранена · перепривязано аккаунтов: {count}",
   "ui.opencode_cline_pass_prefix_rebind_errors": "Не удалось перепривязать аккаунтов: {count}; они сохранят прежнее сопоставление.",
   "ui.opencode_cline_pass_client_model_id": "Идентификатор модели у клиента",

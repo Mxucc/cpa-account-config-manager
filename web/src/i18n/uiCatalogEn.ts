@@ -440,7 +440,7 @@ export const enUI = {
   "ui.opencode_cline_pass_models_title": "Published model mapping",
   "ui.opencode_cline_pass_models_description": "What the CPA channel publishes for Cline Pass, and the model id each client calls.",
   "ui.opencode_cline_pass_strip_prefix": "Publish model ids without the cline-pass/ prefix",
-  "ui.opencode_cline_pass_strip_prefix_hint": "On: clients may call the short model name. Off: clients must call the cline-pass/-prefixed id.",
+  "ui.opencode_cline_pass_strip_prefix_hint": "On: /v1/models advertises the short model name only, so the cline-pass/-prefixed id stops appearing in the list. Off: the prefixed id is what gets advertised.",
   "ui.opencode_cline_pass_prefix_saved": "Cline Pass prefix setting saved · {count} accounts rebound",
   "ui.opencode_cline_pass_prefix_rebind_errors": "{count} accounts could not be rebound and keep the previous mapping.",
   "ui.opencode_cline_pass_client_model_id": "Client model id",

@@ -155,13 +155,13 @@ func clinePassModelAlias(id string, stripPrefix bool) string {
 	return stripped
 }
 
-// clinePassChannelModelAliases derives the authoritative client-facing ids of
-// every model a channel publishes. One upstream id can carry several aliases:
-// the full id is always routable (the identity alias), and with the switch on a
-// prefixed id also publishes its stripped form, so operators can keep calling
-// either id. The map makes the channel merge converge an existing row set to
-// exactly these aliases, which is what lets a settings change take effect on the
-// next bind without dropping the id clients already use.
+// clinePassChannelModelAliases derives the published client-facing id of every
+// model a channel serves, and the prefix switch decides that id. CPA advertises
+// each channel row's alias in /v1/models, so with the switch on a prefixed model
+// is published as its stripped id alone: the prefixed form is no longer
+// advertised, while CPA keeps routing it because the row still carries the full
+// id as its upstream name. With the switch off the prefixed id is what clients
+// see. A model without that prefix is unaffected.
 func clinePassChannelModelAliases(models []string, stripPrefix bool) map[string][]string {
 	aliases := make(map[string][]string, len(models))
 	for _, model := range models {
@@ -169,11 +169,7 @@ func clinePassChannelModelAliases(models []string, stripPrefix bool) map[string]
 		if trimmed == "" {
 			continue
 		}
-		desired := []string{trimmed}
-		if short := clinePassModelAlias(trimmed, stripPrefix); short != trimmed {
-			desired = append(desired, short)
-		}
-		aliases[trimmed] = desired
+		aliases[trimmed] = []string{clinePassModelAlias(trimmed, stripPrefix)}
 	}
 	return aliases
 }

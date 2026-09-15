@@ -470,11 +470,15 @@ func mergeOpenCodeChannelIdentityModels(existing any, models []string) []map[str
 }
 
 // mergeOpenCodeChannelAliasModels converges the rows of every published id to
-// the alias set the caller asked for. An existing row for a published id is
-// kept when its alias is part of that set (an empty alias reads as the
-// identity) and dropped otherwise; rows for other ids are operator additions
-// and are preserved. The returned set is deduplicated by (name, alias) pair, so
-// running the merge on its own output is a no-op.
+// the alias set the caller asked for, and that set is authoritative: CPA
+// advertises each row's alias in /v1/models, so a caller that publishes a model
+// under a different id (the stripped Cline Pass id) must replace the identity
+// alias rather than add to it. A model the caller did not describe keeps its
+// identity. An existing row for a published id is kept when its alias is part
+// of that set (an empty alias reads as the identity) and dropped otherwise;
+// rows for other ids are operator additions and are preserved. The returned set
+// is deduplicated by (name, alias) pair, so running the merge on its own output
+// is a no-op.
 func mergeOpenCodeChannelAliasModels(existing any, models []string, aliases map[string][]string) []map[string]any {
 	wanted := make(map[string][]string, len(models))
 	order := make([]string, 0, len(models))
@@ -486,12 +490,10 @@ func mergeOpenCodeChannelAliasModels(existing any, models []string, aliases map[
 		if _, exists := wanted[model]; exists {
 			continue
 		}
-		// The identity alias is always implied; the caller only adds aliases on
-		// top of it (for example the stripped id of a prefixed model).
-		desired := []string{model}
+		desired := make([]string, 0, len(aliases[model]))
 		for _, alias := range aliases[model] {
 			alias = strings.TrimSpace(alias)
-			if alias == "" || alias == model {
+			if alias == "" {
 				continue
 			}
 			duplicate := false
@@ -504,6 +506,10 @@ func mergeOpenCodeChannelAliasModels(existing any, models []string, aliases map[
 			if !duplicate {
 				desired = append(desired, alias)
 			}
+		}
+		if len(desired) == 0 {
+			// A model the caller did not describe still publishes its identity.
+			desired = []string{model}
 		}
 		wanted[model] = desired
 		order = append(order, model)
@@ -595,10 +601,10 @@ func mergeOpenCodeChannelAliasModels(existing any, models []string, aliases map[
 }
 
 // openCodePublishedModelCount reports the number of distinct upstream model ids
-// one bind covers. Cline Pass publishes several rows for the same id (the
-// identity alias plus the stripped id), so the operator-facing count must not
-// follow the raw row count. An empty requested catalog falls back to the row
-// count so re-binding an existing channel keeps reporting what it serves.
+// one bind covers, so the operator-facing count follows the catalog rather than
+// the raw row count (an operator may add rows of their own). An empty requested
+// catalog falls back to the row count so re-binding an existing channel keeps
+// reporting what it serves.
 func openCodePublishedModelCount(models []string, rows []map[string]any) int {
 	seen := make(map[string]struct{}, len(models))
 	for _, model := range models {

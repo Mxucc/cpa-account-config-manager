@@ -442,7 +442,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.opencode_cline_pass_models_title": "\u5df2\u53d1\u5e03\u7684\u6a21\u578b\u6620\u5c04",
   "ui.opencode_cline_pass_models_description": "CPA \u6e20\u9053\u4e3a Cline Pass \u5ba2\u6237\u7aef\u53d1\u5e03\u7684\u6a21\u578b\uff0c\u4ee5\u53ca\u5404\u5ba2\u6237\u7aef\u5e94\u8c03\u7528\u7684\u6a21\u578b ID\u3002",
   "ui.opencode_cline_pass_strip_prefix": "\u53d1\u5e03\u6a21\u578b ID \u65f6\u4e0d\u5e26 cline-pass/ \u524d\u7f00",
-  "ui.opencode_cline_pass_strip_prefix_hint": "\u5f00\u542f\u540e\u5ba2\u6237\u7aef\u53ef\u76f4\u63a5\u4f7f\u7528\u77ed\u6a21\u578b\u540d\uff1b\u5173\u95ed\u540e\u5fc5\u987b\u4f7f\u7528\u5e26 cline-pass/ \u524d\u7f00\u7684 ID\u3002",
+  "ui.opencode_cline_pass_strip_prefix_hint": "\u5f00\u542f\u540e /v1/models \u53ea\u516c\u5e03\u77ed\u6a21\u578b\u540d\uff0c\u5e26 cline-pass/ \u524d\u7f00\u7684 ID \u4e0d\u518d\u51fa\u73b0\u5728\u5217\u8868\u91cc\uff1b\u5173\u95ed\u540e\u53ea\u516c\u5e03\u5e26\u524d\u7f00\u7684 ID\u3002",
   "ui.opencode_cline_pass_prefix_saved": "Cline Pass \u524d\u7f00\u8bbe\u7f6e\u5df2\u4fdd\u5b58 \u00b7 \u5df2\u91cd\u65b0\u7ed1\u5b9a {count} \u4e2a\u8d26\u53f7",
   "ui.opencode_cline_pass_prefix_rebind_errors": "{count} \u4e2a\u8d26\u53f7\u672a\u80fd\u91cd\u65b0\u7ed1\u5b9a\uff0c\u5c06\u7ee7\u7eed\u4f7f\u7528\u539f\u6709\u6620\u5c04\u3002",
   "ui.opencode_cline_pass_client_model_id": "\u5ba2\u6237\u7aef\u6a21\u578b ID",

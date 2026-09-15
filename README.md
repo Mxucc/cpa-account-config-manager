@@ -94,12 +94,14 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 
 - 工作区按标签页组织，依次为：「总览」、「模型与价格」和「指纹配置」。
 - 「总览」展示 Codex 账号数、AI 提供商渠道数、已禁用模型数、账号级覆盖数、提供商级覆盖数、已覆盖指纹字段数、有效收敛模式，以及一个表示全局模型管控是否启用的指示器。
+- 「总览」的 Codex 账号数与「模型与价格」的每行账号数来自宿主列出的 Codex 凭据（含原生 OAuth 账号）及其实际模型目录，而不是运行时的提供商身份：只配置了原生 Codex 账号的部署不会再把账号数显示为 0、模型列表显示为空。
 - Codex 身份兼容策略编辑器位于「总览」。两个 Codex 实验项（Codex 5h / 7d 额度透支续用、Agent Identity / PAT）仍作为实验性开关保留在「其他配置 → 实验性功能」；Codex 页面保存时会回显这两个开关的当前值，实验性功能保存时会回显身份策略，两个页面不会互相清空配置。
 - 「指纹配置」把原先直接编译进 Codex 指纹的每个取值都变成可编辑字段，字段旁同时展示内置默认值与当前生效值，并提供「已覆盖」标记、单字段恢复、分组恢复和全部恢复操作。
 - 可编辑字段为：收敛模式；客户端身份字符串（User-Agent、Originator、Version、OpenAI-Beta）和 turn 元数据请求头名称；显式 installation/session/thread id（留空表示自动派生）和窗口后缀；installation、session 和 thread id 的派生前缀以及种子策略（按账号或固定种子）；请求体开关（turn 时间戳、关联字段和 prompt-cache-key 重写）。
 - 清空字段或执行恢复都会回到默认值；无效取值会被拒绝，且不会产生任何改动。指纹配置作用于每个 Codex 账号和每条 Codex AI 提供商渠道，AI 提供商页面上的账号级与提供商级收敛覆盖仍优先于档案默认值。
 - 「模型与价格」提供 Codex 模型 id 的全局开关列表，展示每个模型被多少 Codex 账号和 AI 提供商渠道引用；列表带选择列，每行提供「测试」和「禁用」/「启用」操作，并支持批量「禁用所选」「启用所选」以及既有的「全部启用」；模型测试通过已保存的 Codex 账号凭据发起探测。每个模型同时显示插件计费所采用的价格——输入、输出与缓存读取的「美元 / 百万 token」单价，取自与 Codex 用量计费相同的 Sub2API / Wei-Shaw 价格表，并标注该模型的长上下文倍率；列表上方展示价格来源与同步时间。价格表未收录的模型会标记为「暂无价格」，而不是显示为免费。禁用会同时作用于所有 Codex 账号和 AI 提供商渠道，并在请求路径上强制执行：被禁用的模型会立即收到拒绝响应，而不是被转发到上游，因此改动在下一次请求即生效，无需等待宿主侧策略应用。此能力只影响 Codex 流量，同一模型 id 在其他提供商系列上不受影响。
-- 两项设置都保存在插件私有数据目录（0600），并通过要求 Management Key 的管理路由开放，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`GET /codex/overview`、`GET|PUT /codex/fingerprint`、`POST /codex/fingerprint/reset` 和 `GET|PUT /codex/models`。响应中不包含任何凭据。
+- 「Codex 自动模型白名单」是「其他配置 → 实验性功能」中的可视化实验开关，默认关闭。开启后仅在某个账号的默认探测模型被上游以已知的 ChatGPT 账号不兼容响应拒绝、且回退模型可用时才触发：插件会逐一探测该账号模型目录中的全部模型（上限 32 个、并发 3 个、总预算 60 秒），只有每个模型都给出明确结论时才写入白名单；否则不写入任何策略，并在操作日志中记为 `insufficient_compatibility_evidence`。写入的策略会标记为自动探测（`auto_detected`、`detected_at`、`verified_models`），实验性功能面板会显示当前被自动限制的账号数量与最近探测记录；已有的人工白名单或黑名单不会被覆盖。
+- 两项设置都保存在插件私有数据目录（0600），并通过要求 Management Key 的管理路由开放，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`GET /codex/overview`、`GET|PUT /codex/fingerprint`、`POST /codex/fingerprint/reset`、`GET|PUT /codex/models` 和 `GET /experiments/auto-model-whitelist`。响应中不包含任何凭据。
 
 ### OpenCode
 

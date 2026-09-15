@@ -147,18 +147,25 @@ func clinePassModelAlias(id string, stripPrefix bool) string {
 	return stripped
 }
 
-// clinePassChannelModelAliases derives the authoritative client-facing id of
-// every model a channel publishes. The non-nil map makes the channel merge
-// rewrite an existing row's alias in place, which is what lets a settings
-// change take effect on the next bind without duplicating the row.
-func clinePassChannelModelAliases(models []string, stripPrefix bool) map[string]string {
-	aliases := make(map[string]string, len(models))
+// clinePassChannelModelAliases derives the authoritative client-facing ids of
+// every model a channel publishes. One upstream id can carry several aliases:
+// the full id is always routable (the identity alias), and with the switch on a
+// prefixed id also publishes its stripped form, so operators can keep calling
+// either id. The map makes the channel merge converge an existing row set to
+// exactly these aliases, which is what lets a settings change take effect on the
+// next bind without dropping the id clients already use.
+func clinePassChannelModelAliases(models []string, stripPrefix bool) map[string][]string {
+	aliases := make(map[string][]string, len(models))
 	for _, model := range models {
 		trimmed := strings.TrimSpace(model)
 		if trimmed == "" {
 			continue
 		}
-		aliases[trimmed] = clinePassModelAlias(trimmed, stripPrefix)
+		desired := []string{trimmed}
+		if short := clinePassModelAlias(trimmed, stripPrefix); short != trimmed {
+			desired = append(desired, short)
+		}
+		aliases[trimmed] = desired
 	}
 	return aliases
 }

@@ -146,6 +146,11 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
   const [storageError, setStorageError] = useState("");
   const [importNotice, setImportNotice] = useState("");
   const [activeTab, setActiveTab] = useState<OpenCodeTab>(clinePassOnly ? "cline-pass" : "overview");
+  // The Codex, OpenCode and Cline Pass menus render this same component, so React keeps the state
+  // above when the operator switches between them. Deriving the effective tab from the focus prop
+  // makes the Cline Pass page show the Cline Pass panel no matter which OpenCode tab was selected
+  // before, instead of rendering the OpenCode overview under a Cline Pass heading.
+  const effectiveTab: OpenCodeTab = clinePassOnly ? "cline-pass" : activeTab;
   const [adding, setAdding] = useState(false);
   const [newWorkspace, setNewWorkspace] = useState("");
   const [newCookie, setNewCookie] = useState("");
@@ -903,8 +908,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
               key={tab.id}
               type="button"
               role="tab"
-              className={activeTab === tab.id ? "active" : ""}
-              aria-selected={activeTab === tab.id}
+              className={effectiveTab === tab.id ? "active" : ""}
+              aria-selected={effectiveTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
             >
               {tab.label}
@@ -913,7 +918,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
         </div>
       )}
 
-      {activeTab === "overview" ? (
+      {effectiveTab === "overview" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("overview")}>
           {billingModes.length ? (
             <div className="opencode-billing" role="group" aria-label={tx("ui.opencode_billing")}>
@@ -994,7 +999,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
         </section>
       ) : null}
 
-      {activeTab === "go" ? (
+      {effectiveTab === "go" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("go")}>
           <section className="opencode-section" aria-label={tx("ui.opencode_go_accounts")}>
             <div className="opencode-section-heading">
@@ -1163,7 +1168,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
         </section>
       ) : null}
 
-      {activeTab === "zen" ? (
+      {effectiveTab === "zen" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("zen")}>
           <section className="opencode-section" aria-label={tx("ui.opencode_zen_accounts")}>
             <div className="opencode-section-heading">
@@ -1240,7 +1245,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
         </section>
       ) : null}
 
-      {activeTab === "cline-pass" ? (
+      {effectiveTab === "cline-pass" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("cline-pass")}>
           {/* Cline Pass owns its own two-tab surface: the credential list and the published mapping. */}
           <div className="codex-tabs cline-pass-tabs" role="tablist" aria-label={tx("ui.cline_pass_menu")}>
@@ -1610,7 +1615,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
           ) : null}
         </section>
       ) : null}
-      {activeTab === "channels" ? (
+      {effectiveTab === "channels" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("channels")}>
           <section className="opencode-section opencode-channels" aria-label={tx("ui.opencode_channels")}>
             <div className="opencode-section-heading">
@@ -1678,7 +1683,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice, focus
         </section>
       ) : null}
 
-      {activeTab === "models" ? (
+      {effectiveTab === "models" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("models")}>
           <section className="opencode-section opencode-model-control" aria-label={tx("ui.opencode_model_control")}>
             <div className="opencode-section-heading">

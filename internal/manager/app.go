@@ -457,7 +457,7 @@ func (a *App) applyResolvedConfig(config Config, previousDir string) {
 	defer a.configApplyMu.Unlock()
 	// Adopt the state of the previously effective directory before any store re-opens there, so
 	// a directory change never makes already-written credentials look deleted.
-	adoption := a.adoptStateDirectoryChange(previousDir, config.DataDir)
+	adoption := a.adoptStateDirectoryChange(previousDir, config)
 	a.mu.Lock()
 	a.config = config
 	a.mu.Unlock()
@@ -653,7 +653,7 @@ func (a *App) applyServiceConfig(config Config, hostSchema uint32) {
 	defer a.configApplyMu.Unlock()
 	// A host reconfigure can resolve a different state directory without passing through the
 	// coalesced worker, so it runs the same adoption step before the first service Configure.
-	adoption := a.adoptStateDirectoryChange(a.effectiveDataDir, config.DataDir)
+	adoption := a.adoptStateDirectoryChange(a.effectiveDataDir, config)
 	a.concurrency.Configure(config, hostSchema)
 	a.runtime.Configure(config)
 	if a.runtime.Snapshot().Superseded {

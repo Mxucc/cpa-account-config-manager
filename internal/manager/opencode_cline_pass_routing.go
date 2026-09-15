@@ -45,7 +45,7 @@ func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) 
 		routes[key] = clinePassChannelRoute{
 			published: aiProviderChannelPublishedModels(entry),
 			aliases:   aiProviderChannelModelAliases(entry),
-			models:    aiProviderChannelModelCount(entry),
+			models:    clinePassChannelModelCount(entry),
 		}
 	}
 	return routes
@@ -106,6 +106,36 @@ func aiProviderChannelModelAliases(entry map[string]any) map[string]struct{} {
 		}
 	}
 	return aliases
+}
+
+// clinePassChannelModelCount reports how many distinct upstream model ids one
+// live channel entry publishes. A Cline Pass model can carry two rows (the
+// identity alias and the stripped alias), so the raw row count would overstate
+// the catalog the channel exposes.
+func clinePassChannelModelCount(entry map[string]any) int {
+	ids := map[string]struct{}{}
+	list, ok := entry["models"].([]any)
+	if !ok {
+		return 0
+	}
+	for _, item := range list {
+		switch row := item.(type) {
+		case string:
+			if id := strings.TrimSpace(row); id != "" {
+				ids[id] = struct{}{}
+			}
+		case map[string]any:
+			id, _ := row["name"].(string)
+			if strings.TrimSpace(id) == "" {
+				// A hand-written row may only carry the client-facing alias.
+				id, _ = row["alias"].(string)
+			}
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				ids[trimmed] = struct{}{}
+			}
+		}
+	}
+	return len(ids)
 }
 
 // clinePassAccountModelIDs returns the models an account publishes, falling back

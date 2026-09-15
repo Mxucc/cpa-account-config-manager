@@ -177,21 +177,47 @@ type stateAdoptionResult struct {
 // adoptStateDirectoryChange runs the file-copy phase of adoption for one service configuration. It
 // must be called with configApplyMu held, before the first service Configure for the new directory,
 // so every store is re-opened against a directory that already holds the state of the previous one.
-func (a *App) adoptStateDirectoryChange(previousDir, targetDir string) stateAdoptionResult {
-	result := stateAdoptionResult{targetDir: strings.TrimSpace(targetDir)}
+//
+// It adopts from two kinds of source: the directory this instance used before (a resolved state
+// directory can change while the process runs) and the fallback directories recorded in the
+// configuration. The fallbacks matter most: an installation that used to keep its state under the
+// process working directory, or under the plugin library directory, would otherwise read an empty
+// store after the state directory was pinned beside the auth files, and every saved account would
+// look deleted.
+func (a *App) adoptStateDirectoryChange(previousDir string, config Config) stateAdoptionResult {
+	result := stateAdoptionResult{targetDir: strings.TrimSpace(config.DataDir)}
 	if a == nil {
 		return result
 	}
-	previous := strings.TrimSpace(previousDir)
 	target := result.targetDir
 	if target != "" {
 		a.effectiveDataDir = target
 	}
-	if previous == "" || target == "" || filepath.Clean(previous) == filepath.Clean(target) {
+	if target == "" {
 		return result
 	}
-	result.attempted = true
-	result.copied, result.err = adoptStateDirectory(previous, target)
+	sources := make([]string, 0, len(config.DataDirAlternates)+1)
+	if previous := strings.TrimSpace(previousDir); previous != "" && filepath.Clean(previous) != filepath.Clean(target) {
+		sources = append(sources, previous)
+	}
+	for _, alternate := range config.DataDirAlternates {
+		trimmed := strings.TrimSpace(alternate)
+		if trimmed == "" || filepath.Clean(trimmed) == filepath.Clean(target) {
+			continue
+		}
+		sources = append(sources, trimmed)
+	}
+	for _, source := range sources {
+		copied, errAdopt := adoptStateDirectory(source, target)
+		if copied <= 0 && errAdopt == nil {
+			continue
+		}
+		result.attempted = true
+		result.copied += copied
+		if errAdopt != nil && result.err == nil {
+			result.err = errAdopt
+		}
+	}
 	return result
 }
 

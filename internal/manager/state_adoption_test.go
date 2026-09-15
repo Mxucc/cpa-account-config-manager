@@ -222,3 +222,54 @@ func TestStateDirectoryChangeAdoptsThePreviousDirectory(t *testing.T) {
 		t.Fatal("the setting written under the pinned directory was lost by the directory change")
 	}
 }
+
+func TestStateAdoptionReadsTheFallbackDirectories(t *testing.T) {
+	fallback := t.TempDir()
+	target := t.TempDir()
+	writeStateFile(t, filepath.Join(fallback, "opencode-quota.json"), `{"go":true}`)
+	writeStateFile(t, filepath.Join(fallback, "cline-pass.json"), `{"version":1,"strip_model_prefix":false}`)
+	// A store the target already owns must win over the fallback copy.
+	writeStateFile(t, filepath.Join(target, "cline-pass.json"), `{"version":1,"strip_model_prefix":true}`)
+
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	result := app.adoptStateDirectoryChange("", Config{DataDir: target, DataDirAlternates: []string{fallback}})
+
+	if result.copied != 1 {
+		t.Fatalf("adopted %d files, want only the missing one", result.copied)
+	}
+	if got := readStateFile(t, filepath.Join(target, "opencode-quota.json")); got != `{"go":true}` {
+		t.Fatalf("fallback store content = %s", got)
+	}
+	if got := readStateFile(t, filepath.Join(target, "cline-pass.json")); got != `{"version":1,"strip_model_prefix":true}` {
+		t.Fatalf("the target's own store was overwritten: %s", got)
+	}
+}
+
+// This mirrors the live deployment: an older release kept its state under the process working
+// directory, the plugin now pins state beside the CPA auth files, and the fallback directory is the
+// only place the previous accounts still exist. They must be adopted instead of looking deleted.
+func TestStateInAFallbackDirectoryIsAdoptedWhenStateIsPinnedBesideTheAuthDirectory(t *testing.T) {
+	resetAuthDirectoryMemo(t)
+	clearAuthDirectoryEnvironment(t)
+	authDir := t.TempDir()
+	t.Setenv(cpaAuthDirEnvVar, authDir)
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+
+	// What an earlier release left behind, under the implicit working-directory path.
+	legacyDir := filepath.Join(workingDir, implicitDataDirName)
+	writeStateFile(t, filepath.Join(legacyDir, clinePassStoreFileName), `{"version":1,"strip_model_prefix":false}`)
+
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	app.Configure(nil)
+
+	if app.clinePass.StripModelPrefix() {
+		t.Fatal("state written under the fallback directory was not adopted")
+	}
+	adopted := filepath.Join(resolvedPath(t, authDir), usageDurableDirName, clinePassStoreFileName)
+	if _, errStat := os.Stat(adopted); errStat != nil {
+		t.Fatalf("the adopted store is not beside the auth directory: %v", errStat)
+	}
+}

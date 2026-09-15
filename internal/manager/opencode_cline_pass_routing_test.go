@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -312,12 +314,13 @@ func mustEncodeAccounts(t *testing.T, payload clinePassAccountsResponse) []byte 
 	return encoded
 }
 
-// clinePassChannelAliasMap indexes the model rows of one channel entry by
-// upstream name and fails on a duplicate row.
-func clinePassChannelAliasMap(t *testing.T, entry map[string]any) map[string]string {
+// clinePassChannelAliasSets indexes the model rows of one channel entry by
+// upstream name. One name can carry several client-facing aliases, so the value
+// is the alias set and a duplicated (name, alias) pair is a failure.
+func clinePassChannelAliasSets(t *testing.T, entry map[string]any) map[string]map[string]bool {
 	t.Helper()
 	rows, _ := entry["models"].([]any)
-	aliases := make(map[string]string, len(rows))
+	aliases := make(map[string]map[string]bool, len(rows))
 	for _, item := range rows {
 		row, ok := item.(map[string]any)
 		if !ok {
@@ -325,12 +328,34 @@ func clinePassChannelAliasMap(t *testing.T, entry map[string]any) map[string]str
 		}
 		name, _ := row["name"].(string)
 		alias, _ := row["alias"].(string)
-		if _, duplicate := aliases[name]; duplicate {
-			t.Fatalf("duplicate channel row for %q", name)
+		if aliases[name] == nil {
+			aliases[name] = map[string]bool{}
 		}
-		aliases[name] = alias
+		if aliases[name][alias] {
+			t.Fatalf("duplicate channel row for (%q, %q)", name, alias)
+		}
+		aliases[name][alias] = true
 	}
 	return aliases
+}
+
+// clinePassChannelRows flattens one channel entry's model rows into sorted
+// (name, alias) keys so a test can compare the whole row set.
+func clinePassChannelRows(t *testing.T, entry map[string]any) []string {
+	t.Helper()
+	rows, _ := entry["models"].([]any)
+	pairs := make([]string, 0, len(rows))
+	for _, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("channel row is not an object: %#v", item)
+		}
+		name, _ := row["name"].(string)
+		alias, _ := row["alias"].(string)
+		pairs = append(pairs, name+"\x00"+alias)
+	}
+	sort.Strings(pairs)
+	return pairs
 }
 
 func getClinePassModelPage(t *testing.T, app *App, headers http.Header) clinePassModelsResponse {
@@ -359,9 +384,10 @@ func clinePassModelRow(t *testing.T, payload clinePassModelsResponse, id string)
 	return clinePassModelView{}
 }
 
-// The strip_model_prefix setting decides the client-facing alias on the bound
-// channel: only the literal cline-pass/ prefix is stripped, and toggling the
-// setting rewrites the existing rows in place.
+// The strip_model_prefix setting decides the alias set on the bound channel: a
+// prefixed model routes under both its full id and its stripped id while the
+// switch is on, and turning the switch off drops exactly the stripped rows and
+// keeps the full id routable.
 func TestClinePassBindingAliasesFollowStripSetting(t *testing.T) {
 	service, _ := newConfiguredClinePassService(t, t.TempDir())
 	store := &clinePassChannelStore{}
@@ -382,21 +408,25 @@ func TestClinePassBindingAliasesFollowStripSetting(t *testing.T) {
 	if writes != 1 || len(entries) != 1 {
 		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
 	}
-	aliases := clinePassChannelAliasMap(t, entries[0])
+	aliases := clinePassChannelAliasSets(t, entries[0])
 	if len(aliases) != len(clinePassCatalog) {
-		t.Fatalf("published rows = %d, want %d", len(aliases), len(clinePassCatalog))
+		t.Fatalf("published models = %d, want %d", len(aliases), len(clinePassCatalog))
 	}
-	if got := aliases["cline-pass/glm-5.3"]; got != "glm-5.3" {
-		t.Fatalf("cline-pass alias = %q, want the stripped id", got)
+	if len(aliases["cline-pass/glm-5.3"]) != 2 || !aliases["cline-pass/glm-5.3"]["cline-pass/glm-5.3"] || !aliases["cline-pass/glm-5.3"]["glm-5.3"] {
+		t.Fatalf("cline-pass/glm-5.3 aliases = %#v, want the full id and the stripped id", aliases["cline-pass/glm-5.3"])
 	}
 	for _, id := range []string{"cline-free/longcat-2.0", "deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash", "poolside/laguna-s-2.1:free"} {
-		if got := aliases[id]; got != id {
-			t.Fatalf("alias for %q = %q, want identity", id, got)
+		if len(aliases[id]) != 1 || !aliases[id][id] {
+			t.Fatalf("aliases for %q = %#v, want the identity only", id, aliases[id])
 		}
+	}
+	rows, _ := entries[0]["models"].([]any)
+	if len(rows) != clinePassExpectedChannelRows(true) {
+		t.Fatalf("channel rows = %d, want %d", len(rows), clinePassExpectedChannelRows(true))
 	}
 
 	settingsPath := "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/settings"
-	// Turning the switch off rewrites every alias back to the full id in place.
+	// Turning the switch off drops the stripped rows and keeps every full id.
 	update := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPut, Path: settingsPath, Headers: headers, Body: []byte(`{"strip_model_prefix":false}`),
 	})
@@ -407,17 +437,21 @@ func TestClinePassBindingAliasesFollowStripSetting(t *testing.T) {
 	if writes != 2 || len(entries) != 1 {
 		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
 	}
-	aliases = clinePassChannelAliasMap(t, entries[0])
+	aliases = clinePassChannelAliasSets(t, entries[0])
 	if len(aliases) != len(clinePassCatalog) {
-		t.Fatalf("rows after disabling = %d, want no duplicates", len(aliases))
+		t.Fatalf("published models after disabling = %d, want %d", len(aliases), len(clinePassCatalog))
 	}
-	for id, alias := range aliases {
-		if alias != id {
-			t.Fatalf("identity alias expected for %q, got %q", id, alias)
+	for id, set := range aliases {
+		if len(set) != 1 || !set[id] {
+			t.Fatalf("identity alias expected for %q, got %#v", id, set)
 		}
 	}
+	rows, _ = entries[0]["models"].([]any)
+	if len(rows) != clinePassExpectedChannelRows(false) {
+		t.Fatalf("channel rows after disabling = %d, want %d", len(rows), clinePassExpectedChannelRows(false))
+	}
 
-	// Turning it on again strips only the prefixed ids, still in place.
+	// Turning it on again restores the stripped alias for prefixed ids only.
 	update = app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPut, Path: settingsPath, Headers: headers, Body: []byte(`{"strip_model_prefix":true}`),
 	})
@@ -428,15 +462,15 @@ func TestClinePassBindingAliasesFollowStripSetting(t *testing.T) {
 	if writes != 3 || len(entries) != 1 {
 		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
 	}
-	aliases = clinePassChannelAliasMap(t, entries[0])
+	aliases = clinePassChannelAliasSets(t, entries[0])
 	if len(aliases) != len(clinePassCatalog) {
-		t.Fatalf("rows after re-enabling = %d, want no duplicates", len(aliases))
+		t.Fatalf("published models after re-enabling = %d, want %d", len(aliases), len(clinePassCatalog))
 	}
-	if got := aliases["cline-pass/kimi-k3"]; got != "kimi-k3" {
-		t.Fatalf("cline-pass/kimi-k3 alias = %q", got)
+	if len(aliases["cline-pass/kimi-k3"]) != 2 || !aliases["cline-pass/kimi-k3"]["cline-pass/kimi-k3"] || !aliases["cline-pass/kimi-k3"]["kimi-k3"] {
+		t.Fatalf("cline-pass/kimi-k3 aliases = %#v", aliases["cline-pass/kimi-k3"])
 	}
-	if got := aliases["cline-free/muse-spark-1.3-contributor"]; got != "cline-free/muse-spark-1.3-contributor" {
-		t.Fatalf("free model alias = %q", got)
+	if len(aliases["cline-free/muse-spark-1.3-contributor"]) != 1 || !aliases["cline-free/muse-spark-1.3-contributor"]["cline-free/muse-spark-1.3-contributor"] {
+		t.Fatalf("free model aliases = %#v", aliases["cline-free/muse-spark-1.3-contributor"])
 	}
 }
 
@@ -572,5 +606,239 @@ func TestClinePassModelProbeKeepsUpstreamIDWhenStripping(t *testing.T) {
 	gateway.mu.Unlock()
 	if sent != "cline-pass/glm-5.3" {
 		t.Fatalf("probe sent model %#v, want the full upstream id", sent)
+	}
+}
+
+// clinePassExpectedChannelRows returns the number of rows a channel publishes
+// for the curated catalog under one switch state.
+func clinePassExpectedChannelRows(stripPrefix bool) int {
+	rows := len(clinePassCatalog)
+	if stripPrefix {
+		for _, model := range clinePassCatalog {
+			if strings.HasPrefix(model.ID, clinePassModelPrefix) {
+				rows++
+			}
+		}
+	}
+	return rows
+}
+
+// newClinePassPublicationApp binds one app to an in-memory channel store and a
+// stored account whose catalog is exactly the given allow-listed ids.
+func newClinePassPublicationApp(t *testing.T, models []string) (*App, *clinePassChannelStore, string, http.Header) {
+	t.Helper()
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	accountID, errSave := service.SaveAPIKeyAccount("", "publication", "", "sk-publication-secret")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	service.mu.Lock()
+	for index := range service.accounts {
+		if service.accounts[index].ID == accountID {
+			service.accounts[index].Models = append([]string(nil), models...)
+		}
+	}
+	service.mu.Unlock()
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	return app, store, accountID, http.Header{"Authorization": []string{"Bearer management-secret"}}
+}
+
+func bindClinePassPublicationAccount(t *testing.T, app *App, headers http.Header, accountID string) OpenCodeBindingResult {
+	t.Helper()
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/bind", Headers: headers,
+		Body: []byte(`{"account_id":"` + accountID + `"}`),
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("bind status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload struct {
+		Binding OpenCodeBindingResult `json:"binding"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode bind: %v", errDecode)
+	}
+	return payload.Binding
+}
+
+func setClinePassStripPrefix(t *testing.T, app *App, headers http.Header, strip bool) {
+	t.Helper()
+	body := `{"strip_model_prefix":false}`
+	if strip {
+		body = `{"strip_model_prefix":true}`
+	}
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/settings", Headers: headers,
+		Body: []byte(body),
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("settings status = %d body=%s", response.StatusCode, response.Body)
+	}
+}
+
+// With the prefix switch on, a cline-pass/ model is published under both the
+// full upstream id and the stripped client id, while every other model keeps
+// exactly one identity row and no (name, alias) pair is duplicated.
+func TestClinePassBindingPublishesIdentityAndStrippedAliases(t *testing.T) {
+	app, store, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3", "cline-free/longcat-2.0"})
+
+	result := bindClinePassPublicationAccount(t, app, headers, accountID)
+	if result.Models != 2 {
+		t.Fatalf("binding models = %d, want the 2 distinct ids", result.Models)
+	}
+	entries, writes := store.snapshot()
+	if writes != 1 || len(entries) != 1 {
+		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
+	}
+	want := []string{
+		"cline-free/longcat-2.0\x00cline-free/longcat-2.0",
+		"cline-pass/glm-5.3\x00cline-pass/glm-5.3",
+		"cline-pass/glm-5.3\x00glm-5.3",
+	}
+	if got := clinePassChannelRows(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("channel rows = %#v, want %#v", got, want)
+	}
+
+	// Binding twice in a row converges on the same row set.
+	second := bindClinePassPublicationAccount(t, app, headers, accountID)
+	if second.Models != 2 {
+		t.Fatalf("second binding models = %d", second.Models)
+	}
+	entries, writes = store.snapshot()
+	if writes != 2 {
+		t.Fatalf("channel writes = %d", writes)
+	}
+	if got := clinePassChannelRows(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows after a second bind = %#v, want %#v", got, want)
+	}
+}
+
+// A channel written by the previous release carries the identity row only. The
+// rebind must add the stripped alias without losing the full id, and a further
+// rebind must change nothing.
+func TestClinePassBindingUpgradesIdentityOnlyChannel(t *testing.T) {
+	app, store, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3"})
+	store.setEntries([]map[string]any{{
+		"base-url": clinePassDefaultBaseURL,
+		"name":     clinePassBoundChannelName,
+		"models":   []any{map[string]any{"name": "cline-pass/glm-5.3", "alias": "cline-pass/glm-5.3"}},
+	}})
+
+	if result := bindClinePassPublicationAccount(t, app, headers, accountID); result.Models != 1 {
+		t.Fatalf("binding models = %d, want 1", result.Models)
+	}
+	entries, _ := store.snapshot()
+	want := []string{
+		"cline-pass/glm-5.3\x00cline-pass/glm-5.3",
+		"cline-pass/glm-5.3\x00glm-5.3",
+	}
+	if got := clinePassChannelRows(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("upgraded rows = %#v, want %#v", got, want)
+	}
+
+	bindClinePassPublicationAccount(t, app, headers, accountID)
+	entries, _ = store.snapshot()
+	if got := clinePassChannelRows(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows after a further bind = %#v, want %#v", got, want)
+	}
+}
+
+// Turning the switch off after a switch-on bind drops exactly the stripped alias
+// rows and keeps the identity rows, and a further bind changes nothing.
+func TestClinePassBindingDropsStrippedAliasesWhenSwitchOff(t *testing.T) {
+	app, store, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3", "cline-free/longcat-2.0"})
+	bindClinePassPublicationAccount(t, app, headers, accountID)
+
+	setClinePassStripPrefix(t, app, headers, false)
+	want := []string{
+		"cline-free/longcat-2.0\x00cline-free/longcat-2.0",
+		"cline-pass/glm-5.3\x00cline-pass/glm-5.3",
+	}
+	entries, _ := store.snapshot()
+	if got := clinePassChannelRows(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows with the switch off = %#v, want %#v", got, want)
+	}
+
+	if result := bindClinePassPublicationAccount(t, app, headers, accountID); result.Models != 2 {
+		t.Fatalf("binding models with the switch off = %d, want 2", result.Models)
+	}
+	entries, _ = store.snapshot()
+	if got := clinePassChannelRows(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows after a further bind = %#v, want %#v", got, want)
+	}
+}
+
+// An operator-added row for an id this plugin does not publish survives every
+// rebind, while a stale alias row for a published id is removed.
+func TestClinePassBindingPreservesOperatorRows(t *testing.T) {
+	app, store, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3"})
+	store.setEntries([]map[string]any{{
+		"base-url": clinePassDefaultBaseURL,
+		"name":     clinePassBoundChannelName,
+		"models": []any{
+			map[string]any{"name": "operator/private", "alias": "private-alias"},
+			map[string]any{"name": "cline-pass/glm-5.3", "alias": "stale-operator-alias"},
+		},
+	}})
+
+	bindClinePassPublicationAccount(t, app, headers, accountID)
+	entries, _ := store.snapshot()
+	aliases := clinePassChannelAliasSets(t, entries[0])
+	if len(aliases["operator/private"]) != 1 || !aliases["operator/private"]["private-alias"] {
+		t.Fatalf("operator row was not preserved: %#v", aliases)
+	}
+	if aliases["cline-pass/glm-5.3"]["stale-operator-alias"] {
+		t.Fatalf("a stale alias survived the merge: %#v", aliases["cline-pass/glm-5.3"])
+	}
+	if len(aliases["cline-pass/glm-5.3"]) != 2 || !aliases["cline-pass/glm-5.3"]["cline-pass/glm-5.3"] || !aliases["cline-pass/glm-5.3"]["glm-5.3"] {
+		t.Fatalf("published aliases = %#v", aliases["cline-pass/glm-5.3"])
+	}
+
+	// The operator row also survives the switch-off rebind and a manual rebind.
+	setClinePassStripPrefix(t, app, headers, false)
+	entries, _ = store.snapshot()
+	aliases = clinePassChannelAliasSets(t, entries[0])
+	if len(aliases["operator/private"]) != 1 || !aliases["operator/private"]["private-alias"] {
+		t.Fatalf("operator row was lost by the switch-off rebind: %#v", aliases)
+	}
+	if len(aliases["cline-pass/glm-5.3"]) != 1 || !aliases["cline-pass/glm-5.3"]["cline-pass/glm-5.3"] {
+		t.Fatalf("rows with the switch off = %#v", aliases["cline-pass/glm-5.3"])
+	}
+	bindClinePassPublicationAccount(t, app, headers, accountID)
+	entries, _ = store.snapshot()
+	aliases = clinePassChannelAliasSets(t, entries[0])
+	if len(aliases["operator/private"]) != 1 || !aliases["operator/private"]["private-alias"] {
+		t.Fatalf("operator row was lost by a manual rebind: %#v", aliases)
+	}
+}
+
+// The binding result counts distinct upstream ids (two models with both aliases
+// report 2, not 3 or 4), and the model page reports "published" by the alias the
+// current setting says a client should call.
+func TestClinePassBindingModelCountAndModelPagePublication(t *testing.T) {
+	app, _, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3", "cline-free/longcat-2.0"})
+	result := bindClinePassPublicationAccount(t, app, headers, accountID)
+	if result.Models != 2 {
+		t.Fatalf("binding models = %d, want 2", result.Models)
+	}
+
+	page := getClinePassModelPage(t, app, headers)
+	if !page.ChannelBound || page.ChannelModels != 2 || len(page.Models) != 2 {
+		t.Fatalf("page summary with the switch on = %+v", page)
+	}
+	if row := clinePassModelRow(t, page, "cline-pass/glm-5.3"); row.ClientID != "glm-5.3" || !row.Published {
+		t.Fatalf("switch-on row = %+v", row)
+	}
+
+	setClinePassStripPrefix(t, app, headers, false)
+	off := getClinePassModelPage(t, app, headers)
+	if off.StripModelPrefix || !off.ChannelBound || off.ChannelModels != 2 {
+		t.Fatalf("page summary with the switch off = %+v", off)
+	}
+	if row := clinePassModelRow(t, off, "cline-pass/glm-5.3"); row.ClientID != row.ID || !row.Published {
+		t.Fatalf("switch-off row = %+v", row)
 	}
 }

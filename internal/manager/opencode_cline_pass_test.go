@@ -589,8 +589,14 @@ func TestClinePassManagementRoutes(t *testing.T) {
 		t.Fatalf("bound key row = %#v", firstRow)
 	}
 	channelModels, _ := entry["models"].([]any)
-	if len(channelModels) != len(clinePassCatalog) {
-		t.Fatalf("bound channel models = %d, want the allow-list", len(channelModels))
+	if len(channelModels) != clinePassExpectedChannelRows(true) {
+		t.Fatalf("bound channel models = %d, want %d rows for the allow-list", len(channelModels), clinePassExpectedChannelRows(true))
+	}
+	// A prefixed model must stay reachable under both its full id and the id
+	// clients have been calling.
+	boundAliases := clinePassChannelAliasSets(t, entry)
+	if len(boundAliases["cline-pass/deepseek-v4.1-flash"]) != 2 || !boundAliases["cline-pass/deepseek-v4.1-flash"]["cline-pass/deepseek-v4.1-flash"] || !boundAliases["cline-pass/deepseek-v4.1-flash"]["deepseek-v4.1-flash"] {
+		t.Fatalf("prefixed model aliases = %#v", boundAliases["cline-pass/deepseek-v4.1-flash"])
 	}
 	if name, _ := entry["name"].(string); !strings.HasPrefix(name, clinePassBoundChannelName) {
 		t.Fatalf("bound channel name = %#v", entry["name"])

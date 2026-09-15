@@ -68,7 +68,7 @@ func (a *App) bindClinePassChannel(ctx context.Context, managementKey, baseURL, 
 // bindOpenAICompatibleChannel upserts one OpenAI-compatible CPA channel that
 // points at an upstream base URL with a credential and its client headers, then
 // publishes the verified model catalog on the channel so CPA can route it.
-func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string]string) (OpenCodeBindingResult, error) {
+func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string][]string) (OpenCodeBindingResult, error) {
 	result := OpenCodeBindingResult{Kind: "openai-compatibility", BaseURL: channelBaseURL, Index: -1}
 	if a == nil {
 		return result, fmt.Errorf("AI provider channel service is unavailable")
@@ -125,7 +125,9 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 	// operator just tested.
 	channelModels := mergeOpenCodeChannelModels(entry["models"], models, aliases)
 	entry["models"] = channelModels
-	result.Models = len(channelModels)
+	// The operator-facing count is per distinct upstream model id, not per row:
+	// a Cline Pass model can carry an identity row and a stripped-alias row.
+	result.Models = openCodePublishedModelCount(models, channelModels)
 	items[target] = entry
 
 	writer, errWriter := a.newWriteManagementClient(managementKey)
@@ -174,46 +176,42 @@ func mergeOpenCodeChannelKeyEntries(existing any, apiKey string) []map[string]an
 // mergeOpenCodeChannelModels publishes a model catalog on a CPA channel.
 //
 // A row is the CPA pair {"name": <upstream id>, "alias": <client-facing id>}.
-// Existing rows for ids the binding publishes are kept in place: their alias is
-// rewritten to the desired value so a settings change or a rebind takes effect
-// without leaving a stale alias or duplicating the row. Rows for ids the
-// binding does not publish are operator additions and stay untouched.
+// The optional aliases map carries the client-facing alias set the current
+// setting implies for every published id; the identity alias (alias == name) is
+// always implied. The merge is alias-set aware instead of alias-replacing: the
+// rows of one published id converge to exactly that alias set, a row whose
+// alias is no longer implied is dropped, a missing (name, alias) pair is
+// appended, and duplicate pairs are collapsed, so binding twice with the same
+// setting leaves the row set unchanged. Rows for ids the binding does not
+// publish are operator additions and stay untouched.
 //
-// The optional aliases map carries the desired client-facing id of every
-// published id. Without it an existing row's alias is preserved and only
-// missing ids are appended, which is what the OpenCode bindings (no prefix
-// setting) rely on.
-func mergeOpenCodeChannelModels(existing any, models []string, aliases ...map[string]string) []map[string]any {
-	managed := len(aliases) > 0 && aliases[0] != nil
-	wanted := make(map[string]string, len(models))
+// Without the aliases map an existing row's alias is preserved and only missing
+// ids are appended, which is what the OpenCode bindings (no prefix setting)
+// rely on.
+func mergeOpenCodeChannelModels(existing any, models []string, aliases ...map[string][]string) []map[string]any {
+	if len(aliases) > 0 && aliases[0] != nil {
+		return mergeOpenCodeChannelAliasModels(existing, models, aliases[0])
+	}
+	return mergeOpenCodeChannelIdentityModels(existing, models)
+}
+
+// mergeOpenCodeChannelIdentityModels keeps every existing row under its own
+// alias name and appends one identity row per published id that is not routable
+// yet. It is the OpenCode path, which has no alias setting.
+func mergeOpenCodeChannelIdentityModels(existing any, models []string) []map[string]any {
+	wanted := make(map[string]bool, len(models))
 	order := make([]string, 0, len(models))
 	for _, model := range models {
 		model = strings.TrimSpace(model)
-		if model == "" {
+		if model == "" || wanted[model] {
 			continue
 		}
-		if _, exists := wanted[model]; exists {
-			continue
-		}
-		alias := model
-		if managed {
-			if desired, ok := aliases[0][model]; ok && strings.TrimSpace(desired) != "" {
-				alias = strings.TrimSpace(desired)
-			}
-		}
-		wanted[model] = alias
+		wanted[model] = true
 		order = append(order, model)
 	}
 	rows := make([]map[string]any, 0, len(order)+2)
 	seen := make(map[string]bool, len(order))
 	appendRow := func(row map[string]any) {
-		if managed {
-			if name, ok := row["name"].(string); ok {
-				if alias, publish := wanted[strings.TrimSpace(name)]; publish {
-					row["alias"] = alias
-				}
-			}
-		}
 		rows = append(rows, row)
 		for _, field := range []string{"name", "alias"} {
 			if value, ok := row[field].(string); ok && strings.TrimSpace(value) != "" {
@@ -239,9 +237,9 @@ func mergeOpenCodeChannelModels(existing any, models []string, aliases ...map[st
 			}
 		}
 	case []map[string]any:
-		for _, record := range list {
-			cloned := make(map[string]any, len(record)+1)
-			for key, value := range record {
+		for _, item := range list {
+			cloned := make(map[string]any, len(item)+1)
+			for key, value := range item {
 				cloned[key] = value
 			}
 			appendRow(cloned)
@@ -252,9 +250,152 @@ func mergeOpenCodeChannelModels(existing any, models []string, aliases ...map[st
 			continue
 		}
 		seen[model] = true
-		rows = append(rows, map[string]any{"name": model, "alias": wanted[model]})
+		rows = append(rows, map[string]any{"name": model, "alias": model})
 	}
 	return rows
+}
+
+// mergeOpenCodeChannelAliasModels converges the rows of every published id to
+// the alias set the caller asked for. An existing row for a published id is
+// kept when its alias is part of that set (an empty alias reads as the
+// identity) and dropped otherwise; rows for other ids are operator additions
+// and are preserved. The returned set is deduplicated by (name, alias) pair, so
+// running the merge on its own output is a no-op.
+func mergeOpenCodeChannelAliasModels(existing any, models []string, aliases map[string][]string) []map[string]any {
+	wanted := make(map[string][]string, len(models))
+	order := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, exists := wanted[model]; exists {
+			continue
+		}
+		// The identity alias is always implied; the caller only adds aliases on
+		// top of it (for example the stripped id of a prefixed model).
+		desired := []string{model}
+		for _, alias := range aliases[model] {
+			alias = strings.TrimSpace(alias)
+			if alias == "" || alias == model {
+				continue
+			}
+			duplicate := false
+			for _, kept := range desired {
+				if kept == alias {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				desired = append(desired, alias)
+			}
+		}
+		wanted[model] = desired
+		order = append(order, model)
+	}
+	rows := make([]map[string]any, 0, len(order)+2)
+	pairs := make(map[string]bool, len(order)+2)
+	record := func(name, alias string) bool {
+		key := name + "\x00" + alias
+		if pairs[key] {
+			return false
+		}
+		pairs[key] = true
+		return true
+	}
+	appendRow := func(row map[string]any) {
+		if rawName, ok := row["name"].(string); ok {
+			if name := strings.TrimSpace(rawName); name != "" {
+				if desired, publish := wanted[name]; publish {
+					rawAlias, _ := row["alias"].(string)
+					alias := strings.TrimSpace(rawAlias)
+					if alias == "" {
+						// A row without an alias still routes the identity.
+						alias = name
+					}
+					implied := false
+					for _, candidate := range desired {
+						if candidate == alias {
+							implied = true
+							break
+						}
+					}
+					if !implied {
+						// A stale alias the current setting no longer implies.
+						return
+					}
+					row["name"] = name
+					row["alias"] = alias
+					if !record(name, alias) {
+						return
+					}
+					rows = append(rows, row)
+					return
+				}
+			}
+		}
+		// An operator-added row for an id this binding does not publish.
+		name, _ := row["name"].(string)
+		alias, _ := row["alias"].(string)
+		name, alias = strings.TrimSpace(name), strings.TrimSpace(alias)
+		if name != "" || alias != "" {
+			if !record(name, alias) {
+				return
+			}
+		}
+		rows = append(rows, row)
+	}
+	switch list := existing.(type) {
+	case []any:
+		for _, item := range list {
+			if record, isRecord := item.(map[string]any); isRecord {
+				cloned := make(map[string]any, len(record)+1)
+				for key, value := range record {
+					cloned[key] = value
+				}
+				appendRow(cloned)
+				continue
+			}
+			if text, isText := item.(string); isText && strings.TrimSpace(text) != "" {
+				appendRow(map[string]any{"name": strings.TrimSpace(text), "alias": strings.TrimSpace(text)})
+			}
+		}
+	case []map[string]any:
+		for _, item := range list {
+			cloned := make(map[string]any, len(item)+1)
+			for key, value := range item {
+				cloned[key] = value
+			}
+			appendRow(cloned)
+		}
+	}
+	for _, model := range order {
+		for _, alias := range wanted[model] {
+			if record(model, alias) {
+				rows = append(rows, map[string]any{"name": model, "alias": alias})
+			}
+		}
+	}
+	return rows
+}
+
+// openCodePublishedModelCount reports the number of distinct upstream model ids
+// one bind covers. Cline Pass publishes several rows for the same id (the
+// identity alias plus the stripped id), so the operator-facing count must not
+// follow the raw row count. An empty requested catalog falls back to the row
+// count so re-binding an existing channel keeps reporting what it serves.
+func openCodePublishedModelCount(models []string, rows []map[string]any) int {
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		if trimmed := strings.TrimSpace(model); trimmed != "" {
+			seen[trimmed] = struct{}{}
+		}
+	}
+	if len(seen) > 0 {
+		return len(seen)
+	}
+	return len(rows)
 }
 
 // newWriteManagementClient builds the management client used for channel writes.

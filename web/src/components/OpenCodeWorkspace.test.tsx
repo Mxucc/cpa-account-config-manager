@@ -432,6 +432,26 @@ describe("OpenCodeWorkspace", () => {
     expect(requests.some(({ url }) => url.endsWith("/opencode/cline-pass/accounts"))).toBe(true);
   });
 
+  // The sidebar menus render the same component, so React keeps its tab state when the operator
+  // switches from OpenCode to Cline Pass. That used to leave the OpenCode overview (billing cards,
+  // session router, its counters) on screen under the Cline Pass heading.
+  it("shows only the Cline Pass surface when the menu switches from OpenCode", async () => {
+    openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });
+
+    const { rerender } = render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    expect(await screen.findByRole("tabpanel", { name: "总览" })).toBeInTheDocument();
+    expect(screen.getByText("对话会话")).toBeInTheDocument();
+
+    rerender(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} focus="cline-pass" />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
+    expect(screen.queryByText("对话会话")).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenCode Zen")).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenCode 模型")).not.toBeInTheDocument();
+  });
+
   it("lists the published Cline Pass mapping with the client-facing model id", async () => {
     const user = userEvent.setup();
     const requests = openCodeFetchMock({ clinePassAccounts: [clinePassAccountView()] });

@@ -145,9 +145,8 @@ func aiProviderChannelModelAliases(entry map[string]any) map[string]struct{} {
 }
 
 // clinePassChannelModelCount reports how many distinct upstream model ids one
-// live channel entry publishes. A Cline Pass model can carry two rows (the
-// identity alias and the stripped alias), so the raw row count would overstate
-// the catalog the channel exposes.
+// live channel entry publishes. The row count is not that number: operator
+// additions can outnumber the catalog the binding owns.
 func clinePassChannelModelCount(entry map[string]any) int {
 	ids := map[string]struct{}{}
 	list, ok := entry["models"].([]any)

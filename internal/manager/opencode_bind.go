@@ -191,7 +191,7 @@ func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managem
 	channelModels := mergeOpenCodeChannelModels(entry["models"], models, aliases)
 	entry["models"] = channelModels
 	// The operator-facing count is per distinct upstream model id, not per row:
-	// a Cline Pass model can carry an identity row and a stripped-alias row.
+	// the rows a binding does not own are operator additions and can outnumber it.
 	result.Models = openCodePublishedModelCount(models, channelModels)
 	items[target] = entry
 
@@ -390,13 +390,14 @@ func openCodeZenChannelLabel(service *OpenCodeZenService, accountID string) stri
 // mergeOpenCodeChannelModels publishes a model catalog on a CPA channel.
 //
 // A row is the CPA pair {"name": <upstream id>, "alias": <client-facing id>}.
-// The optional aliases map carries the client-facing alias set the current
-// setting implies for every published id; the identity alias (alias == name) is
-// always implied. The merge is alias-set aware instead of alias-replacing: the
-// rows of one published id converge to exactly that alias set, a row whose
-// alias is no longer implied is dropped, a missing (name, alias) pair is
-// appended, and duplicate pairs are collapsed, so binding twice with the same
-// setting leaves the row set unchanged. Rows for ids the binding does not
+// The optional aliases map carries the client-facing alias the current setting
+// publishes for every id, and that alias replaces the identity: a model the
+// setting publishes under a stripped id is listed under that id alone. The merge
+// is alias-set aware instead of alias-replacing: the rows of one published id
+// converge to exactly that alias set; a row whose alias is no longer implied is
+// dropped, a missing (name, alias) pair is appended, and duplicate pairs are
+// collapsed, so binding twice with the same setting leaves the row set unchanged.
+// Rows for ids the binding does not
 // publish are operator additions and stay untouched.
 //
 // Without the aliases map an existing row's alias is preserved and only missing

@@ -116,8 +116,13 @@ type App struct {
 	reconfigureMu      sync.Mutex
 	reconfigurePending configReconfigureRequest
 	reconfigureQueued  bool
-	reconfigureRunning bool
-	reconfigureCycle   chan struct{}
+	// Cline Pass auto-bind throttling: a page load that finds an account unbound publishes
+	// its channel once, so a credential rotation never leaves the operator clicking a bind
+	// button, while a dead credential costs one attempt per cooldown instead of one per read.
+	clinePassAutoBindMu sync.Mutex
+	clinePassAutoBindAt map[string]time.Time
+	reconfigureRunning  bool
+	reconfigureCycle    chan struct{}
 	// configApplyMu serializes every service configuration, so a deferred configure and a host
 	// reconfigure never mutate the services at the same time.
 	configApplyMu sync.Mutex

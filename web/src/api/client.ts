@@ -32,23 +32,6 @@ import type {
 	OpenCodeZenAccountsResponse,
 	OpenCodeZenProbeAccountResponse,
 	OpenCodeZenProbeResponse,
-	ClinePassAccountResponse,
-	ClinePassAccountSaveResponse,
-	ClinePassAccountView,
-	ClinePassQuotaUsage,
-	ClinePassQuotaWindow,
-	ClinePassAccountsResponse,
-	ClinePassBinding,
-	ClinePassBindResponse,
-	ClinePassCatalogResponse,
-	ClinePassLoginCancelResponse,
-	ClinePassLoginView,
-	ClinePassModelsResponse,
-	ClinePassModelView,
-	ClinePassRefreshResponse,
-	ClinePassSettings,
-	ClinePassSettingsResponse,
-	ClinePassSettingsSaveResponse,
 	AIProviderChannelKind,
 	AIProviderChannelSnapshot,
 	AIProviderChannelEntry,
@@ -166,7 +149,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, query?: URLSearchParams, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}, query?: URLSearchParams, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const session = getSession();
   if (!session) throw new APIError(401, "ui.management_key_is_not_set");
   const headers = new Headers(init.headers);
@@ -182,7 +165,7 @@ async function request<T>(path: string, init: RequestInit = {}, query?: URLSearc
   return parseJSONResponse<T>(response);
 }
 
-async function requestRecord<T>(path: string, init: RequestInit = {}, query?: URLSearchParams, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+export async function requestRecord<T>(path: string, init: RequestInit = {}, query?: URLSearchParams, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const response = await request<unknown>(path, init, query, timeoutMs);
   if (!isRecord(response)) {
     throw new APIError(502, "ui.invalid_json_response");
@@ -334,11 +317,11 @@ function finiteNonNegativeInteger(value: unknown, fallback: number, max: number)
   return Math.min(max, Math.max(0, Math.floor(number)));
 }
 
-function isFiniteNonNegativeNumber(value: unknown): value is number {
+export function isFiniteNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function isFiniteNonNegativeInteger(value: unknown): value is number {
+export function isFiniteNonNegativeInteger(value: unknown): value is number {
   return isFiniteNonNegativeNumber(value) && Number.isInteger(value);
 }
 
@@ -372,7 +355,7 @@ function normalizeAccountConcurrencySummary(value: NonNullable<AccountEditableCo
   };
 }
 
-function isNonEmptyString(value: unknown): value is string {
+export function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
@@ -382,7 +365,7 @@ function isNonEmptyString(value: unknown): value is string {
  * malformed rows is different: callers must surface that as a broken API
  * response instead of replacing valid UI state with an apparently empty list.
  */
-function nullableRecordArray(value: unknown): Record<string, unknown>[] | undefined {
+export function nullableRecordArray(value: unknown): Record<string, unknown>[] | undefined {
   if (value === null) return [];
   if (!Array.isArray(value) || value.some((item) => !isRecord(item))) return undefined;
   return value as Record<string, unknown>[];
@@ -1141,7 +1124,7 @@ function normalizeOpenCodeAccountsResponse(response: unknown): OpenCodeAccountsR
 }
 
 /** Parse an optional string array without rejecting the whole response. */
-function stringArrayOrUndefined(value: unknown): string[] | undefined {
+export function stringArrayOrUndefined(value: unknown): string[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	return value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
 }
@@ -1198,8 +1181,8 @@ export async function saveOpenCodeModelControl(disabled: string[]): Promise<impo
  * Create or update the CPA OpenAI-compatible channel that routes one OpenCode
  * credential, so its models become reachable through CPA.
  */
-export async function bindOpenCodeChannel(kind: "go" | "zen", accountID: string): Promise<{ binding: import("../types").OpenCodeBindingResult }> {
-	return requestRecord<{ binding: import("../types").OpenCodeBindingResult }>("/opencode/bind", {
+export async function bindOpenCodeChannel(kind: "go" | "zen", accountID: string): Promise<{ binding: import("../types").ProviderChannelBindingResult }> {
+	return requestRecord<{ binding: import("../types").ProviderChannelBindingResult }>("/opencode/bind", {
 		method: "POST",
 		body: JSON.stringify({ kind, account_id: accountID }),
 	});
@@ -1347,259 +1330,6 @@ export async function probeOpenCodeZen(options: {
 export async function probeOpenCodeZenAccount(accountID: string): Promise<OpenCodeZenProbeAccountResponse> {
 	return requestRecord<OpenCodeZenProbeAccountResponse>("/opencode/zen/probe-account?account_id=" + encodeURIComponent(accountID), {
 		method: "POST",
-	});
-}
-/**
- * Cline Pass credentials. The payload shapes are the Zen ones with an auth method,
- * so the account list is validated the same way before any row is rendered.
- */
-/**
- * Cline Pass reference rates are USD per 1M tokens and are only meaningful when the handler priced
- * the model, so an unpriced model carries no rate at all. A partially numeric payload is treated as
- * unpriced rather than as a free model.
- */
-function clinePassReferenceRate(model: Record<string, unknown>): Partial<ClinePassModelView> {
-	if (model.priced !== true) return {};
-	const rate: Partial<ClinePassModelView> = {};
-	for (const field of ["input_usd_per_million", "output_usd_per_million", "cache_read_usd_per_million", "cache_write_usd_per_million"] as const) {
-		if (isFiniteNonNegativeNumber(model[field])) rate[field] = model[field] as number;
-	}
-	return rate;
-}
-
-/** One documented usage window. Every field degrades to 0 so a partial payload cannot fail a list. */
-function normalizeClinePassQuotaWindow(value: unknown): ClinePassQuotaWindow {
-	const source = isRecord(value) ? value : {};
-	return {
-		usd: isFiniteNonNegativeNumber(source.usd) ? source.usd : 0,
-		input_tokens: isFiniteNonNegativeInteger(source.input_tokens) ? source.input_tokens : 0,
-		output_tokens: isFiniteNonNegativeInteger(source.output_tokens) ? source.output_tokens : 0,
-		requests: isFiniteNonNegativeInteger(source.requests) ? source.requests : 0,
-	};
-}
-
-/**
- * The three windows Cline documents for ClinePass. A backend that predates them omits the field, so
- * an absent payload returns undefined and the account simply renders without a usage line.
- */
-function normalizeClinePassQuotaUsage(value: unknown): ClinePassQuotaUsage | undefined {
-	if (!isRecord(value)) return undefined;
-	return {
-		five_hour: normalizeClinePassQuotaWindow(value.five_hour),
-		weekly: normalizeClinePassQuotaWindow(value.weekly),
-		monthly: normalizeClinePassQuotaWindow(value.monthly),
-		monthly_subscription_usd: isFiniteNonNegativeNumber(value.monthly_subscription_usd) ? value.monthly_subscription_usd : 0,
-		reference: value.reference === true,
-	};
-}
-
-function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccountsResponse {
-	if (!isRecord(response)) throw new APIError(502, "ui.invalid_api_response");
-	const accounts = nullableRecordArray(response.accounts);
-	if (accounts === undefined || accounts.some((account) =>
-		!isNonEmptyString(account.id)
-		|| !isNonEmptyString(account.base_url)
-		|| typeof account.access_token_set !== "boolean"
-		|| typeof account.refresh_token_set !== "boolean"
-		|| typeof account.expired !== "boolean"
-		|| (account.auth_method !== "oauth" && account.auth_method !== "api_key" && account.auth_method !== "cli")
-		|| (account.name !== undefined && typeof account.name !== "string")
-		|| (account.expires_at !== undefined && typeof account.expires_at !== "string")
-	)) {
-		throw new APIError(502, "ui.invalid_api_response");
-	}
-	if (response.storage_error !== undefined && typeof response.storage_error !== "string") {
-		throw new APIError(502, "ui.invalid_api_response");
-	}
-	return {
-		accounts: accounts.map((account) => {
-			const view: ClinePassAccountView = {
-				id: (account.id as string).trim(),
-				base_url: (account.base_url as string).trim(),
-				auth_method: account.auth_method as ClinePassAccountView["auth_method"],
-				access_token_set: account.access_token_set as boolean,
-				refresh_token_set: account.refresh_token_set as boolean,
-				expired: account.expired as boolean,
-				// A pre-binding backend omits the routing fields, so an absent value degrades to
-				// "unbound" instead of failing the whole account list.
-				channel_bound: account.channel_bound === true,
-				channel_models: isFiniteNonNegativeNumber(account.channel_models) ? account.channel_models : 0,
-				channel_model_gaps: isFiniteNonNegativeNumber(account.channel_model_gaps) ? account.channel_model_gaps : 0,
-			};
-			if (typeof account.name === "string" && account.name.trim()) view.name = account.name;
-			if (typeof account.expires_at === "string" && account.expires_at) view.expires_at = account.expires_at;
-			const models = stringArrayOrUndefined(account.models);
-			if (models) view.models = models;
-			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
-			if (typeof account.models_fetched_at === "string" && account.models_fetched_at) view.models_fetched_at = account.models_fetched_at;
-			if (typeof account.created_at === "string" && account.created_at) view.created_at = account.created_at;
-			const quotaUsage = normalizeClinePassQuotaUsage(account.quota_usage);
-			if (quotaUsage) view.quota_usage = quotaUsage;
-			return view;
-		}),
-		...(typeof response.storage_error === "string" ? { storage_error: response.storage_error } : {}),
-	};
-}
-
-/** The published Cline Pass settings; only the prefix rule exists today. */
-function normalizeClinePassSettings(value: unknown): ClinePassSettings {
-	if (!isRecord(value) || typeof value.strip_model_prefix !== "boolean") {
-		throw new APIError(502, "ui.invalid_api_response");
-	}
-	return { strip_model_prefix: value.strip_model_prefix };
-}
-
-/**
- * The model mapping the Cline Pass channel publishes. The rows drive the table, so a row
- * without the ids the probe or the client needs is a broken payload; the binding summary
- * degrades to "unbound" for a pre-binding backend, exactly like the account list does.
- */
-function normalizeClinePassModelsResponse(response: unknown): ClinePassModelsResponse {
-	if (!isRecord(response) || typeof response.strip_model_prefix !== "boolean") {
-		throw new APIError(502, "ui.invalid_api_response");
-	}
-	const models = nullableRecordArray(response.models);
-	if (models === undefined || models.some((model) =>
-		!isNonEmptyString(model.id)
-		|| !isNonEmptyString(model.upstream_id)
-		|| !isNonEmptyString(model.client_id)
-		|| typeof model.published !== "boolean"
-	)) {
-		throw new APIError(502, "ui.invalid_api_response");
-	}
-	return {
-		models: models.map((model): ClinePassModelView => ({
-			id: (model.id as string).trim(),
-			name: isNonEmptyString(model.name) ? model.name.trim() : (model.client_id as string).trim(),
-			free: model.free === true,
-			upstream_id: (model.upstream_id as string).trim(),
-			client_id: (model.client_id as string).trim(),
-			published: model.published === true,
-			priced: model.priced === true,
-			...clinePassReferenceRate(model),
-		})),
-		strip_model_prefix: response.strip_model_prefix,
-		accounts: isFiniteNonNegativeInteger(response.accounts) ? response.accounts : 0,
-		channel_bound: response.channel_bound === true,
-		channel_models: isFiniteNonNegativeInteger(response.channel_models) ? response.channel_models : 0,
-		default_base_url: typeof response.default_base_url === "string" ? response.default_base_url : "",
-	};
-}
-
-export async function listClinePassAccounts(signal?: AbortSignal): Promise<ClinePassAccountsResponse> {
-	return normalizeClinePassAccountsResponse(await requestRecord<unknown>("/opencode/cline-pass/accounts", { signal }));
-}
-
-/** Save or correct one Cline Pass credential; an API key is what creates a new account. */
-export async function saveClinePassAccount(options: {
-	account_id?: string;
-	name?: string;
-	base_url?: string;
-	api_key?: string;
-	timeout_seconds?: number;
-}): Promise<ClinePassAccountSaveResponse> {
-	return requestRecord<ClinePassAccountSaveResponse>("/opencode/cline-pass/accounts", {
-		method: "POST",
-		body: JSON.stringify(options),
-	});
-}
-
-export async function removeClinePassAccount(accountID: string): Promise<void> {
-	await request<{ removed: boolean }>("/opencode/cline-pass/accounts?account_id=" + encodeURIComponent(accountID), {
-		method: "DELETE",
-	});
-}
-
-/** Read the allow-listed Cline Pass model catalog and the default gateway base URL. */
-export async function getClinePassCatalog(signal?: AbortSignal): Promise<ClinePassCatalogResponse> {
-	return requestRecord<ClinePassCatalogResponse>("/opencode/cline-pass/catalog", { signal });
-}
-
-/** Read the Cline Pass publishing settings; currently only the model-id prefix rule. */
-export async function getClinePassSettings(signal?: AbortSignal): Promise<ClinePassSettingsResponse> {
-	const response = await requestRecord<Record<string, unknown>>("/opencode/cline-pass/settings", { signal });
-	return { settings: normalizeClinePassSettings(response.settings) };
-}
-
-/**
- * Persist the prefix setting. Saving re-binds the Cline Pass channel, so the published
- * mapping changes immediately; `rebound`/`rebind_errors` report that re-bind. A re-bind
- * error does not fail the save: the setting itself is stored either way.
- */
-export async function saveClinePassSettings(stripModelPrefix: boolean): Promise<ClinePassSettingsSaveResponse> {
-	const response = await requestRecord<Record<string, unknown>>("/opencode/cline-pass/settings", {
-		method: "PUT",
-		body: JSON.stringify({ strip_model_prefix: stripModelPrefix }),
-	});
-	return {
-		settings: normalizeClinePassSettings(response.settings),
-		rebound: isFiniteNonNegativeInteger(response.rebound) ? response.rebound : 0,
-		rebind_errors: isFiniteNonNegativeInteger(response.rebind_errors) ? response.rebind_errors : 0,
-	};
-}
-
-/** Read the model mapping the Cline Pass channel publishes, with its binding summary. */
-export async function listClinePassModels(signal?: AbortSignal): Promise<ClinePassModelsResponse> {
-	return normalizeClinePassModelsResponse(await requestRecord<unknown>("/opencode/cline-pass/models", { signal }));
-}
-
-/** Start a sign-in: the browser device flow, an existing Cline CLI sign-in or an API key. */
-export async function startClinePassLogin(options: {
-	method?: "oauth" | "cli" | "api_key";
-	name?: string;
-	api_key?: string;
-	base_url?: string;
-}): Promise<ClinePassLoginView> {
-	return requestRecord<ClinePassLoginView>("/opencode/cline-pass/login/start", {
-		method: "POST",
-		body: JSON.stringify(options),
-	});
-}
-
-/** One non-blocking poll of a pending device sign-in. An unknown session answers 404. */
-export async function pollClinePassLogin(sessionID: string): Promise<ClinePassLoginView> {
-	return requestRecord<ClinePassLoginView>("/opencode/cline-pass/login/poll", {
-		method: "POST",
-		body: JSON.stringify({ session_id: sessionID }),
-	});
-}
-
-export async function cancelClinePassLogin(sessionID: string): Promise<ClinePassLoginCancelResponse> {
-	return requestRecord<ClinePassLoginCancelResponse>("/opencode/cline-pass/login/cancel", {
-		method: "POST",
-		body: JSON.stringify({ session_id: sessionID }),
-	});
-}
-
-/** Rotate one stored token and, with `rebind`, republish its CPA channel key. */
-export async function refreshClinePassAccount(accountID: string, rebind = false): Promise<ClinePassRefreshResponse> {
-	return requestRecord<ClinePassRefreshResponse>("/opencode/cline-pass/refresh", {
-		method: "POST",
-		body: JSON.stringify({ account_id: accountID, ...(rebind ? { rebind: true } : {}) }),
-	});
-}
-
-/** Validate one stored credential against the gateway catalog. A catalog failure stays on the account. */
-export async function refreshClinePassModels(accountID: string): Promise<ClinePassAccountResponse> {
-	return requestRecord<ClinePassAccountResponse>("/opencode/cline-pass/models", {
-		method: "POST",
-		body: JSON.stringify({ account_id: accountID }),
-	});
-}
-
-/** Probe one Cline Pass model through the stored credential. */
-export async function testClinePassModel(accountID: string, model: string, timeoutSeconds = 30): Promise<{ result: import("../types").OpenCodeModelTestResult }> {
-	return requestRecord<{ result: import("../types").OpenCodeModelTestResult }>("/opencode/cline-pass/model-test", {
-		method: "POST",
-		body: JSON.stringify({ account_id: accountID, model, timeout_seconds: timeoutSeconds }),
-	});
-}
-
-/** Publish the models of one account to CPA routing as one OpenAI-compatible channel. */
-export async function bindClinePassChannel(accountID: string): Promise<ClinePassBindResponse> {
-	return requestRecord<ClinePassBindResponse>("/opencode/cline-pass/bind", {
-		method: "POST",
-		body: JSON.stringify({ account_id: accountID }),
 	});
 }
 
@@ -2305,7 +2035,7 @@ export const AI_PROVIDER_CHANNELS: Array<{ kind: AIProviderChannelKind; labelKey
   { kind: "opencode-zen", labelKey: "ui.ai_provider_channel_opencode_zen", apiPath: "" },
 ];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

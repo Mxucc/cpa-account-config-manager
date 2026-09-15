@@ -70,6 +70,64 @@ func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) 
 	return routes
 }
 
+// clinePassAutoBindCooldown throttles the automatic binds a page load triggers.
+const clinePassAutoBindCooldown = 30 * time.Second
+
+// clinePassAutoBindDue reports whether an automatic bind may run for one account now, and
+// records the attempt. A read that keeps finding an account unbound must not rewrite the
+// channel on every request, so the cooldown holds the retries back; an account that binds
+// successfully never asks again because it stops being unbound.
+func (a *App) clinePassAutoBindDue(accountID string) bool {
+	if a == nil || strings.TrimSpace(accountID) == "" {
+		return false
+	}
+	a.clinePassAutoBindMu.Lock()
+	defer a.clinePassAutoBindMu.Unlock()
+	if a.clinePassAutoBindAt == nil {
+		a.clinePassAutoBindAt = map[string]time.Time{}
+	}
+	if attemptedAt, ok := a.clinePassAutoBindAt[accountID]; ok && time.Since(attemptedAt) < clinePassAutoBindCooldown {
+		return false
+	}
+	a.clinePassAutoBindAt[accountID] = time.Now()
+	return true
+}
+
+// clinePassRoutesWithAutoBind reads the channel index and repairs the accounts it does not
+// route. Binding is not an action the operator should have to remember: a credential
+// rotation rewrites an account's token while the channel keeps the old one, so the page a
+// load renders is where the missing row is noticed and where it is published again. Every
+// unbound account may attempt one bind under the shared cooldown, and the index is re-read
+// only after one of them succeeded.
+func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey string, accounts []ClinePassAccountView) map[string]clinePassChannelRoute {
+	routes := a.clinePassChannelRoutes(ctx, managementKey)
+	if a == nil || a.clinePass == nil || len(accounts) == 0 {
+		return routes
+	}
+	unbound := make([]ClinePassAccountView, 0, len(accounts))
+	for _, account := range accounts {
+		if _, bound := clinePassChannelRouteLookup(account, a.clinePass.accessToken(account.ID), routes); !bound {
+			unbound = append(unbound, account)
+		}
+	}
+	if len(unbound) == 0 {
+		return routes
+	}
+	bound := false
+	for _, account := range unbound {
+		if !a.clinePassAutoBindDue(account.ID) {
+			continue
+		}
+		if outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, account.ID, false); outcome.Bound {
+			bound = true
+		}
+	}
+	if !bound {
+		return routes
+	}
+	return a.clinePassChannelRoutes(ctx, managementKey)
+}
+
 // clinePassChannelRouteLookup prefers the account's own row (base URL plus its credential) and
 // falls back to the base-URL row, which is what a deployment that has not re-bound yet still has.
 func clinePassChannelRouteLookup(view ClinePassAccountView, apiKey string, routes map[string]clinePassChannelRoute) (clinePassChannelRoute, bool) {
@@ -210,7 +268,8 @@ func applyClinePassRouteState(view ClinePassAccountView, apiKey string, routes m
 
 // annotateClinePassRouteState fills the routing fields of the account views a
 // response carries. The channel list is read once and shared by every view; nil
-// views are skipped.
+// views are skipped. An account that is not routed yet is published here, so a
+// page load repairs the channel a credential rotation left behind.
 func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey string, views ...*ClinePassAccountView) {
 	targets := make([]*ClinePassAccountView, 0, len(views))
 	for _, view := range views {
@@ -221,7 +280,11 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 	if len(targets) == 0 {
 		return
 	}
-	routes := a.clinePassChannelRoutes(ctx, managementKey)
+	accounts := make([]ClinePassAccountView, 0, len(targets))
+	for _, view := range targets {
+		accounts = append(accounts, *view)
+	}
+	routes := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	for _, view := range targets {
 		// The stored credential is what identifies this account's own channel row; it is read
 		// without any refresh or network call and never leaves this function.
@@ -238,7 +301,7 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 // credential, a header or the base URL.
 type clinePassBindOutcome struct {
 	Bound     bool
-	Result    OpenCodeBindingResult
+	Result    ProviderChannelBindingResult
 	ErrorText string
 }
 
@@ -255,11 +318,15 @@ func (o clinePassBindOutcome) fields() map[string]any {
 }
 
 // bindClinePassAccountBestEffort publishes a saved Cline Pass account to CPA
-// routing so the common sign-in and save paths produce a routable account. It
-// never fails the caller: the account is already stored, and a failure is
-// reported through the outcome and the operation journal instead. The write
-// uses a bounded context and runs on the request goroutine.
-func (a *App) bindClinePassAccountBestEffort(ctx context.Context, managementKey, accountID string) clinePassBindOutcome {
+// routing. It never fails the caller: the account is already stored, and a
+// failure is reported through the outcome instead. The write uses a bounded
+// context and runs on the request goroutine.
+//
+// journalFailures records a failed attempt in the operation history. An attempt
+// the operator triggered is always worth recording; the repair a page read runs
+// retries on its own throttle, so its failures stay out of the history instead of
+// filling it with one entry per page load while a credential is broken.
+func (a *App) bindClinePassAccountBestEffort(ctx context.Context, managementKey, accountID string, journalFailures bool) clinePassBindOutcome {
 	if a == nil || a.clinePass == nil || strings.TrimSpace(managementKey) == "" {
 		return clinePassBindOutcome{ErrorText: "management key is unavailable"}
 	}
@@ -268,7 +335,9 @@ func (a *App) bindClinePassAccountBestEffort(ctx context.Context, managementKey,
 	startedAt := time.Now().UTC()
 	credential, errCredential := a.clinePass.credential(bindCtx, accountID)
 	if errCredential != nil {
-		a.recordClinePassBinding(startedAt, false)
+		if journalFailures {
+			a.recordClinePassBinding(startedAt, false)
+		}
 		return clinePassBindOutcome{ErrorText: sanitizeClinePassError(errCredential.Error())}
 	}
 	models := credential.Models
@@ -277,7 +346,9 @@ func (a *App) bindClinePassAccountBestEffort(ctx context.Context, managementKey,
 	}
 	result, errBind := a.bindClinePassChannel(bindCtx, managementKey, credential.ID, credential.BaseURL, credential.APIKey, a.clinePassChannelLabel(credential.ID), models, a.clinePass.clinePassClientVersion(bindCtx))
 	if errBind != nil {
-		a.recordClinePassBinding(startedAt, false)
+		if journalFailures {
+			a.recordClinePassBinding(startedAt, false)
+		}
 		return clinePassBindOutcome{ErrorText: sanitizeClinePassError(errBind.Error())}
 	}
 	a.recordClinePassBinding(startedAt, true)
@@ -331,7 +402,7 @@ func (a *App) completeClinePassLogin(ctx context.Context, managementKey string, 
 	if a == nil || view == nil || view.Account == nil || strings.TrimSpace(managementKey) == "" {
 		return
 	}
-	outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, view.Account.ID)
+	outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, view.Account.ID, true)
 	applyClinePassBindOutcome(view.Account, outcome)
 	if outcome.Bound {
 		view.Binding = &outcome.Result
@@ -361,7 +432,7 @@ func (a *App) rebindClinePassAccounts(ctx context.Context, managementKey string)
 	rebound := 0
 	failed := 0
 	for _, account := range a.clinePass.ListAccounts() {
-		if a.bindClinePassAccountBestEffort(ctx, managementKey, account.ID).Bound {
+		if a.bindClinePassAccountBestEffort(ctx, managementKey, account.ID, true).Bound {
 			rebound++
 			continue
 		}

@@ -423,12 +423,12 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
               const canOpenJob = Boolean(operation.related_job_id && activeJobIDs.includes(operation.related_job_id));
               return (
                 <tr key={operation.id}>
-                  <td><OperationStatusBadge status={operation.status} /></td>
-                  <td><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{operationReasonSummary(operation, locale)}</span> : null}</div></td>
-                  <td><span className={`operation-source source-${operation.source}`}>{sourceLabel(operation.source, locale)}</span></td>
-                  <td><OperationCounts operation={operation} /></td>
-                  <td><div className="operation-target"><code>{operation.target_id || operation.related_job_id || "-"}</code><span>{scopeLabel(operation.scope, locale)}</span></div></td>
-                  <td><time>{formatDateTime(operation.finished_at || operation.started_at)}</time></td>
+                  <td data-label={tx("ui.status")}><OperationStatusBadge status={operation.status} /></td>
+                  <td data-label={tx("ui.actions")}><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{operationReasonSummary(operation, locale)}</span> : null}</div></td>
+                  <td data-label={tx("ui.source")}><span className={`operation-source source-${operation.source}`}>{sourceLabel(operation.source, locale)}</span></td>
+                  <td data-label={tx("ui.results")}><OperationCounts operation={operation} /></td>
+                  <td data-label={tx("ui.related_object")}><div className="operation-target"><code>{operation.target_id || operation.related_job_id || "-"}</code><span>{scopeLabel(operation.scope, locale)}</span></div></td>
+                  <td data-label={tx("ui.time")}><time>{formatDateTime(operation.finished_at || operation.started_at)}</time></td>
                   <td><div className="operation-row-actions">{canOpenJob ? <IconButton label={tx("ui.open_related_job")} onClick={() => onOpenRelatedJob(operation)}><Link2 size={15} /></IconButton> : null}<IconButton label={tx("ui.view_operation_details")} onClick={() => setDetail(operation)}><Eye size={15} /></IconButton></div></td>
                 </tr>
               );

@@ -274,8 +274,8 @@ type ClinePassLoginView struct {
 	// Binding reports the automatic bind attempted when a sign-in completed so
 	// the client can tell whether the new account is already routable. Exactly
 	// one of the two fields is set. Neither carries a credential.
-	Binding      *OpenCodeBindingResult `json:"binding,omitempty"`
-	BindingError string                 `json:"binding_error,omitempty"`
+	Binding      *ProviderChannelBindingResult `json:"binding,omitempty"`
+	BindingError string                        `json:"binding_error,omitempty"`
 }
 
 // clinePassLogin statuses reported to the UI.

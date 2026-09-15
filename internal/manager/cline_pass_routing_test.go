@@ -21,11 +21,14 @@ import (
 // and counts the write. Read or write failures can be forced so the degraded
 // paths stay exercised.
 type clinePassChannelStore struct {
-	mu         sync.Mutex
-	entries    []map[string]any
-	writes     int
-	failReads  bool
-	failWrites bool
+	mu      sync.Mutex
+	entries []map[string]any
+	writes  int
+	// writeAttempts counts every PUT, including the ones failWrites rejects, so a
+	// test can see how often the plugin tried to publish a channel.
+	writeAttempts int
+	failReads     bool
+	failWrites    bool
 	// assignAuthIndex mimics CPA's own write: it stamps an auth index onto the
 	// entries of write number n, so the plugin's re-read sees the index CPA would
 	// have assigned.
@@ -47,6 +50,7 @@ func (s *clinePassChannelStore) doer() HTTPDoer {
 			}
 			return jsonHTTPResponse(http.StatusOK, string(payload)), nil
 		case http.MethodPut:
+			s.writeAttempts++
 			if s.failWrites {
 				return jsonHTTPResponse(http.StatusInternalServerError, `{"error":"boom"}`), nil
 			}
@@ -96,8 +100,9 @@ func getClinePassAccounts(t *testing.T, app *App, headers http.Header) clinePass
 	return payload
 }
 
-// An account only becomes routable once a CPA channel publishes its base URL.
-// The view must say so: unbound reports zero channel models and a full gap.
+// Reading the account list publishes an account that is not routed yet. A credential
+// rotation rewrites an account's token while the channel keeps the old one, so the repair
+// belongs to the read instead of to a bind button the operator has to remember.
 func TestClinePassAccountsReportRoutingState(t *testing.T) {
 	service, _ := newConfiguredClinePassService(t, t.TempDir())
 	accountID, errSave := service.SaveAPIKeyAccount("", "routing", "", "sk-routing-secret")
@@ -110,19 +115,30 @@ func TestClinePassAccountsReportRoutingState(t *testing.T) {
 	app.managementDoer = store.doer()
 	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
 
-	unbound := getClinePassAccounts(t, app, headers)
-	if len(unbound.Accounts) != 1 {
-		t.Fatalf("accounts = %+v", unbound.Accounts)
+	// The first read is already bound: it published the channel the account needs.
+	published := getClinePassAccounts(t, app, headers)
+	if len(published.Accounts) != 1 {
+		t.Fatalf("accounts = %+v", published.Accounts)
 	}
-	account := unbound.Accounts[0]
-	if account.ChannelBound || account.ChannelModels != 0 {
-		t.Fatalf("unbound routing state = %+v", account)
+	account := published.Accounts[0]
+	if !account.ChannelBound || account.ChannelModels != len(clinePassCatalog) || account.ChannelModelGaps != 0 {
+		t.Fatalf("auto-bound routing state = %+v", account)
 	}
-	if account.ChannelModelGaps != len(account.Models) || account.ChannelModelGaps == 0 {
-		t.Fatalf("unbound gap = %d, want %d", account.ChannelModelGaps, len(account.Models))
+	entries, writes := store.snapshot()
+	if writes != 1 || len(entries) != 1 {
+		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
 	}
 
-	// The explicit bind route does not change: it still publishes the channel.
+	// A bound account is left alone: the next read writes nothing.
+	again := getClinePassAccounts(t, app, headers)
+	if !again.Accounts[0].ChannelBound {
+		t.Fatalf("second read routing state = %+v", again.Accounts[0])
+	}
+	if _, writes := store.snapshot(); writes != 1 {
+		t.Fatalf("channel writes after a second read = %d, want 1", writes)
+	}
+
+	// The explicit bind route still answers for an operator who asks for it.
 	bindResponse := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/bind", Headers: headers,
 		Body: []byte(`{"account_id":"` + accountID + `"}`),
@@ -130,15 +146,9 @@ func TestClinePassAccountsReportRoutingState(t *testing.T) {
 	if bindResponse.StatusCode != http.StatusOK {
 		t.Fatalf("bind status = %d body=%s", bindResponse.StatusCode, bindResponse.Body)
 	}
-	entries, writes := store.snapshot()
-	if writes != 1 || len(entries) != 1 {
+	entries, writes = store.snapshot()
+	if writes != 2 || len(entries) != 1 {
 		t.Fatalf("channel writes = %d entries = %#v", writes, entries)
-	}
-
-	bound := getClinePassAccounts(t, app, headers)
-	account = bound.Accounts[0]
-	if !account.ChannelBound || account.ChannelModels != len(clinePassCatalog) || account.ChannelModelGaps != 0 {
-		t.Fatalf("bound routing state = %+v", account)
 	}
 
 	// A partially bound channel reports exactly the models it does not publish.
@@ -154,6 +164,68 @@ func TestClinePassAccountsReportRoutingState(t *testing.T) {
 	if !account.ChannelBound || account.ChannelModels != len(partialModels) || account.ChannelModelGaps != wantGaps {
 		t.Fatalf("partial routing state = %+v, want gaps=%d", account, wantGaps)
 	}
+}
+
+// A bind that keeps failing must not turn every read into a channel write: the attempt is
+// throttled per account, and the page still reports the account as unbound.
+func TestClinePassAutoBindIsThrottledWhenTheWriteFails(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	if _, errSave := service.SaveAPIKeyAccount("", "throttled", "", "sk-throttled-secret"); errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	store := &clinePassChannelStore{failWrites: true}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		payload := getClinePassAccounts(t, app, headers)
+		if len(payload.Accounts) != 1 || payload.Accounts[0].ChannelBound {
+			t.Fatalf("attempt %d routing state = %+v", attempt, payload.Accounts)
+		}
+	}
+	store.mu.Lock()
+	attempts, writes := store.writeAttempts, store.writes
+	store.mu.Unlock()
+	if attempts != 1 {
+		t.Fatalf("channel write attempts = %d, want 1 inside the cooldown", attempts)
+	}
+	if writes != 0 {
+		t.Fatalf("channel writes = %d, want 0 while every write fails", writes)
+	}
+	// The history stays for actions: a repair a page load runs does not log one failed bind
+	// per load, it just retries on its own throttle.
+	for _, operation := range app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize}).Operations {
+		if operation.ReasonCode == "channel_bind_failed" {
+			t.Fatalf("an automatic bind failure was journalled: %+v", operation)
+		}
+	}
+}
+
+// A bind the operator triggered is recorded even when it fails, so the history explains why
+// the account is not routed.
+func TestClinePassSaveJournalsABindFailure(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	store := &clinePassChannelStore{failWrites: true}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/accounts", Headers: headers,
+		Body: []byte(`{"name":"journalled","api_key":"sk-journalled-secret"}`),
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("save status = %d body=%s", response.StatusCode, response.Body)
+	}
+	for _, operation := range app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize}).Operations {
+		if operation.ReasonCode == "channel_bind_failed" {
+			return
+		}
+	}
+	t.Fatal("a bind failure the operator triggered was not journalled")
 }
 
 // A channel-list read failure must degrade every account to "unbound" without
@@ -211,9 +283,9 @@ func TestClinePassSaveAndLoginBindAccount(t *testing.T) {
 		t.Fatal("the save response leaked the credential")
 	}
 	var savePayload struct {
-		Account      ClinePassAccountView   `json:"account"`
-		Binding      *OpenCodeBindingResult `json:"binding"`
-		BindingError string                 `json:"binding_error"`
+		Account      ClinePassAccountView          `json:"account"`
+		Binding      *ProviderChannelBindingResult `json:"binding"`
+		BindingError string                        `json:"binding_error"`
 	}
 	if errDecode := json.Unmarshal(saveResponse.Body, &savePayload); errDecode != nil {
 		t.Fatalf("decode save: %v", errDecode)
@@ -275,9 +347,9 @@ func TestClinePassSaveAndLoginReportBindFailureWithoutFailing(t *testing.T) {
 		t.Fatal("the save response leaked the credential")
 	}
 	var savePayload struct {
-		Account      ClinePassAccountView   `json:"account"`
-		Binding      *OpenCodeBindingResult `json:"binding"`
-		BindingError string                 `json:"binding_error"`
+		Account      ClinePassAccountView          `json:"account"`
+		Binding      *ProviderChannelBindingResult `json:"binding"`
+		BindingError string                        `json:"binding_error"`
 	}
 	if errDecode := json.Unmarshal(saveResponse.Body, &savePayload); errDecode != nil {
 		t.Fatalf("decode save: %v", errDecode)
@@ -686,7 +758,7 @@ func newClinePassPublicationApp(t *testing.T, models []string) (*App, *clinePass
 	return app, store, accountID, http.Header{"Authorization": []string{"Bearer management-secret"}}
 }
 
-func bindClinePassPublicationAccount(t *testing.T, app *App, headers http.Header, accountID string) OpenCodeBindingResult {
+func bindClinePassPublicationAccount(t *testing.T, app *App, headers http.Header, accountID string) ProviderChannelBindingResult {
 	t.Helper()
 	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
 		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/bind", Headers: headers,
@@ -696,7 +768,7 @@ func bindClinePassPublicationAccount(t *testing.T, app *App, headers http.Header
 		t.Fatalf("bind status = %d body=%s", response.StatusCode, response.Body)
 	}
 	var payload struct {
-		Binding OpenCodeBindingResult `json:"binding"`
+		Binding ProviderChannelBindingResult `json:"binding"`
 	}
 	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
 		t.Fatalf("decode bind: %v", errDecode)

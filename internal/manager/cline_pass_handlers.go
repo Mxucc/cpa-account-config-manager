@@ -155,7 +155,7 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 		})
 		// The account is saved either way; binding is best-effort and its outcome
 		// is reported on the response instead of failing the save.
-		outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, accountID)
+		outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, accountID, true)
 		applyClinePassBindOutcome(&view, outcome)
 		response := map[string]any{"account": view, "result": result}
 		for key, value := range outcome.fields() {
@@ -480,7 +480,9 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 	}
 	accounts := a.clinePass.ListAccounts()
 	stripPrefix := a.clinePass.StripModelPrefix()
-	routes := a.clinePassChannelRoutes(ctx, managementKey)
+	// Reading the page also repairs the channel: an account whose credential was rotated is
+	// published again here, so the page never reports a state the plugin would fix on a click.
+	routes := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	published := map[string]struct{}{}
 	channelBound := false
 	channelModels := 0

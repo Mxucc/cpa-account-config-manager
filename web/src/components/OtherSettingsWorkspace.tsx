@@ -484,7 +484,6 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
             </div>
           </div>
           <AutoModelWhitelistPanel refreshRevision={experimentalRefreshRevision} onAPIError={onAPIError} />
-          <p className="experimental-moved-note">{tx("ui.codex_settings_moved_note")}</p>
           <div className="settings-section-actions experimental-actions">
             <button className="button button-primary" type="button" disabled={loading || savingExperiment || !experiments} onClick={() => void saveExperimentalSettings()}>
               {savingExperiment ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}

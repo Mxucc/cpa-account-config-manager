@@ -237,7 +237,7 @@ func TestOpenCodeGoModelRoutesAndBinding(t *testing.T) {
 		t.Fatalf("bound channel models = %#v, want opencode-go-alpha", entry["models"])
 	}
 	var bindPayload struct {
-		Binding OpenCodeBindingResult `json:"binding"`
+		Binding ProviderChannelBindingResult `json:"binding"`
 	}
 	if errDecode := json.Unmarshal(bindResponse.Body, &bindPayload); errDecode != nil {
 		t.Fatalf("decode bind response: %v", errDecode)
@@ -327,7 +327,7 @@ func TestOpenCodeSetAPIKeyInvalidatesCatalog(t *testing.T) {
 // Merge must preserve existing rows in every shape CPA or a hand-edited config
 // can produce, and must not duplicate model ids the channel already serves.
 func TestOpenCodeMergeChannelModelsPreservesExistingRows(t *testing.T) {
-	typed := mergeOpenCodeChannelModels([]map[string]any{{"name": "gpt-5.5", "alias": "gpt-5.5-fast"}}, []string{"gpt-5.5", "kimi-k2"})
+	typed := mergeProviderChannelModels([]map[string]any{{"name": "gpt-5.5", "alias": "gpt-5.5-fast"}}, []string{"gpt-5.5", "kimi-k2"})
 	if len(typed) != 2 {
 		t.Fatalf("typed rows = %#v", typed)
 	}
@@ -338,7 +338,7 @@ func TestOpenCodeMergeChannelModelsPreservesExistingRows(t *testing.T) {
 		t.Fatalf("catalog row = %#v", typed[1])
 	}
 
-	legacy := mergeOpenCodeChannelModels([]any{"legacy-model", 42, map[string]any{"name": "kimi-k2"}}, []string{"kimi-k2", "deepseek-chat"})
+	legacy := mergeProviderChannelModels([]any{"legacy-model", 42, map[string]any{"name": "kimi-k2"}}, []string{"kimi-k2", "deepseek-chat"})
 	if len(legacy) != 3 {
 		t.Fatalf("legacy rows = %#v", legacy)
 	}
@@ -346,7 +346,7 @@ func TestOpenCodeMergeChannelModelsPreservesExistingRows(t *testing.T) {
 		t.Fatalf("legacy rows = %#v", legacy)
 	}
 
-	if empty := mergeOpenCodeChannelModels(nil, nil); len(empty) != 0 {
+	if empty := mergeProviderChannelModels(nil, nil); len(empty) != 0 {
 		t.Fatalf("empty merge = %#v", empty)
 	}
 }

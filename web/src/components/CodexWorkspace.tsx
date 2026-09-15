@@ -508,7 +508,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                         onChange={() => toggleModelSelection(row.id)}
                       />
                     </td>
-                    <td>
+                    <td data-label={tx("ui.model")}>
                       <div className="codex-model-cell">
                         <strong>{row.id}</strong>
                         {row.long_context_threshold_tokens && (row.long_context_input_multiplier ?? 0) > 1 ? (
@@ -519,12 +519,12 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                         ) : null}
                       </div>
                     </td>
-                    <td>{row.priced ? formatCodexPrice(row.input_usd_per_million) : tx("ui.codex_models_unpriced")}</td>
-                    <td>{formatCodexPrice(row.output_usd_per_million)}</td>
-                    <td>{formatCodexPrice(row.cache_read_usd_per_million)}</td>
-                    <td>{row.accounts}</td>
-                    <td>{row.channels}</td>
-                    <td><span className={row.disabled ? "codex-model-state disabled" : "codex-model-state enabled"}>{tx(row.disabled ? "ui.disabled" : "ui.enabled")}</span></td>
+                    <td data-label={tx("ui.codex_models_input_price")}>{row.priced ? formatCodexPrice(row.input_usd_per_million) : tx("ui.codex_models_unpriced")}</td>
+                    <td data-label={tx("ui.codex_models_output_price")}>{formatCodexPrice(row.output_usd_per_million)}</td>
+                    <td data-label={tx("ui.codex_models_cache_read_price")}>{formatCodexPrice(row.cache_read_usd_per_million)}</td>
+                    <td data-label={tx("ui.codex_models_accounts_count")}>{row.accounts}</td>
+                    <td data-label={tx("ui.codex_models_channels_count")}>{row.channels}</td>
+                    <td data-label={tx("ui.status")}><span className={row.disabled ? "codex-model-state disabled" : "codex-model-state enabled"}>{tx(row.disabled ? "ui.disabled" : "ui.enabled")}</span></td>
                     <td className="actions-cell">
                       <div className="row-actions" role="group" aria-label={tx("ui.model_actions", { model: row.id })}>
                         <IconButton label={tx("ui.model_test_action", { model: row.id })} disabled={busy === "model-test"} onClick={() => openModelTest(row.id)}>

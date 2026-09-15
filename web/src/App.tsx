@@ -56,6 +56,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { InspectionWorkspace } from "./components/InspectionWorkspace";
 import { AIProvidersSettings } from "./components/AIProvidersSettings";
 import { CodexWorkspace } from "./components/CodexWorkspace";
+import { ClinePassWorkspace } from "./components/ClinePassWorkspace";
 import { OpenCodeWorkspace } from "./components/OpenCodeWorkspace";
 import { formatCreditUSD } from "./format/currency";
 import { providerRuntimeSnapshotsForChannels } from "./format/providerRuntime";
@@ -1495,24 +1496,24 @@ function AccountManagerApp() {
                 return (
                 <tr key={account.id} className={`${selected.has(account.id) ? "is-selected" : ""} ${!account.editable ? "is-readonly" : ""}`}>
                   <td className="select-cell"><input type="checkbox" checked={selected.has(account.id)} disabled={!account.editable} onChange={() => toggleAccount(account)} aria-label={tx("ui.select_account", { account: account.label || account.name || account.id })} title={operatorMessage(account.read_only_reason, locale)} /></td>
-                  <td className="identity-column-cell">
+                  <td className="identity-column-cell" data-label={tx("ui.accounts")}>
                     <div className="identity-cell">
                       <strong>{account.label || account.email || account.name || account.id}</strong>
                       <span>{account.email && account.label !== account.email ? account.email : account.name}</span>
                       {account.note ? <small>{account.note}</small> : null}
                     </div>
                   </td>
-                  <td><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled openCodeQuota={openCodeQuota[account.id] || (account.auth_id ? openCodeQuota[account.auth_id] : undefined)} clinePassQuota={clinePassQuota[account.id] || (account.auth_id ? clinePassQuota[account.auth_id] : undefined)} /></td>
-                  <td><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
-                  <td><AccountTypeCell account={account} /></td>
-									<td><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
-									<td><AccountConcurrencyCell account={account} /></td>
-									<td><AccountLifecycleTime value={account.created_at} /></td>
-									<td><AccountLifecycleTime value={account.disabled_at} /></td>
-                  <td>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />{tx("ui.editable")}</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason, locale)}><LockKeyhole size={13} />{tx("ui.read_only")}</span>}</td>
-                  <td><StateCell account={account} /></td>
-                  <td><code className="priority-value">{account.priority ?? "-"}</code></td>
-                  <td><RoutingCell account={account} /></td>
+                  <td data-label={tx("ui.usage")}><AccountUsageCell account={account} weeklyOverdraftEnabled={weeklyOverdraftEnabled} creditUsageEnabled openCodeQuota={openCodeQuota[account.id] || (account.auth_id ? openCodeQuota[account.auth_id] : undefined)} clinePassQuota={clinePassQuota[account.id] || (account.auth_id ? clinePassQuota[account.auth_id] : undefined)} /></td>
+                  <td data-label={tx("ui.provider")}><span className="provider-tag">{technicalLabel(account.provider || account.type)}</span></td>
+                  <td data-label={tx("ui.type")}><AccountTypeCell account={account} /></td>
+									<td data-label={tx("ui.active_reset_count")}><AccountQuotaMetadataCell account={account} busy={quotaMetadataBusy[account.id]} onRefresh={() => void refreshQuotaMetadata(account)} onReset={() => setQuotaResetTarget(account)} /></td>
+									<td data-label={tx("ui.account_concurrency")}><AccountConcurrencyCell account={account} /></td>
+									<td data-label={tx("ui.initial_time")}><AccountLifecycleTime value={account.created_at} /></td>
+									<td data-label={tx("ui.disabled_time")}><AccountLifecycleTime value={account.disabled_at} /></td>
+                  <td data-label={tx("ui.access")}>{account.editable ? <span className="access-tag editable"><Settings2 size={13} />{tx("ui.editable")}</span> : <span className="access-tag readonly" title={operatorMessage(account.read_only_reason, locale)}><LockKeyhole size={13} />{tx("ui.read_only")}</span>}</td>
+                  <td data-label={tx("ui.status")}><StateCell account={account} /></td>
+                  <td data-label={tx("ui.priority")}><code className="priority-value">{account.priority ?? "-"}</code></td>
+                  <td data-label={tx("ui.routing")}><RoutingCell account={account} /></td>
                   <td className="actions-cell">
                     <div className="row-actions">
                       <IconButton label={tx("ui.view_account", { account: identity })} onClick={() => setDetailAccount(account)}><Eye size={15} /></IconButton>
@@ -1581,7 +1582,7 @@ function AccountManagerApp() {
         ) : activeView === "opencode" ? (
           <OpenCodeWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "cline_pass" ? (
-          <OpenCodeWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} focus="cline-pass" />
+          <ClinePassWorkspace refreshRevision={0} onAPIError={handleAPIError} onNotice={setNotice} />
         ) : activeView === "operations" ? (
           <OperationLogWorkspace
             activeJobIDs={[job?.id, forceJob?.id].filter((id): id is string => Boolean(id))}

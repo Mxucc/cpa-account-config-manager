@@ -23,7 +23,7 @@ interface ClinePassProbeTarget {
 }
 
 /** The Cline Pass surface splits into the credential list and the published model mapping. */
-type ClinePassTab = "accounts" | "models";
+type ClinePassTab = "overview" | "accounts" | "models";
 
 /** One mapping row waiting in the shared model-test dialog, with its finished result. */
 interface ClinePassRowProbe {
@@ -98,7 +98,7 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
   const [clinePassProbeError, setClinePassProbeError] = useState("");
   // The published mapping is its own surface: it loads when its tab opens and never blocks
   // the accounts tab, so a broken models endpoint only shows its own error state.
-  const [clinePassTab, setClinePassTab] = useState<ClinePassTab>("accounts");
+  const [clinePassTab, setClinePassTab] = useState<ClinePassTab>("overview");
   const [clinePassModels, setClinePassModels] = useState<ClinePassModelsResponse | null>(null);
   const [clinePassModelsLoading, setClinePassModelsLoading] = useState(false);
   const [clinePassModelsError, setClinePassModelsError] = useState("");
@@ -515,6 +515,15 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
           <button
             type="button"
             role="tab"
+            className={clinePassTab === "overview" ? "active" : ""}
+            aria-selected={clinePassTab === "overview"}
+            onClick={() => setClinePassTab("overview")}
+          >
+            {tx("ui.opencode_tab_overview")}
+          </button>
+          <button
+            type="button"
+            role="tab"
             className={clinePassTab === "accounts" ? "active" : ""}
             aria-selected={clinePassTab === "accounts"}
             onClick={() => setClinePassTab("accounts")}
@@ -531,6 +540,38 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
             {tx("ui.cline_pass_tab_models")}
           </button>
         </div>
+        {clinePassTab === "overview" ? (
+        <section className="codex-tab-panel" role="tabpanel" aria-label={tx("ui.opencode_tab_overview")}>
+          <section className="opencode-section" aria-label={tx("ui.cline_pass_usage")}>
+            <div className="opencode-section-heading"><div><strong>{tx("ui.cline_pass_usage")}</strong><span>{tx("ui.cline_pass_usage_reference_note")}</span></div></div>
+            <div className="opencode-price-grid">
+              {([
+                ["5h", "five_hour"],
+                ["7d", "weekly"],
+                ["30d", "monthly"],
+              ] as const).map(([window, key]) => {
+                const usage = clinePassAccounts.reduce((total, account) => {
+                  const value = account.quota_usage?.[key];
+                  if (!value) return total;
+                  total.usd += value.usd ?? 0;
+                  total.requests += value.requests ?? 0;
+                  total.input_tokens += value.input_tokens ?? 0;
+                  total.output_tokens += value.output_tokens ?? 0;
+                  return total;
+                }, { usd: 0, requests: 0, input_tokens: 0, output_tokens: 0 });
+                return (
+                <div className="opencode-price-card" key={window}>
+                  <strong>{window}</strong><span>{formatAllowanceUSD(usage.usd, formatNumber)}</span>
+                  <small>{formatNumber(usage.requests)} requests · {formatNumber(usage.input_tokens)} / {formatNumber(usage.output_tokens)} tokens</small>
+                </div>
+                );
+              })}
+            </div>
+            <p className="opencode-note">{tx("ui.cline_pass_usage_reference_note")}</p>
+          </section>
+        </section>
+        ) : null}
+
         {clinePassTab === "accounts" ? (
         <section className="codex-tab-panel" role="tabpanel" aria-label={tx("ui.cline_pass_tab_accounts")}>
         <section className="opencode-section" aria-label={tx("ui.cline_pass_accounts")}>

@@ -45,6 +45,19 @@ func TestIsAIProviderUsageRecordSeparatesOAuthAndAPIKeyTraffic(t *testing.T) {
 	}
 }
 
+func TestAppRoutesAPIKeyUsageToKnownAccount(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	app.usage.DiscoverAuthStorage([]cpaapi.HostAuthFileEntry{{AuthIndex: "known-auth-index", ID: "known-auth-id", Name: "known account", Provider: "openai", Email: "known@example.com"}})
+	app.HandleUsage(cpaapi.UsageRecord{AuthIndex: "known-auth-index", AuthType: "api_key", APIKey: "provider-secret", Model: "gpt-5", Detail: cpaapi.UsageDetail{TotalTokens: 25}})
+	if got := app.usage.Snapshot("known-auth-index"); got == nil || got.TotalTokens != 25 {
+		t.Fatalf("known account usage was not retained: %+v", got)
+	}
+	if snapshots := app.providerRuntime.Snapshot(); len(snapshots) != 0 {
+		t.Fatalf("known account usage entered provider store: %+v", snapshots)
+	}
+}
+
 func TestAppRoutesProviderUsageAwayFromAccountUsage(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
 	defer app.Close()

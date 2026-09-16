@@ -860,6 +860,19 @@ func (a *App) configError() string {
 // isAIProviderUsageRecord distinguishes API-key provider traffic from native
 // OAuth account traffic before it reaches the provider-only runtime dashboard.
 // CPA delivers both through the same usage callback.
+func (a *App) isKnownAccountUsageRecord(record cpaapi.UsageRecord) bool {
+	if a == nil || a.usage == nil {
+		return false
+	}
+	for _, identifier := range []string{record.AuthIndex, record.AuthID} {
+		resolved := a.usage.ResolveAuthIndex(identifier)
+		if resolved != "" && a.usage.UsageIdentity(resolved) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func isAIProviderUsageRecord(record cpaapi.UsageRecord) bool {
 	switch strings.ToLower(strings.TrimSpace(record.AuthType)) {
 	case "oauth", "oauth2":
@@ -887,7 +900,7 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		// tracker itself decides whether the record is Cline Pass traffic.
 		a.clinePass.ObserveUsage(record)
 	}
-	if isAIProviderUsageRecord(record) {
+	if !a.isKnownAccountUsageRecord(record) && isAIProviderUsageRecord(record) {
 		// Provider credentials and native OAuth accounts share CPA's usage
 		// callback. Never put provider traffic into the account usage store: an
 		// API-key channel can expose an auth index, and that index may collide

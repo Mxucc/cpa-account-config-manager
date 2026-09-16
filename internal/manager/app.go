@@ -92,6 +92,7 @@ type App struct {
 	opencode                 *OpenCodeQuotaService
 	opencodeZen              *OpenCodeZenService
 	clinePass                *ClinePassService
+	autoRetry                *AutoRetryService
 	opencodePricing          *OpenCodePricingService
 	selfUpdate               *SelfUpdateService
 	codexFingerprints        *CodexFingerprintProfileService
@@ -156,6 +157,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	opencode := NewOpenCodeQuotaService()
 	opencodeZen := NewOpenCodeZenService()
 	clinePass := NewClinePassService()
+	autoRetry := NewAutoRetryService()
 	opencodePricing := NewOpenCodePricingService()
 	selfUpdate := NewSelfUpdateService(PluginVersion)
 	codexFingerprints := NewCodexFingerprintProfileService()
@@ -244,6 +246,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		opencode:                 opencode,
 		opencodeZen:              opencodeZen,
 		clinePass:                clinePass,
+		autoRetry:                autoRetry,
 		opencodePricing:          opencodePricing,
 		selfUpdate:               selfUpdate,
 		codexFingerprints:        codexFingerprints,
@@ -472,6 +475,7 @@ func (a *App) applyResolvedConfig(config Config, previousDir string) {
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
 	a.clinePass.Configure(config)
+	a.autoRetry.Configure(config)
 	a.opencodeModelControl.Configure(config)
 	a.opencodeSession.Configure(config)
 	a.codexFingerprints.Configure(config)
@@ -493,6 +497,7 @@ func (a *App) applyResolvedConfig(config Config, previousDir string) {
 	a.inspection.Configure(config)
 	a.force.Configure(config)
 	a.newAccountProbe.Configure(config)
+	a.scheduleAutoRetryApply()
 }
 
 // stateDirUnderAuthDir is where plugin state lives when the data directory is implicit: the
@@ -677,6 +682,7 @@ func (a *App) applyServiceConfig(config Config, hostSchema uint32) {
 	a.opencode.Configure(config)
 	a.opencodeZen.Configure(config)
 	a.clinePass.Configure(config)
+	a.autoRetry.Configure(config)
 	a.opencodePricing.Configure(config)
 	a.selfUpdate.SetManagementDoer(a.managementDoer)
 	a.selfUpdate.Configure(config)
@@ -715,6 +721,7 @@ func (a *App) applyServiceConfig(config Config, hostSchema uint32) {
 	a.force.Configure(config)
 	a.usage.Configure(config)
 	a.reconcileOperationSources()
+	a.scheduleAutoRetryApply()
 	// A completed configure clears the diagnostic recorded by an earlier bounded-configure
 	// timeout or panic, so the status output stops reporting a degraded lifecycle.
 	a.mu.Lock()
@@ -1363,6 +1370,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/ai-providers/test", Description: "Probe one AI provider channel endpoint with the submitted credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/ai-providers/runtime", Description: "Read redacted AI provider concurrency, token, and model cost metrics."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/usage/reset", Description: "Reset locally recorded usage for one account or AI provider."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/auto-retry", Description: "Read the automatic transparent retry budget applied to every managed credential."},
+			{Method: http.MethodPut, Path: managementRoutePrefix + "/auto-retry", Description: "Set the automatic retry budget (0..10) and apply it to every managed credential."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/proxy-profiles", Description: "List redacted reusable proxy profiles."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/proxy-profiles", Description: "Create a reusable proxy profile."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/proxy-profiles", Description: "Update a reusable proxy profile."},
@@ -1653,6 +1662,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleSelfUpdateInstall(ctx, req)
 	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/self-update/settings":
 		return a.handleSelfUpdateSettings(req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/auto-retry":
+		return a.handleAutoRetryGet(req)
+	case method == http.MethodPut && path == "/v0/management"+managementRoutePrefix+"/auto-retry":
+		return a.handleAutoRetryUpdate(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/self-update/reload":
 		return a.handleSelfUpdateReload(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/codex/overview":

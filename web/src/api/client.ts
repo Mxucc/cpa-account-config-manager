@@ -24,6 +24,7 @@ import type {
 	ExperimentalSettings,
 	ExperimentalSettingsSnapshot,
 	AutoModelWhitelistResponse,
+	AutoRetrySnapshot,
 	AgentIdentitySessionLoginResponse,
 	OpenCodeAccountSaveResponse,
 	OpenCodeAccountsResponse,
@@ -1083,6 +1084,22 @@ export async function saveExperimentalSettings(settings: Partial<ExperimentalSet
 export async function getAutoModelWhitelist(signal?: AbortSignal, page = 1, pageSize = 20): Promise<AutoModelWhitelistResponse> {
 	const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
 	return requestRecord<AutoModelWhitelistResponse>("/experiments/auto-model-whitelist", { signal }, query);
+}
+
+/**
+ * Automatic retry setting. The payload reports the host prerequisites and how
+ * many credentials already carry the setting; the card treats absent counters
+ * and objects as not reported instead of as a failure.
+ */
+export async function getAutoRetry(signal?: AbortSignal): Promise<AutoRetrySnapshot> {
+	return requestRecord<AutoRetrySnapshot>("/auto-retry", { signal });
+}
+
+export async function saveAutoRetry(attempts: number): Promise<AutoRetrySnapshot> {
+	return requestRecord<AutoRetrySnapshot>("/auto-retry", {
+		method: "PUT",
+		body: JSON.stringify({ attempts }),
+	});
 }
 
 export async function completeAgentIdentitySessionLogin(state: string, sessionJSON: string): Promise<AgentIdentitySessionLoginResponse> {

@@ -137,6 +137,10 @@ func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managem
 	// The credential lives in the weighted key list; the legacy top-level field is
 	// accepted by CPA's JSON decoder but ignored for OpenAI-compatible channels.
 	entry["api-key-entries"] = mergeProviderChannelKeyEntries(entry["api-key-entries"], apiKey, adopted)
+	// The channel carries the operator's automatic retry budget, so a channel this
+	// bind creates or reuses inherits the setting without waiting for the next
+	// apply pass. CPA reads this row field as the credential's request_retry.
+	entry["request-retry"] = a.autoRetry.Attempts()
 	delete(entry, "api-key")
 	mergedHeaders, _ := entry["headers"].(map[string]any)
 	if mergedHeaders == nil {

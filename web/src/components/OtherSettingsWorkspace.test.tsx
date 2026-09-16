@@ -327,4 +327,128 @@ describe("OtherSettingsWorkspace", () => {
     // The read-only panel is refreshed after the toggle is saved.
     await waitFor(() => expect(whitelistSpy.mock.calls.length).toBeGreaterThan(1));
   });
+  // The automatic retry card lives at the end of the experimental tab and owns its own
+  // GET/PUT pair. These tests pin the frozen /auto-retry contract: GET drives the input,
+  // PUT returns the refreshed snapshot, 0 spells out "disabled", and a raised host switch
+  // stays a neutral note instead of an error banner.
+  function stubAutoRetryFetch(requests: Array<{ url: string; init: RequestInit }>, payloads: { get?: unknown; put?: unknown }): void {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/auto-retry")) return jsonResponse(init.method === "PUT" ? payloads.put ?? payloads.get ?? {} : payloads.get ?? {});
+      if (url.endsWith("/experiments/auto-model-whitelist")) return jsonResponse({ auto_model_whitelist: { enabled: false, accounts: 0, limited: 0, recent: [] } });
+      if (url.endsWith("/experiments")) return jsonResponse({ settings: { weekly_overdraft_enabled: false, agent_identity_enabled: false, auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: true, codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
+      if (url.endsWith("/updates")) return jsonResponse({ policy: { check_enabled: false, check_interval_hours: 24, auto_update: false }, current_version: "0.2.991", update_available: false, checking: false, pending: false, checked_at: "2026-09-17T10:00:00Z" });
+      if (url.endsWith("/v0/management/latest-version")) return jsonResponse({ "latest-version": "v7.2.93" }, 200, { "X-CPA-Version": "v7.2.93" });
+      if (url.endsWith("/plugin-store")) return jsonResponse({ plugins_enabled: true, plugins: [] });
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  async function openExperimentalPanel(user: ReturnType<typeof userEvent.setup>, onNotice: (message: string) => void = () => undefined) {
+    render(<OtherSettingsWorkspace onAPIError={() => undefined} onNotice={onNotice} />);
+    const workspace = await screen.findByRole("region", { name: "其他配置" });
+    await user.click(within(workspace).getByRole("tab", { name: "实验性功能" }));
+    return within(workspace).findByRole("tabpanel", { name: "实验性功能" });
+  }
+
+  const autoRetryHost = { request_retry: 3, max_retry_interval: 30, max_retry_credentials: 0, bootstrap_retries: 2, configured: true };
+
+  it("renders the retry value and host prerequisites returned by GET", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    stubAutoRetryFetch(requests, {
+      get: {
+        attempts: 7,
+        default_attempts: 5,
+        max_attempts: 10,
+        enabled: true,
+        host: autoRetryHost,
+        applied: { codex_accounts: 3, opencode_channels: 2, cline_pass_channels: 1, skipped: 0, host_request_retry_raised: false, host_interval_raised: false, updated_at: "2026-09-17T10:00:00Z" },
+        storage_error: "",
+      },
+    });
+
+    const panel = await openExperimentalPanel(user);
+
+    const input = within(panel).getByRole("spinbutton", { name: "重试次数" });
+    await waitFor(() => expect(input).toHaveValue(7));
+    expect(within(panel).getByText("宿主请求重试次数：3")).toBeInTheDocument();
+    expect(within(panel).getByText("最大重试间隔：30 秒")).toBeInTheDocument();
+    expect(within(panel).getByText("最大重试凭据数：0")).toBeInTheDocument();
+    expect(within(panel).getByText("启动重试次数：2")).toBeInTheDocument();
+    expect(within(panel).getByText("Codex 账号：3")).toBeInTheDocument();
+    expect(within(panel).getByText("OpenCode 渠道：2")).toBeInTheDocument();
+    expect(within(panel).getByText("Cline Pass 渠道：1")).toBeInTheDocument();
+    // A zero skip count is not reported: only a non-zero one is interesting.
+    expect(within(panel).queryByText("已跳过：0")).not.toBeInTheDocument();
+    // Both routes carry the management key the rest of the app sends.
+    const get = requests.find(({ url, init }) => url.endsWith("/auto-retry") && init.method !== "PUT");
+    expect(new Headers(get?.init.headers).get("Authorization")).toBe("Bearer management-secret");
+  });
+
+  it("saves the chosen number with PUT and reflects the returned snapshot", async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    stubAutoRetryFetch(requests, {
+      get: { attempts: 5, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 3, opencode_channels: 2, cline_pass_channels: 1, skipped: 0 } },
+      put: { attempts: 8, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 5, opencode_channels: 2, cline_pass_channels: 1, skipped: 1 } },
+    });
+
+    const panel = await openExperimentalPanel(user, onNotice);
+    const input = within(panel).getByRole("spinbutton", { name: "重试次数" });
+    await waitFor(() => expect(input).toHaveValue(5));
+    await user.click(within(panel).getByRole("button", { name: "保存重试次数" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/auto-retry") && init.method === "PUT")).toBe(true));
+    const put = requests.find(({ url, init }) => url.endsWith("/auto-retry") && init.method === "PUT");
+    expect(JSON.parse(String(put?.init.body))).toEqual({ attempts: 5 });
+    expect(new Headers(put?.init.headers).get("Authorization")).toBe("Bearer management-secret");
+    expect(onNotice).toHaveBeenCalledWith("自动重试设置已保存");
+
+    // The PUT answer refreshes the card in place: input and counters follow the response.
+    await user.clear(input);
+    await user.type(input, "8");
+    await user.click(within(panel).getByRole("button", { name: "保存重试次数" }));
+    await waitFor(() => expect(requests.filter(({ url, init }) => url.endsWith("/auto-retry") && init.method === "PUT").length).toBe(2));
+    const second = requests.filter(({ url, init }) => url.endsWith("/auto-retry") && init.method === "PUT").at(-1);
+    expect(JSON.parse(String(second?.init.body))).toEqual({ attempts: 8 });
+    await waitFor(() => expect(input).toHaveValue(8));
+    expect(within(panel).getByText("Codex 账号：5")).toBeInTheDocument();
+    expect(within(panel).getByText("已跳过：1")).toBeInTheDocument();
+  });
+
+  it("spells out that 0 disables retries without hiding the input", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    stubAutoRetryFetch(requests, { get: { attempts: 0, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 0, opencode_channels: 0, cline_pass_channels: 0 } } });
+
+    const panel = await openExperimentalPanel(user);
+
+    const input = within(panel).getByRole("spinbutton", { name: "重试次数" });
+    await waitFor(() => expect(input).toHaveValue(0));
+    expect(input).toBeEnabled();
+    expect(within(panel).getByText("已关闭（不重试）")).toBeInTheDocument();
+    expect(within(panel).getByText("0 表示不重试，最高 10 次。")).toBeInTheDocument();
+  });
+
+  it("shows a raised host switch as a neutral note and never as an error", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    stubAutoRetryFetch(requests, {
+      get: { attempts: 5, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 3, opencode_channels: 2, cline_pass_channels: 1, skipped: 0, host_request_retry_raised: true, host_interval_raised: true } },
+    });
+
+    const panel = await openExperimentalPanel(user);
+
+    const card = within(panel).getByText("自动重试").closest(".experimental-feature-block") as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(within(card).getByText("已自动补足宿主开关")).toBeInTheDocument();
+    expect(within(card).queryByRole("alert")).not.toBeInTheDocument();
+    expect(card.querySelector(".automation-error")).toBeNull();
+    expect(card.querySelector(".experimental-storage-error")).toBeNull();
+    expect(card.querySelector(".notice-bar")).toBeNull();
+  });
 });

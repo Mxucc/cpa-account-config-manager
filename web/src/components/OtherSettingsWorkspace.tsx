@@ -32,6 +32,7 @@ import { ExternalNotificationSettings } from "./ExternalNotificationSettings";
 import { ProxyProfilesSettings } from "./ProxyProfilesSettings";
 import { AutomationPolicySettings } from "./AutomationPolicySettings";
 import { AutoModelWhitelistPanel } from "./AutoModelWhitelistPanel";
+import { AutoRetryCard } from "./AutoRetryCard";
 import { announcePluginUpdateStatus, subscribePluginUpdateStatus } from "./PluginUpdateAutomation";
 import { SelfUpdatePanel } from "./SelfUpdatePanel";
 import { readPluginDensity, readPluginTheme, readPluginThemeEnabled, resetPluginTheme, setPluginDensity, setPluginTheme, setPluginThemeEnabled, type PluginDensity, type PluginThemePreset } from "../store/pluginTheme";
@@ -489,6 +490,7 @@ export function OtherSettingsWorkspace({ onAPIError, onNotice, forceLoading = fa
               {savingExperiment ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{tx("ui.save_settings")}
             </button>
           </div>
+          <AutoRetryCard refreshRevision={experimentalRefreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
         </section>
       )}
     </section>

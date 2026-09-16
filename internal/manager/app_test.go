@@ -217,6 +217,8 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodGet + " /plugins/cpa-account-config-manager/proxy-profiles":                            {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/proxy-profiles":                           {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/proxy-profiles":                            {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/auto-retry":                                {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/auto-retry":                                {},
 		http.MethodDelete + " /plugins/cpa-account-config-manager/proxy-profiles":                         {},
 	}
 	if len(registration.Routes) != len(expected) {

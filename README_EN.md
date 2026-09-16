@@ -39,6 +39,7 @@ Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, and Codex Manage
 - AI provider model editors include “Fetch models”: the current channel credential is used to read the provider catalog, merge new models, and preserve existing aliases, display names, and mapping options.
 - Plugin-owned quota, concurrency, routing, proxy, risk-control, audit, inspection, update, and experimental settings use private atomic stores. When `data_dir` is implicit, sanitized state follows the CPA Auth directory; API keys, OAuth tokens, Auth JSON, cookies, headers, request bodies, prompts, and proxy credentials are never written.
 
+- Automatic retry (one setting under Other settings): writes the host's own retry budget onto **every credential** of a Codex account, an OpenCode channel and a Cline Pass channel - 5 by default, `0` for no retry, 10 at most. The retry happens inside the host's request loop, so the client only ever sees the successful response and the plugin adds no per-attempt error or log. While it is enabled the plugin also raises the host's `max-retry-interval` to cover the transient-error cooldown (60 seconds by default, without which a 5xx cannot be retried); a non-zero host value is never lowered.
 ### Risk Control Center
 
 - Inspired by Sub2API's content-risk workflow, the plugin runs a native check at the front of CPA's request-transformer chain. It supports disabled, observe-only (`observe`), and pre-routing block (`pre_block`) modes.

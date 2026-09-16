@@ -40,12 +40,49 @@ func (a *App) channelIdentityFor(kind string, entry map[string]any) aiProviderCh
 	identity.provider = aiProviderRuntimeProviderName(kind)
 	identity.credentialKey = a.aiProviderNames.CredentialKey(kind, identity.baseURL, aiProviderChannelCredential(entry))
 	identity.urlKey = a.aiProviderNames.URLKey(kind, identity.baseURL)
-	identity.runtimeID = aiProviderRuntimeCredentialIdentity(identity.provider, aiProviderChannelCredential(entry))
+	// The identity the dashboard matches a usage snapshot by must be the one CPA
+	// actually sends, which for an OpenAI-compatible row is its per-channel provider
+	// key rather than the kind's name; otherwise a channel row that names no auth
+	// index has no way to reach its own usage.
+	identity.runtimeID = aiProviderRuntimeCredentialIdentity(aiProviderUsageProviderName(kind, entry), aiProviderChannelCredential(entry))
 	return identity
 }
 
-// aiProviderRuntimeProviderName maps a CPA channel kind to the provider name CPA
-// reports in usage callbacks, which is the namespace the runtime tracker uses.
+// aiProviderUsageProviderName returns the provider name CPA actually sends in a
+// usage callback for one channel row.
+//
+// For an OpenAI-compatible channel that is NOT the kind's name: CPA registers such a
+// channel under its own provider key, "openai-compatible-" plus the lower-cased
+// channel name (internal/util.OpenAICompatibleProviderKey in CLIProxyAPI), and a
+// callback carries that key. The operator's server shows exactly that shape:
+// "openai-compatible-cline pass", "openai-compatible-opencode go wrk_01…".
+// Keying the channel index by a kind-derived name instead ("openai") made every
+// lookup miss: usage could not be attributed to a credential and the orphan repair
+// compared two spellings of the same channel and found no candidate, so it silently
+// did nothing. A row without a name keeps CPA's own fallback, "openai-compatibility".
+func aiProviderUsageProviderName(kind string, entry map[string]any) string {
+	if !strings.EqualFold(strings.TrimSpace(kind), "openai-compatibility") {
+		return aiProviderRuntimeProviderName(kind)
+	}
+	// The row's configured name, not its display fallback: CPA keys the provider by
+	// the configured name alone, so a nameless row uses its own fallback string.
+	name := ""
+	if raw, isText := entry["name"].(string); isText {
+		name = strings.ToLower(strings.TrimSpace(raw))
+	}
+	switch {
+	case name == "":
+		return "openai-compatibility"
+	case name == "openai-compatibility", strings.HasPrefix(name, "openai-compatible-"):
+		return name
+	default:
+		return "openai-compatible-" + name
+	}
+}
+
+// aiProviderRuntimeProviderName maps a CPA channel kind to the provider name a
+// usage callback uses for that kind. It is the kind-level answer; the provider of a
+// specific channel row can differ (see aiProviderUsageProviderName).
 func aiProviderRuntimeProviderName(kind string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "openai-compatibility", "openai-compatible":
@@ -231,11 +268,15 @@ func (a *App) registerProviderChannelAuthIndex(kind string, entries []map[string
 // names for that channel. The host JSON spells the index with a hyphen
 // ("auth-index") inside the weighted key list; a host that writes the underscore
 // spelling, or that only sets the row-level index, is accepted too.
+//
+// The provider recorded here is the name CPA sends in a usage callback, which is
+// what the runtime tracker and the repair both key by. It is NOT always the name
+// of the channel kind: see aiProviderUsageProviderName.
 func aiProviderChannelAuthCredentials(kind string, entry map[string]any) []providerChannelCredential {
 	if entry == nil {
 		return nil
 	}
-	provider := aiProviderRuntimeProviderName(kind)
+	provider := aiProviderUsageProviderName(kind, entry)
 	baseURL := aiProviderChannelBaseURL(entry)
 	credentials := make([]providerChannelCredential, 0, 2)
 	if list, isList := entry["api-key-entries"].([]any); isList {

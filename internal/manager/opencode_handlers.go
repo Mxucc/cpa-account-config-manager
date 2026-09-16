@@ -142,10 +142,15 @@ func (a *App) handleOpenCodeAccounts(_ context.Context, req cpaapi.ManagementReq
 	}
 }
 
+// handleOpenCodeQuota serves the quota snapshot. A read is self-refreshing: an empty or
+// stale cache is filled before answering, so the first page load after a while shows real
+// numbers instead of "no data". That refresh is best-effort by design, because a read must
+// never turn into an error: whatever the cache holds is still worth answering with.
 func (a *App) handleOpenCodeQuota(_ context.Context, _ cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	if a == nil || a.opencode == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "OpenCode quota service is unavailable"})
 	}
+	a.opencode.RefreshIfStale(openCodeQuotaReadStaleness)
 	return jsonResponse(http.StatusOK, a.opencode.Snapshot())
 }
 

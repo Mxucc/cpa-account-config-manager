@@ -9,6 +9,7 @@ import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 import { formatCreditUSD } from "../format/currency";
 import { channelProductUsage, openCodeQuotaWindows, type ProductQuotaWindow } from "../format/productUsage";
+import { formatResetDuration, quotaPercent } from "../format/quotaWindow";
 
 interface OpenCodeWorkspaceProps {
   refreshRevision: number;
@@ -87,10 +88,33 @@ function priceFor(prices: OpenCodeModelPrice[] | undefined, model: string): Open
 
 const PRICE_ROWS_LIMIT = 40;
 
-function formatWindow(window: { usage_percent: number; reset_in_sec: number } | undefined, tx: ReturnType<typeof useI18n>["tx"]): string {
-  if (!window) return tx("ui.no_data");
-  const resets = window.reset_in_sec > 0 ? `${Math.ceil(window.reset_in_sec / 60)} ${tx("ui.minutes_short")}` : "-";
-  return `${window.usage_percent.toFixed(1)}% · ${resets}`;
+/**
+ * One quota window as a labelled row: the window name, a fill bar and the percentage, with the
+ * reset countdown underneath in words. The credential row used to print the three windows as bare
+ * sentences that ran together and could not be compared at a glance; a bar makes "how much of the
+ * allowance is spent" visible without reading the numbers.
+ */
+function QuotaWindowRow({ label, window, tx }: {
+  label: string;
+  window: { usage_percent: number; reset_in_sec: number } | undefined;
+  tx: ReturnType<typeof useI18n>["tx"];
+}) {
+  if (!window) {
+    return <div className="quota-window-row"><small>{label}: {tx("ui.no_data")}</small></div>;
+  }
+  const percent = quotaPercent(window.usage_percent);
+  return (
+    <div className="quota-window-row">
+      <div className={`usage-quota-row${percent >= 90 ? " quota-danger" : percent >= 75 ? " quota-warning" : ""}`}>
+        <span>{label}</span>
+        <span className="usage-quota-track" role="img" aria-label={`${label} ${percent.toFixed(0)}%`}>
+          <span style={{ width: `${percent}%` }} />
+        </span>
+        <b>{percent.toFixed(1)}%</b>
+      </div>
+      <small>{tx("ui.resets_in", { duration: formatResetDuration(window.reset_in_sec, tx) })}</small>
+    </div>
+  );
 }
 
 /**
@@ -685,9 +709,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
                           <div className="opencode-quota-cell">
                             {result?.success ? (
                               <>
-                                <small>{tx("ui.opencode_rolling")}: {formatWindow(result.rolling, tx)}</small>
-                                <small>{tx("ui.opencode_weekly")}: {formatWindow(result.weekly, tx)}</small>
-                                <small>{tx("ui.opencode_monthly")}: {formatWindow(result.monthly, tx)}</small>
+                                <QuotaWindowRow label={tx("ui.opencode_window_short_rolling")} window={result.rolling} tx={tx} />
+                                <QuotaWindowRow label={tx("ui.opencode_window_short_weekly")} window={result.weekly} tx={tx} />
+                                <QuotaWindowRow label={tx("ui.opencode_window_short_monthly")} window={result.monthly} tx={tx} />
                               </>
                             ) : (
                               <small>{result?.error ? operatorMessage(result.error, locale) : tx("ui.no_data")}</small>

@@ -33,6 +33,8 @@ interface CodexFetchMockOptions {
   overview?: Record<string, unknown>;
   /** Answer the experiments snapshot with nothing, like an unreadable payload. */
   noExperiments?: boolean;
+  /** Provider runtime snapshots, which carry the Codex usage totals on the overview. */
+  runtime?: unknown;
 }
 
 describe("CodexWorkspace", () => {
@@ -120,6 +122,7 @@ describe("CodexWorkspace", () => {
       if (url.endsWith("/codex/fingerprint")) {
         return jsonResponse({ profile: { overridden_fields: 1, fields: options.fields ?? fingerprintFields } });
       }
+      if (url.endsWith("/ai-providers/runtime")) return jsonResponse(options.runtime ?? { snapshots: [], updated_at: new Date().toISOString() });
       if (options.noExperiments && url.endsWith("/experiments")) return jsonResponse({});
       if (url.endsWith("/experiments") && init.method === "PUT") {
         return jsonResponse({ settings: {
@@ -426,8 +429,43 @@ describe("CodexWorkspace", () => {
     // Without a save request there is no payload that could switch the experiment on.
     expect(requests.some(({ url, init }) => url.endsWith("/experiments") && init.method === "PUT")).toBe(false);
   });
+
+  // "codex" provider, so the panel sums those runtime snapshots. Without them it must say so
+  // rather than showing zeroes that read like measured emptiness.
+  it("shows the Codex usage totals on the overview and says when none are recorded", async () => {
+    codexFetchMock({
+      runtime: {
+        snapshots: [
+          { provider: "codex", auth_index: "a", identity: "credential:one", credential_backed: true, supported: true, active: 0, waiting: 0, limit: 0, request_limit: 0, request_window_seconds: 0, used_requests: 0, limit_15s: 0, used_60s: 0, used_15s: 0, input_tokens: 300_000_000, output_tokens: 17_000_000, reasoning_tokens: 0, cached_tokens: 1_000_000, total_tokens: 317_000_000, amount_usd: 386.5, rated_requests: 2760, unrated_requests: 4, quota: { five_hour_amount_usd: 0, seven_day_amount_usd: 0 }, models: [], updated_at: "2026-09-16T00:00:00Z" },
+          { provider: "openai-compatible-other", auth_index: "b", identity: "credential:two", credential_backed: true, supported: true, active: 0, waiting: 0, limit: 0, request_limit: 0, request_window_seconds: 0, used_requests: 0, limit_15s: 0, used_60s: 0, used_15s: 0, input_tokens: 1, output_tokens: 1, reasoning_tokens: 0, cached_tokens: 0, total_tokens: 2, amount_usd: 9, rated_requests: 1, unrated_requests: 0, quota: { five_hour_amount_usd: 0, seven_day_amount_usd: 0 }, models: [], updated_at: "2026-09-16T00:00:00Z" },
+        ],
+        updated_at: "2026-09-16T00:00:00Z",
+      },
+    });
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "总览" });
+    const totals = await within(panel).findByRole("group", { name: "Codex 累计用量" });
+    // Only the codex provider counts: the other provider's 2 tokens and $9 stay out.
+    expect(within(totals).getByText("317,000,000")).toBeInTheDocument();
+    expect(within(totals).getByText("$386.5")).toBeInTheDocument();
+    expect(within(totals).getByText("2,764")).toBeInTheDocument();
+    expect(within(totals).getByText("未计价 4")).toBeInTheDocument();
+  });
+
+  it("states that no Codex usage is recorded instead of showing zeroes", async () => {
+    codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "总览" });
+    const totals = await within(panel).findByRole("group", { name: "Codex 累计用量" });
+    expect(within(totals).getByText("尚未记录到 Codex 供应商流量")).toBeInTheDocument();
+  });
 });
 
 function originatorRow(panel: HTMLElement): HTMLElement {
   return within(panel).getByLabelText("Originator").closest(".codex-fingerprint-row") as HTMLElement;
 }
+

@@ -27,6 +27,11 @@ const (
 	openCodeQuotaMaxTimeoutSeconds  = 60
 	openCodeQuotaDashboardMaxBytes  = 4 << 20
 	openCodeQuotaErrorSummaryLength = 180
+	// openCodeQuotaReadStaleness is how old a cached read may be before an
+	// OpenCode quota GET refreshes it. The OpenCode page is read-only for the
+	// operator, so without this window the first load after a while served an
+	// empty cache and showed "no data" until someone pressed refresh by hand.
+	openCodeQuotaReadStaleness = 5 * time.Minute
 )
 
 // OpenCodeAccount is one bound OpenCode Go workspace credential. The auth
@@ -133,7 +138,11 @@ type OpenCodeQuotaService struct {
 	loadFailed  bool
 	storageErr  string
 	fetchMu     sync.Mutex
-	now         func() time.Time
+	// doer performs the dashboard HTTP request. It is nil in production, where the
+	// fetch builds its own timeout-bounded client, and injectable so tests can point
+	// the scrape at a fake gateway instead of the public upstream.
+	doer HTTPDoer
+	now  func() time.Time
 }
 
 func NewOpenCodeQuotaService() *OpenCodeQuotaService {
@@ -609,17 +618,89 @@ func (s *OpenCodeQuotaService) RefreshAll(force bool) map[string]*OpenCodeQuotaR
 	s.fetchMu.Lock()
 	defer s.fetchMu.Unlock()
 
-	results := make(map[string]*OpenCodeQuotaResult, len(accounts))
-	for _, account := range accounts {
-		result := queryOpenCodeGoQuota(account.WorkspaceID, account.AuthCookie, timeout)
-		result.AccountID = account.ID
-		results[account.ID] = &result
-	}
+	results := s.fetchAll(accounts, timeout)
 	s.mu.Lock()
 	s.cache = results
 	s.fetchedAt = s.now().UTC()
 	s.mu.Unlock()
 	return results
+}
+
+// fetchAll reads the upstream quota for every account without touching the cache, so
+// each caller decides how a failed entry is stored.
+func (s *OpenCodeQuotaService) fetchAll(accounts []OpenCodeAccount, timeout time.Duration) map[string]*OpenCodeQuotaResult {
+	results := make(map[string]*OpenCodeQuotaResult, len(accounts))
+	for _, account := range accounts {
+		result := s.queryOpenCodeGoQuota(account.WorkspaceID, account.AuthCookie, timeout)
+		result.AccountID = account.ID
+		results[account.ID] = &result
+	}
+	return results
+}
+
+// cacheStaleLocked reports whether a read must refresh: the cache was never filled by a
+// fetch, it holds no entry at all, or it is older than maxAge. Callers must hold s.mu.
+func (s *OpenCodeQuotaService) cacheStaleLocked(maxAge time.Duration) bool {
+	if s.fetchedAt.IsZero() || len(s.cache) == 0 {
+		return true
+	}
+	if maxAge <= 0 {
+		return true
+	}
+	return s.now().Sub(s.fetchedAt) >= maxAge
+}
+
+// RefreshIfStale refreshes the cache when it is empty or older than maxAge. It exists for
+// reads: the OpenCode page is read-only for the operator, so a GET must be able to fill the
+// cache itself instead of showing "no data" until someone presses refresh by hand.
+//
+// The fetch is bounded by the service timeout and strictly best-effort. A failure never
+// panics and never erases a previously successful value: an unreachable upstream or a
+// rejected cookie must not blank out the numbers the operator was already looking at.
+// Concurrent callers serialize on the shared fetch lock, so a reload storm performs one
+// upstream fetch and every waiting reader answers from that result.
+func (s *OpenCodeQuotaService) RefreshIfStale(maxAge time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.RLock()
+	accounts := s.snapshotAccountsLocked()
+	timeout := s.timeoutLocked()
+	needsRefresh := s.cacheStaleLocked(maxAge)
+	s.mu.RUnlock()
+
+	// Nothing is bound: there is nothing to fetch and the cached answer is already final.
+	if len(accounts) == 0 || !needsRefresh {
+		return
+	}
+
+	s.fetchMu.Lock()
+	defer s.fetchMu.Unlock()
+
+	// A reader that waited here may find the cache filled by the fetch it waited for (or by
+	// a manual refresh), and must then answer from it instead of hitting the upstream again.
+	s.mu.RLock()
+	needsRefresh = s.cacheStaleLocked(maxAge)
+	s.mu.RUnlock()
+	if !needsRefresh {
+		return
+	}
+
+	results := s.fetchAll(accounts, timeout)
+	s.mu.Lock()
+	if s.cache == nil {
+		s.cache = map[string]*OpenCodeQuotaResult{}
+	}
+	for id, result := range results {
+		if result != nil && !result.Success {
+			if previous, exists := s.cache[id]; exists && previous != nil && previous.Success {
+				continue
+			}
+		}
+		s.cache[id] = result
+	}
+	s.fetchedAt = s.now().UTC()
+	s.mu.Unlock()
 }
 
 // RefreshAccount refreshes a single bound account and updates its cache entry.
@@ -645,7 +726,7 @@ func (s *OpenCodeQuotaService) RefreshAccount(id string) *OpenCodeQuotaResult {
 		empty.Error = "OpenCode account was not found"
 		return empty
 	}
-	result := queryOpenCodeGoQuota(found.WorkspaceID, found.AuthCookie, timeout)
+	result := s.queryOpenCodeGoQuota(found.WorkspaceID, found.AuthCookie, timeout)
 	result.AccountID = found.ID
 	s.mu.Lock()
 	if s.cache == nil {
@@ -663,13 +744,19 @@ func (s *OpenCodeQuotaService) Probe(workspaceID, authCookie string, timeoutSeco
 	if timeoutSeconds >= 1 && timeoutSeconds <= openCodeQuotaMaxTimeoutSeconds {
 		timeout = time.Duration(timeoutSeconds) * time.Second
 	}
-	return queryOpenCodeGoQuota(workspaceID, authCookie, timeout)
+	return s.queryOpenCodeGoQuota(workspaceID, authCookie, timeout)
 }
 
-func queryOpenCodeGoQuota(workspaceID, authCookie string, timeout time.Duration) OpenCodeQuotaResult {
+// queryOpenCodeGoQuota reads the OpenCode Go dashboard for one workspace. The request is
+// always bounded: the default transport carries the service timeout, and a test-injected
+// doer replaces it so the scrape can be pointed at a fake gateway.
+func (s *OpenCodeQuotaService) queryOpenCodeGoQuota(workspaceID, authCookie string, timeout time.Duration) OpenCodeQuotaResult {
 	now := time.Now().UTC()
 	target := "https://opencode.ai/workspace/" + url.PathEscape(workspaceID) + "/go"
-	client := &http.Client{Timeout: timeout}
+	var doer HTTPDoer = &http.Client{Timeout: timeout}
+	if s != nil && s.doer != nil {
+		doer = s.doer
+	}
 	request, errNew := http.NewRequest(http.MethodGet, target, nil)
 	if errNew != nil {
 		return OpenCodeQuotaResult{Success: false, Workspace: workspaceID, Error: sanitizeOpenCodeError(errNew.Error()), FetchedAt: now}
@@ -677,7 +764,7 @@ func queryOpenCodeGoQuota(workspaceID, authCookie string, timeout time.Duration)
 	request.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/148.0")
 	request.Header.Set("Accept", "text/html")
 	request.Header.Set("Cookie", "auth="+strings.TrimSpace(strings.TrimPrefix(authCookie, "auth=")))
-	response, errDo := client.Do(request)
+	response, errDo := doer.Do(request)
 	if errDo != nil {
 		return OpenCodeQuotaResult{Success: false, Workspace: workspaceID, Error: "OpenCode Go dashboard request failed: " + sanitizeOpenCodeError(errDo.Error()), FetchedAt: now}
 	}

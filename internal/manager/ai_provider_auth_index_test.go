@@ -88,11 +88,13 @@ func TestAppAttributesAuthIndexOnlyUsageToChannelCredential(t *testing.T) {
 		t.Fatalf("provider snapshots = %+v, want exactly the channel row", snapshots)
 	}
 	snapshot := snapshots[0]
-	wantIdentity := aiProviderRuntimeCredentialIdentity("openai", apiKey)
+	// CPA names this channel by its own provider key ("openai-compatible-" plus the
+	// lower-cased row name), which is the namespace the tracker and the dashboard use.
+	wantIdentity := aiProviderRuntimeCredentialIdentity("openai-compatible-provider channel", apiKey)
 	if snapshot.Identity != wantIdentity || !snapshot.CredentialBacked {
 		t.Fatalf("snapshot identity = %+v, want credential-backed %q", snapshot, wantIdentity)
 	}
-	if snapshot.Provider != "openai" || snapshot.AuthIndex != "key-index-a" {
+	if snapshot.Provider != "openai-compatible-provider channel" || snapshot.AuthIndex != "key-index-a" {
 		t.Fatalf("snapshot provider/index = %+v", snapshot)
 	}
 	if snapshot.TotalTokens != 42_600_000 {
@@ -118,7 +120,123 @@ func TestAppLeavesUsageWithUnindexedAuthIndexUnattributed(t *testing.T) {
 		t.Fatalf("an unindexed auth index entered provider metrics: %+v", snapshots)
 	}
 	if got := app.usage.Snapshot("an-account-index"); got == nil || got.TotalTokens != 25 {
+
 		t.Fatalf("the record did not follow the previous account path: %+v", got)
+	}
+}
+
+// TestAppPublishesTheUsageIdentityTheDashboardMatchesBy pins the other half of the
+// attribution fix. The dashboard matches a runtime snapshot to a channel row by the
+// identity published on that row's binding, so the binding has to carry the same
+// identity the tracker records usage under - CPA's per-channel provider key plus the
+// credential. A binding that carried the kind-derived name instead left every row
+// without an auth index unable to reach its own usage ("暂无用量" with traffic on it).
+func TestAppPublishesTheUsageIdentityTheDashboardMatchesBy(t *testing.T) {
+	const apiKey = "sk-provider-channel-secret"
+	const cpaProvider = "openai-compatible-provider channel"
+	app := providerAuthIndexTestApp(t, []map[string]any{
+		providerAuthIndexChannelEntry("row-index-a", apiKey, "key-index-a"),
+	})
+	// Read it the way the dashboard does, so the test covers what the UI receives.
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodGet,
+		Path:    "/v0/management" + managementRoutePrefix + "/ai-provider-names",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("names status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload struct {
+		Names []AIProviderNameAssignment `json:"names"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode names: %v", errDecode)
+	}
+	if len(payload.Names) != 1 {
+		t.Fatalf("names = %+v, want the one channel row", payload.Names)
+	}
+	want := aiProviderRuntimeCredentialIdentity(cpaProvider, apiKey)
+	found := false
+	for _, identity := range payload.Names[0].Identities {
+		if identity == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("binding identities = %v, want the usage identity %q among them", payload.Names[0].Identities, want)
+	}
+}
+
+// TestAppRepairsHistoryStrandedByTheKindDerivedProviderName pins the production bug
+// this fix closes. The channel index used to register the KIND-derived provider name
+// ("openai") while a usage callback for an OpenAI-compatible channel carries CPA's
+// per-channel key ("openai-compatible-<name>"). Two consequences followed: the record
+// could not be attributed to a credential, and the orphan repair compared two
+// spellings of one channel, found no candidate and silently did nothing - which is
+// exactly why the operator's 40.3M stranded tokens never moved. With the index keyed
+// by CPA's name, the next channel read folds that history into the channel credential.
+func TestAppRepairsHistoryStrandedByTheKindDerivedProviderName(t *testing.T) {
+	const apiKey = "sk-provider-channel-secret"
+	const cpaProvider = "openai-compatible-provider channel"
+	app := providerAuthIndexTestApp(t, []map[string]any{
+		providerAuthIndexChannelEntry("row-index-a", apiKey, "key-index-a"),
+	})
+	// History recorded before the channel's row was known: the volatile identity.
+	// CPA sends AuthType api_key for a provider channel, which is what classifies the
+	// record as provider traffic; the auth index is the only identifier it carries.
+	app.HandleUsage(cpaapi.UsageRecord{
+		Provider: cpaProvider, AuthType: "api_key", AuthIndex: "stale-row-index", Model: "gpt-5.5",
+		Detail: cpaapi.UsageDetail{InputTokens: 40_000_000, OutputTokens: 300_000, TotalTokens: 40_300_000},
+	})
+	app.HandleUsage(cpaapi.UsageRecord{
+		Provider: cpaProvider, AuthType: "api_key", AuthIndex: "another-stale-index", Model: "gpt-5.5",
+		Detail: cpaapi.UsageDetail{TotalTokens: 2_300_000},
+	})
+	if snapshots := app.providerRuntime.Snapshot(); len(snapshots) != 2 {
+		t.Fatalf("stranded snapshots = %+v, want the two volatile aggregates", snapshots)
+	}
+
+	// A channel read is what explains them, which is what a page load performs.
+	if _, storageErr := app.resolveAIProviderChannelNames(context.Background(), "management-secret"); storageErr != "" {
+		t.Fatalf("channel read failed: %s", storageErr)
+	}
+	snapshots := app.providerRuntime.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots after the repair = %+v, want one channel aggregate", snapshots)
+	}
+	snapshot := snapshots[0]
+	if want := aiProviderRuntimeCredentialIdentity(cpaProvider, apiKey); snapshot.Identity != want || !snapshot.CredentialBacked {
+		t.Fatalf("recovered snapshot = %+v, want credential-backed %q", snapshot, want)
+	}
+	if snapshot.Provider != cpaProvider || snapshot.AuthIndex != "row-index-a" {
+		t.Fatalf("recovered snapshot provider/index = %+v", snapshot)
+	}
+	// The counters merge by maximum, so the largest stranded total survives the move.
+	if snapshot.TotalTokens != 40_300_000 {
+		t.Fatalf("recovered tokens = %d, want the largest stranded total", snapshot.TotalTokens)
+	}
+}
+
+// TestAIProviderUsageProviderNameMatchesCPAShape pins the provider name CPA sends in
+// a usage callback for each channel row, including its fallback for a nameless
+// OpenAI-compatible row and a name that already carries the prefix.
+func TestAIProviderUsageProviderNameMatchesCPAShape(t *testing.T) {
+	for _, testCase := range []struct {
+		scenario string
+		kind     string
+		entry    map[string]any
+		want     string
+	}{
+		{"named compatible row", "openai-compatibility", map[string]any{"name": "Cline Pass"}, "openai-compatible-cline pass"},
+		{"name with surrounding space", "openai-compatibility", map[string]any{"name": "  Warrior.ikitten@gmail.com "}, "openai-compatible-warrior.ikitten@gmail.com"},
+		{"nameless compatible row", "openai-compatibility", map[string]any{}, "openai-compatibility"},
+		{"name already carrying the prefix", "openai-compatibility", map[string]any{"name": "OpenAI-Compatible-Bare"}, "openai-compatible-bare"},
+		{"kind CPA names directly", "codex-api-key", map[string]any{"name": "ignored-by-cpa"}, "codex"},
+	} {
+		if got := aiProviderUsageProviderName(testCase.kind, testCase.entry); got != testCase.want {
+			t.Fatalf("%s: provider name = %q, want %q", testCase.scenario, got, testCase.want)
+		}
 	}
 }
 
@@ -295,7 +413,7 @@ func TestAIProviderChannelAuthCredentialsReadsHostSpellings(t *testing.T) {
 // everything the tracker persists, while the redacted identity is present.
 func TestProviderAuthIndexNeverExposesTheChannelKey(t *testing.T) {
 	const apiKey = "sk-must-not-be-persisted"
-	identity := aiProviderRuntimeCredentialIdentity("openai", apiKey)
+	identity := aiProviderRuntimeCredentialIdentity("openai-compatible-provider channel", apiKey)
 	app := providerAuthIndexTestApp(t, []map[string]any{
 		providerAuthIndexChannelEntry("row-index-a", apiKey, "key-index-a"),
 	})
@@ -322,12 +440,13 @@ func TestProviderAuthIndexNeverExposesTheChannelKey(t *testing.T) {
 	dataDir := t.TempDir()
 	tracker := NewProviderRuntimeTracker(nil)
 	tracker.Configure(Config{DataDir: dataDir})
+	// The app fills the record's key from the index before the tracker sees it, and the
+	// index names the channel the way CPA does.
 	tracker.SetProviderChannelCredentials("openai-compatibility", []providerChannelCredential{{
-		AuthIndex: "row-index-a", APIKey: apiKey, Kind: "openai-compatibility", Provider: "openai", Primary: true,
+		AuthIndex: "row-index-a", APIKey: apiKey, Kind: "openai-compatibility", Provider: "openai-compatible-provider channel", Primary: true,
 	}})
-	// The app fills the record's key from the index before the tracker sees it.
 	tracker.ObserveUsage(cpaapi.UsageRecord{
-		Provider: "openai", AuthIndex: "row-index-a", AuthType: "api_key", APIKey: apiKey,
+		Provider: "openai-compatible-provider channel", AuthIndex: "row-index-a", AuthType: "api_key", APIKey: apiKey,
 		Model: "gpt-5.5", Detail: cpaapi.UsageDetail{TotalTokens: 25},
 	})
 	tracker.Shutdown()

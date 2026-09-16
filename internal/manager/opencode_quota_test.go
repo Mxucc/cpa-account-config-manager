@@ -3,11 +3,14 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -510,5 +513,350 @@ func TestOpenCodeStorageReportsMissingAndAdoptedStates(t *testing.T) {
 	empty.Configure(Config{DataDir: t.TempDir()})
 	if got := empty.Storage(); got.StoreExists || got.Hint != "missing" {
 		t.Fatalf("empty storage = %#v", got)
+	}
+}
+
+// The OpenCode quota page is read-only for the operator, so a GET must be able to fill an
+// empty or stale cache itself. Before this, the first load after a while served an empty
+// cache and showed "no data" until someone pressed the refresh button by hand.
+
+// openCodeQuotaGateway emulates the OpenCode Go dashboard scrape. It counts upstream calls
+// so a test can prove how often a read reaches the upstream, and it can park a call so a
+// concurrency test keeps one fetch in flight while another read arrives.
+type openCodeQuotaGateway struct {
+	mu      sync.Mutex
+	calls   int
+	cookies []string
+	status  int
+	body    string
+	err     error
+
+	started     chan struct{}
+	startedOnce sync.Once
+	hold        chan struct{}
+}
+
+func (gateway *openCodeQuotaGateway) Do(request *http.Request) (*http.Response, error) {
+	gateway.mu.Lock()
+	gateway.calls++
+	gateway.cookies = append(gateway.cookies, request.Header.Get("Cookie"))
+	status, body, errDo := gateway.status, gateway.body, gateway.err
+	started, hold := gateway.started, gateway.hold
+	gateway.mu.Unlock()
+
+	if started != nil {
+		gateway.startedOnce.Do(func() { close(started) })
+		if hold != nil {
+			<-hold
+		}
+	}
+	if errDo != nil {
+		return nil, errDo
+	}
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"text/html"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    request,
+	}, nil
+}
+
+func (gateway *openCodeQuotaGateway) callCount() int {
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	return gateway.calls
+}
+
+func (gateway *openCodeQuotaGateway) lastCookie() string {
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	if len(gateway.cookies) == 0 {
+		return ""
+	}
+	return gateway.cookies[len(gateway.cookies)-1]
+}
+
+func (gateway *openCodeQuotaGateway) setResponse(status int, body string, errDo error) {
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	gateway.status, gateway.body, gateway.err = status, body, errDo
+}
+
+// openCodeQuotaDashboardBody is the SSR markup the live dashboard serves.
+const openCodeQuotaDashboardBody = `rollingUsage:$R[1]={usagePercent:7.8,resetInSec:3600} ` +
+	`weeklyUsage:$R[2]={resetInSec:7200,usagePercent:43.2} ` +
+	`monthlyUsage:$R[3]={usagePercent:21.6,resetInSec:86400}`
+
+// openCodeQuotaStaleDashboardBody is the same markup with different percentages, so a test
+// can tell a fresh fetch apart from the values that were already cached.
+const openCodeQuotaStaleDashboardBody = `rollingUsage:$R[1]={usagePercent:99,resetInSec:3600} ` +
+	`weeklyUsage:$R[2]={resetInSec:7200,usagePercent:98} ` +
+	`monthlyUsage:$R[3]={usagePercent:97,resetInSec:86400}`
+
+// newOpenCodeQuotaReadApp binds one workspace behind the fake gateway.
+func newOpenCodeQuotaReadApp(t *testing.T, gateway *openCodeQuotaGateway, workspaceID string) *App {
+	t.Helper()
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	t.Cleanup(app.Close)
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\n"))
+	app.opencode.doer = gateway
+	if _, errSave := app.opencode.SaveAccount(workspaceID, "cookie-"+workspaceID, ""); errSave != nil {
+		t.Fatalf("SaveAccount() error = %v", errSave)
+	}
+	return app
+}
+
+// readOpenCodeQuota calls the management read route the OpenCode page uses.
+func readOpenCodeQuota(app *App) (int, OpenCodeQuotaSnapshot, error) {
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method:  http.MethodGet,
+		Path:    "/v0/management/plugins/cpa-account-config-manager/opencode/quota",
+		Headers: http.Header{"Authorization": []string{"Bearer management-secret"}},
+	})
+	var snapshot OpenCodeQuotaSnapshot
+	if errDecode := json.Unmarshal(response.Body, &snapshot); errDecode != nil {
+		return response.StatusCode, snapshot, errDecode
+	}
+	return response.StatusCode, snapshot, nil
+}
+
+func singleOpenCodeQuotaResult(t *testing.T, snapshot OpenCodeQuotaSnapshot) *OpenCodeQuotaResult {
+	t.Helper()
+	if len(snapshot.Results) != 1 {
+		t.Fatalf("results = %#v, want exactly one entry", snapshot.Results)
+	}
+	for _, result := range snapshot.Results {
+		return result
+	}
+	return nil
+}
+
+// ageOpenCodeQuotaCache moves the cache timestamp into the past, the way a page kept open
+// for a while would find it.
+func ageOpenCodeQuotaCache(service *OpenCodeQuotaService, age time.Duration) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.fetchedAt = service.now().Add(-age)
+}
+
+func requireOpenCodeWindowPercents(t *testing.T, result *OpenCodeQuotaResult, rolling, weekly, monthly float64) {
+	t.Helper()
+	if result == nil || !result.Success {
+		t.Fatalf("result = %+v, want a successful quota result", result)
+	}
+	if result.Rolling == nil || result.Weekly == nil || result.Monthly == nil {
+		t.Fatalf("result = %+v, want rolling, weekly and monthly windows", result)
+	}
+	if math.Abs(result.Rolling.UsagePercent-rolling) > 0.001 ||
+		math.Abs(result.Weekly.UsagePercent-weekly) > 0.001 ||
+		math.Abs(result.Monthly.UsagePercent-monthly) > 0.001 {
+		t.Fatalf("window percents = %v/%v/%v, want %v/%v/%v",
+			result.Rolling.UsagePercent, result.Weekly.UsagePercent, result.Monthly.UsagePercent,
+			rolling, weekly, monthly)
+	}
+}
+
+// A read that finds an empty cache fetches once and answers with real window values.
+func TestOpenCodeQuotaReadRefreshesAnEmptyCache(t *testing.T) {
+	gateway := &openCodeQuotaGateway{body: openCodeQuotaDashboardBody}
+	app := newOpenCodeQuotaReadApp(t, gateway, "wrk_read_empty")
+
+	status, snapshot, errRead := readOpenCodeQuota(app)
+	if errRead != nil {
+		t.Fatalf("decode quota response: %v", errRead)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if calls := gateway.callCount(); calls != 1 {
+		t.Fatalf("upstream calls = %d, want exactly one for an empty cache", calls)
+	}
+	if snapshot.FetchedAt.IsZero() {
+		t.Fatal("fetched_at is zero, so the read-triggered refresh did not stamp the cache")
+	}
+	if len(snapshot.Accounts) != 1 {
+		t.Fatalf("accounts = %#v", snapshot.Accounts)
+	}
+	requireOpenCodeWindowPercents(t, singleOpenCodeQuotaResult(t, snapshot), 7.8, 43.2, 21.6)
+	// The scrape still presents the stored session cookie upstream.
+	if cookie := gateway.lastCookie(); cookie != "auth=cookie-wrk_read_empty" {
+		t.Fatalf("upstream cookie = %q, want the stored auth cookie", cookie)
+	}
+}
+
+// A fresh cache is answered without touching the upstream.
+func TestOpenCodeQuotaReadLeavesAFreshCacheAlone(t *testing.T) {
+	gateway := &openCodeQuotaGateway{body: openCodeQuotaDashboardBody}
+	app := newOpenCodeQuotaReadApp(t, gateway, "wrk_read_fresh")
+
+	if _, _, errRead := readOpenCodeQuota(app); errRead != nil {
+		t.Fatalf("decode first quota response: %v", errRead)
+	}
+	if calls := gateway.callCount(); calls != 1 {
+		t.Fatalf("upstream calls after the first read = %d, want 1", calls)
+	}
+
+	// A different dashboard body would be visible if the second read fetched again.
+	gateway.setResponse(http.StatusOK, openCodeQuotaStaleDashboardBody, nil)
+	status, snapshot, errRead := readOpenCodeQuota(app)
+	if errRead != nil {
+		t.Fatalf("decode second quota response: %v", errRead)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if calls := gateway.callCount(); calls != 1 {
+		t.Fatalf("upstream calls after a read with a fresh cache = %d, want still 1", calls)
+	}
+	requireOpenCodeWindowPercents(t, singleOpenCodeQuotaResult(t, snapshot), 7.8, 43.2, 21.6)
+}
+
+// A cache older than the read window is refreshed by the read itself.
+func TestOpenCodeQuotaReadRefreshesAStaleCache(t *testing.T) {
+	gateway := &openCodeQuotaGateway{body: openCodeQuotaDashboardBody}
+	app := newOpenCodeQuotaReadApp(t, gateway, "wrk_read_stale")
+
+	if _, _, errRead := readOpenCodeQuota(app); errRead != nil {
+		t.Fatalf("decode first quota response: %v", errRead)
+	}
+	ageOpenCodeQuotaCache(app.opencode, 2*openCodeQuotaReadStaleness)
+	gateway.setResponse(http.StatusOK, openCodeQuotaStaleDashboardBody, nil)
+
+	status, snapshot, errRead := readOpenCodeQuota(app)
+	if errRead != nil {
+		t.Fatalf("decode second quota response: %v", errRead)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if calls := gateway.callCount(); calls != 2 {
+		t.Fatalf("upstream calls after a stale read = %d, want 2", calls)
+	}
+	requireOpenCodeWindowPercents(t, singleOpenCodeQuotaResult(t, snapshot), 99, 98, 97)
+}
+
+// A failing upstream must not turn the read into an error, and it must not erase the values
+// the operator was already looking at.
+func TestOpenCodeQuotaReadKeepsCachedValuesWhenTheUpstreamFails(t *testing.T) {
+	gateway := &openCodeQuotaGateway{body: openCodeQuotaDashboardBody}
+	app := newOpenCodeQuotaReadApp(t, gateway, "wrk_read_failing")
+
+	if _, _, errRead := readOpenCodeQuota(app); errRead != nil {
+		t.Fatalf("decode first quota response: %v", errRead)
+	}
+
+	for index, failure := range []struct {
+		name   string
+		status int
+		errDo  error
+	}{
+		{name: "gateway rejects the cookie", status: http.StatusUnauthorized},
+		{name: "upstream is unreachable", errDo: errors.New("dial tcp: connection refused")},
+	} {
+		ageOpenCodeQuotaCache(app.opencode, 2*openCodeQuotaReadStaleness)
+		gateway.setResponse(failure.status, "login required", failure.errDo)
+
+		status, snapshot, errRead := readOpenCodeQuota(app)
+		if errRead != nil {
+			t.Fatalf("%s: decode quota response: %v", failure.name, errRead)
+		}
+		if status != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200 for a read", failure.name, status)
+		}
+		if calls := gateway.callCount(); calls != index+2 {
+			t.Fatalf("%s: upstream calls = %d, want %d", failure.name, calls, index+2)
+		}
+		requireOpenCodeWindowPercents(t, singleOpenCodeQuotaResult(t, snapshot), 7.8, 43.2, 21.6)
+	}
+}
+
+// A read whose very first fetch fails still answers 200 with the failed cache entry, because
+// the read route reports quota and never the transport.
+func TestOpenCodeQuotaReadAnswersWhenTheFirstFetchFails(t *testing.T) {
+	gateway := &openCodeQuotaGateway{status: http.StatusUnauthorized, body: "login required"}
+	app := newOpenCodeQuotaReadApp(t, gateway, "wrk_read_denied")
+
+	status, snapshot, errRead := readOpenCodeQuota(app)
+	if errRead != nil {
+		t.Fatalf("decode quota response: %v", errRead)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if calls := gateway.callCount(); calls != 1 {
+		t.Fatalf("upstream calls = %d, want 1", calls)
+	}
+	result := singleOpenCodeQuotaResult(t, snapshot)
+	if result == nil || result.Success || result.Error == "" {
+		t.Fatalf("result = %+v, want the sanitized failure in the cache", result)
+	}
+}
+
+// Nothing is bound, so a read must answer instantly instead of scraping anything.
+func TestOpenCodeQuotaReadWithoutBoundAccountsSkipsTheFetch(t *testing.T) {
+	gateway := &openCodeQuotaGateway{body: openCodeQuotaDashboardBody}
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	t.Cleanup(app.Close)
+	app.Configure([]byte("data_dir: " + t.TempDir() + "\n"))
+	app.opencode.doer = gateway
+
+	status, snapshot, errRead := readOpenCodeQuota(app)
+	if errRead != nil {
+		t.Fatalf("decode quota response: %v", errRead)
+	}
+	if status != http.StatusOK || len(snapshot.Accounts) != 0 {
+		t.Fatalf("status = %d accounts = %#v", status, snapshot.Accounts)
+	}
+	if calls := gateway.callCount(); calls != 0 {
+		t.Fatalf("upstream calls without a bound account = %d, want 0", calls)
+	}
+}
+
+// Several readers at once (tabs, a reload storm) must share one upstream fetch.
+func TestConcurrentOpenCodeQuotaReadsPerformOneFetch(t *testing.T) {
+	gateway := &openCodeQuotaGateway{
+		body:    openCodeQuotaDashboardBody,
+		started: make(chan struct{}),
+		hold:    make(chan struct{}),
+	}
+	app := newOpenCodeQuotaReadApp(t, gateway, "wrk_read_race")
+
+	type readOutcome struct {
+		status   int
+		snapshot OpenCodeQuotaSnapshot
+		err      error
+	}
+	startReader := func() chan readOutcome {
+		done := make(chan readOutcome, 1)
+		go func() {
+			status, snapshot, errRead := readOpenCodeQuota(app)
+			done <- readOutcome{status: status, snapshot: snapshot, err: errRead}
+		}()
+		return done
+	}
+
+	first := startReader()
+	<-gateway.started
+	second := startReader()
+	// The first fetch is parked inside the gateway, so the second reader is concurrent with
+	// it: it either waits on the shared fetch lock or arrives to find the fresh cache.
+	time.Sleep(50 * time.Millisecond)
+	close(gateway.hold)
+
+	for index, done := range []chan readOutcome{first, second} {
+		outcome := <-done
+		if outcome.err != nil {
+			t.Fatalf("reader %d: decode quota response: %v", index+1, outcome.err)
+		}
+		if outcome.status != http.StatusOK {
+			t.Fatalf("reader %d: status = %d, want 200", index+1, outcome.status)
+		}
+		requireOpenCodeWindowPercents(t, singleOpenCodeQuotaResult(t, outcome.snapshot), 7.8, 43.2, 21.6)
+	}
+	if calls := gateway.callCount(); calls != 1 {
+		t.Fatalf("upstream calls for two concurrent reads = %d, want exactly one", calls)
 	}
 }

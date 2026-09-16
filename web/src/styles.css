@@ -3264,3 +3264,35 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
   .account-table .usage-quota-list { min-width: 0; }
   .account-table .row-actions { display: grid; grid-template-columns: repeat(auto-fit, 32px); justify-content: start; gap: 4px; }
 }
+
+/* Quota presentation. The window cards of the Cline Pass overview and the two usage lines of
+   its credential rows shipped without any rule at all, so they rendered as unstyled text; these
+   reuse the dashboard's window/card language (see .usage-window / .usage-quota-row above) and the
+   density tokens, so a window keeps its label, its value and its bar aligned at every width. */
+.opencode-price-card {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: var(--row-pad-y) var(--row-pad-x);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+.opencode-price-card > strong { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); font-weight: 700; }
+.opencode-price-card > span {
+  color: var(--primary-active);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(15px * var(--font-size-scale));
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.opencode-price-card > small { color: var(--text-secondary); font-size: calc(10px * var(--font-size-scale)); line-height: 1.35; overflow-wrap: anywhere; }
+
+/* One quota window inside a credential row: label, bar, percentage, then the reset countdown.
+   The label column is wider than the accounts list default because these labels are words. */
+.quota-window-row { min-width: 0; display: grid; gap: 1px; }
+.quota-window-row .usage-quota-row { grid-template-columns: 48px minmax(0, 1fr) 42px; }
+.quota-window-row > small { color: var(--text-tertiary); font-size: calc(9px * var(--font-size-scale)); line-height: 1.35; }
+
+.cline-pass-usage-tokens, .cline-pass-usage-reference { color: var(--text-secondary); font-size: calc(10px * var(--font-size-scale)); line-height: 1.35; overflow-wrap: anywhere; }
+.cline-pass-usage-reference { color: var(--text-tertiary); }

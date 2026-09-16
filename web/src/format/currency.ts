@@ -22,3 +22,12 @@ export function formatCreditUSD(value: number, locale: Locale): string {
     maximumFractionDigits,
   }).format(normalized);
 }
+
+/**
+ * A reference-priced amount with the locale's number formatting. These figures are list prices in
+ * US dollars, not charges, so they reuse the number formatter instead of the currency one.
+ */
+export function formatReferenceUSD(value: number | undefined, formatNumber: (value: number) => string): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "-";
+  return `$${formatNumber(value)}`;
+}

@@ -73,9 +73,14 @@ describe("OpenCodeWorkspace", () => {
     const section = await screen.findByRole("region", { name: "OpenCode Go 工作区" });
     const row = await findGoRow(section);
     expect(within(row).getByText(GO_WORKSPACE)).toBeInTheDocument();
-    expect(within(row).getByText(/5 小时额度: 42\.5% · 60 分钟/)).toBeInTheDocument();
-    expect(within(row).getByText(/7 天额度: 10\.0% · 120 分钟/)).toBeInTheDocument();
-    expect(within(row).getByText(/30 天额度: 3\.3% · -/)).toBeInTheDocument();
+    // Each window is its own labelled bar row with a readable countdown, so the three can be
+    // compared instead of running together as one sentence.
+    expect(within(row).getByRole("img", { name: "5 小时 43%" })).toBeInTheDocument();
+    expect(within(row).getByText("42.5%")).toBeInTheDocument();
+    expect(within(row).getByText("1 小时后重置")).toBeInTheDocument();
+    expect(within(row).getByText("10.0%")).toBeInTheDocument();
+    expect(within(row).getByText("2 小时后重置")).toBeInTheDocument();
+    expect(within(row).getByText("3.3%")).toBeInTheDocument();
     expect(within(row).getByText("4")).toBeInTheDocument();
     expect(row.textContent).toContain("gpt-5.1, claude-sonnet-4, gemini-2.5-pro …");
 
@@ -448,7 +453,10 @@ describe("OpenCodeWorkspace", () => {
     await user.click(within(row).getByRole("button", { name: "刷新 OpenCode 额度" }));
 
     await waitFor(() => expect(requests.some(({ url, init }) => url.includes(`/opencode/refresh-account?account_id=${GO_ACCOUNT_ID}`) && init.method === "POST")).toBe(true));
-    expect(await within(row).findByText(/5 小时额度: 5\.0% · 5 分钟/)).toBeInTheDocument();
+    // The refreshed window is the bar the operator reads, not a bare sentence.
+    expect(await within(row).findByRole("img", { name: "5 小时 5%" })).toBeInTheDocument();
+    expect(within(row).getByText("5.0%")).toBeInTheDocument();
+    expect(within(row).getByText("5 分钟后重置")).toBeInTheDocument();
   });
 
   it("renders the detected channels and imports one through the import route", async () => {

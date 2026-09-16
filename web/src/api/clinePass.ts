@@ -59,6 +59,13 @@ function normalizeClinePassQuotaWindow(value: unknown): ClinePassQuotaWindow {
 		input_tokens: isFiniteNonNegativeInteger(source.input_tokens) ? source.input_tokens : 0,
 		output_tokens: isFiniteNonNegativeInteger(source.output_tokens) ? source.output_tokens : 0,
 		requests: isFiniteNonNegativeInteger(source.requests) ? source.requests : 0,
+		// The cached halves are part of the documented windows and the backend reports them
+		// separately, so dropping them here would show every cached total as 0.
+		cache_read_tokens: isFiniteNonNegativeInteger(source.cache_read_tokens) ? source.cache_read_tokens : 0,
+		cache_write_tokens: isFiniteNonNegativeInteger(source.cache_write_tokens) ? source.cache_write_tokens : 0,
+		// Requests Cline could not reference price must survive normalization, or the UI would
+		// render their window as if it were simply free.
+		unpriced_requests: isFiniteNonNegativeInteger(source.unpriced_requests) ? source.unpriced_requests : 0,
 	};
 }
 

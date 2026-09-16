@@ -656,6 +656,14 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                       cached: formatNumber(usage.cachedTokens),
                     })}
                   </small>
+                  {usage.unpricedRequests > 0 ? (
+                    <small
+                      className="cline-pass-usage-reference"
+                      title={tx("ui.some_requests_could_not_be_priced", { count: formatNumber(usage.unpricedRequests) })}
+                    >
+                      {tx("ui.unrated_requests_count", { count: formatNumber(usage.unpricedRequests) })}
+                    </small>
+                  ) : null}
                 </div>
                 );
               })}
@@ -826,7 +834,11 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                             <div className="cline-pass-usage-cell" title={tx("ui.cline_pass_usage_reference_note")}>
                               <small className="cline-pass-usage-title">{tx("ui.cline_pass_usage")}</small>
                               <span className="cline-pass-usage-windows">
-                                {usageWindows.map((entry) => (
+                                {usageWindows.map((entry) => {
+                                  // A window Cline could not reference price must say so next to its USD,
+                                  // because a $0.00 reference price otherwise looks like no usage.
+                                  const unpricedRequests = entry.window?.unpriced_requests ?? 0;
+                                  return (
                                   <span
                                     key={entry.key}
                                     className="cline-pass-usage-window"
@@ -840,8 +852,17 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                                   >
                                     <small>{entry.label}</small>
                                     <b>{formatPriceUSD(entry.window?.usd)}</b>
+                                    {unpricedRequests > 0 ? (
+                                      <small
+                                        className="cline-pass-usage-reference"
+                                        title={tx("ui.some_requests_could_not_be_priced", { count: formatNumber(unpricedRequests) })}
+                                      >
+                                        {tx("ui.unrated_requests_count", { count: formatNumber(unpricedRequests) })}
+                                      </small>
+                                    ) : null}
                                   </span>
-                                ))}
+                                  );
+                                })}
                               </span>
                               {usageMonthly ? (
                                 <small className="cline-pass-usage-tokens">

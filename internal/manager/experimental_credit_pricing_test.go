@@ -346,3 +346,39 @@ func TestUsageTrackerCreditModeDisabledDoesNotCreateCreditSnapshot(t *testing.T)
 		t.Fatalf("disabled credit snapshot = %#v", snapshot)
 	}
 }
+
+// DeepSeek retired deepseek-v4-flash and serves requests for that model with
+// DeepSeek-V4.1-Flash at the Flash price, and Cline's subscription gateway
+// publishes the newer slug. Both spellings must resolve to the DeepSeek V4 Flash
+// rate card: one live channel carried roughly 952M tokens on the newer slug, and
+// an unresolved lookup reported all of that usage as free.
+func TestCreditPricingResolvesTheRetiredDeepSeekFlashSlug(t *testing.T) {
+	flash := creditModelPricing{Input: 0.44e-6, Output: 1.32e-6, CacheRead: 0.014e-6}
+	models := map[string]creditModelPricing{"deepseek-v4-flash": flash}
+	for _, model := range []string{
+		"deepseek-v4.1-flash",
+		"deepseek-v4-1-flash",
+		"deepseek-v4.1-flash-20260101",
+		"DeepSeek-V4.1-Flash",
+		"cline-pass/deepseek-v4.1-flash",
+		"deepseek-v4.1-flash-preview",
+	} {
+		pricing, ok := resolveCreditModelPricing(models, model)
+		if !ok || pricing != flash {
+			t.Fatalf("resolveCreditModelPricing(%q) = %+v, ok=%v, want the DeepSeek V4 Flash rate card", model, pricing, ok)
+		}
+	}
+
+	// The canonical DeepSeek Flash card is the fallback for a synced table that
+	// drops the retired v4 spelling.
+	canonical := creditModelPricing{Input: 0.30e-6, Output: 1.20e-6, CacheRead: 0.006e-6}
+	if pricing, ok := resolveCreditModelPricing(map[string]creditModelPricing{"deepseek-flash": canonical}, "deepseek-v4.1-flash"); !ok || pricing != canonical {
+		t.Fatalf("fallback resolution = %+v, ok=%v, want the canonical DeepSeek Flash card", pricing, ok)
+	}
+
+	// A table that prices no DeepSeek Flash card leaves the request unrated rather
+	// than reusing an unrelated DeepSeek rate, which would invent a wrong amount.
+	if pricing, ok := resolveCreditModelPricing(map[string]creditModelPricing{"deepseek-chat": {Input: 2.8e-7}}, "deepseek-v4.1-flash"); ok {
+		t.Fatalf("an unrelated rate card priced the model: %+v", pricing)
+	}
+}

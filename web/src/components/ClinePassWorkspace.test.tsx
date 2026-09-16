@@ -454,4 +454,75 @@ describe("ClinePassWorkspace", () => {
     expect(usageCell).not.toBeNull();
     expect(usageCell.getAttribute("title")).toContain("并非实际计费金额");
   });
+  // A window Cline could not reference price must show its unpriced count beside the USD, so a
+  // $0 reference amount can never be read as "no usage". Both surfaces carry the marker: the
+  // overview card and the account's window entry.
+  it("marks Cline Pass windows whose requests could not be reference priced", async () => {
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        quota_usage: clinePassQuotaUsage({
+          five_hour: { usd: 0, input_tokens: 120000, output_tokens: 8000, requests: 12, unpriced_requests: 3 },
+        }),
+      })],
+    });
+
+    render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const overview = await screen.findByRole("tabpanel", { name: "总览" });
+    expect(within(overview).getByText("未计价 3")).toBeInTheDocument();
+    expect(within(overview).getByText("未计价 3").getAttribute("title")).toContain("3");
+
+    const tabs = screen.getByRole("tablist", { name: "Cline Pass" });
+    await userEvent.setup().click(within(tabs).getByRole("tab", { name: "账号" }));
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    // The 5-hour window keeps its "$0" reference price, with the unpriced count beside it.
+    expect(within(row).getByText("$0")).toBeInTheDocument();
+    expect(within(row).getByText("未计价 3")).toBeInTheDocument();
+  });
+
+  it("omits the unpriced marker when every Cline Pass window was priced", async () => {
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        quota_usage: clinePassQuotaUsage({
+          five_hour: { usd: 0.42, input_tokens: 120000, output_tokens: 8000, requests: 12, unpriced_requests: 0 },
+          weekly: { usd: 3.1, input_tokens: 900000, output_tokens: 60000, requests: 88, unpriced_requests: 0 },
+          monthly: { usd: 7.85, input_tokens: 2100000, output_tokens: 150000, requests: 210, unpriced_requests: 0 },
+        }),
+      })],
+    });
+
+    render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const overview = await screen.findByRole("tabpanel", { name: "总览" });
+    expect(within(overview).queryByText(/未计价/)).not.toBeInTheDocument();
+
+    const tabs = screen.getByRole("tablist", { name: "Cline Pass" });
+    await userEvent.setup().click(within(tabs).getByRole("tab", { name: "账号" }));
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+    expect(within(row).queryByText(/未计价/)).not.toBeInTheDocument();
+  });
+
+  // The cached halves of a window are usage the backend reports separately, so the totals must
+  // survive the API normalizer instead of rendering as zero.
+  it("shows the cached tokens a Cline Pass window reports", async () => {
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        quota_usage: clinePassQuotaUsage({
+          monthly: {
+            usd: 7.85, input_tokens: 2100000, output_tokens: 150000, requests: 210,
+            cache_read_tokens: 4000, cache_write_tokens: 500,
+          },
+        }),
+      })],
+    });
+
+    render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const overview = await screen.findByRole("tabpanel", { name: "总览" });
+    // The total card and the monthly window card both report the cached halves.
+    expect(within(overview).getAllByText("缓存 4,500 token", { exact: false }).length).toBeGreaterThan(0);
+  });
 });

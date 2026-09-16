@@ -261,6 +261,11 @@ func (a *App) registerProviderChannelAuthIndex(kind string, entries []map[string
 	}
 	a.providerRuntime.SetProviderChannelCredentials(kind, credentials)
 	a.providerRuntime.RepairOrphanedAuthIndexAggregates()
+	// A price table that learned a model after the fact, or a channel that only now
+	// carries its credential, can value usage an earlier release recorded as
+	// unrated. The pass is idempotent and skips any rate it cannot apply to a sum of
+	// requests, so running it on every channel read is safe.
+	a.providerRuntime.RepriceUnratedModelUsage()
 }
 
 // aiProviderChannelAuthCredentials reads every credential of one CPA channel row

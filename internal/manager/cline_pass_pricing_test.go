@@ -78,7 +78,7 @@ func TestClinePassReferencePriceMatchesDocumentation(t *testing.T) {
 
 	// A model the documentation does not price, including the free tier and an
 	// unknown id, reports unpriced instead of a zero price.
-	for _, id := range []string{"cline-free/longcat-2.0", "cline-pass/glm-5.3-flash", "cline-pass/deepseek-v4.1-flash", "unknown/model", ""} {
+	for _, id := range []string{"cline-free/longcat-2.0", "cline-pass/glm-5.3-flash", "unknown/model", ""} {
 		if rate, ok := clinePassReferencePrice(id); ok {
 			t.Fatalf("clinePassReferencePrice(%q) priced an undocumented model: %+v", id, rate)
 		}
@@ -221,5 +221,46 @@ func TestClinePassModelRowCarriesReferencePrice(t *testing.T) {
 	applyClinePassModelPrice(&free, free.ID)
 	if free.Priced || free.InputUSDPerMillion != 0 {
 		t.Fatalf("unpriced row = %+v", free)
+	}
+}
+
+// Cline's gateway publishes the DeepSeek subscription model under the newer
+// cline-pass/deepseek-v4.1-flash id, while the documented reference table prices it
+// as "DeepSeek V4 Flash": DeepSeek retired the deepseek-v4-flash model and serves
+// requests for it with DeepSeek-V4.1-Flash at the Flash price. The alias must
+// therefore price the model the gateway actually serves instead of reporting a
+// running account's whole usage as unrated.
+func TestClinePassDeepSeekV41FlashUsesTheDocumentedFlashRate(t *testing.T) {
+	want, ok := clinePassReferencePrice("cline-pass/deepseek-v4-flash")
+	if !ok || want.OffPeak == nil {
+		t.Fatalf("the documented DeepSeek V4 Flash row is missing: %+v", want)
+	}
+	for _, id := range []string{
+		"cline-pass/deepseek-v4.1-flash",
+		"deepseek-v4.1-flash",
+		"cline-pass/deepseek-v4-1-flash",
+		"DeepSeek-V4.1-Flash",
+	} {
+		rate, priced := clinePassReferencePrice(id)
+		if !priced || rate.Peak != want.Peak || rate.OffPeak == nil || *rate.OffPeak != *want.OffPeak {
+			t.Fatalf("clinePassReferencePrice(%q) = %+v, priced=%v, want the documented DeepSeek V4 Flash row %+v", id, rate, priced, want)
+		}
+	}
+	// The alias is a price lookup only: it must not widen the published model set,
+	// or traffic of another channel could be attributed to a Cline Pass account.
+	// The strip_model_prefix switch advertises the catalog's v4.1 flash row without
+	// its prefix, so that id is a legitimately published model. The dash spelling is
+	// only a price alias: it must never widen the published model set, or traffic of
+	// another channel could be attributed to a Cline Pass account.
+	if !clinePassIsPublishedModel("deepseek-v4.1-flash") {
+		t.Fatal("the catalog's stripped deepseek-v4.1-flash id is no longer recognized as published")
+	}
+	for _, id := range []string{"deepseek-v4-1-flash"} {
+		if clinePassIsPublishedModel(id) {
+			t.Fatalf("clinePassIsPublishedModel(%q) accepted an id the gateway catalog does not publish", id)
+		}
+	}
+	if usd, priced := clinePassReferenceCost("cline-pass/deepseek-v4.1-flash", 1_000_000, 0, 0, 0); !priced || math.Abs(usd-0.44) > 1e-9 {
+		t.Fatalf("deepseek-v4.1-flash cost = %v priced=%v, want 0.44", usd, priced)
 	}
 }

@@ -256,6 +256,37 @@ func (s *Sub2APICreditUsage) openCodeCharge(record cpaapi.UsageRecord) (CreditCh
 	}, true
 }
 
+// RepriceAggregate values the recorded totals of past requests of one model. It
+// answers only for a model the generic price card prices with a single flat rate: a
+// tiered card (a long-context or priority rate) cannot be applied to a sum of
+// requests, and an OpenCode-routed credential prices through its own gateway card,
+// so both report that history cannot be valued instead of guessing an amount.
+func (s *Sub2APICreditUsage) RepriceAggregate(record cpaapi.UsageRecord) (int64, bool) {
+	if s == nil || !s.enabled.Load() || record.Failed {
+		return 0, false
+	}
+	table := s.table.Load()
+	if table == nil {
+		return 0, false
+	}
+	if _, ok := s.openCodeCharge(record); ok {
+		return 0, false
+	}
+	pricing, ok := resolveCreditModelPricing(table.Models, record.Model)
+	if !ok {
+		return 0, false
+	}
+	if pricing.LongContextThreshold > 0 || pricing.InputPriority > 0 || pricing.OutputPriority > 0 ||
+		pricing.CacheReadPriority > 0 || pricing.CacheCreationPriority > 0 {
+		return 0, false
+	}
+	charge := s.Calculate(record)
+	if !charge.Rated || charge.AmountNanos <= 0 {
+		return 0, false
+	}
+	return charge.AmountNanos, true
+}
+
 func (s *Sub2APICreditUsage) Calculate(record cpaapi.UsageRecord) CreditCharge {
 	charge := CreditCharge{ObservedAt: record.RequestedAt.UTC()}
 	if s == nil || !s.enabled.Load() || record.Failed {
@@ -709,6 +740,13 @@ func resolveCreditModelPricing(models map[string]creditModelPricing, model strin
 	case strings.Contains(normalized, "gemini-2.0-flash") || strings.Contains(normalized, "gemini-2-0-flash"):
 		candidates = append(candidates, "gemini-2.0-flash")
 
+	// DeepSeek retired deepseek-v4-flash and serves requests for that model with
+	// DeepSeek-V4.1-Flash at the Flash price, while Cline's gateway publishes the
+	// same model as deepseek-v4.1-flash. Both spellings therefore resolve to the
+	// DeepSeek V4 Flash rate card instead of leaving the newer slug unpriced and
+	// reporting its usage as free.
+	case strings.Contains(normalized, "deepseek-v4.1-flash"), strings.Contains(normalized, "deepseek-v4-1-flash"):
+		candidates = []string{"deepseek-v4-flash", "deepseek-flash"}
 	case strings.Contains(normalized, "deepseek-v4-pro"):
 		candidates = []string{"deepseek-v4-pro"}
 	case strings.Contains(normalized, "deepseek-v4-flash"):

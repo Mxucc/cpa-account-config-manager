@@ -893,6 +893,133 @@ type providerRuntimeOrphanRepair struct {
 	Ambiguous []string
 }
 
+// providerRuntimeAggregatePricer is the optional capability a credit calculator
+// offers when it can value the recorded totals of past requests exactly. The
+// tracker asks for it before rewriting history, and a calculator without it keeps
+// provider history unrated, which is preferable to inventing an amount.
+type providerRuntimeAggregatePricer interface {
+	RepriceAggregate(record cpaapi.UsageRecord) (int64, bool)
+}
+
+// providerRuntimeRepriceResult reports what a historical re-price pass changed.
+type providerRuntimeRepriceResult struct {
+	Aggregates int
+	Models     int
+	Requests   int64
+	AmountUSD  float64
+}
+
+// RepriceUnratedModelUsage values the model rows of already recorded provider usage
+// that the price table of the day could not price and the current one can.
+//
+// CPA's usage callback is the only source of these totals, so a model that reached
+// the gateway before its rate card did stayed unrated forever, and a channel that
+// carried hundreds of millions of such tokens was displayed as costing nothing. The
+// pass rewrites only rows the calculator can value exactly (see
+// providerRuntimeAggregatePricer), moves their counters from the unrated side to
+// the rated side, and is idempotent: a row without unrated requests is left alone,
+// so repeated calls change nothing. The rolling quota windows are derived from
+// recorded events, and history has no place in a rolling window, so the totals grow
+// without adding an event.
+func (t *ProviderRuntimeTracker) RepriceUnratedModelUsage() providerRuntimeRepriceResult {
+	result := providerRuntimeRepriceResult{}
+	if t == nil || t.calculator == nil {
+		return result
+	}
+	pricer, ok := t.calculator.(providerRuntimeAggregatePricer)
+	if !ok {
+		return result
+	}
+	t.mu.Lock()
+	for _, aggregate := range t.aggregates {
+		if aggregate == nil || len(aggregate.Models) == 0 {
+			continue
+		}
+		repriced := 0
+		for model, entry := range aggregate.Models {
+			if entry == nil || entry.UnratedRequests <= 0 {
+				continue
+			}
+			record := providerRuntimeRepriceRecord(aggregate, entry, model)
+			nanos, priced := pricer.RepriceAggregate(record)
+			if !priced {
+				// Resolve the channel credential only when the record needs one to be
+				// priced at all: the raw key never leaves this tracker.
+				if apiKey := t.aggregateCredentialLocked(aggregate); apiKey != "" {
+					record.APIKey = apiKey
+					nanos, priced = pricer.RepriceAggregate(record)
+				}
+			}
+			if !priced || nanos <= 0 {
+				continue
+			}
+			moved := entry.UnratedRequests
+			entry.AmountUSD += float64(nanos) / creditNanosPerUSD
+			entry.Rated = true
+			entry.RatedRequests += moved
+			entry.UnratedRequests = 0
+			aggregate.AmountNanos = saturatingAdd(aggregate.AmountNanos, nanos)
+			aggregate.RatedRequests += moved
+			aggregate.UnratedRequests = maxInt64(0, aggregate.UnratedRequests-moved)
+			result.Models++
+			result.Requests += moved
+			result.AmountUSD += float64(nanos) / creditNanosPerUSD
+			repriced++
+		}
+		if repriced > 0 {
+			result.Aggregates++
+			t.dirty = true
+		}
+	}
+	persist := result.Models > 0 && t.loaded
+	t.mu.Unlock()
+	if persist {
+		t.markDirty()
+		t.persistNow()
+	}
+	return result
+}
+
+// providerRuntimeRepriceRecord rebuilds the usage record of one model row from the
+// totals recorded for it. The credential is left out: the caller adds one only when
+// the price lookup needs it, and every field here is a token count.
+func providerRuntimeRepriceRecord(aggregate *providerRuntimeAggregate, entry *providerRuntimeModel, model string) cpaapi.UsageRecord {
+	return cpaapi.UsageRecord{
+		Provider:  aggregate.Provider,
+		Model:     model,
+		AuthIndex: aggregate.AuthIndex,
+		Detail: cpaapi.UsageDetail{
+			InputTokens:     entry.InputTokens,
+			OutputTokens:    entry.OutputTokens,
+			ReasoningTokens: entry.ReasoningTokens,
+			CachedTokens:    entry.CachedTokens,
+			TotalTokens:     entry.TotalTokens,
+		},
+	}
+}
+
+// aggregateCredentialLocked resolves the channel credential one aggregate belongs
+// to. The auth index CPA reported is the primary key, and a rotated index is
+// recovered through the aggregate's stable credential identity. An empty result
+// means the aggregate predates the channel index, so the caller prices it without a
+// credential.
+func (t *ProviderRuntimeTracker) aggregateCredentialLocked(aggregate *providerRuntimeAggregate) string {
+	if aggregate == nil {
+		return ""
+	}
+	if index := strings.TrimSpace(aggregate.AuthIndex); index != "" {
+		if entry, exists := t.providerChannelIndex[index]; exists && entry.apiKey != "" {
+			return entry.apiKey
+		}
+	}
+	for _, entry := range t.providerChannelIndex {
+		if entry.identity != "" && entry.identity == aggregate.Identity && entry.apiKey != "" {
+			return entry.apiKey
+		}
+	}
+	return ""
+}
+
 // providerRuntimeSuperseded is one aggregate a live channel row has already
 // replaced, so its history belongs in that row's credential aggregate. Two shapes
 // qualify: a volatile "auth-index:" shell whose index a live row still reports
@@ -2054,6 +2181,11 @@ func (a *App) handleAIProviderRuntime() cpaapi.ManagementResponse {
 	if a == nil || a.providerRuntime == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "provider runtime metrics are unavailable"})
 	}
+	// The dashboard is where unrated usage becomes a visibly wrong amount, so the
+	// read repairs what the current price table can value. The pass is idempotent
+	// and bounded, and it covers the case where the price table was synced after the
+	// channel list was read.
+	a.providerRuntime.RepriceUnratedModelUsage()
 	return jsonResponse(http.StatusOK, map[string]any{
 		"snapshots":     a.providerRuntime.Snapshot(),
 		"updated_at":    time.Now().UTC(),

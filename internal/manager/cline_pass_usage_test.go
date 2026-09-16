@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -586,5 +587,92 @@ func TestClinePassQuotaUsageAttributesAnAuthIndexOnlyCallback(t *testing.T) {
 	}
 	if math.Abs(monthly.USD-1.40) > 1e-6 {
 		t.Fatalf("reference-priced USD = %v, want 1.40 for one GLM-5.3 input million", monthly.USD)
+	}
+}
+
+// The three documented windows are the operator's only view of subscription usage,
+// and an in-memory ledger read as zero after every plugin update - exactly when an
+// operator looks at it. The ledger is therefore written to the store and restored on
+// the next start, with everything no documented window can reach pruned away and
+// without persisting any credential.
+func TestClinePassUsageWindowsSurviveARestart(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	service, _ := newConfiguredClinePassService(t, dataDir)
+	service.now = func() time.Time { return now }
+	accountID, errSave := service.SaveAPIKeyAccount("", "restart", "", "sk-restart-secret")
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+	service.ObserveUsage(clinePassQuotaRecord("sk-restart-secret", "cline-pass/mimo-v2.5", now.Add(-time.Minute), cpaapi.UsageDetail{InputTokens: 1_000_000}))
+	// A February request is already outside every documented window, so it must not
+	// come back with the restored state.
+	service.ObserveUsage(clinePassQuotaRecord("sk-restart-secret", "cline-pass/mimo-v2.5", time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC), cpaapi.UsageDetail{InputTokens: 8_000_000}))
+	before, ok := service.AccountView(accountID)
+	if !ok {
+		t.Fatalf("account %q is missing", accountID)
+	}
+	// MiMo-V2.5 is 0.14 USD per 1M input tokens.
+	if before.QuotaUsage.Monthly.Requests != 1 || math.Abs(before.QuotaUsage.Monthly.USD-0.14) > 1e-6 {
+		t.Fatalf("month window before the restart = %+v", before.QuotaUsage.Monthly)
+	}
+	// The write is debounced, so a host that stops right after traffic still flushes.
+	service.Shutdown()
+
+	raw, errRead := os.ReadFile(clinePassStorePath(dataDir))
+	if errRead != nil {
+		t.Fatalf("read the Cline Pass store: %v", errRead)
+	}
+	// The accounts section necessarily stores the account's own tokens, so the
+	// guarantee the ledger has to keep is that its events add no credential to them.
+	var stored clinePassPersisted
+	if errDecode := json.Unmarshal(raw, &stored); errDecode != nil {
+		t.Fatalf("decode the Cline Pass store: %v", errDecode)
+	}
+	ledgerJSON, errLedger := json.Marshal(stored.UsageEvents)
+	if errLedger != nil {
+		t.Fatalf("encode the stored usage events: %v", errLedger)
+	}
+	if strings.Contains(string(ledgerJSON), "sk-restart-secret") {
+		t.Fatalf("the usage ledger persisted a credential: %s", ledgerJSON)
+	}
+
+	restored := NewClinePassService()
+	restored.now = func() time.Time { return now }
+	restored.Configure(Config{DataDir: dataDir})
+	after, ok := restored.AccountView(accountID)
+	if !ok {
+		t.Fatalf("restored account %q is missing", accountID)
+	}
+	if after.QuotaUsage.FiveHour.Requests != 1 || after.QuotaUsage.FiveHour.InputTokens != 1_000_000 ||
+		math.Abs(after.QuotaUsage.FiveHour.USD-0.14) > 1e-6 {
+		t.Fatalf("five-hour window after the restart = %+v", after.QuotaUsage.FiveHour)
+	}
+	if after.QuotaUsage.Weekly.Requests != 1 || after.QuotaUsage.Monthly.Requests != 1 {
+		t.Fatalf("restored windows = %+v / %+v", after.QuotaUsage.Weekly, after.QuotaUsage.Monthly)
+	}
+
+	// A stale or hand-edited file cannot re-open a window that has already passed.
+	for key := range stored.UsageEvents {
+		stored.UsageEvents[key] = append(stored.UsageEvents[key], clinePassPersistedUsageEvent{
+			At: time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC), USD: 5, InputTokens: 8_000_000, Priced: true,
+		})
+	}
+	edited, errMarshal := json.Marshal(stored)
+	if errMarshal != nil {
+		t.Fatalf("encode the edited store: %v", errMarshal)
+	}
+	if errWrite := os.WriteFile(clinePassStorePath(dataDir), edited, 0o600); errWrite != nil {
+		t.Fatalf("write the edited store: %v", errWrite)
+	}
+	stale := NewClinePassService()
+	stale.now = func() time.Time { return now }
+	stale.Configure(Config{DataDir: dataDir})
+	staleView, ok := stale.AccountView(accountID)
+	if !ok {
+		t.Fatalf("account %q is missing from the edited store", accountID)
+	}
+	if staleView.QuotaUsage.Monthly.Requests != 1 || math.Abs(staleView.QuotaUsage.Monthly.USD-0.14) > 1e-6 {
+		t.Fatalf("pruned usage came back: %+v", staleView.QuotaUsage.Monthly)
 	}
 }

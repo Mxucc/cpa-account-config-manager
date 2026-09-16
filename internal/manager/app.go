@@ -989,6 +989,7 @@ func (a *App) quiesceRetiredInstance() {
 		a.concurrency.Shutdown()
 		a.riskControl.Shutdown()
 		a.providerRuntime.Shutdown()
+		a.clinePass.Shutdown()
 		a.creditUsage.Close()
 		a.usage.Close()
 		// Workers can finish with an interrupted/failed terminal snapshot while

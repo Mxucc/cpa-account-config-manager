@@ -2,6 +2,7 @@ package manager
 
 import (
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,15 @@ const (
 	// rounded to (one microdollar), so a window never shows float noise like
 	// 1.4000000000000001.
 	clinePassUsageUSDPrecision = 1e-6
+
+	// clinePassUsagePersistDelay bounds how often the window ledger is written. Usage
+	// arrives once per request, so a burst of traffic coalesces into one write.
+	clinePassUsagePersistDelay = 2 * time.Second
+
+	// clinePassUsageMaxKeyLength bounds one stored ledger key. Account ids and
+	// credential digests are far shorter, so a hand-edited store file cannot turn a
+	// key into unbounded state.
+	clinePassUsageMaxKeyLength = 128
 )
 
 // clinePassChannelKind is the CPA channel kind this plugin writes for a Cline Pass
@@ -127,6 +137,126 @@ func (l *clinePassUsageLedger) observe(now time.Time, key string, event clinePas
 		kept = kept[len(kept)-clinePassUsageMaxEventsPerKey+1:]
 	}
 	l.events[key] = append(kept, event)
+}
+
+// clinePassPersistedUsageEvent is one retained reference-priced request as it is
+// stored. It carries a timestamp, token counts and a reference amount only: no
+// credential, no model id and no request id, so the file cannot identify a request.
+type clinePassPersistedUsageEvent struct {
+	At               time.Time `json:"at"`
+	USD              float64   `json:"usd"`
+	InputTokens      int64     `json:"input_tokens"`
+	OutputTokens     int64     `json:"output_tokens"`
+	CacheReadTokens  int64     `json:"cache_read_tokens"`
+	CacheWriteTokens int64     `json:"cache_write_tokens"`
+	Priced           bool      `json:"priced"`
+}
+
+// snapshot returns the retained events as they would be stored: only events a
+// documented window can still reach, and only up to the per-key bound. A ledger with
+// nothing to report returns nil, so a service without traffic writes no field.
+func (l *clinePassUsageLedger) snapshot(now time.Time) map[string][]clinePassPersistedUsageEvent {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.events) == 0 {
+		return nil
+	}
+	cutoff := clinePassWindowCutoff(now)
+	stored := make(map[string][]clinePassPersistedUsageEvent, len(l.events))
+	for key, events := range l.events {
+		if key == "" || len(key) > clinePassUsageMaxKeyLength {
+			continue
+		}
+		kept := make([]clinePassPersistedUsageEvent, 0, len(events))
+		for _, event := range events {
+			if event.At.IsZero() || event.At.Before(cutoff) {
+				continue
+			}
+			kept = append(kept, clinePassPersistedUsageEvent{
+				At:               event.At.UTC(),
+				USD:              roundClinePassUSD(event.USD),
+				InputTokens:      nonNegative(event.InputTokens),
+				OutputTokens:     nonNegative(event.OutputTokens),
+				CacheReadTokens:  nonNegative(event.CacheReadTokens),
+				CacheWriteTokens: nonNegative(event.CacheWriteTokens),
+				Priced:           event.Priced,
+			})
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		if len(kept) > clinePassUsageMaxEventsPerKey {
+			kept = kept[len(kept)-clinePassUsageMaxEventsPerKey:]
+		}
+		stored[key] = kept
+	}
+	if len(stored) == 0 {
+		return nil
+	}
+	return stored
+}
+
+// restore replaces the ledger with the events of one stored state, so a restart no
+// longer resets every documented window to zero. Everything a documented window can
+// no longer reach is dropped, and both the key count and the events per key are
+// bounded, so a stale or hand-edited store file cannot grow the ledger; when the key
+// bound is exceeded the keys with the newest events survive.
+func (l *clinePassUsageLedger) restore(now time.Time, stored map[string][]clinePassPersistedUsageEvent) {
+	if l == nil || len(stored) == 0 {
+		return
+	}
+	type restoredKey struct {
+		key      string
+		events   []clinePassUsageEvent
+		newestAt time.Time
+	}
+	cutoff := clinePassWindowCutoff(now)
+	restored := make([]restoredKey, 0, len(stored))
+	for key, events := range stored {
+		if key == "" || len(key) > clinePassUsageMaxKeyLength {
+			continue
+		}
+		kept := make([]clinePassUsageEvent, 0, len(events))
+		newest := time.Time{}
+		for _, event := range events {
+			at := event.At.UTC()
+			if at.IsZero() || at.Before(cutoff) {
+				continue
+			}
+			if at.After(newest) {
+				newest = at
+			}
+			kept = append(kept, clinePassUsageEvent{
+				At:               at,
+				USD:              roundClinePassUSD(event.USD),
+				InputTokens:      nonNegative(event.InputTokens),
+				OutputTokens:     nonNegative(event.OutputTokens),
+				CacheReadTokens:  nonNegative(event.CacheReadTokens),
+				CacheWriteTokens: nonNegative(event.CacheWriteTokens),
+				Priced:           event.Priced,
+			})
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		if len(kept) > clinePassUsageMaxEventsPerKey {
+			kept = kept[len(kept)-clinePassUsageMaxEventsPerKey:]
+		}
+		restored = append(restored, restoredKey{key: key, events: kept, newestAt: newest})
+	}
+	if len(restored) > clinePassUsageMaxKeys {
+		sort.Slice(restored, func(i, j int) bool { return restored[i].newestAt.After(restored[j].newestAt) })
+		restored = restored[:clinePassUsageMaxKeys]
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = make(map[string][]clinePassUsageEvent, len(restored))
+	for _, item := range restored {
+		l.events[item.key] = item.events
+	}
 }
 
 // usage aggregates the retained events of the supplied ledger keys over the three
@@ -271,6 +401,9 @@ func (s *ClinePassService) ObserveUsage(record cpaapi.UsageRecord) {
 		CacheWriteTokens: cacheWrite,
 		Priced:           priced,
 	})
+	// The windows are the operator's only view of subscription usage and they used to
+	// reset to zero on every plugin update, so the change is written to the store.
+	s.markUsageDirty()
 }
 
 // clinePassUsageKey resolves the ledger key of one usage record. A record that

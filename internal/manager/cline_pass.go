@@ -234,6 +234,11 @@ type clinePassPersisted struct {
 	// existed has no field, which reads as the documented default (on). The
 	// store version is not bumped so an existing file still loads.
 	StripModelPrefix *bool `json:"strip_model_prefix,omitempty"`
+	// UsageEvents is additive as well: a store file written before the ledger was
+	// persisted simply carries none, so the version is not bumped and an existing
+	// file still loads. Each event holds a timestamp, token counts and a reference
+	// amount only - never a credential and never a model id.
+	UsageEvents map[string][]clinePassPersistedUsageEvent `json:"usage_events,omitempty"`
 }
 
 // ClinePassProbeResult reports whether the gateway accepted a credential.
@@ -312,6 +317,10 @@ type ClinePassService struct {
 	// usage keeps the reference-priced events of the documented quota windows in
 	// memory. It is fed by the CPA usage callback the plugin already consumes.
 	usage *clinePassUsageLedger
+	// usageDirty marks a ledger change that has not reached the store yet, and
+	// usageTimer coalesces a burst of usage callbacks into one write.
+	usageDirty bool
+	usageTimer *time.Timer
 	// routeAuthIndexes maps a CPA auth index to the id of the stored account whose
 	// channel row carries it. CPA assigns the index when the channel is written,
 	// so it is the identity a usage callback reports for Cline Pass traffic; the
@@ -448,6 +457,7 @@ func (s *ClinePassService) Configure(config Config) {
 	// A missing field reads as the documented default (on) so an existing store
 	// file keeps loading with the new behaviour.
 	s.stripModelPrefix = loaded.StripModelPrefix == nil || *loaded.StripModelPrefix
+	s.usage.restore(s.now().UTC(), loaded.UsageEvents)
 	s.loaded = true
 	s.loadFailed = false
 	s.storageErr = ""
@@ -567,6 +577,7 @@ func (s *ClinePassService) persistLocked() error {
 		Version:          clinePassStoreVersion,
 		Accounts:         append([]ClinePassAccount(nil), s.accounts...),
 		StripModelPrefix: &stripModelPrefix,
+		UsageEvents:      s.usage.snapshot(s.now().UTC()),
 	})
 	if errPersist != nil {
 		s.storageErr = "Cline Pass state could not be persisted"
@@ -575,6 +586,65 @@ func (s *ClinePassService) persistLocked() error {
 	s.loadFailed = false
 	s.storageErr = ""
 	return nil
+}
+
+// markUsageDirty schedules a debounced write of the reference-priced usage ledger.
+// Usage arrives once per request, so a burst of traffic coalesces into one write
+// instead of hitting the disk on every callback.
+func (s *ClinePassService) markUsageDirty() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.loaded || s.dataDir == "" {
+		// Without a store the windows stay in memory, which is what the plugin did
+		// before the ledger was persisted at all.
+		return
+	}
+	s.usageDirty = true
+	if s.usageTimer == nil {
+		s.usageTimer = time.AfterFunc(clinePassUsagePersistDelay, s.flushUsage)
+	}
+}
+
+// flushUsage writes the state when the ledger changed since the last write. A failed
+// write keeps the flag set, so the next change retries instead of dropping the
+// events.
+func (s *ClinePassService) flushUsage() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usageTimer = nil
+	if !s.usageDirty || !s.loaded || s.dataDir == "" {
+		return
+	}
+	if errPersist := s.persistLocked(); errPersist != nil {
+		// persistLocked records the non-sensitive storage error and the flag stays set.
+		return
+	}
+	s.usageDirty = false
+}
+
+// Shutdown flushes a pending ledger write and stops the debounce timer, so usage
+// recorded just before the host stops still reaches the store.
+func (s *ClinePassService) Shutdown() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.usageTimer != nil {
+		s.usageTimer.Stop()
+		s.usageTimer = nil
+	}
+	dirty := s.usageDirty
+	s.mu.Unlock()
+	if !dirty {
+		return
+	}
+	s.flushUsage()
 }
 
 // StorageError reports a fixed, non-sensitive storage failure string.

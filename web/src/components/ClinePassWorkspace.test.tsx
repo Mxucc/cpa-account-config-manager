@@ -12,29 +12,35 @@ describe("ClinePassWorkspace", () => {
     return stubWorkspaceFetch(options);
   }
 
-  function renderClinePass(onNotice: (message: string) => void = () => undefined) {
-    return render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+  /**
+   * The workspace opens on 总览 now, so a test that exercises the credential list opens that tab
+   * first, exactly like the operator does to reach it.
+   */
+  async function renderClinePass(onNotice: (message: string) => void = () => undefined) {
+    const result = render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={onNotice} />);
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    await userEvent.setup().click(within(tabs).getByRole("tab", { name: "账号" }));
+    return result;
   }
 
   it("renders the Cline Pass surface without the OpenCode tab strip", async () => {
     const requests = clinePassFetchMock({ clinePassAccounts: [clinePassAccountView()] });
 
-    renderClinePass();
+    await renderClinePass();
 
     // Cline Pass is its own product menu, so this view must not offer the OpenCode tab strip
     // (nor its OpenCode-only links and heading).
     expect(await screen.findByRole("tabpanel", { name: "Cline Pass" })).toBeInTheDocument();
-    // The OpenCode strip must not appear, but Cline Pass now offers its own accounts/models tabs.
+    // The OpenCode strip must not appear; Cline Pass offers its own overview/accounts/models tabs.
     expect(screen.queryByRole("tablist", { name: "OpenCode" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "总览" })).not.toBeInTheDocument();
     const clinePassTabs = screen.getByRole("tablist", { name: "Cline Pass" });
-    expect(within(clinePassTabs).getAllByRole("tab")).toHaveLength(2);
+    expect(within(clinePassTabs).getAllByRole("tab")).toHaveLength(3);
+    expect(within(clinePassTabs).getByRole("tab", { name: "总览" })).toBeInTheDocument();
     expect(within(clinePassTabs).getByRole("tab", { name: "模型" })).toBeInTheDocument();
-    expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
     expect(screen.queryByText("OpenCode Go 与 Zen 控制器")).not.toBeInTheDocument();
     expect(screen.queryByText(/OpenCode Go · /)).not.toBeInTheDocument();
 
-    const panel = screen.getByRole("tabpanel", { name: "Cline Pass 账号" });
+    const panel = screen.getByRole("tabpanel", { name: "账号" });
     expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
     expect(within(panel).getByText("cline-pass/glm-5.3, cline-pass/kimi-k2.6")).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "使用浏览器登录" })).toBeInTheDocument();
@@ -77,9 +83,12 @@ describe("ClinePassWorkspace", () => {
 
     rerender(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    // The Cline Pass menu opens on its own overview, so the credential list needs its tab.
+    const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
+    const user = userEvent.setup();
+    await user.click(within(tabs).getByRole("tab", { name: "账号" }));
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
-    expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
     expect(screen.queryByText("对话会话")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenCode Zen")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenCode 模型")).not.toBeInTheDocument();
@@ -90,13 +99,15 @@ describe("ClinePassWorkspace", () => {
   it("never shows the Cline Pass surface inside the OpenCode menu", async () => {
     clinePassFetchMock({ clinePassAccounts: [clinePassAccountView()] });
 
+    const user = userEvent.setup();
     const { rerender } = render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
-    expect(await screen.findByRole("tabpanel", { name: "Cline Pass 账号" })).toBeInTheDocument();
+    // The Cline Pass workspace owns its own overview panel inside its OpenCode-free menu.
+    expect(await screen.findByRole("tabpanel", { name: "Cline Pass" })).toBeInTheDocument();
 
     rerender(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
 
     expect(await screen.findByRole("tabpanel", { name: "总览" })).toBeInTheDocument();
-    expect(screen.queryByRole("tabpanel", { name: "Cline Pass 账号" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "Cline Pass" })).not.toBeInTheDocument();
     const tablist = screen.getByRole("tablist", { name: "OpenCode" });
     expect(within(tablist).queryByRole("tab", { name: "Cline Pass 账号" })).not.toBeInTheDocument();
     expect(within(tablist).getAllByRole("tab")).toHaveLength(5);
@@ -106,7 +117,7 @@ describe("ClinePassWorkspace", () => {
     const user = userEvent.setup();
     const requests = clinePassFetchMock({ clinePassAccounts: [clinePassAccountView()] });
 
-    renderClinePass();
+    await renderClinePass();
 
     const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
     await user.click(within(tabs).getByRole("tab", { name: "模型" }));
@@ -126,7 +137,7 @@ describe("ClinePassWorkspace", () => {
     const requests = clinePassFetchMock({ clinePassAccounts: [clinePassAccountView()], clinePassSettingsRebound: 1 });
     const onNotice = vi.fn();
 
-    renderClinePass(onNotice);
+    await renderClinePass(onNotice);
 
     const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
     await user.click(within(tabs).getByRole("tab", { name: "模型" }));
@@ -162,7 +173,7 @@ describe("ClinePassWorkspace", () => {
       },
     });
 
-    renderClinePass();
+    await renderClinePass();
 
     const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
     await user.click(within(tabs).getByRole("tab", { name: "模型" }));
@@ -188,7 +199,7 @@ describe("ClinePassWorkspace", () => {
     const user = userEvent.setup();
     clinePassFetchMock({ clinePassAccounts: [clinePassAccountView()], clinePassModelsStatus: 502 });
 
-    renderClinePass();
+    await renderClinePass();
 
     const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
     await user.click(within(tabs).getByRole("tab", { name: "模型" }));
@@ -196,7 +207,7 @@ describe("ClinePassWorkspace", () => {
 
     // Switching back must still show the unchanged accounts surface.
     await user.click(within(tabs).getByRole("tab", { name: "账号" }));
-    const accounts = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const accounts = await screen.findByRole("tabpanel", { name: "账号" });
     expect(within(accounts).getByText("Work laptop")).toBeInTheDocument();
   });
 
@@ -209,9 +220,9 @@ describe("ClinePassWorkspace", () => {
       clinePassLoginPoll: clinePassLoginView({ status: "pending" }),
     });
 
-    renderClinePass();
+    await renderClinePass();
 
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
     expect(within(panel).getByText("cline-pass/glm-5.3, cline-pass/kimi-k2.6")).toBeInTheDocument();
 
@@ -234,9 +245,9 @@ describe("ClinePassWorkspace", () => {
     const requests = clinePassFetchMock();
     const onNotice = vi.fn();
 
-    renderClinePass(onNotice);
+    await renderClinePass(onNotice);
 
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     const keyInput = panel.querySelector('input[type="password"]') as HTMLInputElement;
     await user.type(keyInput, "sk-cline-pasted");
     await user.click(within(panel).getByRole("button", { name: "保存 API 密钥" }));
@@ -255,9 +266,9 @@ describe("ClinePassWorkspace", () => {
       clinePassLoginStart: clinePassLoginView({ status: "failed", error: "the gateway rejected the device code" }),
     });
 
-    renderClinePass();
+    await renderClinePass();
 
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     await user.click(within(panel).getByRole("button", { name: "使用浏览器登录" }));
 
     expect(await within(panel).findByText(/Cline Pass 登录失败/)).toBeInTheDocument();
@@ -271,8 +282,8 @@ describe("ClinePassWorkspace", () => {
       clinePassAccounts: [clinePassAccountView({ channel_bound: false, channel_models: 0, channel_model_gaps: 2 })],
     });
 
-    renderClinePass();
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
 
     expect(within(row).getByText("尚未绑定 CPA 渠道")).toBeInTheDocument();
@@ -289,8 +300,8 @@ describe("ClinePassWorkspace", () => {
       clinePassAccounts: [clinePassAccountView({ channel_bound: true, channel_models: 1, channel_model_gaps: 1 })],
     });
 
-    renderClinePass();
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
 
     expect(within(row).getByText("还有 1 个模型未发布")).toBeInTheDocument();
@@ -308,8 +319,8 @@ describe("ClinePassWorkspace", () => {
     });
     const onNotice = vi.fn();
 
-    renderClinePass(onNotice);
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await renderClinePass(onNotice);
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     await user.click(within(panel).getByRole("button", { name: "复用已有的 Cline CLI 登录" }));
 
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("已发布 4 个模型")));
@@ -325,8 +336,8 @@ describe("ClinePassWorkspace", () => {
       }),
     });
 
-    renderClinePass();
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     await user.click(within(panel).getByRole("button", { name: "复用已有的 Cline CLI 登录" }));
 
     const warning = await within(panel).findByRole("alert");
@@ -335,14 +346,35 @@ describe("ClinePassWorkspace", () => {
     expect(within(panel).getByText("Cline Pass 账号已登录")).toBeInTheDocument();
   });
 
+  // The operator asked for all three product menus to open on an overview, so this workspace must
+  // land on 总览 and show this product's own counters and usage without a click.
+  it("opens on the overview with this product's counters and usage", async () => {
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({ quota_usage: clinePassQuotaUsage() })],
+    });
+
+    render(<ClinePassWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const overview = await screen.findByRole("tabpanel", { name: "总览" });
+    const tabs = screen.getByRole("tablist", { name: "Cline Pass" });
+    expect(within(tabs).getByRole("tab", { name: "总览" })).toHaveAttribute("aria-selected", "true");
+    // The counts belong to this product, not to the OpenCode families.
+    expect(within(overview).getByText("已绑定 CPA 渠道的账号")).toBeInTheDocument();
+    expect(within(overview).getByText("Cline Pass 模型")).toBeInTheDocument();
+    // The usage cards reuse the dashboard stat cards the operator already knows.
+    expect(within(overview).getByText("总 Tokens")).toBeInTheDocument();
+    expect(within(overview).getByRole("group", { name: "用量与参考价" })).toBeInTheDocument();
+    expect(screen.queryByText("对话会话")).not.toBeInTheDocument();
+  });
+
   it("renders the three Cline Pass usage windows and the subscription context of an account", async () => {
     clinePassFetchMock({
       clinePassAccounts: [clinePassAccountView({ quota_usage: clinePassQuotaUsage() })],
     });
 
-    renderClinePass();
+    await renderClinePass();
 
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
 
     // The three windows Cline documents for ClinePass, each with its reference-priced USD.
@@ -366,7 +398,7 @@ describe("ClinePassWorkspace", () => {
     const user = userEvent.setup();
     clinePassFetchMock({ clinePassAccounts: [clinePassAccountView()] });
 
-    renderClinePass();
+    await renderClinePass();
 
     const tabs = await screen.findByRole("tablist", { name: "Cline Pass" });
     await user.click(within(tabs).getByRole("tab", { name: "模型" }));
@@ -391,9 +423,9 @@ describe("ClinePassWorkspace", () => {
       clinePassAccounts: [clinePassAccountView({ quota_usage: clinePassQuotaUsage() })],
     });
 
-    renderClinePass();
+    await renderClinePass();
 
-    const panel = await screen.findByRole("tabpanel", { name: "Cline Pass 账号" });
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
 
     // Both words stay on screen: a change that presents the reference USD as a charge must fail here.

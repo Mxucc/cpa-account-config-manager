@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, ExternalLink, KeyRound, Link2, LoaderCircle, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, CircleDollarSign, ExternalLink, Gauge, KeyRound, Link2, LoaderCircle, RefreshCw, RotateCcw, Save, Trash2, Wallet } from "lucide-react";
 import * as api from "../api/clinePass";
 import type { ClinePassAccountView, ClinePassCatalogModel, ClinePassLoginView, ClinePassModelsResponse, ClinePassModelView } from "../api/clinePassTypes";
 import { operatorMessage } from "../format/operatorMessage";
@@ -7,6 +7,7 @@ import { useI18n } from "../i18n";
 import type { OpenCodeModelTestResult } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
+import { UsageMetricCards } from "./UsageMetricCards";
 
 interface ClinePassWorkspaceProps {
   refreshRevision: number;
@@ -489,6 +490,44 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
   /** The mapping summary counts the rows the channel actually publishes. */
   const clinePassPublishedModels = (clinePassModels?.models ?? []).filter((model) => model.published).length;
 
+  /**
+   * One Cline Pass usage window summed over the accounts that reported it. The USD figure is
+   * Cline's documented reference price, so it is labelled as one everywhere it is shown.
+   */
+  const clinePassWindowTotals = (key: "five_hour" | "weekly" | "monthly") => clinePassAccounts.reduce(
+    (total, account) => {
+      const window = account.quota_usage?.[key];
+      if (!window) return total;
+      total.reported += 1;
+      total.usd += window.usd ?? 0;
+      total.requests += window.requests ?? 0;
+      total.inputTokens += window.input_tokens ?? 0;
+      total.outputTokens += window.output_tokens ?? 0;
+      total.cachedTokens += (window.cache_read_tokens ?? 0) + (window.cache_write_tokens ?? 0);
+      total.unpricedRequests += window.unpriced_requests ?? 0;
+      return total;
+    },
+    { reported: 0, usd: 0, requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, unpricedRequests: 0 },
+  );
+  const clinePassMonthlyUsage = clinePassWindowTotals("monthly");
+  const clinePassWindowKeys = ([
+    ["5h", "five_hour"],
+    ["7d", "weekly"],
+    ["30d", "monthly"],
+  ] as const);
+  /** Cline documents one flat monthly fee, so any account that reports it names the plan. */
+  const clinePassSubscriptionUSD = clinePassAccounts.reduce<number | undefined>(
+    (value, account) => value ?? account.quota_usage?.monthly_subscription_usd,
+    undefined,
+  );
+  // The balance is the documented subscription minus the reference-priced month. It stays
+  // undefined until Cline reports a month, because a missing window is not zero usage.
+  const clinePassRemainingUSD = clinePassMonthlyUsage.reported > 0 && typeof clinePassSubscriptionUSD === "number"
+    ? clinePassSubscriptionUSD - clinePassMonthlyUsage.usd
+    : undefined;
+  const clinePassBoundChannels = clinePassAccounts.filter((account) => account.channel_bound === true).length;
+  const clinePassModelCount = clinePassAccounts.reduce((total, account) => total + (account.models?.length ?? 0), 0);
+
   return (
     <section className="opencode-workspace" role="tabpanel" aria-label={tx("ui.cline_pass_menu")}>
       <header className="opencode-header">
@@ -509,7 +548,9 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
         <p className="opencode-credential-warning" role="alert"><AlertTriangle size={14} />{clinePassLoadError}</p>
       ) : null}
 
-      <section className="opencode-tab-panel" role="tabpanel" aria-label={tx("ui.cline_pass_tab_title")}>
+      {/* A layout wrapper only: the tab panels below carry the accessibility names, and a second
+          tabpanel here would duplicate the workspace's own name. */}
+      <section className="opencode-tab-panel">
         {/* Cline Pass owns its own two-tab surface: the credential list and the published mapping. */}
         <div className="codex-tabs cline-pass-tabs" role="tablist" aria-label={tx("ui.cline_pass_menu")}>
           <button
@@ -541,28 +582,80 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
           </button>
         </div>
         {clinePassTab === "overview" ? (
-        <section className="codex-tab-panel" role="tabpanel" aria-label={tx("ui.opencode_tab_overview")}>
+        <section className="codex-tab-panel" role="tabpanel" aria-label={tx("ui.cline_pass_tab_overview")}>
+          <dl className="opencode-counts">
+            <div><dt>{tx("ui.cline_pass_accounts")}</dt><dd>{clinePassAccounts.length}</dd></div>
+            <div><dt>{tx("ui.cline_pass_counts_bound")}</dt><dd>{clinePassBoundChannels}</dd></div>
+            <div><dt>{tx("ui.cline_pass_counts_models")}</dt><dd>{clinePassModelCount}</dd></div>
+          </dl>
+
           <section className="opencode-section" aria-label={tx("ui.cline_pass_usage")}>
             <div className="opencode-section-heading"><div><strong>{tx("ui.cline_pass_usage")}</strong><span>{tx("ui.cline_pass_usage_reference_note")}</span></div></div>
+            <UsageMetricCards
+              label={tx("ui.cline_pass_usage")}
+              metrics={[
+                {
+                  key: "tokens",
+                  icon: <Gauge size={18} />,
+                  label: tx("ui.total_tokens"),
+                  value: formatNumber(clinePassMonthlyUsage.inputTokens + clinePassMonthlyUsage.outputTokens + clinePassMonthlyUsage.cachedTokens),
+                  note: tx("ui.overview_usage_tokens", {
+                    input: formatNumber(clinePassMonthlyUsage.inputTokens),
+                    output: formatNumber(clinePassMonthlyUsage.outputTokens),
+                    cached: formatNumber(clinePassMonthlyUsage.cachedTokens),
+                  }),
+                },
+                {
+                  key: "requests",
+                  icon: <Activity size={18} />,
+                  label: tx("ui.overview_requests"),
+                  value: formatNumber(clinePassMonthlyUsage.requests),
+                  // Requests Cline could not price stay visible instead of looking free.
+                  note: clinePassMonthlyUsage.unpricedRequests > 0
+                    ? tx("ui.unrated_requests_count", { count: formatNumber(clinePassMonthlyUsage.unpricedRequests) })
+                    : undefined,
+                  title: clinePassMonthlyUsage.unpricedRequests > 0
+                    ? tx("ui.some_requests_could_not_be_priced", { count: formatNumber(clinePassMonthlyUsage.unpricedRequests) })
+                    : undefined,
+                },
+                {
+                  key: "amount",
+                  tone: "accent",
+                  icon: <CircleDollarSign size={18} />,
+                  label: tx("ui.overview_priced_amount"),
+                  value: formatAllowanceUSD(clinePassMonthlyUsage.usd, formatNumber),
+                  note: typeof clinePassSubscriptionUSD === "number"
+                    ? tx("ui.opencode_billing_subscription", { amount: formatAllowanceUSD(clinePassSubscriptionUSD, formatNumber) })
+                    : undefined,
+                  title: tx("ui.cline_pass_usage_reference_note"),
+                },
+                {
+                  key: "balance",
+                  icon: <Wallet size={18} />,
+                  label: tx("ui.overview_balance"),
+                  value: clinePassRemainingUSD === undefined ? "-" : formatAllowanceUSD(clinePassRemainingUSD, formatNumber),
+                  note: clinePassRemainingUSD === undefined
+                    ? tx("ui.overview_balance_unavailable")
+                    : tx("ui.cline_pass_balance", { subscription: formatAllowanceUSD(clinePassSubscriptionUSD, formatNumber) }),
+                  title: clinePassRemainingUSD === undefined
+                    ? tx("ui.overview_balance_unavailable")
+                    : tx("ui.cline_pass_usage_reference_note"),
+                },
+              ]}
+            />
             <div className="opencode-price-grid">
-              {([
-                ["5h", "five_hour"],
-                ["7d", "weekly"],
-                ["30d", "monthly"],
-              ] as const).map(([window, key]) => {
-                const usage = clinePassAccounts.reduce((total, account) => {
-                  const value = account.quota_usage?.[key];
-                  if (!value) return total;
-                  total.usd += value.usd ?? 0;
-                  total.requests += value.requests ?? 0;
-                  total.input_tokens += value.input_tokens ?? 0;
-                  total.output_tokens += value.output_tokens ?? 0;
-                  return total;
-                }, { usd: 0, requests: 0, input_tokens: 0, output_tokens: 0 });
+              {clinePassWindowKeys.map(([window, key]) => {
+                const usage = clinePassWindowTotals(key);
                 return (
                 <div className="opencode-price-card" key={window}>
                   <strong>{window}</strong><span>{formatAllowanceUSD(usage.usd, formatNumber)}</span>
-                  <small>{formatNumber(usage.requests)} requests · {formatNumber(usage.input_tokens)} / {formatNumber(usage.output_tokens)} tokens</small>
+                  <small>
+                    {tx("ui.overview_requests")}: {formatNumber(usage.requests)} · {tx("ui.overview_usage_tokens", {
+                      input: formatNumber(usage.inputTokens),
+                      output: formatNumber(usage.outputTokens),
+                      cached: formatNumber(usage.cachedTokens),
+                    })}
+                  </small>
                 </div>
                 );
               })}

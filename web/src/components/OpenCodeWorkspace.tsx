@@ -7,6 +7,8 @@ import { useI18n } from "../i18n";
 import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
+import { formatCreditUSD } from "../format/currency";
+import { channelProductUsage, openCodeQuotaWindows, type ProductQuotaWindow } from "../format/productUsage";
 
 interface OpenCodeWorkspaceProps {
   refreshRevision: number;
@@ -15,6 +17,20 @@ interface OpenCodeWorkspaceProps {
 }
 
 type OpenCodeKind = "go" | "zen";
+
+/**
+ * Provider runtime metrics are observability only: an endpoint this host does not serve must
+ * leave the overview's counters empty instead of blanking the page. A 401 still belongs to the
+ * session and is never swallowed.
+ */
+async function optionalProviderMetrics<T>(request: Promise<T>): Promise<T | null> {
+  try {
+    return await request;
+  } catch (caught) {
+    if (caught instanceof api.APIError && caught.status === 401) throw caught;
+    return null;
+  }
+}
 
 /** The workspace is split into tabs so overview, accounts, imports and prices stay reachable. */
 type OpenCodeTab = "overview" | "go" | "zen" | "channels" | "models";

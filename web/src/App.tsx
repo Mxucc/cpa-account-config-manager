@@ -497,7 +497,7 @@ function AccountManagerApp() {
       refreshInFlight = true;
       try {
         // Quota is not a passive cache: fetch the provider dashboards first so a
-        // cold start (or an expired cache) cannot remain at “暂无用量” forever.
+        // cold start (or an expired cache) cannot stay at "no usage yet" forever.
         await api.refreshOpenCodeQuota().catch(() => undefined);
         const [openCodeResult, clinePassResult] = await Promise.allSettled([
           api.getOpenCodeQuota(controller.signal),

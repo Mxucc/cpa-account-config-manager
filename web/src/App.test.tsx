@@ -1880,7 +1880,10 @@ describe("primary navigation order", () => {
     expect(screen.queryByRole("tablist", { name: "OpenCode" })).not.toBeInTheDocument();
     expect(screen.queryByText(/OpenCode Go · /)).not.toBeInTheDocument();
 
-    const panel = screen.getByRole("tabpanel", { name: "Cline Pass 账号" });
+    // The menu opens on the Cline Pass overview, so the credential list needs its own tab.
+    const clinePassTabs = within(screen.getByRole("tabpanel", { name: "Cline Pass" })).getByRole("tablist", { name: "Cline Pass" });
+    await user.click(within(clinePassTabs).getByRole("tab", { name: "账号" }));
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
     expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
   });
 });

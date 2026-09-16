@@ -209,6 +209,16 @@ function listToArray(text: string): string[] {
 function arrayToList(items: string[] | undefined): string {
   return (items ?? []).join("\n");
 }
+
+/**
+ * True when a matched channel reported requests but priced none of them. The token counters are
+ * real while the money is not, so the row names the unpriced requests instead of printing a
+ * "$0.00" that reads like free traffic.
+ */
+function usageHasNoRate(snapshot: AIProviderRuntimeSnapshot | undefined): boolean {
+  if (!snapshot || snapshot.amount_usd > 0) return false;
+  return snapshot.rated_requests === 0 && snapshot.unrated_requests > 0;
+}
 type ProviderIdentitySource = Pick<AIProviderChannelEntry, "index" | "name" | "base_url" | "auth_index" | "account_id" | "workspace_id" | "api_key_entries">;
 
 function providerStableIdentity(entry: ProviderIdentitySource): string {
@@ -855,12 +865,13 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
       const authIndex = (keyEntry.auth_index ?? "").trim();
       if (authIndex) authIndexes.add(authIndex);
     }
-    if (authIndexes.size === 0) return undefined;
     const blockedAccountIdentities = new Set(accountIdentities.map((identity) => identity.trim()).filter(Boolean));
     // The channel record carries the usage identities resolved from the base URL
     // and credential digest, so history keeps matching after an auth-index change
     // or an API key rotation; the auth-index match stays as a fallback for
-    // channels the plugin cannot identify (for example OpenCode entries).
+    // channels whose row names no index at all. Neither signal may be required on
+    // its own: CPA leaves the auth index off an OpenAI-compatible row until it
+    // assigns one, and the plugin still records that channel's usage.
     const channelIdentities = new Set(
       (providerAssignment(providerNames, kind, entry)?.identities ?? []).map((identity) => identity.trim()).filter(Boolean),
     );
@@ -1846,7 +1857,7 @@ export function AIProvidersSettings({ refreshRevision, onAPIError, onNotice, acc
                           </td>
                           <td className="ai-provider-runtime-cell" data-label={tx("ui.ai_provider_usage")} title={tx("ui.ai_provider_quota_settings_description")}>
                             <div className="ai-provider-runtime-usage">
-                              {runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><small>{formatAmount(runtime.amount_usd)} · {tx("ui.quota_window_five_hour")} {budget(policy?.five_hour ?? {}, runtime.quota?.five_hour_amount_usd)} · {tx("ui.quota_window_seven_day")} {budget(policy?.seven_day ?? {}, runtime.quota?.seven_day_amount_usd)}</small></> : <strong title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</strong>}
+                              {runtime ? <><strong>{formatTokens(runtime.total_tokens)}</strong><small>{formatAmount(runtime.amount_usd)} · {tx("ui.quota_window_five_hour")} {budget(policy?.five_hour ?? {}, runtime.quota?.five_hour_amount_usd)} · {tx("ui.quota_window_seven_day")} {budget(policy?.seven_day ?? {}, runtime.quota?.seven_day_amount_usd)}{usageHasNoRate(runtime) ? ` · ${tx("ui.unrated_requests_count", { count: String(runtime.unrated_requests) })}` : ""}</small></> : <strong title={runtimeError || tx("ui.ai_provider_identity_unavailable")}>{tx("ui.ai_provider_no_usage")}</strong>}
                             </div>
                           </td>
                         </>;

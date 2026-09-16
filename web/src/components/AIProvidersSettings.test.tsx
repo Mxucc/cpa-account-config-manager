@@ -8,14 +8,19 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+/**
+ * CPA annotates an OpenAI-compatible credential row with the auth index it assigned. An entry that
+ * already carries the field keeps it, so a test can state that a row names no index at all (null),
+ * which is what a channel CPA has not annotated yet looks like.
+ */
 function authIndexedOpenAIEntry(entry: Record<string, unknown>): Record<string, unknown> {
   const keyEntries = (Array.isArray(entry["api-key-entries"])
     ? entry["api-key-entries"]
     : []) as Array<Record<string, unknown>>;
   if (keyEntries.length > 0) {
-    return { ...entry, "api-key-entries": keyEntries.map((keyEntry) => ({ ...keyEntry, "auth-index": `openai-${keyEntry["api-key"]}` })) };
+    return { ...entry, "api-key-entries": keyEntries.map((keyEntry) => "auth-index" in keyEntry ? keyEntry : { ...keyEntry, "auth-index": `openai-${keyEntry["api-key"]}` }) };
   }
-  return { ...entry, "auth-index": "openai-entry" };
+  return "auth-index" in entry ? entry : { ...entry, "auth-index": "openai-entry" };
 }
 
 describe("AIProvidersSettings", () => {
@@ -202,6 +207,62 @@ describe("AIProvidersSettings", () => {
     expect(row.textContent).toContain("队列 0");
     expect(row.textContent).toContain("1,234");
     expect(row.textContent).toContain("$0.0123");
+  });
+
+  // The reported defect: a channel row that names no auth index showed "暂无用量" even when the
+  // plugin had recorded that channel's traffic, because the auth index was treated as a
+  // requirement instead of a fallback. Matching on the stored channel identity must still work.
+  it("shows usage for a channel row that names no auth index", async () => {
+    const requests = providerFetchMock({
+      // One credential row that names no auth index, which is what CPA serves for a channel it has
+      // not annotated yet.
+      "openai-compatibility": [
+        { name: "Cline Pass", "base-url": "https://api.cline.bot/api/v1", "api-key-entries": [{ "api-key": "workos-token-abc", "auth-index": null }], models: [{ name: "cline-pass/glm-5.3", alias: "glm-5.3" }] },
+      ],
+      "ai-provider-names": {
+        names: [{ kind: "openai-compatibility", index: 0, base_url: "https://api.cline.bot/api/v1", name: "Cline Pass", identities: ["credential:cline-identity"] }],
+      },
+      "ai-providers-runtime": {
+        snapshots: [{
+          provider: "openai-compatible-cline pass",
+          auth_index: "5eb8ef87c6abb929",
+          identity: "credential:cline-identity",
+          credential_backed: true,
+          supported: true,
+          active: 0,
+          limit: 0,
+          limit_15s: 0,
+          used_60s: 0,
+          used_15s: 0,
+          input_tokens: 40331479,
+          output_tokens: 1200,
+          reasoning_tokens: 0,
+          cached_tokens: 0,
+          total_tokens: 40332679,
+          amount_usd: 0,
+          rated_requests: 0,
+          unrated_requests: 214,
+          updated_at: new Date().toISOString(),
+        }],
+        updated_at: new Date().toISOString(),
+      },
+    });
+
+    render(<AIProvidersSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const section = await screen.findByRole("tabpanel", { name: "AI 提供商" });
+    const row = await waitFor(() => {
+      const found = Array.from(section.querySelectorAll(".ai-provider-table tbody tr"))
+        .find((item) => item.textContent?.includes("Cline Pass"));
+      expect(found).toBeDefined();
+      return found as HTMLElement;
+    });
+    // The tokens are real, so the row must print them instead of claiming there is no usage.
+    await waitFor(() => expect(within(row).getByText("40,332,679")).toBeInTheDocument());
+    expect(within(row).queryByText("暂无用量")).not.toBeInTheDocument();
+    // The money is not: every request was unpriced, so the row names that instead of a $0.00.
+    expect(within(row).getByText(/未计价 214/)).toBeInTheDocument();
+    expect(requests.some(({ url }) => url.includes("/ai-providers/runtime"))).toBe(true);
   });
 
   it("prefers a saved provider request window over a stale runtime default", async () => {

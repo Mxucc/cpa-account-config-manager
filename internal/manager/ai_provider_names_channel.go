@@ -200,7 +200,94 @@ func (a *App) syncAIProviderChannelBindings(kind string, entries []map[string]an
 	if errPrune := a.aiProviderNames.PruneKind(kind, keep); errPrune != nil {
 		a.aiProviderNames.noteStorageError("AI provider name state could not be persisted")
 	}
+
+	// CPA omits the API key from a usage callback for a provider channel, so the
+	// auth index each row carries is the only way back to the channel credential.
+	// A live list has just been read, which makes this the moment to publish the
+	// index and to recover history an earlier release stranded under a stale
+	// "auth-index:" identity.
+	a.registerProviderChannelAuthIndex(kind, entries)
 	return assignments
+}
+
+// registerProviderChannelAuthIndex publishes one channel list's auth indexes to
+// the runtime tracker and asks it to recover stranded usage history. The raw key
+// never leaves this call: the tracker hashes it immediately, keeps it in memory
+// only, and never logs or persists it.
+func (a *App) registerProviderChannelAuthIndex(kind string, entries []map[string]any) {
+	if a == nil || a.providerRuntime == nil {
+		return
+	}
+	credentials := make([]providerChannelCredential, 0, len(entries)*2)
+	for _, entry := range entries {
+		credentials = append(credentials, aiProviderChannelAuthCredentials(kind, entry)...)
+	}
+	a.providerRuntime.SetProviderChannelCredentials(kind, credentials)
+	a.providerRuntime.RepairOrphanedAuthIndexAggregates()
+}
+
+// aiProviderChannelAuthCredentials reads every credential of one CPA channel row
+// together with the auth index CPA assigned to it, which is what a usage callback
+// names for that channel. The host JSON spells the index with a hyphen
+// ("auth-index") inside the weighted key list; a host that writes the underscore
+// spelling, or that only sets the row-level index, is accepted too.
+func aiProviderChannelAuthCredentials(kind string, entry map[string]any) []providerChannelCredential {
+	if entry == nil {
+		return nil
+	}
+	provider := aiProviderRuntimeProviderName(kind)
+	baseURL := aiProviderChannelBaseURL(entry)
+	credentials := make([]providerChannelCredential, 0, 2)
+	if list, isList := entry["api-key-entries"].([]any); isList {
+		for _, item := range list {
+			record, isRecord := item.(map[string]any)
+			if !isRecord {
+				continue
+			}
+			apiKey := channelEntryCredentialString(record, "api-key", "api_key")
+			if apiKey == "" {
+				continue
+			}
+			credentials = append(credentials, providerChannelCredential{
+				AuthIndex: channelEntryCredentialString(record, "auth-index", "auth_index"),
+				APIKey:    apiKey,
+				BaseURL:   baseURL,
+				Kind:      kind,
+				Provider:  provider,
+			})
+		}
+	}
+	// The row-level index is the one CPA reports for the whole row, so it is
+	// registered as the primary index of the row's credential.
+	rowKey := channelEntryCredentialString(entry, "api-key", "api_key")
+	if rowKey == "" && len(credentials) > 0 {
+		rowKey = credentials[0].APIKey
+	}
+	if rowAuthIndex := channelEntryCredentialString(entry, "auth-index", "auth_index"); rowAuthIndex != "" && rowKey != "" {
+		credentials = append(credentials, providerChannelCredential{
+			AuthIndex: rowAuthIndex,
+			APIKey:    rowKey,
+			BaseURL:   baseURL,
+			Kind:      kind,
+			Provider:  provider,
+			Primary:   true,
+		})
+	}
+	return credentials
+}
+
+// channelEntryCredentialString returns the first non-empty string field of a
+// channel record, so both the hyphenated host spelling and the underscore one
+// resolve to the same value.
+func channelEntryCredentialString(record map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, isText := record[key].(string); isText {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 // openCodeChannelAuthIdentity returns the binding identity that records a CPA

@@ -25,6 +25,15 @@ const (
 	providerRuntimeMaxModels     = 512
 	providerRuntimeMaxEvents     = 10000
 	providerRuntimeMaxWindow     = time.Hour
+	// The provider channel index is host-derived and rebuilt from the next channel
+	// list, so it is bounded well below the aggregate cap: it only has to hold the
+	// auth indexes CPA currently reports for the operator's channels.
+	providerRuntimeMaxProviderIndexEntries = 4096
+	// One repair pass inspects at most this many stranded aggregates and folds at
+	// most this many of them, so the pass is cheap and always terminates even on a
+	// full aggregate map.
+	providerRuntimeMaxOrphanCandidates = 1024
+	providerRuntimeMaxOrphanAdoptions  = 256
 	// A missing completion callback must not leave the runtime dashboard's
 	// active count (or request map) growing forever. CPA requests can be long
 	// lived, so use a generous lease and prune at a lower cadence.
@@ -152,6 +161,14 @@ type ProviderRuntimeTracker struct {
 	// lets us reject ambiguous provider aggregates instead of copying account
 	// usage into the provider dashboard.
 	accountAuthIndexes map[string]struct{}
+	// providerChannelIndex maps the volatile auth index CPA assigned to a
+	// provider channel row to that row's credential. CPA's usage callback for an
+	// openai-compatibility or codex-api-key channel names the auth index but
+	// carries no API key, so without this index such a record cannot be mapped to
+	// a channel credential. Every entry is derived from a live channel list; the
+	// raw key stays in memory, is hashed into a redacted identity on the way in,
+	// and is never logged or persisted.
+	providerChannelIndex map[string]providerChannelIndexEntry
 	// storageBlocked prevents a corrupt primary/backup pair from being
 	// overwritten by an empty snapshot. New observations remain available in
 	// memory, while the non-sensitive storage error tells the operator that
@@ -164,12 +181,12 @@ type ProviderRuntimeTracker struct {
 
 func NewProviderRuntimeTracker(calculator UsageCreditCalculator) *ProviderRuntimeTracker {
 	return &ProviderRuntimeTracker{
-		requests:           make(map[string]providerRuntimeRequest),
-		aggregates:         make(map[string]*providerRuntimeAggregate),
-		aliases:            make(map[string]string),
-		accountAuthIndexes: make(map[string]struct{}),
-		calculator:         calculator,
-		now:                time.Now,
+		requests:             make(map[string]providerRuntimeRequest),
+		aggregates:           make(map[string]*providerRuntimeAggregate),
+		accountAuthIndexes:   make(map[string]struct{}),
+		providerChannelIndex: make(map[string]providerChannelIndexEntry),
+		calculator:           calculator,
+		now:                  time.Now,
 	}
 }
 
@@ -274,6 +291,9 @@ func (t *ProviderRuntimeTracker) DiscoverAuthStorage(entries []cpaapi.HostAuthFi
 	// backed aggregate.
 	t.mu.Lock()
 	t.accountAuthIndexes = accountIndexes
+	// An index a native account owns is never a provider channel index, even when
+	// a channel list read the same index earlier.
+	t.dropAccountClaimedProviderIndexesLocked(accountIndexes)
 	removed := pruneProviderRuntimeAccountCollisionsLocked(t.aggregates, accountIndexes)
 	if removed {
 		t.dirty = true
@@ -818,6 +838,339 @@ func (t *ProviderRuntimeTracker) SetQuotaPolicies(service *QuotaPolicyService) {
 	t.mu.Unlock()
 }
 
+// providerChannelIndexEntry is one credential of a live CPA provider channel
+// row, keyed by the volatile auth index CPA assigned to it. The raw API key is
+// held in memory only: it is hashed into the redacted credential identity as
+// soon as the channel list is read, is never logged, and is never part of the
+// persisted runtime state.
+type providerChannelIndexEntry struct {
+	apiKey   string
+	identity string
+	provider string
+	baseURL  string
+	kind     string
+	// primary marks the auth index CPA reports for the whole channel row (as
+	// opposed to one weighted key entry of it). It is the index a usage callback
+	// names for that row, so it is the representative index when one is needed.
+	primary bool
+}
+
+// providerChannelCredential is one auth index paired with the credential of the
+// channel row it belongs to, as read from a CPA channel list.
+type providerChannelCredential struct {
+	AuthIndex string
+	APIKey    string
+	BaseURL   string
+	Kind      string
+	Provider  string
+	// Primary reports that AuthIndex is the row-level index of the channel.
+	Primary bool
+}
+
+// providerChannelCredentialRef is one distinct channel credential of a provider
+// together with a representative auth index for it.
+type providerChannelCredentialRef struct {
+	identity  string
+	authIndex string
+}
+
+// providerRuntimeOrphan is one aggregate stranded under the volatile identity
+// "auth-index:<hex>" that a channel list read has now explained.
+type providerRuntimeOrphan struct {
+	key       string
+	provider  string
+	authIndex string
+	aggregate *providerRuntimeAggregate
+}
+
+// providerRuntimeOrphanRepair reports what one repair pass did.
+type providerRuntimeOrphanRepair struct {
+	// Adopted counts the stranded aggregates folded into a channel's stable
+	// credential aggregate.
+	Adopted int
+	// Ambiguous names the providers whose stranded aggregates were left alone
+	// because more than one live channel row could own them.
+	Ambiguous []string
+}
+
+// SetProviderChannelCredentials replaces the credential index of one CPA channel
+// kind with the rows of a freshly read channel list. CPA's usage callback for an
+// openai-compatibility or codex-api-key channel carries the auth index of the
+// channel row but no API key, so this index is what maps such a record back to
+// the channel credential (and therefore to the credential identity the whole
+// downstream path uses).
+//
+// Only the entries of the given kind are replaced: every kind is read on its own,
+// and a successful read of one kind must not drop another kind's entries. The map
+// is bounded, a native account index always wins, and a later account listing
+// still overrules an index recorded here.
+func (t *ProviderRuntimeTracker) SetProviderChannelCredentials(kind string, credentials []providerChannelCredential) {
+	if t == nil {
+		return
+	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.providerChannelIndex == nil {
+		t.providerChannelIndex = make(map[string]providerChannelIndexEntry)
+	}
+	for authIndex, entry := range t.providerChannelIndex {
+		if entry.kind == kind {
+			delete(t.providerChannelIndex, authIndex)
+		}
+	}
+	for _, credential := range credentials {
+		authIndex := strings.TrimSpace(credential.AuthIndex)
+		entry := providerChannelIndexEntry{
+			apiKey:   credential.APIKey,
+			identity: aiProviderRuntimeCredentialIdentity(credential.Provider, credential.APIKey),
+			provider: normalizeRuntimeProvider(credential.Provider),
+			baseURL:  strings.TrimSpace(credential.BaseURL),
+			kind:     kind,
+			primary:  credential.Primary,
+		}
+		if authIndex == "" || entry.identity == "" || entry.provider == "" {
+			continue
+		}
+		if current, exists := t.providerChannelIndex[authIndex]; exists {
+			// The row-level index is the more useful attribution of the two, so it
+			// wins over a key-entry index that happens to carry the same value.
+			if current.primary && !entry.primary {
+				continue
+			}
+		} else if len(t.providerChannelIndex) >= providerRuntimeMaxProviderIndexEntries {
+			continue
+		}
+		if _, isAccount := t.accountAuthIndexes[authIndex]; isAccount {
+			continue
+		}
+		t.providerChannelIndex[authIndex] = entry
+	}
+}
+
+// ProviderCredentialForAuthIndex resolves the provider channel credential CPA
+// assigned one auth index to. It returns an empty key for an unknown index and
+// for an index a native account owns, so account telemetry keeps its current
+// behaviour. The caller must use the returned key only to derive the redacted
+// credential identity: it is never logged or persisted.
+func (t *ProviderRuntimeTracker) ProviderCredentialForAuthIndex(authIndex string) (apiKey, provider string) {
+	authIndex = strings.TrimSpace(authIndex)
+	if t == nil || authIndex == "" {
+		return "", ""
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if _, isAccount := t.accountAuthIndexes[authIndex]; isAccount {
+		return "", ""
+	}
+	entry, exists := t.providerChannelIndex[authIndex]
+	if !exists || entry.apiKey == "" {
+		return "", ""
+	}
+	return entry.apiKey, entry.provider
+}
+
+// dropAccountClaimedProviderIndexesLocked removes provider channel entries whose
+// auth index a native account now owns. CPA regenerates auth indexes, so an index
+// read from a channel row can later belong to an account; the tracker must never
+// attribute that account's usage to a provider channel. The caller must hold the
+// write lock.
+func (t *ProviderRuntimeTracker) dropAccountClaimedProviderIndexesLocked(accountIndexes map[string]struct{}) {
+	for authIndex := range t.providerChannelIndex {
+		if _, isAccount := accountIndexes[authIndex]; isAccount {
+			delete(t.providerChannelIndex, authIndex)
+		}
+	}
+}
+
+// RepairOrphanedAuthIndexAggregates folds provider aggregates that were stranded
+// under the volatile identity "auth-index:<hex>" into the stable credential
+// aggregate of the channel row that now owns that provider. It is called after a
+// channel list was read, because that is the only moment at which the plugin
+// knows which auth index a live row uses and which credential owns it.
+//
+// An orphan is only adopted when the provider maps to exactly ONE live channel
+// credential: with two rows the orphan's provenance is unknown, and moving real
+// usage onto the wrong row is worse than leaving it stranded, so those providers
+// are reported instead. An orphan whose index a live row still uses, or an index
+// a native account owns, is never touched. The number of candidates inspected and
+// the number of aggregates folded per pass are both bounded, and the pass is
+// idempotent: an adopted aggregate is deleted and counters merge by maximum.
+func (t *ProviderRuntimeTracker) RepairOrphanedAuthIndexAggregates() providerRuntimeOrphanRepair {
+	repair := providerRuntimeOrphanRepair{}
+	if t == nil {
+		return repair
+	}
+	t.mu.Lock()
+	orphans := t.orphanedAuthIndexAggregatesLocked()
+	ambiguous := make(map[string]struct{})
+	for _, orphan := range orphans {
+		if repair.Adopted >= providerRuntimeMaxOrphanAdoptions {
+			break
+		}
+		if _, reported := ambiguous[orphan.provider]; reported {
+			continue
+		}
+		candidates := t.providerChannelCredentialsLocked(orphan.provider)
+		if len(candidates) == 0 {
+			// No live channel row for this provider: there is nothing to adopt the
+			// history into yet, so it stays where it is.
+			continue
+		}
+		if len(candidates) > 1 {
+			ambiguous[orphan.provider] = struct{}{}
+			continue
+		}
+		if t.adoptOrphanLocked(candidates[0], orphan) {
+			repair.Adopted++
+		}
+	}
+	for provider := range ambiguous {
+		repair.Ambiguous = append(repair.Ambiguous, provider)
+	}
+	sort.Strings(repair.Ambiguous)
+	t.mu.Unlock()
+	if repair.Adopted > 0 {
+		t.markDirty()
+	}
+	return repair
+}
+
+// orphanedAuthIndexAggregatesLocked collects the aggregates a channel list read
+// has explained: provider aggregates whose identity is still the volatile
+// "auth-index:" one and whose index no live channel row or account uses. The
+// scan is bounded and the result is ordered so a pass is reproducible.
+func (t *ProviderRuntimeTracker) orphanedAuthIndexAggregatesLocked() []providerRuntimeOrphan {
+	orphans := make([]providerRuntimeOrphan, 0, 4)
+	for key, aggregate := range t.aggregates {
+		if aggregate == nil {
+			continue
+		}
+		if len(orphans) >= providerRuntimeMaxOrphanCandidates {
+			// Bounded pass: the rest is recovered by the next channel read.
+			break
+		}
+		identity := strings.TrimSpace(aggregate.Identity)
+		if !strings.HasPrefix(identity, "auth-index:") {
+			// Only the volatile identity this mapping bug produced is recovered. A
+			// credential-backed or auth-id aggregate is never merged anywhere.
+			continue
+		}
+		identityIndex := strings.TrimSpace(strings.TrimPrefix(identity, "auth-index:"))
+		authIndex := strings.TrimSpace(aggregate.AuthIndex)
+		if authIndex == "" {
+			authIndex = identityIndex
+		}
+		provider := normalizeRuntimeProvider(aggregate.Provider)
+		if provider == "" || authIndex == "" {
+			continue
+		}
+		if _, live := t.providerChannelIndex[authIndex]; live {
+			continue
+		}
+		if _, isAccount := t.accountAuthIndexes[authIndex]; isAccount {
+			continue
+		}
+		if identityIndex != "" && identityIndex != authIndex {
+			if _, live := t.providerChannelIndex[identityIndex]; live {
+				continue
+			}
+		}
+		orphans = append(orphans, providerRuntimeOrphan{
+			key: key, provider: provider, authIndex: authIndex, aggregate: aggregate,
+		})
+	}
+	sort.Slice(orphans, func(i, j int) bool {
+		if orphans[i].provider == orphans[j].provider {
+			return orphans[i].authIndex < orphans[j].authIndex
+		}
+		return orphans[i].provider < orphans[j].provider
+	})
+	return orphans
+}
+
+// providerChannelCredentialsLocked lists the distinct credentials the channel
+// index holds for one provider. Distinct credentials, not rows: two rows that
+// share a credential are one credential, and therefore one unambiguous target.
+func (t *ProviderRuntimeTracker) providerChannelCredentialsLocked(provider string) []providerChannelCredentialRef {
+	provider = normalizeRuntimeProvider(provider)
+	type choice struct {
+		primary string
+		lowest  string
+	}
+	choices := make(map[string]choice, 2)
+	for authIndex, entry := range t.providerChannelIndex {
+		if entry.provider != provider || entry.identity == "" {
+			continue
+		}
+		current := choices[entry.identity]
+		if current.lowest == "" || authIndex < current.lowest {
+			current.lowest = authIndex
+		}
+		if entry.primary && (current.primary == "" || authIndex < current.primary) {
+			current.primary = authIndex
+		}
+		choices[entry.identity] = current
+	}
+	refs := make([]providerChannelCredentialRef, 0, len(choices))
+	for identity, current := range choices {
+		authIndex := current.primary
+		if authIndex == "" {
+			authIndex = current.lowest
+		}
+		refs = append(refs, providerChannelCredentialRef{identity: identity, authIndex: authIndex})
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].identity < refs[j].identity })
+	return refs
+}
+
+// adoptOrphanLocked folds one stranded aggregate into the stable credential
+// aggregate of the single credential that owns the provider. The caller must hold
+// the write lock and must have already proven the credential is unambiguous.
+func (t *ProviderRuntimeTracker) adoptOrphanLocked(credential providerChannelCredentialRef, orphan providerRuntimeOrphan) bool {
+	key := runtimeAggregateKey(orphan.provider, credential.identity)
+	if key == orphan.key {
+		return false
+	}
+	target := t.aggregates[key]
+	if target == nil {
+		if len(t.aggregates) >= providerRuntimeMaxIdentities && !t.evictIdleAggregateLocked() {
+			return false
+		}
+		target = &providerRuntimeAggregate{
+			Provider:  orphan.provider,
+			AuthIndex: credential.authIndex,
+			Identity:  credential.identity,
+			Models:    make(map[string]*providerRuntimeModel),
+		}
+		t.aggregates[key] = target
+	}
+	// Both aggregates are cumulative views of the same channel's history, so
+	// counters merge by maximum (the convention the store merge already uses)
+	// instead of being added, which keeps a repeated pass from double counting.
+	merged := mergeProviderRuntimeAggregate(*target, *orphan.aggregate)
+	merged.Identity = credential.identity
+	merged.CredentialBacked = true
+	if credential.authIndex != "" {
+		// The row's current auth index replaces the stale index the orphan was
+		// stranded under, so the dashboard row follows the live index.
+		merged.AuthIndex = credential.authIndex
+	}
+	merged.Active = target.Active + orphan.aggregate.Active
+	*target = merged
+	delete(t.aggregates, orphan.key)
+	for requestID, request := range t.requests {
+		if request.AggregateKey == orphan.key {
+			request.AggregateKey = key
+			t.requests[requestID] = request
+		}
+	}
+	return true
+}
+
 // RequestInterceptionActive keeps the lifecycle observer attached even when no
 // mutating request experiment is enabled. It never changes request bodies.
 func (t *ProviderRuntimeTracker) RequestInterceptionActive() bool              { return t != nil }
@@ -1229,6 +1582,9 @@ func (t *ProviderRuntimeTracker) Shutdown() {
 	t.mu.Lock()
 	t.requests = make(map[string]providerRuntimeRequest)
 	t.aggregates = make(map[string]*providerRuntimeAggregate)
+	// The channel index is host-derived, so it is dropped with the rest of the
+	// in-memory state instead of surviving a retired instance.
+	t.providerChannelIndex = make(map[string]providerChannelIndexEntry)
 	t.mu.Unlock()
 }
 

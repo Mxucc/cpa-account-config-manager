@@ -900,6 +900,7 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		// tracker itself decides whether the record is Cline Pass traffic.
 		a.clinePass.ObserveUsage(record)
 	}
+	record = a.attributeProviderChannelCredential(record)
 	if !a.isKnownAccountUsageRecord(record) && isAIProviderUsageRecord(record) {
 		// Provider credentials and native OAuth accounts share CPA's usage
 		// callback. Never put provider traffic into the account usage store: an
@@ -910,6 +911,42 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		a.usage.Observe(record)
 		a.inspection.Observe(record)
 	}
+}
+
+// attributeProviderChannelCredential resolves the credential of a CPA provider
+// channel from the auth index a usage callback carries. CPA's callback for an
+// openai-compatibility or codex-api-key channel names the auth index CPA assigned
+// to the channel row but omits the API key, so the record has no credential
+// identity: the runtime dashboard refuses such a snapshot and pricing cannot
+// resolve the channel. The index is only filled in when the plugin verified that
+// the auth index belongs to a live provider channel row, which is provenance
+// enough to attribute the record. A record that already carries a key, one that
+// names an index no channel row owns, and native account telemetry are all
+// returned unchanged. The key stays inside this process and is hashed by the
+// tracker immediately: it is never logged or persisted.
+func (a *App) attributeProviderChannelCredential(record cpaapi.UsageRecord) cpaapi.UsageRecord {
+	if a == nil || a.providerRuntime == nil || strings.TrimSpace(record.APIKey) != "" {
+		return record
+	}
+	switch strings.ToLower(strings.TrimSpace(record.AuthType)) {
+	case "oauth", "oauth2":
+		// Native account telemetry stays account telemetry.
+		return record
+	}
+	apiKey, provider := a.providerRuntime.ProviderCredentialForAuthIndex(record.AuthIndex)
+	if apiKey == "" {
+		return record
+	}
+	record.APIKey = apiKey
+	// The provider name is the namespace the tracker and the pricing lookup both
+	// key the credential identity by, so the channel's name wins over whatever a
+	// callback reports: the identity must be the one the channel is known under.
+	if provider != "" {
+		record.Provider = provider
+	}
+	// Keep the record on the provider path even when the host omitted AuthType.
+	record.AuthType = "api_key"
+	return record
 }
 
 func (a *App) Close() {

@@ -293,6 +293,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.opencode_is_saved": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043a\u0432\u043e\u0442\u044b OpenCode Go \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u043d. \u041c\u043e\u0436\u043d\u043e \u0437\u0430\u043a\u0440\u044b\u0442\u044c \u044d\u0442\u043e \u043e\u043a\u043d\u043e.",
   "ui.opencode_saved_account": "\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u043a\u0432\u043e\u0442\u044b OpenCode Go",
   "ui.opencode_rolling": "\u041a\u0432\u043e\u0442\u0430 5 \u0447\u0430\u0441\u043e\u0432",
+  "ui.cline_pass_channel_unreadable": "Список каналов CPA прочитать не удалось",
+  "ui.cline_pass_channel_unreadable_hint": "Состояние привязки неизвестно, а не \"не привязано\": плагин не смог прочитать список каналов CPA - обычно это означает, что Management API недоступен или CPA не принял management-ключ. Проверьте это, прежде чем считать запись неопубликованной.",
   "ui.codex_usage_totals": "Суммарное использование Codex",
   "ui.codex_usage_reference_amount": "Сумма по справочным ценам",
   "ui.codex_usage_reference_note": "Справочная цена по стандартному тарифу API, а не сумма к оплате",

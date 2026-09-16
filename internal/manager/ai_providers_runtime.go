@@ -893,6 +893,28 @@ type providerRuntimeOrphanRepair struct {
 	Ambiguous []string
 }
 
+// providerRuntimeSuperseded is one aggregate a live channel row has already
+// replaced, so its history belongs in that row's credential aggregate. Two shapes
+// qualify: a volatile "auth-index:" shell whose index a live row still reports
+// (the aggregate the fix that keyed accounting by CPA's provider name left
+// behind), and a credential-backed aggregate an earlier release filed under the
+// channel KIND's name ("openai") instead of the row's CPA provider name
+// ("openai-compatible-<name>").
+type providerRuntimeSuperseded struct {
+	key string
+	// row is the live channel row the aggregate's auth index belongs to. Its
+	// credential identity is the aggregate the row's new records write to.
+	row providerChannelIndexEntry
+	// authIndex is the live row index the aggregate was matched by, and therefore
+	// the index the merged aggregate is published under.
+	authIndex string
+	// legacyKindName reports that the aggregate sits under the channel kind's name
+	// rather than the row's CPA provider name, which is the shape the previous
+	// release wrote for an OpenAI-compatible channel.
+	legacyKindName bool
+	aggregate      *providerRuntimeAggregate
+}
+
 // SetProviderChannelCredentials replaces the credential index of one CPA channel
 // kind with the rows of a freshly read channel list. CPA's usage callback for an
 // openai-compatibility or codex-api-key channel carries the auth index of the
@@ -986,19 +1008,32 @@ func (t *ProviderRuntimeTracker) dropAccountClaimedProviderIndexesLocked(account
 	}
 }
 
-// RepairOrphanedAuthIndexAggregates folds provider aggregates that were stranded
-// under the volatile identity "auth-index:<hex>" into the stable credential
-// aggregate of the channel row that now owns that provider. It is called after a
-// channel list was read, because that is the only moment at which the plugin
-// knows which auth index a live row uses and which credential owns it.
+// RepairOrphanedAuthIndexAggregates folds provider aggregates that no longer
+// belong where they are into the stable credential aggregate of the channel row
+// that now owns that provider. It is called after a channel list was read, because
+// that is the only moment at which the plugin knows which auth index a live row
+// uses and which credential owns it.
 //
-// An orphan is only adopted when the provider maps to exactly ONE live channel
-// credential: with two rows the orphan's provenance is unknown, and moving real
-// usage onto the wrong row is worse than leaving it stranded, so those providers
-// are reported instead. An orphan whose index a live row still uses, or an index
-// a native account owns, is never touched. The number of candidates inspected and
-// the number of aggregates folded per pass are both bounded, and the pass is
-// idempotent: an adopted aggregate is deleted and counters merge by maximum.
+// Two shapes are recovered:
+//
+//   - An aggregate stranded under the volatile identity "auth-index:<hex>" that no
+//     live row and no native account claims.
+//   - An aggregate the live path has already moved on from: a volatile shell whose
+//     auth index a live row still reports, or a credential-backed aggregate an
+//     earlier release filed under the channel KIND's name ("openai") instead of
+//     CPA's per-channel provider key ("openai-compatible-<name>"). Both are folded
+//     only while the channel index already holds the row's credential-backed
+//     aggregate: that existing target is the proof the row's new records are being
+//     written elsewhere, so the aggregate in hand will never see another one. The
+//     target is never created here.
+//
+// An aggregate is only adopted when the provider maps to exactly ONE live channel
+// credential: with two rows the provenance is unknown, and moving real usage onto
+// the wrong row is worse than leaving it stranded, so those providers are reported
+// instead. An index a native account owns is never touched. The number of
+// candidates inspected and the number of aggregates folded per pass are both
+// bounded, and the pass is idempotent: an adopted aggregate is deleted and counters
+// merge by maximum.
 func (t *ProviderRuntimeTracker) RepairOrphanedAuthIndexAggregates() providerRuntimeOrphanRepair {
 	repair := providerRuntimeOrphanRepair{}
 	if t == nil {
@@ -1028,6 +1063,9 @@ func (t *ProviderRuntimeTracker) RepairOrphanedAuthIndexAggregates() providerRun
 			repair.Adopted++
 		}
 	}
+	// Second pass: the aggregates a live channel row has already replaced, which
+	// the first pass deliberately skips because their auth index is still live.
+	t.repairSupersededAggregatesLocked(&repair, ambiguous)
 	for provider := range ambiguous {
 		repair.Ambiguous = append(repair.Ambiguous, provider)
 	}
@@ -1169,6 +1207,171 @@ func (t *ProviderRuntimeTracker) adoptOrphanLocked(credential providerChannelCre
 		}
 	}
 	return true
+}
+
+// repairSupersededAggregatesLocked folds the aggregates a live channel row has
+// already replaced into that row's credential-backed aggregate (see
+// supersededAggregatesLocked for which ones qualify). The caller must hold the
+// write lock and passes the pass-wide ambiguity report along so a provider is
+// named at most once per pass.
+func (t *ProviderRuntimeTracker) repairSupersededAggregatesLocked(repair *providerRuntimeOrphanRepair, ambiguous map[string]struct{}) {
+	for _, candidate := range t.supersededAggregatesLocked() {
+		if repair.Adopted >= providerRuntimeMaxOrphanAdoptions {
+			// Bounded pass: the rest is recovered by the next channel read.
+			return
+		}
+		provider := candidate.row.provider
+		if _, reported := ambiguous[provider]; reported {
+			continue
+		}
+		if candidate.legacyKindName {
+			// The KIND-derived name is shared by every channel of that kind, so only
+			// the auth index can prove which row owns the aggregate. It must resolve
+			// exactly one distinct credential of the row's provider, otherwise the
+			// owner is unknown and is reported instead of guessed.
+			credentials := t.providerChannelCredentialsLocked(provider)
+			if len(credentials) > 1 {
+				ambiguous[provider] = struct{}{}
+				continue
+			}
+			if len(credentials) == 0 || credentials[0].identity != candidate.row.identity {
+				continue
+			}
+		}
+		if t.adoptSupersededAggregateLocked(candidate) {
+			repair.Adopted++
+		}
+	}
+}
+
+// adoptSupersededAggregateLocked folds one superseded aggregate into the row's
+// existing credential-backed aggregate. The target must already exist: its absence
+// is exactly the proof that the live path has not settled on that row yet, in which
+// case the aggregate in hand may still receive records and has to be left alone.
+// The caller must hold the write lock and must have already proven the row's
+// credential, so no aggregate is ever created here.
+func (t *ProviderRuntimeTracker) adoptSupersededAggregateLocked(candidate providerRuntimeSuperseded) bool {
+	key := runtimeAggregateKey(candidate.row.provider, candidate.row.identity)
+	if key == candidate.key {
+		return false
+	}
+	target := t.aggregates[key]
+	if target == nil {
+		return false
+	}
+	// Both aggregates are cumulative views of the same channel's history, so
+	// counters merge by maximum - the convention adoptOrphanLocked and the store
+	// merge already use - which keeps a repeated pass from double counting.
+	merged := mergeProviderRuntimeAggregate(*target, *candidate.aggregate)
+	merged.Provider = candidate.row.provider
+	merged.Identity = candidate.row.identity
+	merged.CredentialBacked = true
+	if candidate.authIndex != "" {
+		// The live index of the row replaces the stale index the superseded
+		// aggregate was stranded under, so the dashboard row follows the live one.
+		merged.AuthIndex = candidate.authIndex
+	}
+	merged.Active = target.Active + candidate.aggregate.Active
+	*target = merged
+	delete(t.aggregates, candidate.key)
+	for requestID, request := range t.requests {
+		if request.AggregateKey == candidate.key {
+			request.AggregateKey = key
+			t.requests[requestID] = request
+		}
+	}
+	return true
+}
+
+// supersededAggregatesLocked collects the aggregates a live channel row has
+// already replaced:
+//
+//   - a volatile "auth-index:<hex>" shell whose index that row still reports, and
+//   - a credential-backed aggregate filed under the channel KIND's name while the
+//     row is served under CPA's per-channel provider name.
+//
+// Both are only returned when the channel index already holds the row's
+// credential-backed aggregate - the target the row's new records write to. That
+// existing target is the evidence the live path has moved on, so the aggregate in
+// hand can never receive another record; without it the aggregate may still be
+// live, and creating the target here would attribute history nobody has proven.
+// The scan is bounded and the result is ordered so a pass is reproducible.
+func (t *ProviderRuntimeTracker) supersededAggregatesLocked() []providerRuntimeSuperseded {
+	candidates := make([]providerRuntimeSuperseded, 0, 4)
+	for key, aggregate := range t.aggregates {
+		if aggregate == nil {
+			continue
+		}
+		if len(candidates) >= providerRuntimeMaxOrphanCandidates {
+			// Bounded pass: the rest is recovered by the next channel read.
+			break
+		}
+		identity := strings.TrimSpace(aggregate.Identity)
+		authIndex := strings.TrimSpace(aggregate.AuthIndex)
+		identityIndex := ""
+		legacyKindName := false
+		switch {
+		case strings.HasPrefix(identity, "auth-index:"):
+			identityIndex = strings.TrimSpace(strings.TrimPrefix(identity, "auth-index:"))
+			if authIndex == "" {
+				authIndex = identityIndex
+			}
+		case strings.HasPrefix(identity, "credential:"):
+			// A credential-backed aggregate is only superseded when it sits under
+			// the KIND-derived name: the current release always writes the row's CPA
+			// provider name, so that name is the row's own aggregate.
+			legacyKindName = true
+		default:
+			continue
+		}
+		if authIndex == "" {
+			// Without an index nothing proves which row owns the aggregate.
+			continue
+		}
+		row, live := t.providerChannelIndex[authIndex]
+		if !live {
+			// Not an index of a live row: either a real orphan, which the first
+			// pass owns, or history that belongs to nobody.
+			continue
+		}
+		if _, isAccount := t.accountAuthIndexes[authIndex]; isAccount {
+			continue
+		}
+		if identityIndex != "" && identityIndex != authIndex {
+			if _, isAccount := t.accountAuthIndexes[identityIndex]; isAccount {
+				continue
+			}
+		}
+		if legacyKindName {
+			provider := normalizeRuntimeProvider(aggregate.Provider)
+			if provider == row.provider {
+				// Already filed under the row's CPA provider name.
+				continue
+			}
+			if provider != normalizeRuntimeProvider(aiProviderRuntimeProviderName(row.kind)) {
+				// Only the name the channel kind itself used to publish is migrated:
+				// any other name is a different aggregate, not a legacy spelling of
+				// this row.
+				continue
+			}
+		}
+		if t.aggregates[runtimeAggregateKey(row.provider, row.identity)] == nil {
+			continue
+		}
+		candidates = append(candidates, providerRuntimeSuperseded{
+			key: key, row: row, authIndex: authIndex, legacyKindName: legacyKindName, aggregate: aggregate,
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].row.provider == candidates[j].row.provider {
+			if candidates[i].aggregate.Identity == candidates[j].aggregate.Identity {
+				return candidates[i].key < candidates[j].key
+			}
+			return candidates[i].aggregate.Identity < candidates[j].aggregate.Identity
+		}
+		return candidates[i].row.provider < candidates[j].row.provider
+	})
+	return candidates
 }
 
 // RequestInterceptionActive keeps the lifecycle observer attached even when no

@@ -47,7 +47,27 @@ describe("ClinePassWorkspace", () => {
     expect(requests.some(({ url }) => url.endsWith("/opencode/cline-pass/accounts"))).toBe(true);
   });
 
+  // The operator reported the unbound hint appearing on every refresh while the server reports the
+  // channel bound. This pins the contract with the payload the server actually serves (captured
+  // live: channel_bound true, 21 published models, no gaps), so a row may only show the unbound
+  // hint when the payload really says unbound.
+  it("shows the bound badge for a payload that reports the channel bound", async () => {
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        channel_bound: true,
+        channel_models: 21,
+        channel_model_gaps: 0,
+        models: Array.from({ length: 21 }, (_, index) => `cline-pass/model-${index}`),
+      })],
+    });
 
+    await renderClinePass();
+
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("已绑定 · 已发布 21 个模型")).toBeInTheDocument();
+    expect(within(row).queryByText("尚未绑定 CPA 渠道")).not.toBeInTheDocument();
+  });
   // A failed load must not look like an empty account list: the page the operator is looking at
   // has to say what went wrong, and a 401 belongs to the shared session handler.
   it("reports a failed account load instead of showing an empty list", async () => {

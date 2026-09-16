@@ -38,17 +38,21 @@ func clinePassChannelRouteKey(baseURL, apiKey string) string {
 // clinePassChannelRoutes reads the OpenAI-compatible channel list once and indexes it twice: by
 // canonical base URL (first row wins, which is what a summary over every account needs) and by
 // base URL plus credential (which is what one account needs, now that each account has its own
-// row). A read failure or a missing management key returns an empty index so every caller degrades
-// to the unbound state instead of failing the request. The management key is never logged or
-// returned.
-func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) map[string]clinePassChannelRoute {
+// row). The management key is never logged or returned.
+//
+// readable reports whether the list could actually be read. Without it every caller would show the
+// same "not bound" state for two very different situations - a channel that is genuinely missing
+// and a management API this plugin could not reach - and an operator whose channel IS published
+// would be told on every refresh to go and publish it. The second return value lets the pages say
+// which of the two happened.
+func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) (map[string]clinePassChannelRoute, bool) {
 	routes := map[string]clinePassChannelRoute{}
 	if a == nil || strings.TrimSpace(managementKey) == "" {
-		return routes
+		return routes, false
 	}
 	entries, errRead := a.aiProviderChannelEntries(ctx, managementKey, "openai-compatibility")
 	if errRead != nil {
-		return routes
+		return routes, false
 	}
 	for _, entry := range entries {
 		baseKey := canonicalProviderBaseURL(aiProviderChannelBaseURL(entry))
@@ -67,7 +71,7 @@ func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) 
 			routes[credentialKey] = route
 		}
 	}
-	return routes
+	return routes, true
 }
 
 // clinePassAutoBindCooldown throttles the automatic binds a page load triggers.
@@ -99,10 +103,12 @@ func (a *App) clinePassAutoBindDue(accountID string) bool {
 // load renders is where the missing row is noticed and where it is published again. Every
 // unbound account may attempt one bind under the shared cooldown, and the index is re-read
 // only after one of them succeeded.
-func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey string, accounts []ClinePassAccountView) map[string]clinePassChannelRoute {
-	routes := a.clinePassChannelRoutes(ctx, managementKey)
-	if a == nil || a.clinePass == nil || len(accounts) == 0 {
-		return routes
+func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey string, accounts []ClinePassAccountView) (map[string]clinePassChannelRoute, bool) {
+	routes, readable := a.clinePassChannelRoutes(ctx, managementKey)
+	if a == nil || a.clinePass == nil || len(accounts) == 0 || !readable {
+		// An unreadable list is not an empty one: binding on top of it could publish a
+		// duplicate row, and every account would be reported unbound for the wrong reason.
+		return routes, readable
 	}
 	unbound := make([]ClinePassAccountView, 0, len(accounts))
 	for _, account := range accounts {
@@ -111,7 +117,7 @@ func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey str
 		}
 	}
 	if len(unbound) == 0 {
-		return routes
+		return routes, readable
 	}
 	bound := false
 	for _, account := range unbound {
@@ -123,9 +129,10 @@ func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey str
 		}
 	}
 	if !bound {
-		return routes
+		return routes, readable
 	}
-	return a.clinePassChannelRoutes(ctx, managementKey)
+	routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
+	return routes, readable
 }
 
 // clinePassChannelRouteLookup prefers the account's own row (base URL plus its credential) and
@@ -284,8 +291,11 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 	for _, view := range targets {
 		accounts = append(accounts, *view)
 	}
-	routes := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
+	routes, readable := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	for _, view := range targets {
+		// Reporting "not bound" for a list this plugin could not read would send the operator
+		// looking for a missing channel that may well be published; the pages say which it is.
+		view.ChannelStateUnreadable = !readable
 		// The stored credential is what identifies this account's own channel row; it is read
 		// without any refresh or network call and never leaves this function.
 		credential := ""

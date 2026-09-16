@@ -753,6 +753,8 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                   // CPA routing: the account is reachable only once a channel carries its base
                   // URL, and a partially published channel leaves some models unroutable.
                   const bound = account.channel_bound === true;
+                  /** True when the plugin could not read CPA's channel list at all. */
+                  const channelStateUnreadable = account.channel_state_unreadable === true;
                   const publishedModels = account.channel_models ?? 0;
                   const modelGaps = account.channel_model_gaps ?? 0;
                   // Cline documents exactly these three ClinePass windows; the USD figures the
@@ -803,7 +805,14 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                       </td>
                       <td data-label={tx("ui.cline_pass_routing")}>
                         <div className="opencode-routing-cell">
-                          {bound && modelGaps > 0 ? (
+                          {channelStateUnreadable ? (
+                            // Not the same as unbound: the list could not be read, so claiming
+                            // "unbound" would send the operator to fix a channel that may be fine.
+                            <>
+                              <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_channel_unreadable")}</span>
+                              <small>{tx("ui.cline_pass_channel_unreadable_hint")}</small>
+                            </>
+                          ) : bound && modelGaps > 0 ? (
                             <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_routing_gaps", { count: String(modelGaps) })}</span>
                           ) : bound ? (
                             <span className="opencode-routing-badge is-bound">{tx("ui.cline_pass_routing_bound", { count: String(publishedModels) })}</span>
@@ -963,9 +972,11 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                 </div>
                 <p className="opencode-price-meta">
                   <span>{tx("ui.cline_pass_models_summary", { published: String(clinePassPublishedModels), total: String(clinePassModels.models.length) })}</span>
-                  <span>{clinePassModels.channel_bound
-                    ? tx("ui.cline_pass_routing_bound", { count: String(clinePassModels.channel_models) })
-                    : tx("ui.cline_pass_routing_unbound")}</span>
+                  <span>{clinePassModels.channel_state_unreadable
+                    ? tx("ui.cline_pass_channel_unreadable")
+                    : clinePassModels.channel_bound
+                      ? tx("ui.cline_pass_routing_bound", { count: String(clinePassModels.channel_models) })
+                      : tx("ui.cline_pass_routing_unbound")}</span>
                   <span>{tx("ui.opencode_price_per_million")}</span>
                 </p>
                 <p className="opencode-note">{tx("ui.cline_pass_models_prices_note")}</p>

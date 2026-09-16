@@ -527,3 +527,64 @@ func TestClinePassPublishedModelAcceptsClientAlias(t *testing.T) {
 		}
 	}
 }
+
+// The reported defect: CPA's callback for the channel names only the auth index CPA assigned,
+// so the Cline Pass ledger resolved no credential and attributed nothing - the documented windows
+// stayed at $0 while the traffic kept arriving. The record's credential is now resolved before any
+// consumer reads it, which is what this pins.
+func TestClinePassQuotaUsageAttributesAnAuthIndexOnlyCallback(t *testing.T) {
+	const token = "sk-ledger-channel-secret"
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	now := time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	accountID, errSave := service.SaveAPIKeyAccount("", "ledger", "", token)
+	if errSave != nil {
+		t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+	}
+
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.Configure([]byte("data_dir: " + t.TempDir()))
+	t.Cleanup(app.Close)
+	app.clinePass = service
+	app.managementDoer = httpDoerFunc(func(request *http.Request) (*http.Response, error) {
+		kind := strings.TrimPrefix(request.URL.Path, "/v0/management/")
+		var list []map[string]any
+		if kind == "openai-compatibility" {
+			list = []map[string]any{{
+				"name":            "Cline Pass",
+				"base-url":        clinePassDefaultBaseURL,
+				"api-key-entries": []any{map[string]any{"api-key": token, "auth-index": "row-index-a"}},
+			}}
+		}
+		payload, errEncode := json.Marshal(map[string]any{kind: list})
+		if errEncode != nil {
+			return nil, errEncode
+		}
+		return jsonHTTPResponse(http.StatusOK, string(payload)), nil
+	})
+	// One channel read is what teaches the plugin which credential the auth index belongs to.
+	if _, storageErr := app.resolveAIProviderChannelNames(context.Background(), "management-secret"); storageErr != "" {
+		t.Fatalf("channel read failed: %s", storageErr)
+	}
+
+	// The callback carries the auth index and nothing else: no API key, no provider name.
+	app.HandleUsage(cpaapi.UsageRecord{
+		AuthType:    "api_key",
+		AuthIndex:   "row-index-a",
+		Model:       "cline-pass/glm-5.3",
+		RequestedAt: now.Add(-time.Minute),
+		Detail:      cpaapi.UsageDetail{InputTokens: 1_000_000, OutputTokens: 0},
+	})
+
+	view, ok := service.AccountView(accountID)
+	if !ok {
+		t.Fatal("the stored account disappeared")
+	}
+	monthly := view.QuotaUsage.Monthly
+	if monthly.Requests != 1 || monthly.InputTokens != 1_000_000 {
+		t.Fatalf("an auth-index-only callback was not attributed: %+v", monthly)
+	}
+	if math.Abs(monthly.USD-1.40) > 1e-6 {
+		t.Fatalf("reference-priced USD = %v, want 1.40 for one GLM-5.3 input million", monthly.USD)
+	}
+}

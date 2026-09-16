@@ -98,7 +98,10 @@ type clinePassModelsResponse struct {
 	Accounts         int                  `json:"accounts"`
 	ChannelBound     bool                 `json:"channel_bound"`
 	ChannelModels    int                  `json:"channel_models"`
-	DefaultBaseURL   string               `json:"default_base_url"`
+	// ChannelStateUnreadable marks that the live channel list could not be read, so
+	// ChannelBound is unknown rather than false.
+	ChannelStateUnreadable bool   `json:"channel_state_unreadable,omitempty"`
+	DefaultBaseURL         string `json:"default_base_url"`
 }
 
 // handleClinePassAccounts lists, saves and removes Cline Pass accounts.
@@ -482,7 +485,7 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 	stripPrefix := a.clinePass.StripModelPrefix()
 	// Reading the page also repairs the channel: an account whose credential was rotated is
 	// published again here, so the page never reports a state the plugin would fix on a click.
-	routes := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
+	routes, channelStateReadable := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	published := map[string]struct{}{}
 	channelBound := false
 	channelModels := 0
@@ -517,12 +520,13 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 		models = append(models, view)
 	}
 	return jsonResponse(http.StatusOK, clinePassModelsResponse{
-		Models:           models,
-		StripModelPrefix: stripPrefix,
-		Accounts:         len(accounts),
-		ChannelBound:     channelBound,
-		ChannelModels:    channelModels,
-		DefaultBaseURL:   clinePassDefaultBaseURL,
+		Models:                 models,
+		StripModelPrefix:       stripPrefix,
+		Accounts:               len(accounts),
+		ChannelBound:           channelBound,
+		ChannelStateUnreadable: !channelStateReadable,
+		ChannelModels:          channelModels,
+		DefaultBaseURL:         clinePassDefaultBaseURL,
 	})
 }
 

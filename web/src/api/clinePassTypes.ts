@@ -26,6 +26,8 @@ export interface ClinePassAccountView {
    * and equals the whole model list while the account is unbound.
    */
   channel_bound: boolean;
+  /** The live channel list could not be read, so channel_bound is unknown rather than false. */
+  channel_state_unreadable?: boolean;
   channel_models: number;
   channel_model_gaps: number;
   /** Usage the Cline gateway attributes to this account; absent until Cline reports it. */
@@ -104,6 +106,8 @@ export interface ClinePassModelsResponse {
   accounts: number;
   channel_bound: boolean;
   channel_models: number;
+  /** The live channel list could not be read, so channel_bound is unknown rather than false. */
+  channel_state_unreadable?: boolean;
   default_base_url: string;
 }
 

@@ -893,6 +893,11 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 	if a.runtimeSuperseded() {
 		return
 	}
+	// Resolve the channel credential BEFORE any consumer sees the record. CPA omits the API
+	// key from a provider channel's callback, so a consumer that only looks for one - the
+	// Cline Pass ledger does exactly that - attributes nothing while the traffic keeps
+	// arriving, which is why the documented Cline Pass windows stayed at $0.
+	record = a.attributeProviderChannelCredential(record)
 	if a.clinePass != nil {
 		// Cline Pass is an OpenAI-compatible channel, so its traffic arrives on
 		// this same usage callback. The record feeds the reference-priced quota
@@ -900,7 +905,6 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		// tracker itself decides whether the record is Cline Pass traffic.
 		a.clinePass.ObserveUsage(record)
 	}
-	record = a.attributeProviderChannelCredential(record)
 	if !a.isKnownAccountUsageRecord(record) && isAIProviderUsageRecord(record) {
 		// Provider credentials and native OAuth accounts share CPA's usage
 		// callback. Never put provider traffic into the account usage store: an

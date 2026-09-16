@@ -291,6 +291,8 @@ export const enUI = {
   "ui.opencode_is_saved": "The OpenCode Go quota account is bound. You can close this window.",
   "ui.opencode_saved_account": "OpenCode Go quota account",
   "ui.opencode_rolling": "5-hour quota",
+  "ui.cline_pass_channel_unreadable": "CPA channel list could not be read",
+  "ui.cline_pass_channel_unreadable_hint": "The binding state is unknown, not \"unbound\": the plugin could not read CPA's channel list, which usually means the management API is unreachable or CPA did not accept the management key. Check that before treating the account as unpublished.",
   "ui.codex_usage_totals": "Codex cumulative usage",
   "ui.codex_usage_reference_amount": "Reference-priced amount",
   "ui.codex_usage_reference_note": "Reference price at the standard API rate, not an amount owed",

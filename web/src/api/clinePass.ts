@@ -107,6 +107,7 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 				// A pre-binding backend omits the routing fields, so an absent value degrades to
 				// "unbound" instead of failing the whole account list.
 				channel_bound: account.channel_bound === true,
+				channel_state_unreadable: account.channel_state_unreadable === true,
 				channel_models: isFiniteNonNegativeNumber(account.channel_models) ? account.channel_models : 0,
 				channel_model_gaps: isFiniteNonNegativeNumber(account.channel_model_gaps) ? account.channel_model_gaps : 0,
 			};
@@ -165,6 +166,7 @@ function normalizeClinePassModelsResponse(response: unknown): ClinePassModelsRes
 		strip_model_prefix: response.strip_model_prefix,
 		accounts: isFiniteNonNegativeInteger(response.accounts) ? response.accounts : 0,
 		channel_bound: response.channel_bound === true,
+		channel_state_unreadable: response.channel_state_unreadable === true,
 		channel_models: isFiniteNonNegativeInteger(response.channel_models) ? response.channel_models : 0,
 		default_base_url: typeof response.default_base_url === "string" ? response.default_base_url : "",
 	};

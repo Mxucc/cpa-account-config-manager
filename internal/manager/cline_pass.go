@@ -216,6 +216,10 @@ type ClinePassAccountView struct {
 	ChannelBound     bool `json:"channel_bound"`
 	ChannelModels    int  `json:"channel_models"`
 	ChannelModelGaps int  `json:"channel_model_gaps"`
+	// ChannelStateUnreadable marks that the live channel list could not be read, so
+	// ChannelBound is unknown rather than false. A page must say so instead of telling the
+	// operator to publish a channel that may already be published.
+	ChannelStateUnreadable bool `json:"channel_state_unreadable,omitempty"`
 	// QuotaUsage is the reference-priced usage of this account over the three
 	// documented Cline Pass windows. It carries token counts and reference-priced
 	// USD amounts only, never a credential, and it is additive: existing keys are

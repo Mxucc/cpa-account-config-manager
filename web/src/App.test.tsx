@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { formatDateTimeForLocale } from "./i18n/I18nProvider";
+import { formatCompactNumber } from "./format/compactNumber";
+import { formatCreditUSD } from "./format/currency";
 import { ACCOUNT_FILTERS_STORAGE_KEY, writeAccountFilters } from "./store/accountFilters";
 import { ACCOUNT_PAGE_SIZE_STORAGE_KEY, writeAccountPageSize } from "./store/accountPageSize";
 import { ACCOUNT_SORT_STORAGE_KEY, writeAccountSort } from "./store/accountSort";
@@ -129,6 +131,69 @@ describe("primary account batch flow", () => {
     expect(await screen.findByText("CPA 已重新加载插件，新版本已在本页生效。")).toBeInTheDocument();
     // One-shot: the next load of this tab must not repeat a reload that is long over.
     expect(takePendingNotice()).toBe("");
+  });
+
+  it("reports one spend and one token total in the sidebar footer", async () => {
+    // The footer used to print six per-family counters (enabled, active, spend for each credential
+    // family) that an operator reads as one running total.
+    document.documentElement.lang = "zh-CN";
+    vi.mocked(readPanelAuth).mockReturnValue({ apiBase: "http://localhost:8317", managementKey: "management-secret" });
+    // A credential-backed provider aggregate, so both halves of each total have to arrive.
+    const providerSnapshot = {
+      provider: "openai-compatibility",
+      auth_index: "idx-1",
+      identity: "credential:idx-1",
+      supported: true,
+      active: 1,
+      waiting: 0,
+      limit: 4,
+      request_limit: 0,
+      request_window_seconds: 0,
+      used_requests: 0,
+      limit_15s: 0,
+      used_60s: 0,
+      used_15s: 0,
+      input_tokens: 100,
+      output_tokens: 200,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
+      total_tokens: 500,
+      amount_usd: 16,
+      rated_requests: 3,
+      unrated_requests: 0,
+      updated_at: "2026-09-17T00:00:00Z",
+      quota: { five_hour_amount_usd: 16, seven_day_amount_usd: 32 },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/ai-providers/runtime")) return jsonResponse({ updated_at: "2026-09-17T00:00:00Z", snapshots: [providerSnapshot] });
+      // A channel payload is keyed by kind, and only a credential-backed runtime aggregate of an
+      // enabled entry may be counted as provider usage.
+      if (url.endsWith("/openai-compatibility")) return jsonResponse({ "openai-compatibility": [{ auth_index: "idx-1", api_key_entries: [{ auth_index: "idx-1" }], name: "provider key" }] });
+      if (url.includes("/accounts")) {
+        const usage = { credit: { amount_usd: 1.25 }, total_tokens: 2_000 };
+        return jsonResponse({ accounts: [{ ...account, usage }], total: 1, page: 1, page_size: 50, pages: 1 });
+      }
+      return jsonResponse({});
+    }));
+
+    render(<App />);
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    const footer = document.querySelector(".sidebar-telemetry");
+    expect(footer).not.toBeNull();
+    const rows = () => Array.from(document.querySelectorAll(".sidebar-telemetry-row"));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    // The labels say accumulated because neither side is a daily window.
+    expect(rows()[0].textContent).toContain("累计总消耗额度");
+    expect(rows()[1].textContent).toContain("累计总 token 用量");
+    // The sidebar reads its own account page and the provider runtime after the table loads, so the
+    // combined totals arrive late: 1.25 + 16 USD and 2000 + 500 tokens.
+    await waitFor(() => expect(rows()[0].textContent).toContain(formatCreditUSD(17.25, "zh-CN")));
+    expect(rows()[1].textContent).toContain(formatCompactNumber(2_500, "zh-CN"));
+    for (const removed of ["账号已启用", "账号总并发", "今日账号消耗额度", "AI 供应商已启用", "AI 供应商总并发", "今日供应商消耗额度", "系统状态"]) {
+      expect(footer?.textContent).not.toContain(removed);
+    }
   });
 
   it("leaves the sidebar totals alone while the page is hidden and reads them again on return", async () => {

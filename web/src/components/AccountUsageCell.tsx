@@ -1,7 +1,8 @@
 import { Activity, AlertTriangle, Gauge } from "lucide-react";
 import type { Account, OpenCodeQuotaResult, UsageWindowSnapshot } from "../types";
 import type { ClinePassQuotaUsage } from "../api/clinePassTypes";
-import { localeFormats, useI18n, type Locale } from "../i18n";
+import { useI18n } from "../i18n";
+import { formatCompactNumber } from "../format/compactNumber";
 import { formatCreditUSD } from "../format/currency";
 import type { UIMessageKey } from "../i18n/uiText";
 
@@ -275,14 +276,6 @@ function safeCount(value: number): number {
 
 function safePercent(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
-}
-
-function formatCompactNumber(value: number, locale: Locale): string {
-  const normalized = safeCount(value);
-  return new Intl.NumberFormat(localeFormats[locale].dateTimeLocale, {
-    notation: normalized >= 1000 ? "compact" : "standard",
-    maximumFractionDigits: 1,
-  }).format(normalized);
 }
 
 function formatPercent(value: number): string {

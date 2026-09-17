@@ -66,16 +66,20 @@ describe("sidebarTelemetrySignature", () => {
       .toBe(sidebarTelemetrySignature(accounts(), channels(), runtime()));
   });
 
-  it("ignores fields the sidebar totals never show", () => {
-    expect(sidebarTelemetrySignature(accounts({ name: "renamed.json", note: "operator note" }), channels(), runtime()))
-      .toBe(sidebarTelemetrySignature(accounts(), channels(), runtime()));
+  it("ignores fields no sidebar total is derived from", () => {
+    const base = sidebarTelemetrySignature(accounts(), channels(), runtime());
+    expect(sidebarTelemetrySignature(accounts({ name: "renamed.json", note: "operator note" }), channels(), runtime())).toBe(base);
+    // Concurrency is still read for the other surfaces, but the footer prints spend and tokens
+    // only, so a moving counter must not keep the schedule on the fast cadence.
+    expect(sidebarTelemetrySignature(accounts({ concurrency: { supported: true, active: 3, limit: 10 } }), channels(), runtime())).toBe(base);
+    expect(sidebarTelemetrySignature(accounts(), channels(), runtime({ active: 7, limit: 4 }))).toBe(base);
   });
 
   it("changes when an account total or the identity behind it moves", () => {
     const base = sidebarTelemetrySignature(accounts(), channels(), runtime());
-    expect(sidebarTelemetrySignature(accounts({ concurrency: { supported: true, active: 3, limit: 10 } }), channels(), runtime())).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts({ disabled: true }), channels(), runtime())).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts({ usage: { credit: { amount_usd: 2 } } }), channels(), runtime())).not.toBe(base);
+    expect(sidebarTelemetrySignature(accounts({ usage: { total_tokens: 1_200 } }), channels(), runtime())).not.toBe(base);
     // The credential identities decide which runtime aggregate may be shown as provider usage.
     expect(sidebarTelemetrySignature(accounts({ auth_id: "auth-2" }), channels(), runtime())).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts({ credential: { id: "cred-2" } }), channels(), runtime())).not.toBe(base);
@@ -88,8 +92,8 @@ describe("sidebarTelemetrySignature", () => {
     expect(sidebarTelemetrySignature(accounts(), channels({ error: "channel_unavailable" }), runtime())).not.toBe(base);
     // Disabling one entry keeps the entry count identical, so only the entry fields can catch it.
     expect(sidebarTelemetrySignature(accounts(), channels({ entries: [{ disabled: true }, {}, {}] }), runtime())).not.toBe(base);
+    expect(sidebarTelemetrySignature(accounts(), channels(), runtime({ total_tokens: 4_200 }))).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts(), channels({ entries: [{ auth_index: "idx-9" }, {}, {}] }), runtime())).not.toBe(base);
-    expect(sidebarTelemetrySignature(accounts(), channels(), runtime({ active: 7 }))).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts(), channels(), runtime({ auth_index: "idx-9" }))).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts(), channels(), runtime({ quota: { five_hour_amount_usd: 0.5 } }))).not.toBe(base);
     expect(sidebarTelemetrySignature(accounts(), channels(), [])).not.toBe(base);

@@ -76,6 +76,7 @@
 - 账号与 AI 提供商可分别引用代理档案，并能在全局策略、默认策略、条件策略和批量编辑中覆盖。此能力解决了 [issue #3](https://github.com/Mxucc/cpa-account-config-manager/issues/3)。
 - 外部通知支持多个 HTTPS GET 地址，可对接 Bark、ntfy 等通用接口；模板变量可预览并发送测试，测试结果会展示实际 URL、HTTP 状态、尝试次数和具体变量值，百分比变量自带 `%`。
 - 通用通知和策略通知相互独立。策略通知具有唯一名称、顺序、一个或多个通知地址、嵌套 `all`/`any` 匹配条件，以及可用账号数和可用率阈值；指定策略后不再受通用通知触发规则控制。
+- 策略通知还支持**状态触发条件**，用于在账号掉授权、被禁用或持续报错时告警：按 `health`、`reason_code`、`status_code`、`disabled`、`disable_reason` 匹配巡检记录，并以「任一账号」「全部账号」「至少 N 个账号」控制触发范围，例如「全部账号被禁用」或「错误码 = 429」。状态条件与可用性阈值任一命中即触发通知，并新增 `${state_rule}`、`${matched_accounts}` 模板变量。此能力解决了 [issue #5](https://github.com/Mxucc/cpa-account-config-manager/issues/5)。
 
 ### AI 提供商
 

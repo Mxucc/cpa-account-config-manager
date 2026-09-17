@@ -2,6 +2,12 @@ import { ArrowDown, ArrowUp, BellRing, Check, Eye, GitBranch, LoaderCircle, Plus
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
+import {
+  inspectionHealthLabelKey,
+  inspectionHealthValues,
+  inspectionReasonLabelKey,
+  inspectionReasonValues,
+} from "../format/inspectionLabels";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
 import type {
@@ -9,11 +15,15 @@ import type {
   InspectionNotificationPolicy,
   InspectionNotificationPreview,
   InspectionNotificationRequest,
+  InspectionNotificationStateMatch,
+  InspectionNotificationStateRule,
+  InspectionNotificationStateScope,
   InspectionNotificationTestResult,
   InspectionPolicy,
 } from "../types";
 import { IconButton } from "./IconButton";
 import { PolicyConditionEditor } from "./PolicyConditionEditor";
+
 
 interface ExternalNotificationSettingsProps {
   refreshRevision: number;
@@ -27,7 +37,54 @@ type NotificationResult = {
 };
 
 const maxEndpoints = 20;
+const maxStateRules = 8;
 const detailsPreset = "__notification_details__";
+const defaultStateRuleStatus = "429";
+
+// A state rule inspects the latest per-account inspection evidence, so its
+// target and its scope are independent choices: the target says what to look
+// at, the scope says how many accounts in the policy cohort must match.
+const stateMatchOptions: Array<{ value: InspectionNotificationStateMatch; label: UIMessageKey }> = [
+  { value: "health", label: "ui.state_match_health" },
+  { value: "reason_code", label: "ui.state_match_reason_code" },
+  { value: "status_code", label: "ui.state_match_status_code" },
+  { value: "disabled", label: "ui.state_match_disabled" },
+  { value: "disable_reason", label: "ui.state_match_disable_reason" },
+];
+
+const stateScopeOptions: Array<{ value: InspectionNotificationStateScope; label: UIMessageKey }> = [
+  { value: "any", label: "ui.state_scope_any" },
+  { value: "all", label: "ui.state_scope_all" },
+  { value: "at_least", label: "ui.state_scope_at_least" },
+];
+
+// Switching the target must not leave a value that belongs to the previous one.
+function defaultStateRuleValue(match: InspectionNotificationStateMatch): string {
+  switch (match) {
+    case "health":
+    case "disable_reason":
+      return "invalid_credentials";
+    case "reason_code":
+      return "token_revoked";
+    case "status_code":
+      return defaultStateRuleStatus;
+    default:
+      return "true";
+  }
+}
+
+// The inspection produces more reason codes than this editor localizes, and a
+// policy written through the API can already hold one of them. The stored value is
+// always offered, so the select shows the real code instead of silently rewriting
+// it to whichever option happens to come first.
+function reasonCodeOptions(value: string): string[] {
+  return inspectionReasonValues.some((reason) => reason === value) ? inspectionReasonValues : [value, ...inspectionReasonValues];
+}
+
+function createStateRule(): InspectionNotificationStateRule {
+  return { match: "health", value: defaultStateRuleValue("health"), scope: "any" };
+}
+
 
 const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
   { name: "event", label: "ui.notification_parameter_event" },
@@ -42,6 +99,8 @@ const notificationVariables: Array<{ name: string; label: UIMessageKey }> = [
   { name: "deactivated_accounts", label: "ui.notification_parameter_deactivated_accounts" },
   { name: "unavailable_accounts", label: "ui.notification_parameter_unavailable_accounts" },
   { name: "disabled_accounts", label: "ui.notification_parameter_disabled_accounts" },
+  { name: "state_rule", label: "ui.notification_parameter_state_rule" },
+  { name: "matched_accounts", label: "ui.notification_parameter_matched_accounts" },
   { name: "threshold_percent", label: "ui.notification_parameter_threshold_percent" },
   { name: "available_accounts_threshold", label: "ui.notification_parameter_available_accounts_threshold" },
   { name: "availability_percent_threshold", label: "ui.notification_parameter_availability_percent_threshold" },
@@ -216,6 +275,7 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
       available_accounts_below: 10,
       availability_percent_enabled: false,
       availability_percent_below: 20,
+      state_rules: [],
     }]);
     setEndpoints((current) => [...current, createEndpoint(id)]);
     setError("");
@@ -223,6 +283,31 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
 
   const updateNotificationPolicy = (id: string, patch: Partial<InspectionNotificationPolicy>) => {
     setNotificationPolicies((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const updateStateRule = (policyID: string, index: number, patch: Partial<InspectionNotificationStateRule>) => {
+    setNotificationPolicies((current) => current.map((item) => {
+      if (item.id !== policyID) return item;
+      const rules = [...(item.state_rules ?? [])];
+      rules[index] = { ...rules[index], ...patch };
+      return { ...item, state_rules: rules };
+    }));
+  };
+
+  const addStateRule = (policyID: string) => {
+    setNotificationPolicies((current) => current.map((item) => {
+      if (item.id !== policyID) return item;
+      const rules = item.state_rules ?? [];
+      if (rules.length >= maxStateRules) return item;
+      return { ...item, state_rules: [...rules, createStateRule()] };
+    }));
+  };
+
+  const removeStateRule = (policyID: string, index: number) => {
+    setNotificationPolicies((current) => current.map((item) => {
+      if (item.id !== policyID) return item;
+      return { ...item, state_rules: (item.state_rules ?? []).filter((_, position) => position !== index) };
+    }));
   };
 
   const removeNotificationPolicy = (item: InspectionNotificationPolicy) => {
@@ -316,7 +401,20 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
       const normalizedName = name.toLocaleLowerCase();
       if (policyNames.has(normalizedName)) throw new Error(tx("ui.notification_policy_name_duplicate", { name }));
       policyNames.add(normalizedName);
-      if (!item.available_accounts_enabled && !item.availability_percent_enabled) throw new Error(tx("ui.notification_policy_threshold_required"));
+      const stateRules = item.state_rules ?? [];
+      if (!item.available_accounts_enabled && !item.availability_percent_enabled && stateRules.length === 0) throw new Error(tx("ui.notification_policy_trigger_required"));
+      if (stateRules.length > maxStateRules) throw new Error(tx("ui.notification_state_rule_limit_reached", { count: maxStateRules }));
+      for (const rule of stateRules) {
+        if (!rule.value.trim()) throw new Error(tx("ui.notification_state_rule_value_required", { name }));
+        if (rule.match === "status_code") {
+          const status = Number(rule.value);
+          if (!Number.isInteger(status) || status < 100 || status > 599) throw new Error(tx("ui.notification_state_rule_status_code_invalid", { name }));
+        }
+        if (rule.scope === "at_least") {
+          const minimum = Number(rule.minimum_count);
+          if (!Number.isInteger(minimum) || minimum < 1 || minimum > 10000) throw new Error(tx("ui.notification_state_rule_minimum_count_invalid", { name }));
+        }
+      }
       if (!Number.isInteger(item.available_accounts_below) || item.available_accounts_below < 1 || item.available_accounts_below > 10000) throw new Error(tx("ui.notification_available_accounts_must_be_between_1_and_10000"));
       if (!Number.isInteger(item.availability_percent_below) || item.availability_percent_below < 1 || item.availability_percent_below > 100) throw new Error(tx("ui.notification_availability_percent_must_be_between_1_and_100"));
       if (item.enabled && !endpoints.some((endpoint) => endpoint.enabled && endpoint.notification_policy_id === item.id)) {
@@ -417,6 +515,73 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
     }
   };
 
+  const renderStateRuleValue = (policyID: string, rule: InspectionNotificationStateRule, index: number) => {
+    const number = index + 1;
+    const label = tx("ui.notification_state_rule_value_number", { number });
+    if (rule.match === "health") {
+      return (
+        <select value={rule.value} disabled={saving} aria-label={label} onChange={(event) => updateStateRule(policyID, index, { value: event.target.value })}>
+          {inspectionHealthValues.map((health) => <option key={health} value={health}>{tx(inspectionHealthLabelKey(health))}</option>)}
+        </select>
+      );
+    }
+    if (rule.match === "disabled") {
+      return (
+        <select value={rule.value} disabled={saving} aria-label={label} onChange={(event) => updateStateRule(policyID, index, { value: event.target.value })}>
+          <option value="true">{tx("ui.state_value_true")}</option>
+          <option value="false">{tx("ui.state_value_false")}</option>
+        </select>
+      );
+    }
+    if (rule.match === "status_code") {
+      return <input type="number" min="100" max="599" value={rule.value} disabled={saving} aria-label={label} onChange={(event) => updateStateRule(policyID, index, { value: event.target.value })} />;
+    }
+    // reason_code and disable_reason are bounded by the codes the inspection can
+    // actually produce, so an operator can only choose a value that can match.
+    return (
+      <select value={rule.value} disabled={saving} aria-label={label} onChange={(event) => updateStateRule(policyID, index, { value: event.target.value })}>
+        {reasonCodeOptions(rule.value).map((reason) => {
+          const key = inspectionReasonLabelKey(reason);
+          return <option key={reason} value={reason}>{key ? tx(key) : reason}</option>;
+        })}
+      </select>
+    );
+  };
+
+  const renderStateRule = (policyID: string, rule: InspectionNotificationStateRule, index: number) => {
+    const number = index + 1;
+    const scope = rule.scope ?? "any";
+    return (
+      <div className="notification-state-rule" role="group" key={`${policyID}-state-rule-${index}`} aria-label={tx("ui.notification_state_rule_number", { number })}>
+        <label><span>{tx("ui.notification_state_match")}</span>
+          <select value={rule.match} disabled={saving} aria-label={tx("ui.notification_state_rule_match_number", { number })} onChange={(event) => {
+            const match = event.target.value as InspectionNotificationStateMatch;
+            updateStateRule(policyID, index, { match, value: defaultStateRuleValue(match) });
+          }}>
+            {stateMatchOptions.map((option) => <option key={option.value} value={option.value}>{tx(option.label)}</option>)}
+          </select>
+        </label>
+        <label><span>{tx("ui.notification_state_value")}</span>{renderStateRuleValue(policyID, rule, index)}</label>
+        <label><span>{tx("ui.notification_state_scope")}</span>
+          <select value={scope} disabled={saving} aria-label={tx("ui.notification_state_rule_scope_number", { number })} onChange={(event) => {
+            const nextScope = event.target.value as InspectionNotificationStateScope;
+            updateStateRule(policyID, index, nextScope === "at_least" ? { scope: nextScope, minimum_count: rule.minimum_count ?? 1 } : { scope: nextScope, minimum_count: undefined });
+          }}>
+            {stateScopeOptions.map((option) => <option key={option.value} value={option.value}>{tx(option.label)}</option>)}
+          </select>
+        </label>
+        {scope === "at_least" ? (
+          <label><span>{tx("ui.notification_state_minimum_count")}</span>
+            <input type="number" min="1" max="10000" value={rule.minimum_count ?? 1} disabled={saving} aria-label={tx("ui.notification_state_rule_minimum_count_number", { number })} onChange={(event) => updateStateRule(policyID, index, { minimum_count: Number(event.target.value) })} />
+          </label>
+        ) : null}
+        <div className="notification-state-rule-tools">
+          <IconButton label={tx("ui.remove_notification_state_rule_number", { number })} disabled={saving} onClick={() => removeStateRule(policyID, index)}><Trash2 size={15} /></IconButton>
+        </div>
+      </div>
+    );
+  };
+
   const renderEndpoint = (endpoint: InspectionNotificationEndpoint, index: number) => {
     const scope = endpoint.notification_policy_id || "";
     const peers = endpoints.filter((item) => (item.notification_policy_id || "") === scope);
@@ -506,6 +671,14 @@ export function ExternalNotificationSettings({ refreshRevision, onAPIError, onNo
                 <span className="condition-operator-summary" role="status">{tx(item.threshold_operator === "all" ? "ui.threshold_match_all_hint" : "ui.threshold_match_any_hint")}</span>
                 <label className={`automation-setting ${item.available_accounts_enabled ? "is-enabled" : ""}`}><span>{tx("ui.notify_when_available_accounts_low")}</span><input type="checkbox" checked={item.available_accounts_enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { available_accounts_enabled: event.target.checked })} /><span className="number-suffix"><input type="number" min="1" max="10000" value={item.available_accounts_below} disabled={saving || !item.available_accounts_enabled} onChange={(event) => updateNotificationPolicy(item.id, { available_accounts_below: Number(event.target.value) })} /><b>{tx("ui.accounts_2")}</b></span></label>
                 <label className={`automation-setting ${item.availability_percent_enabled ? "is-enabled" : ""}`}><span>{tx("ui.notify_when_availability_low")}</span><input type="checkbox" checked={item.availability_percent_enabled} disabled={saving} onChange={(event) => updateNotificationPolicy(item.id, { availability_percent_enabled: event.target.checked })} /><span className="number-suffix"><input type="number" min="1" max="100" value={item.availability_percent_below} disabled={saving || !item.availability_percent_enabled} onChange={(event) => updateNotificationPolicy(item.id, { availability_percent_below: Number(event.target.value) })} /><b>{tx("ui.percent")}</b></span></label>
+              </section>
+              <section className="notification-policy-state-rules">
+                <header className="notification-state-rules-header">
+                  <div><h4>{tx("ui.notification_state_rules")}</h4><span>{tx("ui.notification_state_rules_description")}</span></div>
+                  <button className="button button-quiet" type="button" disabled={saving || (item.state_rules?.length ?? 0) >= maxStateRules} onClick={() => addStateRule(item.id)}><Plus size={14} />{tx("ui.add_notification_state_rule")}</button>
+                </header>
+                {(item.state_rules ?? []).map((rule, ruleIndex) => renderStateRule(item.id, rule, ruleIndex))}
+                {(item.state_rules ?? []).length === 0 ? <span className="condition-operator-summary" role="status">{tx("ui.no_notification_state_rules")}</span> : null}
               </section>
             </div>
             <section className="notification-policy-endpoints" aria-label={tx("ui.policy_notification_endpoints_for", { name: item.name || tx("ui.notification_policy_number", { number: index + 1 }) })}>

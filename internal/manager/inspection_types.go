@@ -159,16 +159,38 @@ type InspectionNotificationEndpoint struct {
 	NotificationPolicyID string `json:"notification_policy_id,omitempty" yaml:"notification_policy_id,omitempty"`
 }
 
+// InspectionNotificationStateRule matches the observed inspection state of the
+// accounts inside a notification policy cohort. Unlike the cohort conditions,
+// which select accounts by static attributes, a state rule inspects the latest
+// per-account evidence: the health classification, the reason code, the last
+// upstream HTTP status, the disable flag, or the reason that this plugin
+// disabled the account. It is what lets a policy notify when accounts lose
+// their authorization and are disabled, or when they fail with a status such as
+// 429.
+type InspectionNotificationStateRule struct {
+	// Match selects the observed attribute: health, reason_code, status_code,
+	// disabled, or disable_reason.
+	Match string `json:"match" yaml:"match"`
+	// Value is the expected attribute value. Health names and reason codes are
+	// validated against the values the inspection can actually produce.
+	Value string `json:"value" yaml:"value"`
+	// Scope decides how many cohort accounts must match: any, all, or at_least.
+	Scope string `json:"scope,omitempty" yaml:"scope,omitempty"`
+	// MinimumCount is required by the at_least scope.
+	MinimumCount int `json:"minimum_count,omitempty" yaml:"minimum_count,omitempty"`
+}
+
 type InspectionNotificationPolicy struct {
-	ID                         string               `json:"id" yaml:"id"`
-	Name                       string               `json:"name" yaml:"name"`
-	Enabled                    bool                 `json:"enabled" yaml:"enabled"`
-	Conditions                 PolicyConditionGroup `json:"conditions" yaml:"conditions"`
-	ThresholdOperator          string               `json:"threshold_operator" yaml:"threshold_operator"`
-	AvailableAccountsEnabled   bool                 `json:"available_accounts_enabled" yaml:"available_accounts_enabled"`
-	AvailableAccountsBelow     int                  `json:"available_accounts_below" yaml:"available_accounts_below"`
-	AvailabilityPercentEnabled bool                 `json:"availability_percent_enabled" yaml:"availability_percent_enabled"`
-	AvailabilityPercentBelow   int                  `json:"availability_percent_below" yaml:"availability_percent_below"`
+	ID                         string                            `json:"id" yaml:"id"`
+	Name                       string                            `json:"name" yaml:"name"`
+	Enabled                    bool                              `json:"enabled" yaml:"enabled"`
+	Conditions                 PolicyConditionGroup              `json:"conditions" yaml:"conditions"`
+	StateRules                 []InspectionNotificationStateRule `json:"state_rules,omitempty" yaml:"state_rules,omitempty"`
+	ThresholdOperator          string                            `json:"threshold_operator" yaml:"threshold_operator"`
+	AvailableAccountsEnabled   bool                              `json:"available_accounts_enabled" yaml:"available_accounts_enabled"`
+	AvailableAccountsBelow     int                               `json:"available_accounts_below" yaml:"available_accounts_below"`
+	AvailabilityPercentEnabled bool                              `json:"availability_percent_enabled" yaml:"availability_percent_enabled"`
+	AvailabilityPercentBelow   int                               `json:"availability_percent_below" yaml:"availability_percent_below"`
 }
 
 type ModelProbeModels struct {

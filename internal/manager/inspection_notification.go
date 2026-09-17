@@ -16,13 +16,14 @@ import (
 )
 
 const (
-	maxAnomalyNotificationURLBytes     = 4096
-	maxInspectionNotificationEndpoints = 20
-	maxInspectionNotificationPolicies  = 100
-	maxInspectionNotificationNameBytes = 80
-	anomalyNotificationTimeout         = 10 * time.Second
-	anomalyNotificationAttempts        = 3
-	maxAnomalyNotificationResponse     = 4 << 10
+	maxAnomalyNotificationURLBytes      = 4096
+	maxInspectionNotificationEndpoints  = 20
+	maxInspectionNotificationPolicies   = 100
+	maxInspectionNotificationNameBytes  = 80
+	anomalyNotificationTimeout          = 10 * time.Second
+	anomalyNotificationAttempts         = 3
+	maxAnomalyNotificationResponse      = 4 << 10
+	maxInspectionNotificationStateRules = 8
 )
 
 var anomalyNotificationVariablePattern = regexp.MustCompile(`\$\{([a-z_]+)\}`)
@@ -48,6 +49,7 @@ var anomalyNotificationVariables = map[string]struct{}{
 	"disabled_accounts": {}, "threshold_percent": {}, "available_accounts_threshold": {},
 	"availability_percent_threshold": {}, "triggered_at": {},
 	"notification_policy_id": {}, "notification_policy_name": {},
+	"state_rule": {}, "matched_accounts": {},
 }
 
 const (
@@ -56,6 +58,23 @@ const (
 	InspectionNotificationScenarioAvailableLow     = "available_accounts_low"
 	InspectionNotificationScenarioAvailabilityLow  = "availability_percent_low"
 	InspectionNotificationScenarioCombined         = "combined"
+)
+
+// State-rule match targets. They read the latest per-account inspection
+// evidence rather than the static cohort attributes used by PolicyCondition.
+const (
+	PolicyStateMatchHealth        = "health"
+	PolicyStateMatchReasonCode    = "reason_code"
+	PolicyStateMatchStatusCode    = "status_code"
+	PolicyStateMatchDisabled      = "disabled"
+	PolicyStateMatchDisableReason = "disable_reason"
+)
+
+// State-rule scopes decide how many cohort accounts must match.
+const (
+	PolicyStateScopeAny     = "any"
+	PolicyStateScopeAll     = "all"
+	PolicyStateScopeAtLeast = "at_least"
 )
 
 type anomalyNotificationMetrics struct {
@@ -82,9 +101,14 @@ type anomalyNotificationEvent struct {
 	URLTemplate  string
 	Event        string
 	Metrics      anomalyNotificationMetrics
-	TriggeredAt  time.Time
-	PolicyID     string
-	PolicyName   string
+	// StateRule and MatchedAccounts describe a notification that fired because
+	// of a state rule rather than an availability threshold. They are empty
+	// (and zero) for a threshold-triggered event.
+	StateRule       string
+	MatchedAccounts int
+	TriggeredAt     time.Time
+	PolicyID        string
+	PolicyName      string
 }
 
 var inspectionNotificationEndpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -126,6 +150,7 @@ func normalizeInspectionNotificationPolicies(policies []InspectionNotificationPo
 			policy.AvailabilityPercentBelow = defaultAvailabilityPercent
 		}
 		policy.Conditions = clonePolicyConditionGroup(policy.Conditions)
+		policy.StateRules = normalizeInspectionNotificationStateRules(policy.StateRules)
 		normalized[index] = policy
 	}
 	return normalized
@@ -165,8 +190,13 @@ func validateInspectionNotificationPolicies(policies []InspectionNotificationPol
 		if policy.ThresholdOperator != PolicyConditionAll && policy.ThresholdOperator != PolicyConditionAny {
 			return nil, fmt.Errorf("notification policy %s threshold_operator must be all or any", policy.ID)
 		}
-		if !policy.AvailableAccountsEnabled && !policy.AvailabilityPercentEnabled {
-			return nil, fmt.Errorf("notification policy %s requires at least one threshold", policy.ID)
+		stateRules, errStateRules := validateInspectionNotificationStateRules(policy.ID, policy.StateRules)
+		if errStateRules != nil {
+			return nil, errStateRules
+		}
+		policy.StateRules = stateRules
+		if !policy.AvailableAccountsEnabled && !policy.AvailabilityPercentEnabled && len(policy.StateRules) == 0 {
+			return nil, fmt.Errorf("notification policy %s requires at least one threshold or state rule", policy.ID)
 		}
 		if policy.AvailableAccountsBelow < 1 || policy.AvailableAccountsBelow > maxInspectionAccounts {
 			return nil, fmt.Errorf("notification policy %s available_accounts_below must be between 1 and %d", policy.ID, maxInspectionAccounts)
@@ -383,6 +413,8 @@ func anomalyNotificationVariableValues(event anomalyNotificationEvent) map[strin
 		"triggered_at":                   event.TriggeredAt.UTC().Format(time.RFC3339),
 		"notification_policy_id":         event.PolicyID,
 		"notification_policy_name":       event.PolicyName,
+		"state_rule":                     event.StateRule,
+		"matched_accounts":               strconv.Itoa(event.MatchedAccounts),
 	}
 }
 
@@ -504,11 +536,15 @@ func (e *InspectionEngine) PreviewNotification(ctx context.Context, request Insp
 	policy := e.policy
 	e.mu.RUnlock()
 	policyName := ""
+	var notificationPolicy InspectionNotificationPolicy
+	hasNotificationPolicy := false
 	if request.NotificationPolicyID != "" {
-		notificationPolicy, exists := inspectionNotificationPolicyMap(policy.NotificationPolicies)[request.NotificationPolicyID]
+		resolved, exists := inspectionNotificationPolicyMap(policy.NotificationPolicies)[request.NotificationPolicyID]
 		if !exists {
 			return InspectionNotificationPreview{}, fmt.Errorf("notification policy is unavailable")
 		}
+		notificationPolicy = resolved
+		hasNotificationPolicy = true
 		accountsByID = inspectionNotificationCohort(accountsByID, notificationPolicy.Conditions)
 		request.AvailableAccountsThreshold = notificationPolicy.AvailableAccountsBelow
 		request.AvailabilityPercentThreshold = notificationPolicy.AvailabilityPercentBelow
@@ -519,16 +555,24 @@ func (e *InspectionEngine) PreviewNotification(ctx context.Context, request Insp
 	metrics.ThresholdPercent = request.ThresholdPercent
 	metrics.AvailableAccountsThreshold = request.AvailableAccountsThreshold
 	metrics.AvailabilityThreshold = request.AvailabilityPercentThreshold
+	// A preview has to show what the policy would actually report, so the state
+	// rules are evaluated against the same cohort and records the trigger uses.
+	stateEvaluation := inspectionNotificationStateEvaluation{}
+	if hasNotificationPolicy {
+		stateEvaluation = inspectionNotificationStateEvaluationFor(notificationPolicy, accountsByID, records)
+	}
 	triggeredAt := e.currentTime()
 	event := anomalyNotificationEvent{
-		EndpointID:   request.EndpointID,
-		EndpointName: request.EndpointName,
-		URLTemplate:  request.URLTemplate,
-		Event:        eventName,
-		Metrics:      metrics,
-		TriggeredAt:  triggeredAt,
-		PolicyID:     request.NotificationPolicyID,
-		PolicyName:   policyName,
+		EndpointID:      request.EndpointID,
+		EndpointName:    request.EndpointName,
+		URLTemplate:     request.URLTemplate,
+		Event:           eventName,
+		Metrics:         metrics,
+		StateRule:       strings.Join(stateEvaluation.Rules, ","),
+		MatchedAccounts: stateEvaluation.Accounts,
+		TriggeredAt:     triggeredAt,
+		PolicyID:        request.NotificationPolicyID,
+		PolicyName:      policyName,
 	}
 	expanded, errExpand := expandAnomalyNotificationURL(event)
 	if errExpand != nil {
@@ -567,9 +611,11 @@ func (e *InspectionEngine) TestNotification(ctx context.Context, request Inspect
 			AvailableAccountsThreshold: parseNotificationMetric(preview.Variables, "available_accounts_threshold"),
 			AvailabilityThreshold:      parseNotificationMetric(preview.Variables, "availability_percent_threshold"),
 		},
-		TriggeredAt: preview.TriggeredAt,
-		PolicyID:    request.NotificationPolicyID,
-		PolicyName:  preview.Variables["notification_policy_name"],
+		StateRule:       preview.Variables["state_rule"],
+		MatchedAccounts: parseNotificationMetric(preview.Variables, "matched_accounts"),
+		TriggeredAt:     preview.TriggeredAt,
+		PolicyID:        request.NotificationPolicyID,
+		PolicyName:      preview.Variables["notification_policy_name"],
 	}
 	result := e.deliverAnomalyNotification(ctx, event)
 	delivered := result.ReasonCode == "notification_delivered"
@@ -637,7 +683,7 @@ func inspectionNotificationReasons(policy InspectionPolicy, metrics anomalyNotif
 	return reasons
 }
 
-func inspectionNotificationPolicyReasons(policy InspectionNotificationPolicy, metrics anomalyNotificationMetrics) []string {
+func inspectionNotificationPolicyThresholdReasons(policy InspectionNotificationPolicy, metrics anomalyNotificationMetrics) []string {
 	results := make([]struct {
 		reason  string
 		matched bool
@@ -678,6 +724,18 @@ func inspectionNotificationPolicyReasons(policy InspectionNotificationPolicy, me
 		}
 	}
 	return reasons
+}
+
+// inspectionNotificationPolicyReasons combines both trigger families of a
+// notification policy. A policy fires when its availability thresholds are
+// reached or when one of its state rules matches the observed account state.
+func inspectionNotificationPolicyReasons(
+	policy InspectionNotificationPolicy,
+	state inspectionNotificationStateEvaluation,
+	metrics anomalyNotificationMetrics,
+) []string {
+	reasons := append([]string(nil), inspectionNotificationPolicyThresholdReasons(policy, metrics)...)
+	return append(reasons, state.Reasons...)
 }
 
 // availabilityPercentTriggerable distinguishes a real zero-availability
@@ -721,6 +779,7 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 	policyByID := inspectionNotificationPolicyMap(policy.NotificationPolicies)
 	type policyEvaluation struct {
 		metrics anomalyNotificationMetrics
+		state   inspectionNotificationStateEvaluation
 		reasons []string
 	}
 	evaluations := make(map[string]policyEvaluation, len(policyByID))
@@ -737,6 +796,7 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 		}
 		metrics := genericMetrics
 		reasons := genericReasons
+		state := inspectionNotificationStateEvaluation{}
 		policyID, policyName := endpoint.NotificationPolicyID, ""
 		if policyID != "" {
 			notificationPolicy, exists := policyByID[policyID]
@@ -748,11 +808,12 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 			if !exists {
 				cohort := inspectionNotificationCohort(accounts, notificationPolicy.Conditions)
 				metrics = inspectionAnomalyNotificationMetrics(cohort, records)
-				reasons = inspectionNotificationPolicyReasons(notificationPolicy, metrics)
-				evaluation = policyEvaluation{metrics: metrics, reasons: reasons}
+				state = inspectionNotificationStateEvaluationFor(notificationPolicy, cohort, records)
+				reasons = inspectionNotificationPolicyReasons(notificationPolicy, state, metrics)
+				evaluation = policyEvaluation{metrics: metrics, state: state, reasons: reasons}
 				evaluations[policyID] = evaluation
 			} else {
-				metrics, reasons = evaluation.metrics, evaluation.reasons
+				metrics, reasons, state = evaluation.metrics, evaluation.reasons, evaluation.state
 			}
 		}
 		if len(reasons) == 0 {
@@ -776,8 +837,10 @@ func (e *InspectionEngine) evaluateInspectionNotification(
 		}
 		events = append(events, anomalyNotificationEvent{
 			EndpointID: endpoint.ID, EndpointName: endpoint.Name, URLTemplate: endpoint.URL,
-			Event: strings.Join(reasons, ","), Metrics: metrics, TriggeredAt: now.UTC(),
-			PolicyID: policyID, PolicyName: policyName,
+			Event: strings.Join(reasons, ","), Metrics: metrics,
+			StateRule: strings.Join(state.Rules, ","), MatchedAccounts: state.Accounts,
+			TriggeredAt: now.UTC(),
+			PolicyID:    policyID, PolicyName: policyName,
 		})
 		e.lastNotificationByEndpoint[endpoint.ID] = now.UTC()
 	}

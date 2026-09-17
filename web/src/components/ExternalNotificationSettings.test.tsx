@@ -306,4 +306,127 @@ describe("ExternalNotificationSettings", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("策略名称“策略通知 1”已存在，请使用唯一名称");
     expect(save).not.toHaveBeenCalled();
   });
+
+  it("persists notification state triggers that watch the observed account state", async () => {
+    const user = userEvent.setup();
+    const initial = inspectionPolicy();
+    initial.notification_policies = [{
+      id: "notify-policy-state", name: "State watch", enabled: true,
+      conditions: { operator: "all", conditions: [{ field: "provider", value: "codex" }], groups: [] },
+      threshold_operator: "all", available_accounts_enabled: true, available_accounts_below: 1,
+      availability_percent_enabled: false, availability_percent_below: 20, state_rules: [],
+    }];
+    initial.notification_endpoints = [
+      { id: "legacy", url: "https://legacy.example/hook", enabled: true },
+      { id: "state-endpoint", url: "https://state.example/hook", enabled: true, notification_policy_id: "notify-policy-state" },
+    ];
+    initial.anomaly_notification_url = "";
+    vi.spyOn(api, "getInspection").mockResolvedValue({ policy: initial } as Awaited<ReturnType<typeof api.getInspection>>);
+    const save = vi.spyOn(api, "saveInspectionPolicy").mockImplementation(async (policy) => ({ policy } as Awaited<ReturnType<typeof api.saveInspectionPolicy>>));
+
+    render(<ExternalNotificationSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    const policyRow = await screen.findByRole("article", { name: "通知策略 1" });
+    expect(within(policyRow).getByText("尚未配置状态触发条件")).toBeInTheDocument();
+
+    await user.click(within(policyRow).getByRole("button", { name: "添加状态条件" }));
+    const rule = within(policyRow).getByRole("group", { name: "状态条件 1" });
+    const target = within(rule).getByLabelText("状态条件 1 匹配对象");
+    const value = within(rule).getByLabelText("状态条件 1 匹配值");
+    expect(target).toHaveValue("health");
+    expect(value).toHaveValue("invalid_credentials");
+
+    // Changing the target must swap in a value the new target can actually match.
+    await user.selectOptions(target, "status_code");
+    expect(within(rule).getByLabelText("状态条件 1 匹配值")).toHaveValue(429);
+    await user.selectOptions(within(rule).getByLabelText("状态条件 1 触发范围"), "all");
+    expect(within(rule).queryByLabelText("状态条件 1 最少账号数")).not.toBeInTheDocument();
+
+    await user.click(within(policyRow).getByRole("button", { name: "添加状态条件" }));
+    const secondRule = within(policyRow).getByRole("group", { name: "状态条件 2" });
+    await user.selectOptions(within(secondRule).getByLabelText("状态条件 2 匹配对象"), "disable_reason");
+    await user.selectOptions(within(secondRule).getByLabelText("状态条件 2 触发范围"), "at_least");
+    await user.clear(within(secondRule).getByLabelText("状态条件 2 最少账号数"));
+    await user.type(within(secondRule).getByLabelText("状态条件 2 最少账号数"), "3");
+
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].notification_policies?.[0].state_rules).toEqual([
+      { match: "status_code", value: "429", scope: "all" },
+      { match: "disable_reason", value: "invalid_credentials", scope: "at_least", minimum_count: 3 },
+    ]);
+  });
+
+  it("requires a trigger and rejects an out-of-range state trigger status code", async () => {
+    const user = userEvent.setup();
+    const initial = inspectionPolicy();
+    initial.notification_policies = [{
+      id: "notify-policy-state", name: "State watch", enabled: true,
+      conditions: { operator: "all", conditions: [{ field: "provider", value: "codex" }], groups: [] },
+      threshold_operator: "all", available_accounts_enabled: false, available_accounts_below: 1,
+      availability_percent_enabled: false, availability_percent_below: 20, state_rules: [],
+    }];
+    initial.notification_endpoints = [
+      { id: "legacy", url: "https://legacy.example/hook", enabled: true },
+      { id: "state-endpoint", url: "https://state.example/hook", enabled: true, notification_policy_id: "notify-policy-state" },
+    ];
+    initial.anomaly_notification_url = "";
+    vi.spyOn(api, "getInspection").mockResolvedValue({ policy: initial } as Awaited<ReturnType<typeof api.getInspection>>);
+    const save = vi.spyOn(api, "saveInspectionPolicy");
+
+    render(<ExternalNotificationSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    const policyRow = await screen.findByRole("article", { name: "通知策略 1" });
+
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("至少需要启用一个可用性触发条件或状态条件");
+    expect(save).not.toHaveBeenCalled();
+
+    // A state rule alone is a complete trigger, so only an invalid value blocks the save.
+    await user.click(within(policyRow).getByRole("button", { name: "添加状态条件" }));
+    const rule = within(policyRow).getByRole("group", { name: "状态条件 1" });
+    await user.selectOptions(within(rule).getByLabelText("状态条件 1 匹配对象"), "status_code");
+    await user.clear(within(rule).getByLabelText("状态条件 1 匹配值"));
+    await user.type(within(rule).getByLabelText("状态条件 1 匹配值"), "99");
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("状态条件状态码必须在 100-599 之间");
+    expect(save).not.toHaveBeenCalled();
+
+    await user.clear(within(rule).getByLabelText("状态条件 1 匹配值"));
+    await user.type(within(rule).getByLabelText("状态条件 1 匹配值"), "429");
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps a stored state trigger reason code the editor does not localize", async () => {
+    const user = userEvent.setup();
+    const initial = inspectionPolicy();
+    initial.notification_policies = [{
+      id: "notify-policy-state", name: "State watch", enabled: true,
+      conditions: { operator: "all", conditions: [{ field: "provider", value: "codex" }], groups: [] },
+      threshold_operator: "all", available_accounts_enabled: true, available_accounts_below: 1,
+      availability_percent_enabled: false, availability_percent_below: 20,
+      // quota_reset is a legitimate inspection reason code the editor has no label
+      // for, so it has to survive a save byte for byte.
+      state_rules: [{ match: "reason_code", value: "quota_reset", scope: "any" }],
+    }];
+    initial.notification_endpoints = [
+      { id: "legacy", url: "https://legacy.example/hook", enabled: true },
+      { id: "state-endpoint", url: "https://state.example/hook", enabled: true, notification_policy_id: "notify-policy-state" },
+    ];
+    initial.anomaly_notification_url = "";
+    vi.spyOn(api, "getInspection").mockResolvedValue({ policy: initial } as Awaited<ReturnType<typeof api.getInspection>>);
+    const save = vi.spyOn(api, "saveInspectionPolicy").mockImplementation(async (policy) => ({ policy } as Awaited<ReturnType<typeof api.saveInspectionPolicy>>));
+
+    render(<ExternalNotificationSettings refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    const policyRow = await screen.findByRole("article", { name: "通知策略 1" });
+    const value = within(within(policyRow).getByRole("group", { name: "状态条件 1" })).getByLabelText("状态条件 1 匹配值");
+    expect(value).toHaveValue("quota_reset");
+    // The code is shown as itself instead of collapsing onto an unrelated label.
+    expect(within(value).getByRole("option", { selected: true })).toHaveTextContent("quota_reset");
+
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].notification_policies?.[0].state_rules).toEqual([
+      { match: "reason_code", value: "quota_reset", scope: "any" },
+    ]);
+  });
 });

@@ -104,6 +104,18 @@ func inspectionStorePath(dataDir string) string {
 	return filepath.Join(dataDir, "inspection-state.json")
 }
 
+// sanitizeInspectionPolicyForLoad drops persisted configuration this version can
+// no longer evaluate. Notification state rules are the one policy field whose
+// values come from a version-dependent allow-list, so a downgrade or a
+// hand-edited state file must degrade to "this rule is ignored" rather than
+// failing the whole load and discarding every inspection record.
+func sanitizeInspectionPolicyForLoad(policy InspectionPolicy) InspectionPolicy {
+	for index := range policy.NotificationPolicies {
+		policy.NotificationPolicies[index].StateRules = sanitizeInspectionNotificationStateRules(policy.NotificationPolicies[index].StateRules)
+	}
+	return policy
+}
+
 func loadInspectionState(path string) (persistedInspectionState, error) {
 	raw, errRead := os.ReadFile(path)
 	if errRead != nil {
@@ -116,6 +128,7 @@ func loadInspectionState(path string) (persistedInspectionState, error) {
 	if state.Version != inspectionStoreVersion {
 		return persistedInspectionState{}, fmt.Errorf("unsupported inspection store version %d", state.Version)
 	}
+	state.Policy = sanitizeInspectionPolicyForLoad(state.Policy)
 	policy, errPolicy := validateInspectionPolicy(state.Policy)
 	if errPolicy != nil {
 		return persistedInspectionState{}, fmt.Errorf("validate inspection policy: %w", errPolicy)
@@ -498,21 +511,33 @@ func normalizeInspectionActionStatus(value string) string {
 	}
 }
 
+// inspectionReasonCodes is the single allow-list of reason codes the inspection
+// can attach to an account. It is shared by record sanitisation and by
+// notification state-rule validation so the two can never drift apart.
+var inspectionReasonCodes = map[string]struct{}{
+	"healthy_recent_success": {}, "quota_exhausted": {}, "token_revoked": {}, "invalid_credentials": {},
+	"account_deactivated": {}, "workspace_deactivated": {}, "authentication_review": {},
+	"billing_review": {}, "credential_permission_denied": {}, "native_unavailable": {}, "manual_disabled": {},
+	"transient_failure": {}, "no_recent_evidence": {}, "mutation_busy": {}, "account_changed": {},
+	"account_missing": {}, "account_read_only": {}, "management_unavailable": {}, "delete_failed": {},
+	"model_response_ok": {}, "credential_response_ok": {}, "authentication_failed": {}, "quota_limited": {},
+	"model_not_found": {}, "unsupported_provider": {}, "model_blocked_by_account_policy": {},
+	"request_timeout": {}, "upstream_unavailable": {}, "invalid_response": {}, "unconfirmed_upstream_response": {},
+	"passive_circuit_open": {}, "quota_reset": {}, "passive_circuit_recovered": {}, "health_recovered": {},
+	"credential_refreshed": {},
+}
+
+func inspectionReasonCodeAllowed(value string) bool {
+	_, allowed := inspectionReasonCodes[strings.ToLower(strings.TrimSpace(value))]
+	return allowed
+}
+
 func safeInspectionReason(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "healthy_recent_success", "quota_exhausted", "token_revoked", "invalid_credentials",
-		"account_deactivated", "workspace_deactivated", "authentication_review",
-		"billing_review", "credential_permission_denied", "native_unavailable", "manual_disabled",
-		"transient_failure", "no_recent_evidence", "mutation_busy", "account_changed",
-		"account_missing", "account_read_only", "management_unavailable", "delete_failed",
-		"model_response_ok", "credential_response_ok", "authentication_failed", "quota_limited", "model_not_found", "unsupported_provider",
-		"model_blocked_by_account_policy",
-		"request_timeout", "upstream_unavailable", "invalid_response", "unconfirmed_upstream_response",
-		"passive_circuit_open", "quota_reset", "passive_circuit_recovered", "health_recovered", "credential_refreshed":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if !inspectionReasonCodeAllowed(normalized) {
 		return "no_recent_evidence"
 	}
+	return normalized
 }
 
 func safeOptionalInspectionReason(value string) string {

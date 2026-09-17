@@ -905,11 +905,22 @@ export interface InspectionNotificationEndpoint {
   notification_policy_id?: string;
 }
 
+export type InspectionNotificationStateMatch = "health" | "reason_code" | "status_code" | "disabled" | "disable_reason";
+export type InspectionNotificationStateScope = "any" | "all" | "at_least";
+
+export interface InspectionNotificationStateRule {
+  match: InspectionNotificationStateMatch;
+  value: string;
+  scope?: InspectionNotificationStateScope;
+  minimum_count?: number;
+}
+
 export interface InspectionNotificationPolicy {
   id: string;
   name: string;
   enabled: boolean;
   conditions: PolicyConditionGroup;
+  state_rules?: InspectionNotificationStateRule[];
   threshold_operator: "all" | "any";
   available_accounts_enabled: boolean;
   available_accounts_below: number;

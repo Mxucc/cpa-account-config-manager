@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
+import { inspectionHealthLabelKey, inspectionReasonLabelKey } from "../format/inspectionLabels";
 import type {
   Account,
   AccountDeletePreview,
@@ -965,23 +966,11 @@ function inspectionResultAccount(result: InspectionResult): Account {
 }
 
 function healthLabel(value: InspectionHealth | string | undefined, locale: Locale): string {
-  const sources: Partial<Record<string, UIMessageKey>> = { healthy: "ui.healthy", quota_limited: "ui.quota_limited", invalid_credentials: "ui.invalid_credentials", deactivated: "ui.deactivated", review: "ui.needs_review", unavailable: "ui.unavailable", disabled: "ui.disabled", unknown: "ui.insufficient_evidence" };
-  const source = value ? sources[value] : undefined;
-  return translateUI(locale, source ?? "ui.insufficient_evidence");
+  return translateUI(locale, inspectionHealthLabelKey(value));
 }
 
 function reasonLabel(value: string, locale: Locale): string {
-  const source = ({
-    healthy_recent_success: "ui.recent_request_succeeded", quota_exhausted: "ui.quota_exhausted", token_revoked: "ui.token_revoked", invalid_credentials: "ui.credentials_invalid_or_expired",
-    account_deactivated: "ui.account_deactivated", workspace_deactivated: "ui.workspace_deactivated", authentication_review: "ui.authentication_needs_review",
-    billing_review: "ui.billing_or_quota_needs_review", credential_permission_denied: "ui.credential_permission_denied", native_unavailable: "ui.cpa_marked_unavailable", manual_disabled: "ui.manually_disabled_2",
-    transient_failure: "ui.temporary_upstream_failure", no_recent_evidence: "ui.no_recent_evidence",
-    model_response_ok: "ui.model_response_is_healthy", credential_response_ok: "ui.credential_usage_response_is_healthy", authentication_failed: "ui.authentication_failed",
-    quota_limited: "ui.upstream_quota_or_rate_limited_2", model_not_found: "ui.model_unavailable_or_missing",
-    request_timeout: "ui.model_test_timed_out", upstream_unavailable: "ui.upstream_service_unavailable",
-    invalid_response: "ui.could_not_validate_upstream_response", unsupported_provider: "ui.provider_unsupported",
-    unconfirmed_upstream_response: "ui.could_not_validate_upstream_response", passive_circuit_open: "ui.passive_temporary_circuit",
-  } satisfies Record<string, UIMessageKey>)[value];
+  const source = inspectionReasonLabelKey(value);
   return source ? translateUI(locale, source) : value;
 }
 

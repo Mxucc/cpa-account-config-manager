@@ -1210,6 +1210,15 @@ html[data-plugin-density="compact"] {
 .notification-policy-thresholds .condition-operator { justify-self: start; }
 .notification-policy-thresholds .automation-setting { min-height: 52px; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
 .notification-policy-thresholds .automation-setting > input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary-color); }
+.notification-policy-state-rules { min-width: 0; border-top: 1px solid var(--border-color); grid-column: 1 / -1; }
+.notification-state-rules-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 9px; margin-bottom: 8px; }
+.notification-state-rules-header > div { min-width: 0; display: grid; gap: 3px; }
+.notification-state-rules-header h4 { margin: 0; }
+.notification-state-rules-header span { color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); line-height: 1.45; }
+.notification-state-rule { min-width: 0; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-bottom: 8px; padding: 9px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-primary); }
+.notification-state-rule > label { flex: 1 1 140px; min-width: 0; display: grid; gap: 4px; color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); }
+.notification-state-rule select, .notification-state-rule input { min-width: 0; width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); background: var(--bg-primary); font-size: calc(10px * var(--font-size-scale)); }
+.notification-state-rule-tools { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .notification-policy-endpoints { min-width: 0; border-top: 1px solid var(--border-color); background: var(--bg-secondary); }
 .notification-policy-endpoints > header { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border-color); }
 .notification-policy-endpoints > header > div { min-width: 0; display: grid; gap: 3px; }

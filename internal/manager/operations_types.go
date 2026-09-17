@@ -2,8 +2,10 @@ package manager
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -19,6 +21,7 @@ const (
 	OperationCategoryJournal       = "journal"
 	OperationCategoryOpenCode      = "opencode"
 	OperationCategoryPlugin        = "plugin"
+	OperationCategoryModelError    = "model_error"
 
 	OperationActionDelete                 = "delete"
 	OperationActionTokenRefresh           = "token_refresh"
@@ -57,6 +60,7 @@ const (
 	OperationActionOpenCodeRemove         = "opencode_remove"
 	OperationActionOpenCodeRefresh        = "opencode_refresh"
 	OperationActionPluginConfigure        = "plugin_configure"
+	OperationActionModelFailure           = "model_failure"
 
 	OperationStatusRunning     = "running"
 	OperationStatusSucceeded   = "succeeded"
@@ -105,6 +109,11 @@ const (
 	OperationFailureInspectionAuthSave           = "inspection_auth_save_failed"
 	OperationFailureInspectionMutation           = "inspection_mutation_failed"
 	OperationFailureModelTestInspectionRecord    = "model_test_inspection_record_failed"
+	// Model-error journal reasons: one plain upstream failure, one request that
+	// consumed the configured retry budget completely, and one client cancel.
+	OperationFailureModelUpstream       = "model_upstream_failed"
+	OperationFailureModelRetryExhausted = "model_retry_exhausted"
+	OperationFailureModelCanceled       = "model_request_canceled"
 )
 
 type OperationFailureDetail struct {
@@ -136,6 +145,7 @@ type OperationEntry struct {
 	Model           string                   `json:"model,omitempty"`
 	HTTPStatus      int                      `json:"http_status,omitempty"`
 	Attempts        int                      `json:"attempts,omitempty"`
+	Message         string                   `json:"message,omitempty"`
 	FailureDetails  []OperationFailureDetail `json:"failure_details,omitempty"`
 }
 
@@ -234,7 +244,7 @@ func normalizeOperationCategory(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case OperationCategoryAccount, OperationCategoryBatch, OperationCategoryImport, OperationCategoryExport,
 		OperationCategoryDefaultPolicy, OperationCategoryInspection, OperationCategoryUpdate, OperationCategoryJournal,
-		OperationCategoryOpenCode, OperationCategoryPlugin:
+		OperationCategoryOpenCode, OperationCategoryPlugin, OperationCategoryModelError:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -252,7 +262,7 @@ func normalizeOperationAction(value string) string {
 		OperationActionReviewResolve, OperationActionReviewIgnore, OperationActionReviewReopen,
 		OperationActionUpdateCheck, OperationActionUpdateInstall, OperationActionJournalClear,
 		OperationActionOpenCodeSave, OperationActionOpenCodeRemove, OperationActionOpenCodeRefresh,
-		OperationActionPluginConfigure:
+		OperationActionPluginConfigure, OperationActionModelFailure:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -280,11 +290,71 @@ func normalizeOperationSource(value string) string {
 }
 
 func normalizeOperationScope(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	trimmed := strings.TrimSpace(value)
+	switch strings.ToLower(trimmed) {
 	case OperationScopeSingle, OperationScopeSelected, OperationScopeFiltered, OperationScopeAll,
 		OperationScopeScheduled, OperationScopeSystem:
-		return strings.ToLower(strings.TrimSpace(value))
+		return strings.ToLower(trimmed)
 	default:
+		// A model-error entry scopes to the credential CPA selected, so a bounded
+		// safe identifier is preserved alongside the enum values.
+		return safeOperationScopeIdentifier(trimmed)
+	}
+}
+
+// safeOperationScopeIdentifier accepts the auth-id shape a model-error entry
+// scopes to: one bounded token, no whitespace, no control characters and no
+// credential-looking text.
+func safeOperationScopeIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 160 {
 		return ""
 	}
+	lower := strings.ToLower(value)
+	for _, sensitive := range []string{"authorization", "bearer", "cookie", "password", "secret", "token"} {
+		if strings.Contains(lower, sensitive) {
+			return ""
+		}
+	}
+	for _, character := range value {
+		if !unicode.IsLetter(character) && !unicode.IsDigit(character) && !strings.ContainsRune("@._:+-", character) {
+			return ""
+		}
+	}
+	return value
+}
+
+const operationMessageLimit = 600
+
+var (
+	operationMessageBearer        = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
+	operationMessageBasic         = regexp.MustCompile(`(?i)\bbasic\s+[A-Za-z0-9+/=]{6,}`)
+	operationMessageAuthorization = regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*[^\s,;)]+`)
+	operationMessageKeyValue      = regexp.MustCompile(`(?i)\b(api[_-]?key|apikey|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{4,}["']?`)
+	operationMessageOpenAIKey     = regexp.MustCompile(`(?i)\bsk-[A-Za-z0-9_-]{6,}`)
+	operationMessagePersonalToken = regexp.MustCompile(`(?i)\bat-[A-Za-z0-9_-]{6,}`)
+	operationMessageJWT           = regexp.MustCompile(`\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
+	operationMessageLongRun       = regexp.MustCompile(`[A-Za-z0-9+/=_-]{40,}`)
+)
+
+// sanitizeOperationMessage bounds and flattens one upstream error message for the
+// model-error journal. Unlike sanitizeAIProviderProbeError, the upstream text is
+// kept: it is the point of the field. Every obvious credential is removed first,
+// so no token can survive into the persisted entry, then the message is collapsed
+// to a single line and bounded. An empty result stays empty and is omitted by the
+// entry's JSON tag.
+func sanitizeOperationMessage(value string) string {
+	value = operationMessageBearer.ReplaceAllString(value, "Bearer [redacted]")
+	value = operationMessageBasic.ReplaceAllString(value, "Basic [redacted]")
+	value = operationMessageAuthorization.ReplaceAllString(value, "Authorization=[redacted]")
+	value = operationMessageKeyValue.ReplaceAllString(value, "$1=[redacted]")
+	value = operationMessageOpenAIKey.ReplaceAllString(value, "[redacted-api-key]")
+	value = operationMessagePersonalToken.ReplaceAllString(value, "[redacted-token]")
+	value = operationMessageJWT.ReplaceAllString(value, "[redacted]")
+	value = operationMessageLongRun.ReplaceAllString(value, "[redacted]")
+	value = strings.Join(strings.Fields(value), " ")
+	if runes := []rune(value); len(runes) > operationMessageLimit {
+		value = string(runes[:operationMessageLimit])
+	}
+	return value
 }

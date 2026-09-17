@@ -277,4 +277,91 @@ describe("OperationLogWorkspace", () => {
     await waitFor(() => expect(api.clearOperations).toHaveBeenCalledTimes(1));
     expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("保留本次清理记录"));
   });
+
+  it("shows a model error with the original upstream message and its status evidence", async () => {
+    const message = "{\"error\":{\"message\":\"rate limit exceeded for model gpt-5.4 on provider openai\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\",\"request_id\":\"req_0123456789abcdef0123456789abcdef\"}}";
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [{
+        ...operationResponse.operations[0],
+        id: "model-error-1",
+        category: "model_error",
+        action: "model_failure",
+        status: "failed",
+        source: "background",
+        scope: "single",
+        target_id: "req_0123456789abcdef0123456789abcdef",
+        target_count: 1,
+        succeeded: 0,
+        failed: 1,
+        skipped: 0,
+        reason_code: "quota_limited",
+        related_job_id: undefined,
+        model: "gpt-5.4",
+        http_status: 429,
+        attempts: 3,
+        message,
+      }],
+      summary: { total: 1, running: 0, succeeded: 0, failed: 1, attention: 0, interrupted: 0 },
+    });
+    const user = userEvent.setup();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("大模型请求失败")).toBeInTheDocument();
+    expect(screen.getByText(/大模型错误 · gpt-5\.4/)).toBeInTheDocument();
+    expect(screen.getByText("上游额度或频率受限")).toBeInTheDocument();
+    const rowMessage = screen.getByTitle(message);
+    expect(rowMessage).toHaveClass("operation-message");
+    expect(rowMessage).toHaveTextContent(message);
+
+    await user.click(screen.getByRole("button", { name: "查看操作详情" }));
+    const details = screen.getByRole("dialog", { name: "操作详情" });
+    expect(within(details).getByText("原始错误")).toBeInTheDocument();
+    expect(within(details).getByText(message)).toBeInTheDocument();
+    expect(within(details).getByText("gpt-5.4")).toBeInTheDocument();
+    expect(within(details).getByText("429")).toBeInTheDocument();
+    expect(within(details).getByText("3")).toBeInTheDocument();
+  });
+
+  it("offers the model-error category as a filter option and requests it", async () => {
+    const user = userEvent.setup();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+    await screen.findByText("批量修改");
+
+    const categoryFilter = screen.getByRole("combobox", { name: "操作类别" });
+    expect(within(categoryFilter).getByRole("option", { name: "大模型错误" })).toHaveValue("model_error");
+    await user.selectOptions(categoryFilter, "model_error");
+    await waitFor(() => expect(api.listOperations).toHaveBeenLastCalledWith(1, expect.objectContaining({ category: "model_error" }), expect.any(AbortSignal)));
+  });
+
+  it("renders a model error without a message normally", async () => {
+    vi.mocked(api.listOperations).mockResolvedValue({
+      ...operationResponse,
+      operations: [{
+        ...operationResponse.operations[0],
+        id: "model-error-2",
+        category: "model_error",
+        action: "model_failure",
+        status: "failed",
+        reason_code: "transient_failure",
+        related_job_id: undefined,
+        model: "gpt-5.4-mini",
+        http_status: 503,
+        attempts: 2,
+      }],
+      summary: { total: 1, running: 0, succeeded: 0, failed: 1, attention: 0, interrupted: 0 },
+    });
+    const user = userEvent.setup();
+    render(<OperationLogWorkspace activeJobIDs={[]} onAPIError={() => undefined} onNotice={() => undefined} onOpenRelatedJob={() => undefined} />);
+
+    expect(await screen.findByText("大模型请求失败")).toBeInTheDocument();
+    expect(screen.getByText(/大模型错误 · gpt-5\.4-mini/)).toBeInTheDocument();
+    expect(screen.queryByText("原始错误")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "查看操作详情" }));
+    const details = screen.getByRole("dialog", { name: "操作详情" });
+    expect(within(details).queryByText("原始错误")).not.toBeInTheDocument();
+    expect(within(details).getByText("503")).toBeInTheDocument();
+    expect(within(details).getByText("2")).toBeInTheDocument();
+  });
 });

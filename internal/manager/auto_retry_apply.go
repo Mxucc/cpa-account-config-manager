@@ -52,8 +52,11 @@ func (result autoRetryApplyResult) appliedState() AutoRetryAppliedState {
 
 // runAutoRetryApply publishes the operator's retry budget to every credential
 // the plugin manages and raises the host retry knobs a disabled value would
-// otherwise defeat. The pass is best-effort and bounded: every step is
-// independent, a failure skips the rest of that step, and nothing here is ever
+// otherwise defeat. What is published is autoRetryPublishedAttempts(R): one
+// attempt more than the operator's R retries, because the exhausted-retry
+// interceptor consumes that extra attempt to answer the client with a 503
+// instead of the upstream error. The pass is best-effort and bounded: every step
+// is independent, a failure skips the rest of that step, and nothing here is ever
 // surfaced to a client request.
 //
 // The Codex half works through the host auth API alone, so it also runs before
@@ -67,10 +70,13 @@ func (a *App) runAutoRetryApply(ctx context.Context, managementKey string) autoR
 		ctx = context.Background()
 	}
 	attempts := a.autoRetry.Attempts()
+	// The operator's setting counts upstream retries; the extra published attempt
+	// is the one the interceptor terminates.
+	published := autoRetryPublishedAttempts(attempts)
 	applyCtx, cancel := context.WithTimeout(ctx, autoRetryApplyTimeout)
 	defer cancel()
 
-	result.CodexAccounts = a.applyAutoRetryToCodexAuthFiles(applyCtx, attempts)
+	result.CodexAccounts = a.applyAutoRetryToCodexAuthFiles(applyCtx, published)
 
 	client, errClient := a.newWriteManagementClient(strings.TrimSpace(managementKey))
 	if errClient != nil {
@@ -79,9 +85,9 @@ func (a *App) runAutoRetryApply(ctx context.Context, managementKey string) autoR
 	}
 	defer clearManagementWriterSecrets(client)
 
-	result.OpenCodeChannels, result.ClinePassChannels, result.Skipped = a.applyAutoRetryToChannels(applyCtx, client, managementKey, attempts)
-	result.Host, result.HostRequestRetryRaised, result.HostIntervalRaised = a.applyAutoRetryToHostKnobs(applyCtx, client, attempts)
-	result.CodexChannels = a.applyAutoRetryToCodexChannels(applyCtx, managementKey, client, attempts)
+	result.OpenCodeChannels, result.ClinePassChannels, result.Skipped = a.applyAutoRetryToChannels(applyCtx, client, managementKey, published)
+	result.Host, result.HostRequestRetryRaised, result.HostIntervalRaised = a.applyAutoRetryToHostKnobs(applyCtx, client, published)
+	result.CodexChannels = a.applyAutoRetryToCodexChannels(applyCtx, managementKey, client, published)
 
 	a.autoRetry.recordApply(&result.Host, result.appliedState())
 	return result
@@ -247,7 +253,8 @@ func isClinePassGatewayBaseURL(baseURL string) bool {
 // applyAutoRetryToHostKnobs reads the host retry configuration and raises the
 // two knobs a disabled value would defeat, but only while attempts is positive:
 // 0 means "no retry" for the credentials the plugin manages, not a change to
-// host policy. An existing non-zero value is never lowered.
+// host policy. An existing non-zero value is never lowered. The passed budget is
+// the published one, so it already includes the interceptor's extra attempt.
 func (a *App) applyAutoRetryToHostKnobs(ctx context.Context, client *managementClient, attempts int) (AutoRetryHostState, bool, bool) {
 	host := a.autoRetry.hostState()
 	intervalKnown := false

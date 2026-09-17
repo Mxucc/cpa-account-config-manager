@@ -1296,6 +1296,8 @@ html[data-plugin-density="compact"] {
 .operation-name strong { font-size: calc(10px * var(--font-size-scale)); }
 .operation-name span, .operation-target span { color: var(--text-tertiary); font-size: calc(8px * var(--font-size-scale)); }
 .operation-target code { color: var(--text-secondary); font-size: calc(9px * var(--font-size-scale)); }
+.operation-name .operation-message { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; padding: 2px 5px; border-radius: 3px; color: var(--text-primary); background: var(--bg-secondary); font-family: "SFMono-Regular", Consolas, monospace; font-size: calc(8px * var(--font-size-scale)); line-height: 1.5; overflow-wrap: anywhere; }
+.operation-name .operation-message b { margin-right: 5px; color: var(--text-secondary); font-family: inherit; }
 .operation-source { min-height: 24px; display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 4px; color: var(--text-secondary); background: var(--bg-tertiary); font-size: calc(8px * var(--font-size-scale)); font-weight: 700; overflow-wrap: anywhere; }
 .operation-source.source-manual { color: var(--blue); background: var(--blue-soft); }
 .operation-source.source-inspection { color: var(--success); background: var(--success-soft); }

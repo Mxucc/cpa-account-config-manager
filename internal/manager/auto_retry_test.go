@@ -208,7 +208,9 @@ func TestAutoRetryApplyCoversEveryManagedProduct(t *testing.T) {
 	for _, patch := range patches {
 		value, _ := patch["value"].(map[string]any)
 		// The stub decodes the JSON body, so the number arrives as a float64.
-		if value["request-retry"] != float64(5) {
+		// Five operator retries are published as six attempts: the extra attempt is
+		// the one the exhausted-retry interceptor terminates with a 503.
+		if value["request-retry"] != float64(6) {
 			t.Fatalf("patch payload = %#v", patch)
 		}
 	}
@@ -341,6 +343,26 @@ func TestAutoRetryRequiredIntervalFollowsTheHostCooldown(t *testing.T) {
 	for _, testCase := range cases {
 		if got := autoRetryRequiredRetryInterval(testCase.cooldown); got != testCase.want {
 			t.Fatalf("autoRetryRequiredRetryInterval(%d) = %d, want %d", testCase.cooldown, got, testCase.want)
+		}
+	}
+}
+
+// A positive operator budget is published as one extra attempt so the
+// exhausted-retry interceptor has an attempt to terminate; zero stays zero
+// because the feature is off and nothing may be intercepted.
+func TestAutoRetryPublishedAttemptsKeepsZeroOffAndAddsTheInterceptedAttempt(t *testing.T) {
+	cases := []struct {
+		operator  int
+		published int
+	}{
+		{operator: 0, published: 0},
+		{operator: 1, published: 2},
+		{operator: 5, published: 6},
+		{operator: autoRetryMaxAttempts, published: autoRetryMaxAttempts + 1},
+	}
+	for _, testCase := range cases {
+		if got := autoRetryPublishedAttempts(testCase.operator); got != testCase.published {
+			t.Fatalf("autoRetryPublishedAttempts(%d) = %d, want %d", testCase.operator, got, testCase.published)
 		}
 	}
 }

@@ -93,6 +93,7 @@ type App struct {
 	opencodeZen              *OpenCodeZenService
 	clinePass                *ClinePassService
 	autoRetry                *AutoRetryService
+	modelRetry               *modelRetryExhaustionTracker
 	opencodePricing          *OpenCodePricingService
 	selfUpdate               *SelfUpdateService
 	codexFingerprints        *CodexFingerprintProfileService
@@ -158,6 +159,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	opencodeZen := NewOpenCodeZenService()
 	clinePass := NewClinePassService()
 	autoRetry := NewAutoRetryService()
+	modelRetry := newModelRetryExhaustionTracker()
 	opencodePricing := NewOpenCodePricingService()
 	selfUpdate := NewSelfUpdateService(PluginVersion)
 	codexFingerprints := NewCodexFingerprintProfileService()
@@ -247,6 +249,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		opencodeZen:              opencodeZen,
 		clinePass:                clinePass,
 		autoRetry:                autoRetry,
+		modelRetry:               modelRetry,
 		opencodePricing:          opencodePricing,
 		selfUpdate:               selfUpdate,
 		codexFingerprints:        codexFingerprints,
@@ -1154,13 +1157,27 @@ func (a *App) runtimeSuperseded() bool {
 }
 
 func (a *App) HandleRequestAfter(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
-	if a == nil || a.requestHooks == nil || a.runtimeSuperseded() {
+	if a == nil || a.runtimeSuperseded() {
 		return cpaapi.RequestInterceptResponse{}
 	}
-	// This is the interception path the host actually invokes, so the session
-	// router's OpenCode model set is refreshed here.
-	a.refreshOpenCodeSessionTargetsIfStale()
-	return a.requestHooks.InterceptAfter(request)
+	response := cpaapi.RequestInterceptResponse{}
+	if a.requestHooks != nil {
+		// This is the interception path the host actually invokes, so the session
+		// router's OpenCode model set is refreshed here.
+		a.refreshOpenCodeSessionTargetsIfStale()
+		response = a.requestHooks.InterceptAfter(request)
+		if response.Terminate {
+			// Another transformer answered the request, so this attempt never reaches
+			// upstream and must not consume the request's retry counter.
+			return response
+		}
+	}
+	if exhausted, terminate := a.modelRetryExhaustedResponse(request); terminate {
+		// The attempt after the operator's retry budget ends here instead of going
+		// upstream, so the client sees a 503 instead of the upstream error.
+		return exhausted
+	}
+	return response
 }
 
 func (a *App) HandleRequestComplete(completion cpaapi.RequestCompletion) {
@@ -1173,6 +1190,9 @@ func (a *App) HandleRequestComplete(completion cpaapi.RequestCompletion) {
 	if a.providerRuntime != nil {
 		a.providerRuntime.Complete(completion)
 	}
+	// Keep the dedicated model-error journal fed without letting a journal problem
+	// reach CPA's completion path.
+	a.recordModelError(completion)
 }
 
 func (a *App) RequestCompletionActive() bool {

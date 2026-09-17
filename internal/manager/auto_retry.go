@@ -20,9 +20,12 @@ import (
 // channels and Cline Pass channels. CPA owns the request loop and reads the
 // per-credential budget from the credential itself, so the plugin only
 // publishes that budget: a top-level request_retry key in an auth file, and the
-// request-retry field of an OpenAI-compatible channel row. The host-wide retry
-// knobs are raised only when a disabled value would defeat the setting, and an
-// existing non-zero value is never lowered.
+// request-retry field of an OpenAI-compatible channel row. A positive operator
+// budget is published as one extra attempt, which the exhausted-retry
+// interceptor consumes to answer the client with a 503 (see
+// autoRetryPublishedAttempts). The host-wide retry knobs are raised only when a
+// disabled value would defeat the setting, and an existing non-zero value is
+// never lowered.
 const (
 	autoRetryDefaultAttempts = 5
 	autoRetryMaxAttempts     = 10
@@ -170,6 +173,19 @@ func (s *AutoRetryService) Attempts() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.attempts
+}
+
+// autoRetryPublishedAttempts is the retry budget written to CPA for a positive
+// operator setting. R counts the retries the operator wants the upstream to see;
+// the request-after interceptor needs exactly one more attempt than that to turn
+// an exhausted request into a 503 instead of letting CPA hand the client the
+// upstream error. Zero stays zero: the feature is off, CPA performs no retry, and
+// the interceptor never terminates anything.
+func autoRetryPublishedAttempts(attempts int) int {
+	if attempts <= 0 {
+		return 0
+	}
+	return attempts + 1
 }
 
 // SetAttempts persists a budget in 0..10. Zero disables retries for the

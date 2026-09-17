@@ -684,6 +684,9 @@ func mergeOperationEntry(existing, replacement OperationEntry) OperationEntry {
 	if replacement.Attempts == 0 {
 		replacement.Attempts = existing.Attempts
 	}
+	if replacement.Message == "" {
+		replacement.Message = existing.Message
+	}
 	if len(replacement.FailureDetails) == 0 {
 		replacement.FailureDetails = cloneOperationFailureDetails(existing.FailureDetails)
 	}
@@ -721,6 +724,7 @@ func normalizeOperationEntry(entry OperationEntry, now time.Time) (OperationEntr
 	entry.Version = safeOperationVersion(entry.Version)
 	entry.Format = safeOperationFormat(entry.Format)
 	entry.Model = safeModelIdentifier(entry.Model)
+	entry.Message = sanitizeOperationMessage(entry.Message)
 	entry.HTTPStatus = boundedHTTPStatus(entry.HTTPStatus)
 	entry.Attempts = boundedCounter(entry.Attempts)
 	entry.FailureDetails = normalizeOperationFailureDetails(entry.FailureDetails)
@@ -792,7 +796,8 @@ func safeOperationReason(value string) string {
 		return value
 	case "model_response_ok", "model_not_found", "account_unavailable", "authentication_failed",
 		"quota_limited", "request_timeout", "upstream_unavailable", "invalid_response", "unsupported_provider",
-		"passive_circuit_open", "quota_reset", "passive_circuit_recovered", "health_recovered", "credential_refreshed":
+		"passive_circuit_open", "quota_reset", "passive_circuit_recovered", "health_recovered", "credential_refreshed",
+		OperationFailureModelUpstream, OperationFailureModelRetryExhausted, OperationFailureModelCanceled:
 		return value
 	default:
 		return "operation_failed"

@@ -771,7 +771,7 @@ export type ResultExportFormat = "json" | "csv" | "jsonl";
 
 export type ExportFormat = AccountExportFormat | ResultExportFormat;
 
-export type OperationCategory = "account" | "batch" | "import" | "export" | "default_policy" | "inspection" | "update" | "journal" | "opencode" | "plugin";
+export type OperationCategory = "account" | "batch" | "import" | "export" | "default_policy" | "inspection" | "update" | "journal" | "opencode" | "plugin" | "model_error";
 export type OperationStatus = "running" | "succeeded" | "partial" | "failed" | "interrupted" | "warning" | "skipped";
 export type OperationSource = "manual" | "background" | "default_policy" | "inspection" | "import" | "plugin_store";
 export type OperationExportFormat = "json" | "csv" | "jsonl";
@@ -805,6 +805,7 @@ export interface OperationEntry {
   model?: string;
   http_status?: number;
   attempts?: number;
+  message?: string;
   failure_details?: OperationFailureDetail[];
 }
 

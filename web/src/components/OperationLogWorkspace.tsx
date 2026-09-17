@@ -70,6 +70,7 @@ const categoryLabels: Record<OperationCategory, UIMessageKey> = {
   journal: "ui.log_management",
   opencode: "ui.opencode",
   plugin: "ui.plugin_lifecycle",
+  model_error: "ui.operation_category_model_error",
 };
 
 const statusLabels: Record<OperationStatus, UIMessageKey> = {
@@ -126,6 +127,7 @@ const actionLabels: Record<string, UIMessageKey> = {
   opencode_remove: "ui.opencode_remove_action",
   opencode_refresh: "ui.opencode_refresh_action",
   plugin_configure: "ui.plugin_configure_action",
+  model_failure: "ui.model_failure_action",
 };
 
 const reasonLabels: Record<string, UIMessageKey> = {
@@ -424,7 +426,7 @@ export function OperationLogWorkspace({ activeJobIDs, onAPIError, onNotice, onOp
               return (
                 <tr key={operation.id}>
                   <td data-label={tx("ui.status")}><OperationStatusBadge status={operation.status} /></td>
-                  <td data-label={tx("ui.actions")}><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{operationReasonSummary(operation, locale)}</span> : null}</div></td>
+                  <td data-label={tx("ui.actions")}><div className="operation-name"><strong>{actionLabelForOperation(operation.action, locale)}</strong><span>{categoryLabel(operation.category, locale)}{operation.model ? ` · ${operation.model}` : ""}{operation.format ? ` · ${operation.format.toUpperCase()}` : ""}{operation.version ? ` · v${operation.version}` : ""}</span>{operation.reason_code ? <span>{operationReasonSummary(operation, locale)}</span> : null}{operation.message ? <span className="operation-message" title={operation.message}><b>{tx("ui.original_error")}</b>{operation.message}</span> : null}</div></td>
                   <td data-label={tx("ui.source")}><span className={`operation-source source-${operation.source}`}>{sourceLabel(operation.source, locale)}</span></td>
                   <td data-label={tx("ui.results")}><OperationCounts operation={operation} /></td>
                   <td data-label={tx("ui.related_object")}><div className="operation-target"><code>{operation.target_id || operation.related_job_id || "-"}</code><span>{scopeLabel(operation.scope, locale)}</span></div></td>
@@ -487,6 +489,7 @@ function OperationDetailsDialog({ operation, canOpenJob, onClose, onOpenJob }: {
     [tx("ui.model"), operation.model],
     [tx("ui.http_status"), operation.http_status],
     [tx("ui.attempts"), operation.attempts],
+    [tx("ui.original_error"), operation.message],
     [tx("ui.started"), formatDateTime(operation.started_at)],
     [tx("ui.completed_3"), formatDateTime(operation.finished_at)],
   ];

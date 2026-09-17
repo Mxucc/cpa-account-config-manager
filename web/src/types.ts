@@ -1320,6 +1320,8 @@ export interface AutoRetryHostState {
 /** Credentials that carry the automatic retry setting, counted per product. */
 export interface AutoRetryAppliedState {
   codex_accounts?: number;
+  /** Codex provider-channel rows a host keeps in its configuration rather than in auth files. */
+  codex_channels?: number;
   opencode_channels?: number;
   cline_pass_channels?: number;
   skipped?: number;

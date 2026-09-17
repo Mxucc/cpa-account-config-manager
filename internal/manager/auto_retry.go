@@ -71,7 +71,10 @@ type AutoRetryHostState struct {
 // values it had to raise. Counts describe written credentials, not matched
 // ones: a row that already carries the configured budget is left untouched.
 type AutoRetryAppliedState struct {
-	CodexAccounts          int    `json:"codex_accounts"`
+	CodexAccounts int `json:"codex_accounts"`
+	// CodexChannels counts the Codex provider-channel rows a host keeps in its
+	// configuration instead of in auth files.
+	CodexChannels          int    `json:"codex_channels"`
 	OpenCodeChannels       int    `json:"opencode_channels"`
 	ClinePassChannels      int    `json:"cline_pass_channels"`
 	Skipped                int    `json:"skipped"`

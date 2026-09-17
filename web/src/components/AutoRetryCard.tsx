@@ -43,6 +43,7 @@ function normalizeApplied(value: unknown): AutoRetryAppliedState | undefined {
   if (!isRecord(value)) return undefined;
   return {
     codex_accounts: numberOr(value.codex_accounts, 0),
+    codex_channels: numberOr(value.codex_channels, 0),
     opencode_channels: numberOr(value.opencode_channels, 0),
     cline_pass_channels: numberOr(value.cline_pass_channels, 0),
     skipped: numberOr(value.skipped, 0),
@@ -212,7 +213,7 @@ export function AutoRetryCard({ refreshRevision, onAPIError, onNotice }: AutoRet
             <strong>{tx("ui.auto_retry_applied")}</strong>
             {snapshot.applied ? (
               <>
-                <span>{tx("ui.auto_retry_applied_codex", { value: snapshot.applied.codex_accounts ?? 0 })}</span>
+                <span>{tx("ui.auto_retry_applied_codex", { value: (snapshot.applied.codex_accounts ?? 0) + (snapshot.applied.codex_channels ?? 0) })}</span>
                 <span>{tx("ui.auto_retry_applied_opencode", { value: snapshot.applied.opencode_channels ?? 0 })}</span>
                 <span>{tx("ui.auto_retry_applied_cline_pass", { value: snapshot.applied.cline_pass_channels ?? 0 })}</span>
                 {(snapshot.applied.skipped ?? 0) > 0 ? (

@@ -2054,7 +2054,7 @@ export const enUI = {
   "ui.auto_retry_host_bootstrap_retries": "Bootstrap retries: {value}",
   "ui.auto_retry_host_raised": "Host switches were filled in automatically",
   "ui.auto_retry_applied": "Credentials carrying the setting",
-  "ui.auto_retry_applied_codex": "Codex accounts: {value}",
+  "ui.auto_retry_applied_codex": "Codex credentials: {value}",
   "ui.auto_retry_applied_opencode": "OpenCode channels: {value}",
   "ui.auto_retry_applied_cline_pass": "Cline Pass channels: {value}",
   "ui.auto_retry_applied_skipped": "Skipped: {value}",

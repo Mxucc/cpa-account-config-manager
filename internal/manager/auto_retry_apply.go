@@ -26,7 +26,10 @@ const (
 // pass actually wrote: a row that already carries the configured budget is not
 // counted, because nothing was applied to it.
 type autoRetryApplyResult struct {
-	CodexAccounts          int
+	CodexAccounts int
+	// CodexChannels counts the Codex provider-channel rows (codex-api-key), which a
+	// host may use instead of an auth file for the same product.
+	CodexChannels          int
 	OpenCodeChannels       int
 	ClinePassChannels      int
 	Skipped                int
@@ -38,6 +41,7 @@ type autoRetryApplyResult struct {
 func (result autoRetryApplyResult) appliedState() AutoRetryAppliedState {
 	return AutoRetryAppliedState{
 		CodexAccounts:          result.CodexAccounts,
+		CodexChannels:          result.CodexChannels,
 		OpenCodeChannels:       result.OpenCodeChannels,
 		ClinePassChannels:      result.ClinePassChannels,
 		Skipped:                result.Skipped,
@@ -77,6 +81,7 @@ func (a *App) runAutoRetryApply(ctx context.Context, managementKey string) autoR
 
 	result.OpenCodeChannels, result.ClinePassChannels, result.Skipped = a.applyAutoRetryToChannels(applyCtx, client, managementKey, attempts)
 	result.Host, result.HostRequestRetryRaised, result.HostIntervalRaised = a.applyAutoRetryToHostKnobs(applyCtx, client, attempts)
+	result.CodexChannels = a.applyAutoRetryToCodexChannels(applyCtx, managementKey, client, attempts)
 
 	a.autoRetry.recordApply(&result.Host, result.appliedState())
 	return result
@@ -192,6 +197,34 @@ func (a *App) applyAutoRetryToChannels(ctx context.Context, client *managementCl
 		}
 	}
 	return openCode, clinePass, skipped
+}
+
+// applyAutoRetryToCodexChannels writes the budget onto every Codex provider-channel
+// row. A host that keeps its Codex credentials in the configuration instead of in
+// auth files reaches CPA through exactly the same metadata key, so both shapes have
+// to carry the setting for the product to be covered.
+func (a *App) applyAutoRetryToCodexChannels(ctx context.Context, managementKey string, client *managementClient, attempts int) int {
+	entries, errList := a.aiProviderChannelEntries(ctx, managementKey, "codex-api-key")
+	if errList != nil {
+		return 0
+	}
+	applied := 0
+	for index, entry := range entries {
+		if ctx.Err() != nil {
+			break
+		}
+		if current, known := autoRetryValue(entry["request-retry"]); known && current == attempts {
+			continue
+		}
+		if errPatch := client.patch(ctx, "/v0/management/codex-api-key", map[string]any{
+			"index": index,
+			"value": map[string]any{"request-retry": attempts},
+		}); errPatch != nil {
+			continue
+		}
+		applied++
+	}
+	return applied
 }
 
 // isClinePassGatewayBaseURL reports whether a channel base URL points at a Cline

@@ -2056,7 +2056,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.auto_retry_host_bootstrap_retries": "\u542f\u52a8\u91cd\u8bd5\u6b21\u6570\uff1a{value}",
   "ui.auto_retry_host_raised": "\u5df2\u81ea\u52a8\u8865\u8db3\u5bbf\u4e3b\u5f00\u5173",
   "ui.auto_retry_applied": "\u5df2\u751f\u6548\u51ed\u636e",
-  "ui.auto_retry_applied_codex": "Codex \u8d26\u53f7\uff1a{value}",
+  "ui.auto_retry_applied_codex": "Codex \u51ed\u636e\uff1a{value}",
   "ui.auto_retry_applied_opencode": "OpenCode \u6e20\u9053\uff1a{value}",
   "ui.auto_retry_applied_cline_pass": "Cline Pass \u6e20\u9053\uff1a{value}",
   "ui.auto_retry_applied_skipped": "\u5df2\u8df3\u8fc7\uff1a{value}",

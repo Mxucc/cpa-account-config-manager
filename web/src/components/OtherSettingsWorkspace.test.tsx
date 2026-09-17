@@ -365,7 +365,7 @@ describe("OtherSettingsWorkspace", () => {
         max_attempts: 10,
         enabled: true,
         host: autoRetryHost,
-        applied: { codex_accounts: 3, opencode_channels: 2, cline_pass_channels: 1, skipped: 0, host_request_retry_raised: false, host_interval_raised: false, updated_at: "2026-09-17T10:00:00Z" },
+        applied: { codex_accounts: 3, codex_channels: 2, opencode_channels: 2, cline_pass_channels: 1, skipped: 0, host_request_retry_raised: false, host_interval_raised: false, updated_at: "2026-09-17T10:00:00Z" },
         storage_error: "",
       },
     });
@@ -378,7 +378,8 @@ describe("OtherSettingsWorkspace", () => {
     expect(within(panel).getByText("最大重试间隔：30 秒")).toBeInTheDocument();
     expect(within(panel).getByText("最大重试凭据数：0")).toBeInTheDocument();
     expect(within(panel).getByText("启动重试次数：2")).toBeInTheDocument();
-    expect(within(panel).getByText("Codex 账号：3")).toBeInTheDocument();
+    // Auth files and Codex provider channels are both Codex credentials for the operator.
+    expect(within(panel).getByText("Codex 凭据：5")).toBeInTheDocument();
     expect(within(panel).getByText("OpenCode 渠道：2")).toBeInTheDocument();
     expect(within(panel).getByText("Cline Pass 渠道：1")).toBeInTheDocument();
     // A zero skip count is not reported: only a non-zero one is interesting.
@@ -394,7 +395,7 @@ describe("OtherSettingsWorkspace", () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     stubAutoRetryFetch(requests, {
       get: { attempts: 5, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 3, opencode_channels: 2, cline_pass_channels: 1, skipped: 0 } },
-      put: { attempts: 8, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 5, opencode_channels: 2, cline_pass_channels: 1, skipped: 1 } },
+      put: { attempts: 8, max_attempts: 10, host: autoRetryHost, applied: { codex_accounts: 5, codex_channels: 2, opencode_channels: 2, cline_pass_channels: 1, skipped: 1 } },
     });
 
     const panel = await openExperimentalPanel(user, onNotice);
@@ -416,7 +417,7 @@ describe("OtherSettingsWorkspace", () => {
     const second = requests.filter(({ url, init }) => url.endsWith("/auto-retry") && init.method === "PUT").at(-1);
     expect(JSON.parse(String(second?.init.body))).toEqual({ attempts: 8 });
     await waitFor(() => expect(input).toHaveValue(8));
-    expect(within(panel).getByText("Codex 账号：5")).toBeInTheDocument();
+    expect(within(panel).getByText("Codex 凭据：7")).toBeInTheDocument();
     expect(within(panel).getByText("已跳过：1")).toBeInTheDocument();
   });
 

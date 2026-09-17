@@ -2056,7 +2056,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.auto_retry_host_bootstrap_retries": "Повторы запуска: {value}",
   "ui.auto_retry_host_raised": "Переключатели хоста заполнены автоматически",
   "ui.auto_retry_applied": "Учетные данные с этой настройкой",
-  "ui.auto_retry_applied_codex": "Аккаунты Codex: {value}",
+  "ui.auto_retry_applied_codex": "Учетные данные Codex: {value}",
   "ui.auto_retry_applied_opencode": "Каналы OpenCode: {value}",
   "ui.auto_retry_applied_cline_pass": "Каналы Cline Pass: {value}",
   "ui.auto_retry_applied_skipped": "Пропущено: {value}",

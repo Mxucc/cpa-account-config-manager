@@ -18,6 +18,7 @@ import (
 type autoRetryHostStub struct {
 	mu            sync.Mutex
 	channels      []map[string]any
+	codexChannels []map[string]any
 	requestRetry  int
 	retryInterval int
 	cooldown      int
@@ -30,21 +31,15 @@ func (s *autoRetryHostStub) serveHTTP(writer http.ResponseWriter, request *http.
 	defer s.mu.Unlock()
 	writer.Header().Set("Content-Type", "application/json")
 	switch request.URL.Path {
+	case "/v0/management/codex-api-key":
+		if request.Method == http.MethodPatch {
+			s.patchRow(writer, request, s.codexChannels)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"codex-api-key": s.codexChannels})
 	case "/v0/management/openai-compatibility":
 		if request.Method == http.MethodPatch {
-			var body struct {
-				Index *int           `json:"index"`
-				Value map[string]any `json:"value"`
-			}
-			_ = json.NewDecoder(request.Body).Decode(&body)
-			record := map[string]any{"index": body.Index, "value": body.Value}
-			s.patches = append(s.patches, record)
-			if body.Index != nil && *body.Index >= 0 && *body.Index < len(s.channels) {
-				for key, value := range body.Value {
-					s.channels[*body.Index][key] = value
-				}
-			}
-			_, _ = writer.Write([]byte(`{}`))
+			s.patchRow(writer, request, s.channels)
 			return
 		}
 		_ = json.NewEncoder(writer).Encode(map[string]any{"openai-compatibility": s.channels})
@@ -80,6 +75,23 @@ func (s *autoRetryHostStub) patchCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.patches)
+}
+
+// patchRow records one patch and applies it to the row the index names, so a second
+// pass can prove it finds the value already correct.
+func (s *autoRetryHostStub) patchRow(writer http.ResponseWriter, request *http.Request, rows []map[string]any) {
+	var body struct {
+		Index *int           `json:"index"`
+		Value map[string]any `json:"value"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&body)
+	s.patches = append(s.patches, map[string]any{"index": body.Index, "value": body.Value})
+	if body.Index != nil && *body.Index >= 0 && *body.Index < len(rows) {
+		for key, value := range body.Value {
+			rows[*body.Index][key] = value
+		}
+	}
+	_, _ = writer.Write([]byte(`{}`))
 }
 
 // newAutoRetryTestApp wires the smallest App an apply pass needs: the automatic
@@ -159,6 +171,10 @@ func TestAutoRetryApplyCoversEveryManagedProduct(t *testing.T) {
 			{"name": "Cline Pass", "base-url": clinePassDefaultBaseURL},
 			{"name": "Some other relay", "base-url": "https://relay.example.com/v1"},
 		},
+		codexChannels: []map[string]any{
+			{"api-key": "sk-codex-one", "base-url": "https://codex.example.com/v1"},
+			{"api-key": "sk-codex-two", "base-url": "https://codex.example.com/v1"},
+		},
 		requestRetry:  3,
 		retryInterval: 30,
 	}
@@ -168,7 +184,7 @@ func TestAutoRetryApplyCoversEveryManagedProduct(t *testing.T) {
 	}
 
 	result := app.runAutoRetryApply(context.Background(), "management-secret")
-	if result.OpenCodeChannels != 1 || result.ClinePassChannels != 1 || result.Skipped != 1 {
+	if result.OpenCodeChannels != 1 || result.ClinePassChannels != 1 || result.CodexChannels != 2 || result.Skipped != 1 {
 		t.Fatalf("apply result = %#v", result)
 	}
 	if result.Host.MaxRetryInterval != autoRetryTransientCooldownFallbackSeconds || !result.HostIntervalRaised {
@@ -185,8 +201,9 @@ func TestAutoRetryApplyCoversEveryManagedProduct(t *testing.T) {
 	channels := append([]map[string]any(nil), stub.channels...)
 	hostWrites := append([]string(nil), stub.hostWrites...)
 	stub.mu.Unlock()
-	if len(patches) != 2 {
-		t.Fatalf("patched %d rows, want the two managed products: %#v", len(patches), patches)
+	// Two managed OpenAI-compatible rows plus the two Codex provider-channel rows.
+	if len(patches) != 4 {
+		t.Fatalf("patched %d rows, want the managed products and both Codex rows: %#v", len(patches), patches)
 	}
 	for _, patch := range patches {
 		value, _ := patch["value"].(map[string]any)

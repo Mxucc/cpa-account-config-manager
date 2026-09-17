@@ -1976,6 +1976,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.risk_prompt_content": "系統提示詞",
   "ui.risk_prompt_default": "預設",
   "ui.risk_prompt_default_locked": "預設提示詞不可編輯或刪除。",
+  "ui.risk_prompt_in_use": "該提示詞正被提示詞審計使用，請先切換審計頁的目前提示詞。",
   "ui.risk_new_prompt": "新提示詞",
   "ui.risk_current_prompt": "目前提示詞",
   "ui.risk_action_audit_observe": "審計觀察",

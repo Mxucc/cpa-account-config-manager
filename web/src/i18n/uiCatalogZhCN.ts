@@ -1976,6 +1976,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.risk_prompt_content": "系统提示词",
   "ui.risk_prompt_default": "默认",
   "ui.risk_prompt_default_locked": "默认提示词不可编辑或删除。",
+  "ui.risk_prompt_in_use": "该提示词正被提示词审计使用，请先切换审计页的当前提示词。",
   "ui.risk_new_prompt": "新提示词",
   "ui.risk_current_prompt": "当前提示词",
   "ui.risk_action_audit_observe": "审计观察",

@@ -1974,6 +1974,7 @@ export const enUI = {
   "ui.risk_prompt_content": "System prompt",
   "ui.risk_prompt_default": "Default",
   "ui.risk_prompt_default_locked": "The default prompt cannot be edited or deleted.",
+  "ui.risk_prompt_in_use": "This prompt is used by the prompt audit; switch the audit prompt before deleting it.",
   "ui.risk_new_prompt": "New prompt",
   "ui.risk_current_prompt": "Current prompt",
   "ui.risk_action_audit_observe": "Audit observed",

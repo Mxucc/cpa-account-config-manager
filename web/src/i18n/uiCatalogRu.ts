@@ -1976,6 +1976,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.risk_prompt_content": "Системный промпт",
   "ui.risk_prompt_default": "По умолчанию",
   "ui.risk_prompt_default_locked": "Промпт по умолчанию нельзя изменять или удалять.",
+  "ui.risk_prompt_in_use": "Этот промпт используется аудитом промптов; сначала смените текущий промпт аудита.",
   "ui.risk_new_prompt": "Новый промпт",
   "ui.risk_current_prompt": "Текущий промпт",
   "ui.risk_action_audit_observe": "Аудит: наблюдение",

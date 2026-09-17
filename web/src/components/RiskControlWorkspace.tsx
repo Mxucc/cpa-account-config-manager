@@ -42,8 +42,22 @@ function providerLabel(kind: string, entry: AIProviderChannelEntry): string { re
 function providerAuthIndex(entry: AIProviderChannelEntry): string { return (entry.auth_index || entry.account_id || "").trim(); }
 function providerModels(entry: AIProviderChannelEntry): AIProviderChannelModel[] { return Array.isArray(entry.models) ? entry.models.filter((model) => typeof model?.name === "string" && model.name.trim()) : []; }
 
+// prompt_options is a UI-only extra the audit form reads beside its config so the prompt select can
+// render. It must never reach the persisted config, which the backend decodes with
+// DisallowUnknownFields (issue #8: json: unknown field "prompt_options").
+type RiskAuditFormValue = RiskAuditConfig & { prompt_options?: RiskSystemPrompt[] };
+function auditWithoutUIOptions(value: RiskAuditFormValue): RiskAuditConfig { const { prompt_options: _uiOptions, ...audit } = value; return audit; }
+
+
+// A persisted audit prompt_id can dangle when an older release deleted its prompt; the backend
+// rejects such a save, so fall back to the first prompt that still exists (issue #8 follow-up).
+function reconcileAuditPrompt(config: RiskControlConfig): RiskControlConfig {
+  const prompts = config.system_prompts ?? [];
+  if (!prompts.length || prompts.some((prompt) => prompt.id === config.audit?.prompt_id)) return config;
+  return { ...config, audit: { ...config.audit, prompt_id: prompts[0].id } };
+}
 interface AuditFormProps {
-  value: RiskAuditConfig & { prompt_options?: RiskSystemPrompt[] };
+  value: RiskAuditFormValue;
   status?: RiskAuditModuleStatus;
   accounts: Account[];
   providers: Array<{ kind: string; entry: AIProviderChannelEntry }>;
@@ -104,6 +118,11 @@ function PromptCatalog({ config, onChange, tx }: { config: RiskControlConfig; on
     }
   }, [config.system_prompts, selectedID]);
 
+  const auditPromptID = config.audit?.prompt_id ?? "";
+  // A prompt the audit still references must not be deleted: saving would be rejected with
+  // "audit.prompt_id references an unknown system prompt" (issue #8).
+  const promptInUse = Boolean(selected && selected.id === auditPromptID);
+
   const edit = (patch: Partial<RiskSystemPrompt>) => {
     if (!selected || selected.builtin) return;
     onChange(config.system_prompts.map((prompt) => prompt.id === selected.id ? { ...prompt, ...patch } : prompt));
@@ -117,7 +136,7 @@ function PromptCatalog({ config, onChange, tx }: { config: RiskControlConfig; on
   };
 
   const remove = () => {
-    if (!selected || selected.builtin) return;
+    if (!selected || selected.builtin || promptInUse) return;
     onChange(config.system_prompts.filter((prompt) => prompt.id !== selected.id));
     setSelectedID(config.system_prompts.find((prompt) => prompt.id !== selected.id)?.id ?? "");
   };
@@ -131,12 +150,13 @@ function PromptCatalog({ config, onChange, tx }: { config: RiskControlConfig; on
         </select>
       </label>
       <button className="button" type="button" onClick={add}><Plus size={15} />{tx("ui.risk_prompt_add")}</button>
-      <button className="button subtle-danger" type="button" disabled={!selected || selected.builtin} onClick={remove}><Trash2 size={15} />{tx("ui.risk_prompt_delete")}</button>
+      <button className="button subtle-danger" type="button" disabled={!selected || selected.builtin || promptInUse} title={promptInUse ? tx("ui.risk_prompt_in_use") : undefined} onClick={remove}><Trash2 size={15} />{tx("ui.risk_prompt_delete")}</button>
     </div>
     {selected ? <div className="risk-form-grid">
       <label className="field-block"><span>{tx("ui.risk_prompt_name")}</span><input value={selected.name} disabled={selected.builtin} onChange={(event) => edit({ name: event.target.value })} /></label>
       <label className="field-block risk-wide"><span>{tx("ui.risk_prompt_content")}</span><textarea rows={10} value={selected.system_prompt} disabled={selected.builtin} onChange={(event) => edit({ system_prompt: event.target.value })} /></label>
       {selected.builtin ? <small>{tx("ui.risk_prompt_default_locked")}</small> : null}
+      {promptInUse ? <small role="status">{tx("ui.risk_prompt_in_use")}</small> : null}
     </div> : null}
   </div>;
 }
@@ -158,7 +178,9 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true); setError("");
     try {
-      const next = mergeSnapshot(await api.getRiskControl(signal)); setSnapshot(next); setConfig(next.config);
+      const next = mergeSnapshot(await api.getRiskControl(signal));
+      const reconciled = { ...next, config: reconcileAuditPrompt(next.config) };
+      setSnapshot(reconciled); setConfig(reconciled.config);
       const [accountResponse, providerSnapshots] = await Promise.all([
         api.listAccounts(1, 1000, {}, { field: "account", order: "asc" }, signal),
         api.listAIProviderChannels(signal),
@@ -189,7 +211,10 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
   }, [config.audit.account_id, config.audit.model_source]);
 
   const status = snapshot?.status; const events = snapshot?.events ?? [];
-  const update = <K extends keyof RiskControlConfig>(key: K, value: RiskControlConfig[K]) => setConfig((current) => ({ ...current, [key]: value }));
+  const update = <K extends keyof RiskControlConfig>(key: K, value: RiskControlConfig[K]) => setConfig((current) => {
+    const next = key === "audit" ? auditWithoutUIOptions(value as RiskAuditFormValue) : value;
+    return { ...current, [key]: next } as RiskControlConfig;
+  });
   const save = async () => {
     setSaving(true); setError("");
     try {

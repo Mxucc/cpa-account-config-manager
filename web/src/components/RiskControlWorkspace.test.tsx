@@ -80,6 +80,71 @@ describe("RiskControlWorkspace", () => {
     expect(screen.queryByText("private-audit-key")).not.toBeInTheDocument();
   });
 
+  it("never persists the UI-only prompt options of the audit form (issue #8)", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      return respond();
+    });
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    await user.click(within(workspace).getByRole("tab", { name: "提示词审计" }));
+    await user.type(within(workspace).getByLabelText("API Key"), "private-audit-key");
+    await user.selectOptions(within(workspace).getByLabelText("审核模式"), "observe");
+    await user.click(within(workspace).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ init }) => init?.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ init }) => init?.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init?.body));
+    expect(body.audit).not.toHaveProperty("prompt_options");
+    // The backend decodes this payload with DisallowUnknownFields, so any key outside the Go
+    // RiskAuditConfig struct fails the whole save: keep the body inside that allow-list.
+    const knownAuditKeys = new Set(["enabled", "mode", "endpoint", "model", "model_source", "account_id", "provider_auth_index", "provider_name", "api_key", "api_key_set", "api_key_clear", "scanners", "latest_turn_only", "store_pass_events", "timeout_ms", "input_limit", "worker_count", "queue_capacity", "failure_policy", "block_status", "block_message", "confidence_threshold", "prompt_id"]);
+    expect(Object.keys(body.audit).filter((key) => !knownAuditKeys.has(key))).toEqual([]);
+    expect(body.audit).toMatchObject({ api_key: "private-audit-key", mode: "observe", prompt_id: defaultPrompt.id });
+  });
+
+  it("refuses to delete the prompt the audit is using (issue #8)", async () => {
+    const user = userEvent.setup();
+    const custom = { id: "custom-guard", name: "Custom guard", system_prompt: "guard", builtin: false };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(respond({ ...snapshot, config: { ...snapshot.config, audit: { ...snapshot.config.audit, prompt_id: custom.id }, system_prompts: [defaultPrompt, custom] } }));
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    await user.click(within(workspace).getByRole("tab", { name: "自定义审核" }));
+    await user.selectOptions(within(workspace).getByLabelText("系统提示词列表"), custom.id);
+    expect(within(workspace).getByRole("button", { name: "删除提示词" })).toBeDisabled();
+    expect(within(workspace).getByText("该提示词正被提示词审计使用，请先切换审计页的当前提示词。")).toBeInTheDocument();
+
+    await user.click(within(workspace).getByRole("tab", { name: "提示词审计" }));
+    await user.selectOptions(within(workspace).getByLabelText("当前提示词"), defaultPrompt.id);
+    await user.click(within(workspace).getByRole("tab", { name: "自定义审核" }));
+    await user.selectOptions(within(workspace).getByLabelText("系统提示词列表"), custom.id);
+    expect(within(workspace).getByRole("button", { name: "删除提示词" })).not.toBeDisabled();
+  });
+
+  it("falls back to a live prompt when the persisted audit prompt is gone (issue #8)", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const dangling = { ...snapshot, config: { ...snapshot.config, audit: { ...snapshot.config.audit, prompt_id: "deleted-prompt" } } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      requests.push({ url: String(input), init });
+      return respond(init?.method === "PUT" ? snapshot : dangling);
+    });
+
+    render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
+    const workspace = await screen.findByRole("region", { name: "风控中心" });
+    await user.click(within(workspace).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ init }) => init?.method === "PUT")).toBe(true));
+    const putRequest = requests.find(({ init }) => init?.method === "PUT");
+    const body = JSON.parse(String(putRequest?.init?.body));
+    expect(body.audit.prompt_id).toBe(defaultPrompt.id);
+  });
+
   it("supports prompt catalog add, edit, delete, and protects the default prompt", async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(respond());

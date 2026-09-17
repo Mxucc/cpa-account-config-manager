@@ -28,6 +28,10 @@ interface BatchEditorProps {
 	loadCurrentConfig?: () => Promise<AccountEditableConfig>;
 	onLoadError?: (error: unknown) => void;
 	accountConcurrency?: AccountConcurrencyAvailability;
+	/** True while the parent is submitting this patch, so the button cannot fire twice. */
+	busy?: boolean;
+	/** A preview the parent rejected: the editor stays open so the operator's edits survive. */
+	submitError?: string;
 }
 
 const initialEnabled: Record<FieldName, boolean> = {
@@ -48,7 +52,7 @@ const initialEnabled: Record<FieldName, boolean> = {
 
 const defaultConcurrencyAvailability: AccountConcurrencyAvailability = { supported: true, host_schema_version: 2, required_schema_version: 2 };
 
-export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError, accountConcurrency = defaultConcurrencyAvailability }: BatchEditorProps) {
+export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSubmit, loadModels, loadCurrentConfig, onLoadError, accountConcurrency = defaultConcurrencyAvailability, busy = false, submitError = "" }: BatchEditorProps) {
   const { locale, tx } = useI18n();
 	const currentConfigLoader = useRef(loadCurrentConfig);
 	const loadErrorHandler = useRef(onLoadError);
@@ -318,7 +322,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
         <>
           <span className="modal-scope">{scopeLabel}</span>
           <button className="button" type="button" onClick={onClose}>{tx("ui.cancel")}</button>
-          <button className="button button-primary" type="submit" form="batch-editor" disabled={!anyEnabled || configLoading || configError}>{tx("ui.generate_preview")}</button>
+          <button className="button button-primary" type="submit" form="batch-editor" disabled={!anyEnabled || configLoading || configError || busy}>{busy ? <LoaderCircle className="spin" size={15} /> : null}{tx("ui.generate_preview")}</button>
         </>
       )}
     >
@@ -476,7 +480,7 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 				) : <div className="model-catalog-state">{tx("ui.enable_model_policy_to_load")}</div>}
 			</div>
 		</div>
-        {error ? <div className="form-error" role="alert">{error}</div> : null}
+        {submitError || error ? <div className="form-error" role="alert">{submitError || error}</div> : null}
       </form> : null}
     </Modal>
   );

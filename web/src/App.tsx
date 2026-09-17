@@ -228,6 +228,10 @@ interface EditorContext {
   scopeLabel: string;
 	scope: TargetScope;
 	accountID?: string;
+	/** True while this context's patch is being previewed. */
+	busy?: boolean;
+	/** A preview rejected for this context, shown inside the editor. */
+	error?: string;
 }
 
 const agentIdentityLoginStatePattern = /^[A-Za-z0-9._-]{1,256}$/;
@@ -871,18 +875,33 @@ function AccountManagerApp() {
     return { mode: "filtered" as const, filters: apiFilters };
   };
 
-  const beginPreview = async (patch: BatchPatch, explicitScope?: TargetScope) => {
+  const beginPreview = async (patch: BatchPatch, explicitScope?: TargetScope): Promise<{ ok: true } | { ok: false; message: string }> => {
     setPreviewLoading(true);
     setPreviewError("");
     try {
       const response = await api.createPreview(explicitScope ?? targetScope(), patch);
       previewPatches.current.set(response.id, patch);
       setPreview(response);
+      return { ok: true };
     } catch (error) {
       handleAPIError(error);
+      return { ok: false, message: errorText(error, locale) };
     } finally {
       setPreviewLoading(false);
     }
+  };
+
+  // A rejected preview must not throw the operator's edits away: the editor stays open with the
+  // reason until the preview is actually on screen.
+  const submitEditorPatch = async (patch: BatchPatch) => {
+    const context = editorContext;
+    if (!context) return;
+    setEditorContext((current) => (current ? { ...current, busy: true, error: "" } : current));
+    const result = await beginPreview(patch, context.scope);
+    setEditorContext((current) => {
+      if (!current) return current;
+      return result.ok ? null : { ...current, busy: false, error: result.message };
+    });
   };
 
   const beginAccountStatePreview = (account: Account, disabled: boolean) => {
@@ -1624,7 +1643,7 @@ function AccountManagerApp() {
 
       {authState === "booting" ? <div className="auth-loading"><LoaderCircle className="spin" size={24} /></div> : null}
       {authState === "login" ? <LoginDialog loading={authLoading} error={authError} onSubmit={login} /> : null}
-      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} accountConcurrency={data.account_concurrency} loadModels={() => api.loadAccountModels(editorContext.scope)} loadCurrentConfig={editorContext.accountID ? () => api.loadAccountConfig(editorContext.accountID || "") : undefined} onLoadError={(error) => { if (error instanceof api.APIError && error.status === 401) { setEditorContext(null); handleAPIError(error); } }} onClose={() => setEditorContext(null)} onSubmit={(patch) => { const scope = editorContext.scope; setEditorContext(null); void beginPreview(patch, scope); }} /> : null}
+      {editorContext ? <BatchEditor title={editorContext.title} scopeLabel={editorContext.scopeLabel} accountConcurrency={data.account_concurrency} loadModels={() => api.loadAccountModels(editorContext.scope)} loadCurrentConfig={editorContext.accountID ? () => api.loadAccountConfig(editorContext.accountID || "") : undefined} onLoadError={(error) => { if (error instanceof api.APIError && error.status === 401) { setEditorContext(null); handleAPIError(error); } }} onClose={() => setEditorContext(null)} busy={editorContext.busy} submitError={editorContext.error} onSubmit={(patch) => void submitEditorPatch(patch)} /> : null}
       {detailAccount ? <AccountDetailsDialog account={detailAccount} creditUsageEnabled weeklyOverdraftEnabled={weeklyOverdraftEnabled} onClose={() => setDetailAccount(null)} onEdit={() => openAccountEditor(detailAccount)} /> : null}
 			{quotaResetTarget ? (
 				<Modal

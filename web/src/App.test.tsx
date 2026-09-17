@@ -1951,4 +1951,55 @@ describe("primary navigation order", () => {
     const panel = await screen.findByRole("tabpanel", { name: "账号" });
     expect(within(panel).getByText("Work laptop")).toBeInTheDocument();
   });
+
+  it("keeps the batch editor open with the reason when the preview is rejected", async () => {
+    const user = userEvent.setup();
+    let previewCalls = 0;
+    vi.mocked(readPanelAuth).mockReturnValue({ apiBase: "http://localhost:8317", managementKey: "management-secret" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/batch/preview")) {
+        previewCalls += 1;
+        if (previewCalls === 1) {
+          return jsonResponse({ error: "proxy_url must be empty, direct, none, or a valid proxy URL" }, 400);
+        }
+        return jsonResponse({
+          id: "preview-retry",
+          created_at: "2026-07-15T10:00:00Z",
+          expires_at: "2026-07-15T10:05:00Z",
+          scope_mode: "filtered",
+          total: 1,
+          eligible: 1,
+          read_only: 0,
+          missing: 0,
+          physical_files: 1,
+          providers: { codex: 1 },
+          patch: { fields: ["note"], proxy_mutation: false },
+          targets: [{ id: "auth-1", name: "operator.json", provider: "codex", label: "operator@example.com", eligible: true }],
+        });
+      }
+      return jsonResponse({ accounts: [account], total: 1, page: 1, page_size: 50, pages: 1 });
+    }));
+
+    render(<App />);
+    expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "批量编辑" }));
+    await user.click(screen.getByLabelText("备注"));
+    await user.type(screen.getByLabelText("Note 值"), "rotated pool");
+    await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+    // A rejected preview must not throw the operator's edits away: the editor stays open, names the
+    // reason, and no preview dialog is opened.
+    const editor = await screen.findByRole("dialog", { name: "批量编辑" });
+    expect(await within(editor).findByRole("alert")).toHaveTextContent("proxy_url must be empty");
+    expect(within(editor).getByLabelText("Note 值")).toHaveValue("rotated pool");
+    expect(screen.queryByRole("dialog", { name: "变更预览" })).not.toBeInTheDocument();
+
+    // Retrying from the still-populated form opens the preview and only then closes the editor.
+    await user.click(within(editor).getByRole("button", { name: "生成预览" }));
+    expect(await screen.findByRole("dialog", { name: "变更预览" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "批量编辑" })).not.toBeInTheDocument();
+    expect(previewCalls).toBe(2);
+  });
 });

@@ -280,4 +280,13 @@ describe("BatchEditor", () => {
 		expect(load).toHaveBeenCalledTimes(1);
 		expect(submit).toHaveBeenCalledWith({ model_policy: { mode: "allow_only", models: ["gpt-5.6-sol"] } });
 	});
+
+	it("blocks a second submission and shows a rejected preview inside the form", async () => {
+		const user = userEvent.setup();
+		render(<BatchEditor scopeLabel="已选 2 个账号" loadModels={loadModels} busy submitError="proxy_url must be empty, direct, none, or a valid proxy URL" onClose={() => undefined} onSubmit={() => undefined} />);
+
+		await user.click(screen.getByLabelText("备注"));
+		expect(screen.getByRole("button", { name: "生成预览" })).toBeDisabled();
+		expect(screen.getByRole("alert")).toHaveTextContent("proxy_url must be empty");
+	});
 });

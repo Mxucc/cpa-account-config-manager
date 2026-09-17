@@ -213,8 +213,11 @@ func TestApplyCodexFingerprintPromptCacheKeyConditions(t *testing.T) {
 }
 
 func TestEffectiveAndValidationConvergenceMode(t *testing.T) {
-	if got := effectiveCodexFingerprintMode(""); got != codexFingerprintOff {
-		t.Fatalf("empty mode = %q, want fail-closed off", got)
+	// An unset mode is the converging default now: the operator enable the global
+	// switch, and passthrough as the unset default made that switch look inert. An
+	// unknown value still fails closed so a typo cannot converge identity.
+	if got := effectiveCodexFingerprintMode(""); got != codexFingerprintDefaultMode {
+		t.Fatalf("empty mode = %q, want the converging default %q", got, codexFingerprintDefaultMode)
 	}
 	if got := effectiveCodexFingerprintMode("bad"); got != codexFingerprintOff {
 		t.Fatalf("invalid mode = %q, want fail-closed off", got)
@@ -230,11 +233,15 @@ func TestEffectiveAndValidationConvergenceMode(t *testing.T) {
 		t.Fatal("invalid convergence mode was accepted")
 	}
 
+	// A store file that never set the mode keeps saying so, while the runtime
+	// resolves it to the converging default.
 	settings := NormalizeExperimentalCodexIdentitySettings(ExperimentalCodexIdentitySettings{})
-	if settings.ConvergenceMode != "" || effectiveCodexFingerprintMode(settings.ConvergenceMode) != codexFingerprintOff {
-		t.Fatalf("legacy empty setting = %#v, want persisted empty and runtime off", settings)
+	if settings.ConvergenceMode != "" || effectiveCodexFingerprintMode(settings.ConvergenceMode) != codexFingerprintDefaultMode {
+		t.Fatalf("legacy empty setting = %#v, want persisted empty and the converging runtime default", settings)
 	}
-
+	if codexFingerprintDefaultMode == codexFingerprintOff {
+		t.Fatal("the unset default must converge")
+	}
 	if ids := resolveCodexFingerprintIDs(
 		Account{}, testCodexFingerprintSeed, "client-session", codexFingerprintMode("bad"),
 	); ids != nil {

@@ -156,7 +156,7 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.codex_fingerprint_signals": "Ворота отпечатков",
   "ui.codex_fingerprint_signals_behavior": "Все обязательные сигналы должны совпасть. Варианты внутри сигнала образуют ИЛИ; по умолчанию требуется заголовок x-codex-*.",
   "ui.codex_convergence_mode": "Режим сходимости",
-  "ui.codex_convergence_legacy_full": "По умолчанию выключено (режим не задан)",
+  "ui.codex_convergence_default": "По умолчанию: только устройство (режим не задан)",
   "ui.codex_convergence_off": "Выключено (исходная идентификация)",
   "ui.codex_convergence_device": "Только устройство (фиксированный installation_id)",
   "ui.codex_convergence_session": "Сессия (фиксированная сессия, производный thread)",

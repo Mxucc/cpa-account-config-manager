@@ -156,7 +156,7 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.codex_fingerprint_signals": "引擎指紋門",
   "ui.codex_fingerprint_signals_behavior": "所有勾選訊號都必須命中；同一訊號多個變體為 OR。預設要求存在 x-codex-* 請求標頭。",
   "ui.codex_convergence_mode": "收斂模式",
-  "ui.codex_convergence_legacy_full": "預設關閉（未明確設定）",
+  "ui.codex_convergence_default": "預設：裝置層級（未明確設定）",
   "ui.codex_convergence_off": "關閉（透傳原始標識）",
   "ui.codex_convergence_device": "裝置層級（固定 installation_id）",
   "ui.codex_convergence_session": "工作階段層級（固定工作階段並衍生 thread）",

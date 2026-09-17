@@ -18,8 +18,10 @@ import (
 )
 
 // The convergence modes intentionally mirror the reference sub2api account
-// setting. Convergence is explicit opt-in: unset, empty, and invalid values
-// fail closed to passthrough; only device/session/full converge identity.
+// setting. Convergence is opt-in through the global identity switch, and the
+// unset default converges: an unset mode used to resolve to passthrough, which
+// made an enabled switch look inert. An explicit "off" still selects passthrough,
+// and an unknown non-empty value keeps failing closed to it.
 type codexFingerprintMode string
 
 const (
@@ -27,6 +29,12 @@ const (
 	codexFingerprintDevice  codexFingerprintMode = "device"
 	codexFingerprintSession codexFingerprintMode = "session"
 	codexFingerprintFull    codexFingerprintMode = "full"
+
+	// codexFingerprintDefaultMode is what an unset or empty mode resolves to.
+	// Device convergence fixes installation_id only and leaves the per-session and
+	// per-thread identifiers the client sends untouched, so it is the least
+	// invasive way to look like one device.
+	codexFingerprintDefaultMode = codexFingerprintDevice
 )
 
 const (
@@ -65,8 +73,16 @@ func validCodexFingerprintMode(value string) bool {
 	return normalizeCodexFingerprintMode(value) != "" || strings.TrimSpace(value) == ""
 }
 
+// effectiveCodexFingerprintMode resolves a stored mode value to the mode that
+// applies. An empty value means "not configured", which is now the converging
+// default rather than passthrough; a non-empty unknown value still fails closed to
+// passthrough so a typo in a hand-edited file cannot silently converge identity.
 func effectiveCodexFingerprintMode(value string) codexFingerprintMode {
-	if mode := normalizeCodexFingerprintMode(value); mode != "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return codexFingerprintDefaultMode
+	}
+	if mode := normalizeCodexFingerprintMode(trimmed); mode != "" {
 		return mode
 	}
 	return codexFingerprintOff

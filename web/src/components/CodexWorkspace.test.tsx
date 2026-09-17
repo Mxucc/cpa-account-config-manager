@@ -79,7 +79,7 @@ describe("CodexWorkspace", () => {
             accounts: 3,
             channels: 2,
             disabled_models: disabled.length,
-            convergence_mode: "session",
+            convergence_mode: "device",
             account_overrides: 1,
             provider_overrides: 2,
             fingerprint_overridden_fields: 1,
@@ -168,8 +168,37 @@ describe("CodexWorkspace", () => {
 
     const panel = await screen.findByRole("tabpanel", { name: "总览" });
     expect(within(panel).getByText("3")).toBeInTheDocument();
-    expect(within(panel).getByText("session")).toBeInTheDocument();
+    // The effective mode shows its localized label, never the raw enum value.
+    const effectiveMode = within(panel).getByText("有效收敛模式").nextElementSibling as HTMLElement;
+    expect(effectiveMode.textContent).toBe("设备级（固定 installation_id）");
+    expect(within(panel).queryByText("device")).not.toBeInTheDocument();
     expect(within(panel).getByText("AI 提供商渠道")).toBeInTheDocument();
+  });
+
+  it.each([
+    { name: "empty", mode: "" },
+    { name: "unrecognized", mode: "experimental_mode" },
+  ])("shows a dash for the effective convergence mode when it is $name", async ({ mode }) => {
+    codexFetchMock({ overview: { convergence_mode: mode } });
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "总览" });
+    const effectiveMode = within(panel).getByText("有效收敛模式").nextElementSibling as HTMLElement;
+    expect(effectiveMode.textContent).toBe("-");
+  });
+
+  // The unset enum value follows the converging default now, so the inherit option has to say so.
+  it("names the unset convergence mode after the converging default", async () => {
+    codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "总览" });
+    const mode = within(panel).getByLabelText("收敛模式") as HTMLSelectElement;
+    expect(mode).toHaveValue("");
+    expect(mode.selectedOptions[0]?.textContent).toBe("默认：设备级（未显式配置）");
+    expect(within(panel).queryByText("默认关闭（未显式配置）")).not.toBeInTheDocument();
   });
 
   // The fingerprint editor must show every value with its default, allow an edit,
@@ -209,6 +238,33 @@ describe("CodexWorkspace", () => {
       const resets = requests.filter(({ url }) => url.endsWith("/codex/fingerprint/reset"));
       expect(JSON.parse(String(resets.at(-1)?.init.body))).toEqual({ keys: [] });
     });
+  });
+
+  // The fingerprint mode is a fixed enum: the select must show the localized labels while
+  // the value it submits stays the raw enum value the API stores.
+  it("localizes the fingerprint mode options and still submits the raw value", async () => {
+    const user = userEvent.setup();
+    const requests = codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: "指纹配置" }));
+    const panel = await screen.findByRole("tabpanel", { name: "指纹配置" });
+
+    const mode = within(panel).getByRole("combobox", { name: "模式" }) as HTMLSelectElement;
+    expect(mode).toHaveValue("off");
+    expect(Array.from(mode.options).map((option) => [option.value, option.textContent])).toEqual([
+      ["off", "关闭（透传原始标识）"],
+      ["device", "设备级（固定 installation_id）"],
+      ["session", "会话级（固定会话并派生 thread）"],
+      ["full", "完全收敛（单设备单会话）"],
+    ]);
+
+    await user.selectOptions(mode, "device");
+    await user.click(within(panel).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(requests.some(({ url, init }) => url.endsWith("/codex/fingerprint") && init.method === "PUT")).toBe(true));
+    const saveRequest = requests.find(({ url, init }) => url.endsWith("/codex/fingerprint") && init.method === "PUT");
+    expect(JSON.parse(String(saveRequest?.init.body))).toEqual({ values: { mode: "device" } });
   });
 
   it("disables a Codex model globally and can enable every model again", async () => {

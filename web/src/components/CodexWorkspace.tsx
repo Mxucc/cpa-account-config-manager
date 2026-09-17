@@ -4,7 +4,7 @@ import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { UIMessageKey } from "../i18n/uiText";
-import type { Account, AIProviderRuntimeSnapshot, CodexFingerprintField, CodexModelProbeResult, CodexTestTargetOption, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
+import type { Account, AIProviderRuntimeSnapshot, CodexFingerprintField, CodexFingerprintMode, CodexModelProbeResult, CodexTestTargetOption, CodexFingerprintProfile, CodexModelControlSnapshot, CodexOverview, ExperimentalCodexIdentitySettings, ExperimentalSettings, ModelTestResult, ModelTestStatus } from "../types";
 import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 import { IconButton } from "./IconButton";
@@ -66,6 +66,34 @@ const FINGERPRINT_FIELD_LABELS: Record<string, UIMessageKey> = {
   include_relationship_fields: "ui.codex_fingerprint_include_relationship_fields",
   rewrite_prompt_cache_key: "ui.codex_fingerprint_rewrite_prompt_cache_key",
 };
+
+/**
+ * The four fixed convergence modes and the localized label each raw value shows. The API
+ * stores and receives the raw value; only the displayed text is translated.
+ */
+const CONVERGENCE_MODE_LABELS: Record<CodexFingerprintMode, UIMessageKey> = {
+  off: "ui.codex_convergence_off",
+  device: "ui.codex_convergence_device",
+  session: "ui.codex_convergence_session",
+  full: "ui.codex_convergence_full",
+};
+
+/**
+ * Returns the localized label for a raw convergence-mode value, or "" for an empty or
+ * unrecognized value so each caller picks its own fallback: the fingerprint select keeps
+ * the raw option text, the overview shows a dash.
+ */
+function convergenceModeLabel(value: string, tx: (key: UIMessageKey) => string): string {
+  switch (value) {
+    case "off":
+    case "device":
+    case "session":
+    case "full":
+      return tx(CONVERGENCE_MODE_LABELS[value]);
+    default:
+      return "";
+  }
+}
 
 function draftFor(field: CodexFingerprintField, drafts: Record<string, string>): string {
   return drafts[field.key] ?? field.value;
@@ -464,7 +492,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
               </label>
             </div>
             <dl className="codex-test-result">
-              <div><dt>{tx("ui.codex_convergence_mode_effective")}</dt><dd>{overview?.convergence_mode || "-"}</dd></div>
+              <div><dt>{tx("ui.codex_convergence_mode_effective")}</dt><dd>{convergenceModeLabel(overview?.convergence_mode ?? "", tx) || "-"}</dd></div>
             </dl>
           </section>
 
@@ -677,7 +705,10 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
                       {field.kind === "select" ? (
                         <select aria-label={label} value={draft} disabled={busy.startsWith("fingerprint")} onChange={(event) => updateDraft(field, event.target.value)}>
                           {!(field.options ?? []).includes(draft) ? <option value={draft}>{draft || "-"}</option> : null}
-                          {(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}
+                          {(field.options ?? []).map((option) => (
+                            // Only the mode enum has localized option labels; every other select keeps its raw values.
+                            <option key={option} value={option}>{field.key === "mode" ? convergenceModeLabel(option, tx) || option : option}</option>
+                          ))}
                         </select>
                       ) : field.kind === "bool" ? (
                         <input

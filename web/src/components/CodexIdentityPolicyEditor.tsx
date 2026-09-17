@@ -35,7 +35,7 @@ export function CodexIdentityPolicyEditor({ value, disabled = false, onChange }:
         <label className="filter-control">
           <span>{tx("ui.codex_convergence_mode")}</span>
           <select value={value.convergence_mode ?? ""} disabled={disabled} onChange={(event) => onChange({ convergence_mode: event.target.value })}>
-            <option value="">{tx("ui.codex_convergence_legacy_full")}</option>
+            <option value="">{tx("ui.codex_convergence_default")}</option>
             <option value="off">{tx("ui.codex_convergence_off")}</option>
             <option value="device">{tx("ui.codex_convergence_device")}</option>
             <option value="session">{tx("ui.codex_convergence_session")}</option>

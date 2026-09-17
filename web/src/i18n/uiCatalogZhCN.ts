@@ -156,7 +156,7 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.codex_fingerprint_signals": "引擎指纹门",
   "ui.codex_fingerprint_signals_behavior": "所有勾选信号都必须命中；同一信号多个变体为 OR。默认要求存在 x-codex-* 请求头。",
   "ui.codex_convergence_mode": "收敛模式",
-  "ui.codex_convergence_legacy_full": "默认关闭（未显式配置）",
+  "ui.codex_convergence_default": "默认：设备级（未显式配置）",
   "ui.codex_convergence_off": "关闭（透传原始标识）",
   "ui.codex_convergence_device": "设备级（固定 installation_id）",
   "ui.codex_convergence_session": "会话级（固定会话并派生 thread）",

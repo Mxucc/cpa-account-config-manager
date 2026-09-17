@@ -154,7 +154,7 @@ export const enUI = {
   "ui.codex_fingerprint_signals": "Fingerprint gate",
   "ui.codex_fingerprint_signals_behavior": "All required signals must match. Header variants use OR; default requires an x-codex-* header.",
   "ui.codex_convergence_mode": "Convergence mode",
-  "ui.codex_convergence_legacy_full": "Default off (unset mode)",
+  "ui.codex_convergence_default": "Default: device convergence (unset)",
   "ui.codex_convergence_off": "Off (passthrough identity)",
   "ui.codex_convergence_device": "Device only (fixed installation ID)",
   "ui.codex_convergence_session": "Session (fixed session, derived thread)",

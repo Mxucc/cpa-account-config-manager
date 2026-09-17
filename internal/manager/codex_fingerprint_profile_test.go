@@ -42,7 +42,9 @@ func TestCodexFingerprintProfileDefaultsAreVisibleAndEditable(t *testing.T) {
 	// Every value the outbound path hard coded before must be exposed with its
 	// compiled value as the default.
 	for key, want := range map[string]string{
-		codexFingerprintFieldMode:                      string(codexFingerprintOff),
+		// An unset profile converges: the mode default is the converging default, not
+		// passthrough, so enabling the global switch is enough to converge identity.
+		codexFingerprintFieldMode:                      string(codexFingerprintDefaultMode),
 		codexFingerprintFieldUserAgent:                 defaultCodexCLIUserAgent,
 		codexFingerprintFieldOriginator:                defaultCodexOriginator,
 		codexFingerprintFieldVersion:                   codexCLIVersion,
@@ -326,4 +328,34 @@ func statCodexProfileStore(dataDir string) (uint32, error) {
 		return 0, errStat
 	}
 	return uint32(info.Mode().Perm()), nil
+}
+
+// The convergence mode is a fixed enum whose unset value means "the converging
+// default": an enabled global switch used to leave identity passthrough because the
+// unset mode resolved to off, which made the switch look inert. An explicit off
+// still selects passthrough, and an unknown value keeps failing closed to it.
+func TestCodexFingerprintModeDefaultsToConvergence(t *testing.T) {
+	if got := effectiveCodexFingerprintMode(""); got != codexFingerprintDefaultMode {
+		t.Fatalf("unset mode = %q, want the converging default %q", got, codexFingerprintDefaultMode)
+	}
+	if got := effectiveCodexFingerprintMode("   "); got != codexFingerprintDefaultMode {
+		t.Fatalf("blank mode = %q, want the converging default", got)
+	}
+	if codexFingerprintDefaultMode == codexFingerprintOff {
+		t.Fatal("the default mode must converge, not pass through")
+	}
+	if got := effectiveCodexFingerprintMode("off"); got != codexFingerprintOff {
+		t.Fatalf("explicit off = %q, want off", got)
+	}
+	for _, mode := range []codexFingerprintMode{codexFingerprintDevice, codexFingerprintSession, codexFingerprintFull} {
+		if got := effectiveCodexFingerprintMode(string(mode)); got != mode {
+			t.Fatalf("explicit %q = %q", mode, got)
+		}
+	}
+	if got := effectiveCodexFingerprintMode("FULL"); got != codexFingerprintFull {
+		t.Fatalf("upper-case mode = %q, want full", got)
+	}
+	if got := effectiveCodexFingerprintMode("device-ish"); got != codexFingerprintOff {
+		t.Fatalf("unknown mode = %q, want passthrough", got)
+	}
 }

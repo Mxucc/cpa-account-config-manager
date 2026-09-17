@@ -232,8 +232,10 @@ func validateCodexFingerprintHeaderName(value string) error {
 func codexFingerprintFieldSpecs() []codexFingerprintFieldSpec {
 	return []codexFingerprintFieldSpec{
 		{Key: codexFingerprintFieldMode, Group: codexFingerprintGroupClient, Kind: codexFingerprintKindSelect,
-			Default: string(codexFingerprintOff),
-			Options: []string{"off", "device", "session", "full"},
+			// An unset mode converges: see codexFingerprintDefaultMode. "off" stays an
+			// explicit choice in the option list.
+			Default: string(codexFingerprintDefaultMode),
+			Options: []string{string(codexFingerprintOff), string(codexFingerprintDevice), string(codexFingerprintSession), string(codexFingerprintFull)},
 			validate: func(value string) error {
 				if value == "" || validCodexFingerprintMode(value) {
 					return nil

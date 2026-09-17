@@ -445,10 +445,11 @@ func (e *CodexIdentityExperiment) effectiveAccountFingerprintMode(gate codexAcco
 		return codexFingerprintOff
 	}
 	settings := e.settings.codexIdentitySnapshot()
-	if settings.OutboundConvergenceEnabled {
-		if mode := effectiveCodexFingerprintMode(settings.ConvergenceMode); mode != codexFingerprintOff {
-			return mode
-		}
+	if settings.OutboundConvergenceEnabled && strings.TrimSpace(settings.ConvergenceMode) != "" {
+		// An explicit global choice wins, including passthrough: only an unset mode
+		// follows the profile default below, so choosing "off" here cannot be
+		// silently overruled by a profile that converges.
+		return effectiveCodexFingerprintMode(settings.ConvergenceMode)
 	}
 	// The fingerprint profile carries an operator-set default mode, so the Codex
 	// workspace can switch convergence on without touching the experimental
@@ -505,10 +506,10 @@ func (e *CodexIdentityExperiment) effectiveProviderFingerprintMode(providerKey s
 		return codexFingerprintOff
 	}
 	settings := e.settings.codexIdentitySnapshot()
-	if settings.OutboundConvergenceEnabled {
-		if mode := effectiveCodexFingerprintMode(settings.ConvergenceMode); mode != codexFingerprintOff {
-			return mode
-		}
+	if settings.OutboundConvergenceEnabled && strings.TrimSpace(settings.ConvergenceMode) != "" {
+		// Same precedence as the account path: an explicit global choice wins, and an
+		// unset mode follows the profile default below.
+		return effectiveCodexFingerprintMode(settings.ConvergenceMode)
 	}
 	// The fingerprint profile carries an operator-set default mode, so the Codex
 	// workspace can switch convergence on without touching the experimental

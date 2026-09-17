@@ -291,9 +291,13 @@ func TestCodexFingerprintProfileModeDrivesConvergenceForAccountsAndProviders(t *
 	}
 	account := Account{ID: "acct-mode", AuthID: "acct-mode", Provider: "codex", Type: "codex", AccountType: "oauth"}
 
-	// Default: off, matching the compiled behavior.
-	if mode := codexTransformer.effectiveAccountFingerprintMode(codexAccountWithMetadata{account: &account}); mode != codexFingerprintOff {
-		t.Fatalf("default account mode = %q", mode)
+	// Default: the converging default, so enabling the identity switch is enough and
+	// an operator who wants passthrough picks "off" explicitly.
+	if mode := codexTransformer.effectiveAccountFingerprintMode(codexAccountWithMetadata{account: &account}); mode != codexFingerprintDefaultMode {
+		t.Fatalf("default account mode = %q, want the converging default", mode)
+	}
+	if mode := codexTransformer.effectiveProviderFingerprintMode("codex-api-key:prov-mode"); mode != codexFingerprintDefaultMode {
+		t.Fatalf("default provider mode = %q, want the converging default", mode)
 	}
 	if _, errSet := app.codexFingerprints.Set(map[string]string{codexFingerprintFieldMode: "session"}); errSet != nil {
 		t.Fatalf("set mode: %v", errSet)
@@ -311,12 +315,46 @@ func TestCodexFingerprintProfileModeDrivesConvergenceForAccountsAndProviders(t *
 	if mode := codexTransformer.effectiveAccountFingerprintMode(codexAccountWithMetadata{account: &account}); mode != codexFingerprintFull {
 		t.Fatalf("the per-account override was ignored: %q", mode)
 	}
-	// Restoring the default returns the profile value, not the experiment value.
+	// Restoring the profile returns the converging default, not passthrough.
 	if _, errReset := app.codexFingerprints.Reset(nil); errReset != nil {
 		t.Fatalf("reset: %v", errReset)
 	}
+	if mode := codexTransformer.effectiveProviderFingerprintMode("codex-api-key:prov-mode"); mode != codexFingerprintDefaultMode {
+		t.Fatalf("reset did not restore the converging default: %q", mode)
+	}
+	// A profile that explicitly passes through still means passthrough.
+	if _, errSet := app.codexFingerprints.Set(map[string]string{codexFingerprintFieldMode: "off"}); errSet != nil {
+		t.Fatalf("set off: %v", errSet)
+	}
 	if mode := codexTransformer.effectiveProviderFingerprintMode("codex-api-key:prov-mode"); mode != codexFingerprintOff {
-		t.Fatalf("reset did not restore the compiled default: %q", mode)
+		t.Fatalf("an explicit profile off was overruled: %q", mode)
+	}
+	if _, errReset := app.codexFingerprints.Reset(nil); errReset != nil {
+		t.Fatalf("reset: %v", errReset)
+	}
+
+	// An explicit global choice wins over the profile default, in both directions.
+	settings := ExperimentalCodexIdentitySettings{OutboundConvergenceEnabled: true, ConvergenceMode: "off"}
+	if _, errSave := app.experiments.Set(ExperimentalSettings{CodexIdentity: settings}); errSave != nil {
+		t.Fatalf("set experiments: %v", errSave)
+	}
+	if mode := codexTransformer.effectiveProviderFingerprintMode("codex-api-key:prov-mode"); mode != codexFingerprintOff {
+		t.Fatalf("an explicit global off was overruled by the converging default: %q", mode)
+	}
+	settings.ConvergenceMode = "session"
+	if _, errSave := app.experiments.Set(ExperimentalSettings{CodexIdentity: settings}); errSave != nil {
+		t.Fatalf("set experiments: %v", errSave)
+	}
+	if mode := codexTransformer.effectiveProviderFingerprintMode("codex-api-key:prov-mode"); mode != codexFingerprintSession {
+		t.Fatalf("an explicit global mode was ignored: %q", mode)
+	}
+	// An unset global mode follows the profile, which is the converging default.
+	settings.ConvergenceMode = ""
+	if _, errSave := app.experiments.Set(ExperimentalSettings{CodexIdentity: settings}); errSave != nil {
+		t.Fatalf("set experiments: %v", errSave)
+	}
+	if mode := codexTransformer.effectiveProviderFingerprintMode("codex-api-key:prov-mode"); mode != codexFingerprintDefaultMode {
+		t.Fatalf("an unset global mode = %q, want the converging default", mode)
 	}
 }
 

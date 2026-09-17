@@ -120,7 +120,10 @@ type codexFingerprintValues struct {
 
 func defaultCodexFingerprintValues() codexFingerprintValues {
 	return codexFingerprintValues{
-		mode:                      string(codexFingerprintOff),
+		// The compiled default is the converging default, not passthrough: this map is
+		// the base the resolver merges operator overrides onto, so leaving it at off
+		// would silently undo the mode default that the field spec advertises.
+		mode:                      string(codexFingerprintDefaultMode),
 		userAgent:                 defaultCodexCLIUserAgent,
 		originator:                defaultCodexOriginator,
 		version:                   codexCLIVersion,

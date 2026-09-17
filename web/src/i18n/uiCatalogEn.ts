@@ -1,6 +1,7 @@
 export const enUI = {
   "ui.select_proxy_profile": "Proxy profile",
   "ui.manual_proxy_url": "Manual proxy URL",
+  "ui.proxy_url_display_is_redacted": "The address shown here is the redacted display value; type the proxy address again, or select a proxy profile above.",
   "ui.proxy_profiles": "Proxy profiles",
   "ui.proxy_profiles_description": "Create reusable, credential-safe proxy presets and assign them during batch edits.",
   "ui.proxy_profiles_storage_error": "Proxy profile storage could not be read or saved; check the plugin data directory.",

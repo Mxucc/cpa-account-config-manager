@@ -3,6 +3,7 @@ import type { UIMessageKey } from "./uiText";
 export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.select_proxy_profile": "代理設定檔",
   "ui.manual_proxy_url": "手動代理位址",
+  "ui.proxy_url_display_is_redacted": "這裡顯示的是去識別化後的代理位址；請重新輸入代理位址，或在上方選擇一個代理設定檔。",
   "ui.proxy_profiles": "代理設定檔",
   "ui.proxy_profiles_description": "建立可重複使用且不洩漏憑證的代理預設，並在批次編輯中引用。",
   "ui.proxy_profiles_storage_error": "代理設定檔無法讀取或儲存；請檢查外掛資料目錄。",

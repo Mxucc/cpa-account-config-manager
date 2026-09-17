@@ -3,6 +3,7 @@ import type { UIMessageKey } from "./uiText";
 export const ruUI: Record<UIMessageKey, string> = {
   "ui.select_proxy_profile": "Профиль прокси",
   "ui.manual_proxy_url": "Ручной URL прокси",
+  "ui.proxy_url_display_is_redacted": "Здесь показан обезличенный адрес прокси; введите адрес заново или выберите профиль прокси выше.",
   "ui.proxy_profiles": "Профили прокси",
   "ui.proxy_profiles_description": "Создавайте переиспользуемые пресеты прокси без раскрытия учетных данных и используйте их при массовом редактировании.",
   "ui.proxy_profiles_storage_error": "Не удалось прочитать или сохранить профили прокси; проверьте каталог данных плагина.",

@@ -3,6 +3,7 @@ import type { UIMessageKey } from "./uiText";
 export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.select_proxy_profile": "代理档案",
   "ui.manual_proxy_url": "手动代理地址",
+  "ui.proxy_url_display_is_redacted": "这里显示的是脱敏后的代理地址；请重新输入代理地址，或在上方选择一个代理档案。",
   "ui.proxy_profiles": "代理档案",
   "ui.proxy_profiles_description": "创建可复用且不泄露凭据的代理预设，并在批量编辑中引用。",
   "ui.proxy_profiles_storage_error": "代理档案无法读取或保存；请检查插件数据目录。",

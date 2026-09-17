@@ -64,6 +64,60 @@ describe("BatchEditor", () => {
 		expect(submit).toHaveBeenCalledWith({ proxy_profile_id: "proxy-primary" });
 	});
 
+	it("submits a manually typed proxy URL instead of the redacted display value", async () => {
+		const user = userEvent.setup();
+		const submit = vi.fn();
+		const loadCurrentConfig = vi.fn(async () => ({
+			account_id: "auth-1",
+			disabled: false,
+			priority: 0,
+			note: "",
+			prefix: "",
+			proxy: "configured",
+			proxy_configured: true,
+			websockets: false,
+			header_names: [],
+			model_policy: null,
+		}));
+
+		render(<BatchEditor scopeLabel="account" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
+
+		await screen.findByText("当前账号配置");
+		await user.click(screen.getByRole("checkbox", { name: "代理 URL" }));
+		expect(screen.getByLabelText("Proxy URL 值")).toHaveValue("configured");
+		await user.clear(screen.getByLabelText("Proxy URL 值"));
+		await user.type(screen.getByLabelText("Proxy URL 值"), "socks5://typed.example:1080");
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+		expect(submit).toHaveBeenCalledWith({ proxy_url: "socks5://typed.example:1080" });
+	});
+
+	it.each(["configured", "socks5://proxy.example:1080"])("refuses to submit the redacted proxy display value unchanged (%s)", async (display) => {
+		const user = userEvent.setup();
+		const submit = vi.fn();
+		const loadCurrentConfig = vi.fn(async () => ({
+			account_id: "auth-1",
+			disabled: false,
+			priority: 0,
+			note: "",
+			prefix: "",
+			proxy: display,
+			proxy_configured: true,
+			websockets: false,
+			header_names: [],
+			model_policy: null,
+		}));
+
+		render(<BatchEditor scopeLabel="account" loadModels={loadModels} loadCurrentConfig={loadCurrentConfig} onClose={() => undefined} onSubmit={submit} />);
+
+		await screen.findByText("当前账号配置");
+		await user.click(screen.getByRole("checkbox", { name: "代理 URL" }));
+		await user.click(screen.getByRole("button", { name: "生成预览" }));
+
+		expect(submit).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent("脱敏");
+	});
+
 	it("submits both account request-window limits independently", async () => {
 		const user = userEvent.setup();
 		const submit = vi.fn();

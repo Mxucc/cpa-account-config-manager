@@ -245,8 +245,16 @@ export function BatchEditor({ title = "ui.batch_edit", scopeLabel, onClose, onSu
 		}
     if (enabled.note) patch.note = note;
     if (enabled.prefix) patch.prefix = prefix;
+    const proxyDisplayUnchanged = Boolean(currentConfig?.proxy_configured)
+      && proxyURL.trim() !== ""
+      && proxyURL.trim() === (currentConfig?.proxy ?? "").trim();
     if (enabled.proxy_url) {
 			if (proxyProfileID) patch.proxy_profile_id = proxyProfileID;
+			// The account API redacts the stored proxy: a value that is not a URL comes back as the
+			// literal "configured", and a URL comes back without its credentials. Sending that display
+			// value back either fails validation or silently rewrites the proxy without the
+			// credentials, so changing a proxy means typing the address again or picking a profile.
+			else if (proxyDisplayUnchanged) { setError(tx("ui.proxy_url_display_is_redacted")); return; }
 			else patch.proxy_url = proxyURL;
 		}
     if (enabled.websockets) patch.websockets = websockets;

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -447,5 +448,103 @@ func TestHandleMethodRejectsUnknownMethod(t *testing.T) {
 	}
 	if response.OK || response.Error == nil || response.Error.Code != "unknown_method" {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+// The DeepSeek upstream-consistency switch is applied in the request path, so the host
+// has to be told the plugin needs the payload for request.intercept_before, and the
+// injected body has to come back through the same ABI the host uses.
+func TestRequestInterceptBeforePinsClinePassDeepseekThroughTheHostPath(t *testing.T) {
+	originalApp := pluginApp
+	testApp := manager.NewApp(nil, nil)
+	testApp.Configure([]byte("data_dir: " + t.TempDir()))
+	pluginApp = testApp
+	defer func() {
+		testApp.Close()
+		pluginApp = originalApp
+	}()
+
+	// With the switch off the host must keep the payload out of the plugin.
+	if methodNeedsRequestPayload(cpaapi.MethodRequestInterceptBefore) {
+		t.Fatal("an inactive installation requested a CGO payload copy for the before hook")
+	}
+
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+	base := "/v0/management" + "/plugins/cpa-account-config-manager/opencode/cline-pass"
+	// A closed port keeps the credential probe off the network; the account is stored
+	// either way, which is all the switch needs.
+	saved := testApp.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: base + "/accounts", Headers: headers,
+		Body: []byte(`{"api_key":"sk-cline-pin-test","base_url":"http://127.0.0.1:9/v1","timeout_seconds":1}`),
+	})
+	if saved.StatusCode != http.StatusOK {
+		t.Fatalf("saving the account = %d body=%s", saved.StatusCode, saved.Body)
+	}
+	updated := testApp.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: base + "/settings", Headers: headers,
+		Body: []byte(`{"deepseek_upstream_consistency":true}`),
+	})
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("saving the switch = %d body=%s", updated.StatusCode, updated.Body)
+	}
+	if !methodNeedsRequestPayload(cpaapi.MethodRequestInterceptBefore) {
+		t.Fatal("the active switch did not request the before-hook payload")
+	}
+
+	chat := `{"model":"cline-pass/deepseek-v4.1-flash","messages":[{"role":"user","content":"keep this cache"}]}`
+	rawRequest, errMarshal := json.Marshal(cpaapi.RequestInterceptRequest{
+		RequestID: "req-pin-1", SourceFormat: "openai", ToFormat: "openai",
+		Model: "cline-pass/deepseek-v4.1-flash", RequestedModel: "cline-pass/deepseek-v4.1-flash",
+		Body: []byte(chat),
+	})
+	if errMarshal != nil {
+		t.Fatalf("marshal interceptor request: %v", errMarshal)
+	}
+	raw, errHandle := handleMethod(cpaapi.MethodRequestInterceptBefore, rawRequest)
+	if errHandle != nil {
+		t.Fatalf("handleMethod() error = %v", errHandle)
+	}
+	result, errDecode := decodeEnvelopeResult(raw)
+	if errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	var response cpaapi.RequestInterceptResponse
+	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
+		t.Fatalf("decode response: %v", errUnmarshal)
+	}
+	injected := string(response.Body)
+	if !strings.Contains(injected, `"providerOptions":{"gateway":{"only":["deepseek"]}}`) {
+		t.Fatalf("the before hook did not pin providerOptions: %s", injected)
+	}
+	if !strings.Contains(injected, `"provider":{"only":["deepseek"]}`) {
+		t.Fatalf("the before hook did not pin provider: %s", injected)
+	}
+	if !strings.Contains(injected, `"keep this cache"`) {
+		t.Fatalf("the injection lost the caller payload: %s", injected)
+	}
+
+	// Every other model keeps the untouched path.
+	otherRequest, errMarshal := json.Marshal(cpaapi.RequestInterceptRequest{
+		RequestID: "req-pin-2", SourceFormat: "openai", ToFormat: "openai",
+		Model: "cline-pass/glm-5.3", RequestedModel: "cline-pass/glm-5.3",
+		Body: []byte(`{"model":"cline-pass/glm-5.3","messages":[{"role":"user","content":"hi"}]}`),
+	})
+	if errMarshal != nil {
+		t.Fatalf("marshal second request: %v", errMarshal)
+	}
+	raw, errHandle = handleMethod(cpaapi.MethodRequestInterceptBefore, otherRequest)
+	if errHandle != nil {
+		t.Fatalf("second handleMethod() error = %v", errHandle)
+	}
+	result, errDecode = decodeEnvelopeResult(raw)
+	if errDecode != nil {
+		t.Fatalf("decode second result: %v", errDecode)
+	}
+	var untouched cpaapi.RequestInterceptResponse
+	if errUnmarshal := json.Unmarshal(result, &untouched); errUnmarshal != nil {
+		t.Fatalf("decode second response: %v", errUnmarshal)
+	}
+	if len(untouched.Body) != 0 {
+		t.Fatalf("a non-DeepSeek model was rewritten: %s", untouched.Body)
 	}
 }

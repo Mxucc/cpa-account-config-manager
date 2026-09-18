@@ -203,7 +203,7 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 	// Admission must run before observational trackers. A saturated account can
 	// block in the concurrency transformer; recording it as active before that
 	// wait would skew provider runtime metrics and rolling request windows.
-	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity, opencodeModelControlGate, opencodeSession, NewCodexModelControl(codexModelControl))
+	requestHooks := NewRequestHook(riskControl, quotaGuard, concurrency, providerRuntime, weeklyOverdraft, codexIdentity, opencodeModelControlGate, opencodeSession, NewCodexModelControl(codexModelControl), NewClinePassUpstreamPinner(clinePass))
 	runtimeMarker := ""
 	if provider, ok := host.(interface{ RuntimeProcessMarker() string }); ok {
 		runtimeMarker = provider.RuntimeProcessMarker()
@@ -1087,6 +1087,14 @@ func (a *App) HandleRequestBefore(request cpaapi.RequestInterceptRequest) cpaapi
 		return cpaapi.RequestInterceptResponse{}
 	}
 	return a.requestHooks.InterceptBefore(request)
+}
+
+// RequestInterceptionBeforeActive reports whether a transformer rewrites the
+// outgoing request, which is also what decides whether the host payload is read
+// at all. An installation that never turned such a switch on keeps the path where
+// the request body is not even copied out of the host.
+func (a *App) RequestInterceptionBeforeActive() bool {
+	return a != nil && !a.runtimeSuperseded() && a.requestLifecycleAvailable() && a.requestHooks != nil && a.requestHooks.BeforeActive()
 }
 
 // openCodeSessionTargetTTL keeps the session router's model set current without

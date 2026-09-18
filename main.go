@@ -169,7 +169,24 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		return okEnvelope(response)
 	case cpaapi.MethodRequestInterceptBefore:
-		return emptyRequestInterceptEnvelope, nil
+		if !pluginApp.RequestInterceptionBeforeActive() {
+			return emptyRequestInterceptEnvelope, nil
+		}
+		if len(request) == 0 {
+			return emptyRequestInterceptEnvelope, nil
+		}
+		beforeFormat, errBeforeFormat := requestInterceptFormat(request)
+		if errBeforeFormat != nil {
+			return nil, fmt.Errorf("decode request interceptor format: %w", errBeforeFormat)
+		}
+		if !pluginApp.RequestInterceptionAcceptsFormat(beforeFormat) {
+			return emptyRequestInterceptEnvelope, nil
+		}
+		var beforeRequest cpaapi.RequestInterceptRequest
+		if errUnmarshal := json.Unmarshal(request, &beforeRequest); errUnmarshal != nil {
+			return nil, fmt.Errorf("decode request interceptor input: %w", errUnmarshal)
+		}
+		return okEnvelope(pluginApp.HandleRequestBefore(beforeRequest))
 	case cpaapi.MethodRequestInterceptAfter:
 		if !pluginApp.RequestInterceptionActive() {
 			return emptyRequestInterceptEnvelope, nil
@@ -242,7 +259,7 @@ func requestInterceptFormat(raw []byte) (string, error) {
 func methodNeedsRequestPayload(method string) bool {
 	switch method {
 	case cpaapi.MethodRequestInterceptBefore:
-		return false
+		return pluginApp.RequestInterceptionBeforeActive()
 	case cpaapi.MethodRequestInterceptAfter:
 		return pluginApp.RequestInterceptionActive()
 	case cpaapi.MethodRequestComplete:

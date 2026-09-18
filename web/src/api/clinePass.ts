@@ -24,6 +24,7 @@ import type {
 	ClinePassQuotaWindow,
 	ClinePassRefreshResponse,
 	ClinePassSettings,
+	ClinePassSettingsPatch,
 	ClinePassSettingsResponse,
 	ClinePassSettingsSaveResponse,
 } from "./clinePassTypes";
@@ -133,12 +134,17 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 	};
 }
 
-/** The published Cline Pass settings; only the prefix rule exists today. */
+/** The published Cline Pass settings, with the additive upstream-consistency switch. */
 function normalizeClinePassSettings(value: unknown): ClinePassSettings {
 	if (!isRecord(value) || typeof value.strip_model_prefix !== "boolean") {
 		throw new APIError(502, "ui.invalid_api_response");
 	}
-	return { strip_model_prefix: value.strip_model_prefix };
+	// The switch is additive, so a response from a build that predates it reads as
+	// the documented default (off) instead of failing the page.
+	return {
+		strip_model_prefix: value.strip_model_prefix,
+		deepseek_upstream_consistency: value.deepseek_upstream_consistency === true,
+	};
 }
 
 /**
@@ -171,6 +177,7 @@ function normalizeClinePassModelsResponse(response: unknown): ClinePassModelsRes
 			...clinePassReferenceRate(model),
 		})),
 		strip_model_prefix: response.strip_model_prefix,
+		deepseek_upstream_consistency: response.deepseek_upstream_consistency === true,
 		accounts: isFiniteNonNegativeInteger(response.accounts) ? response.accounts : 0,
 		channel_bound: response.channel_bound === true,
 		channel_state_unreadable: response.channel_state_unreadable === true,
@@ -219,10 +226,13 @@ export async function getClinePassSettings(signal?: AbortSignal): Promise<ClineP
  * mapping changes immediately; `rebound`/`rebind_errors` report that re-bind. A re-bind
  * error does not fail the save: the setting itself is stored either way.
  */
-export async function saveClinePassSettings(stripModelPrefix: boolean): Promise<ClinePassSettingsSaveResponse> {
+export async function saveClinePassSettings(patch: ClinePassSettingsPatch): Promise<ClinePassSettingsSaveResponse> {
+	const body: Record<string, boolean> = {};
+	if (patch.stripModelPrefix !== undefined) body.strip_model_prefix = patch.stripModelPrefix;
+	if (patch.deepseekUpstreamConsistency !== undefined) body.deepseek_upstream_consistency = patch.deepseekUpstreamConsistency;
 	const response = await requestRecord<Record<string, unknown>>("/opencode/cline-pass/settings", {
 		method: "PUT",
-		body: JSON.stringify({ strip_model_prefix: stripModelPrefix }),
+		body: JSON.stringify(body),
 	});
 	return {
 		settings: normalizeClinePassSettings(response.settings),

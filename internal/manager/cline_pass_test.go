@@ -874,8 +874,25 @@ func TestClinePassSettingsPersistAndSurviveReconfigure(t *testing.T) {
 	if payload.Settings.StripModelPrefix || payload.Rebound != 1 || payload.RebindErrors != 0 {
 		t.Fatalf("update payload = %+v", payload)
 	}
-	if got := string(update.Body); got != `{"settings":{"strip_model_prefix":false},"rebound":1,"rebind_errors":0}` {
+	if got := string(update.Body); got != `{"settings":{"strip_model_prefix":false,"deepseek_upstream_consistency":false},"rebound":1,"rebind_errors":0}` {
 		t.Fatalf("update body = %s", got)
+	}
+	// The upstream-consistency switch is additive: it can be saved on its own,
+	// and flipping it changes nothing about the published channel, so it must not
+	// trigger a re-bind.
+	pinUpdate := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPut, Path: settingsPath, Headers: headers,
+		Body: []byte(`{"deepseek_upstream_consistency":true}`),
+	})
+	if pinUpdate.StatusCode != http.StatusOK {
+		t.Fatalf("upstream consistency update status = %d body=%s", pinUpdate.StatusCode, pinUpdate.Body)
+	}
+	var pinPayload clinePassSettingsUpdateResponse
+	if errDecode := json.Unmarshal(pinUpdate.Body, &pinPayload); errDecode != nil || !pinPayload.Settings.DeepseekUpstreamConsistency {
+		t.Fatalf("upstream consistency payload = %+v err=%v", pinPayload, errDecode)
+	}
+	if pinPayload.Rebound != 0 || pinPayload.RebindErrors != 0 {
+		t.Fatalf("the pin must not rebind the channel: %+v", pinPayload)
 	}
 	if _, writes := store.snapshot(); writes != 1 {
 		t.Fatalf("settings update did not rebind the stored account: writes=%d", writes)
@@ -898,10 +915,10 @@ func TestClinePassSettingsPersistAndSurviveReconfigure(t *testing.T) {
 		t.Fatalf("read status = %d body=%s", read.StatusCode, read.Body)
 	}
 	var view clinePassSettingsView
-	if errDecode := json.Unmarshal(read.Body, &view); errDecode != nil || view.Settings.StripModelPrefix {
+	if errDecode := json.Unmarshal(read.Body, &view); errDecode != nil || view.Settings.StripModelPrefix || !view.Settings.DeepseekUpstreamConsistency {
 		t.Fatalf("read payload = %+v err=%v", view, errDecode)
 	}
-	if got := string(read.Body); got != `{"settings":{"strip_model_prefix":false}}` {
+	if got := string(read.Body); got != `{"settings":{"strip_model_prefix":false,"deepseek_upstream_consistency":true}}` {
 		t.Fatalf("read body = %s", got)
 	}
 

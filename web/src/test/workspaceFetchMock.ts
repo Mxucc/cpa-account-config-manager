@@ -133,6 +133,7 @@ export function clinePassModelsPayload(overrides: Record<string, unknown> = {}):
       },
     ],
     strip_model_prefix: true,
+    deepseek_upstream_consistency: false,
     accounts: 1,
     channel_bound: true,
     channel_models: 2,
@@ -248,6 +249,8 @@ export interface WorkspaceFetchMockOptions {
   clinePassLoginPoll?: Record<string, unknown>;
   /** The initial `strip_model_prefix` the mock serves; a PUT flips it for later GETs. */
   clinePassStripPrefix?: boolean;
+  /** The initial `deepseek_upstream_consistency` the mock serves; a PUT flips it. */
+  clinePassDeepseekConsistency?: boolean;
   clinePassModels?: Record<string, unknown>;
   /** Status the accounts read answers with, to exercise a failed page load. */
   clinePassAccountsStatus?: number;
@@ -266,6 +269,7 @@ export function stubWorkspaceFetch(options: WorkspaceFetchMockOptions = {}): Arr
   const requests: Array<{ url: string; init: RequestInit }> = [];
   let disabledModels = [...((options.modelControl?.disabled as string[] | undefined) ?? [])];
   let stripModelPrefix = options.clinePassStripPrefix ?? true;
+  let deepseekConsistency = options.clinePassDeepseekConsistency ?? false;
   const controlRows = (disabled: string[]) => [
     { id: "qwen3.7-max", disabled: disabled.includes("qwen3.7-max"), accounts: 1, channels: 1, priced: true, input_usd_per_million: 2.5, output_usd_per_million: 7.5 },
     { id: "gpt-5.6-luna", disabled: disabled.includes("gpt-5.6-luna"), accounts: 1, channels: 0, priced: true, input_usd_per_million: 0.2, output_usd_per_million: 1.2 },
@@ -315,22 +319,24 @@ export function stubWorkspaceFetch(options: WorkspaceFetchMockOptions = {}): Arr
         return jsonResponse({ error: "cline pass models failed" }, options.clinePassModelsStatus);
       }
       // The served mapping follows the last PUT so a save-and-reload is observable.
-      return jsonResponse({ ...clinePassModelsPayload(), ...(options.clinePassModels ?? {}), strip_model_prefix: stripModelPrefix });
+      return jsonResponse({ ...clinePassModelsPayload(), ...(options.clinePassModels ?? {}), strip_model_prefix: stripModelPrefix, deepseek_upstream_consistency: deepseekConsistency });
     }
     if (url.endsWith("/opencode/cline-pass/settings") && init.method === "PUT") {
       if (options.clinePassSettingsStatus) {
         return jsonResponse({ error: "cline pass settings failed" }, options.clinePassSettingsStatus);
       }
-      const body = JSON.parse(String(init.body ?? "{}")) as { strip_model_prefix?: boolean };
-      stripModelPrefix = body.strip_model_prefix === true;
+      const body = JSON.parse(String(init.body ?? "{}")) as { strip_model_prefix?: boolean; deepseek_upstream_consistency?: boolean };
+      // A PUT carries one control at a time, so the other keeps its stored value.
+      if (body.strip_model_prefix !== undefined) stripModelPrefix = body.strip_model_prefix === true;
+      if (body.deepseek_upstream_consistency !== undefined) deepseekConsistency = body.deepseek_upstream_consistency === true;
       return jsonResponse({
-        settings: { strip_model_prefix: stripModelPrefix },
+        settings: { strip_model_prefix: stripModelPrefix, deepseek_upstream_consistency: deepseekConsistency },
         rebound: options.clinePassSettingsRebound ?? 0,
         rebind_errors: 0,
       });
     }
     if (url.endsWith("/opencode/cline-pass/settings")) {
-      return jsonResponse({ settings: { strip_model_prefix: stripModelPrefix } });
+      return jsonResponse({ settings: { strip_model_prefix: stripModelPrefix, deepseek_upstream_consistency: deepseekConsistency } });
     }
     if (url.endsWith("/opencode/cline-pass/model-test")) return jsonResponse(options.clinePassModelTest ?? { result: {} });
     if (url.endsWith("/opencode/cline-pass/bind")) {

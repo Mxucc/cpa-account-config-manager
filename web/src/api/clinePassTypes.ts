@@ -103,6 +103,11 @@ export interface ClinePassModelView {
 export interface ClinePassModelsResponse {
   models: ClinePassModelView[];
   strip_model_prefix: boolean;
+  /**
+   * The stored upstream-consistency switch: Cline Pass DeepSeek requests are pinned to
+   * DeepSeek's own upstream so one conversation keeps its prompt cache.
+   */
+  deepseek_upstream_consistency: boolean;
   accounts: number;
   channel_bound: boolean;
   channel_models: number;
@@ -114,6 +119,13 @@ export interface ClinePassModelsResponse {
 /** Publishing settings for the Cline Pass channel. */
 export interface ClinePassSettings {
   strip_model_prefix: boolean;
+  deepseek_upstream_consistency: boolean;
+}
+
+/** One saved control: an omitted field leaves the stored switch alone. */
+export interface ClinePassSettingsPatch {
+  stripModelPrefix?: boolean;
+  deepseekUpstreamConsistency?: boolean;
 }
 
 export interface ClinePassSettingsResponse {

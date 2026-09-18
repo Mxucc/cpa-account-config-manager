@@ -56,6 +56,10 @@ type clinePassSettings struct {
 	// StripModelPrefix publishes the client-facing model id without the literal
 	// cline-pass/ prefix. It defaults to on.
 	StripModelPrefix bool `json:"strip_model_prefix"`
+	// DeepseekUpstreamConsistency pins the Cline Pass DeepSeek requests to
+	// DeepSeek's own upstream so one conversation keeps its prompt cache. It
+	// defaults to off.
+	DeepseekUpstreamConsistency bool `json:"deepseek_upstream_consistency"`
 }
 
 type clinePassSettingsView struct {
@@ -64,6 +68,9 @@ type clinePassSettingsView struct {
 
 type clinePassSettingsUpdateRequest struct {
 	StripModelPrefix *bool `json:"strip_model_prefix"`
+	// DeepseekUpstreamConsistency is additive: omitting it leaves the stored
+	// switch alone, so one control can be saved without resending the other.
+	DeepseekUpstreamConsistency *bool `json:"deepseek_upstream_consistency"`
 }
 
 type clinePassSettingsUpdateResponse struct {
@@ -95,9 +102,11 @@ type clinePassModelView struct {
 type clinePassModelsResponse struct {
 	Models           []clinePassModelView `json:"models"`
 	StripModelPrefix bool                 `json:"strip_model_prefix"`
-	Accounts         int                  `json:"accounts"`
-	ChannelBound     bool                 `json:"channel_bound"`
-	ChannelModels    int                  `json:"channel_models"`
+	// DeepseekUpstreamConsistency reports the stored upstream-consistency switch.
+	DeepseekUpstreamConsistency bool `json:"deepseek_upstream_consistency"`
+	Accounts                    int  `json:"accounts"`
+	ChannelBound                bool `json:"channel_bound"`
+	ChannelModels               int  `json:"channel_models"`
 	// ChannelStateUnreadable marks that the live channel list could not be read, so
 	// ChannelBound is unknown rather than false.
 	ChannelStateUnreadable bool   `json:"channel_state_unreadable,omitempty"`
@@ -447,19 +456,36 @@ func (a *App) handleClinePassSettings(ctx context.Context, req cpaapi.Management
 	switch strings.ToUpper(strings.TrimSpace(req.Method)) {
 	case http.MethodGet:
 		return jsonResponse(http.StatusOK, clinePassSettingsView{
-			Settings: clinePassSettings{StripModelPrefix: a.clinePass.StripModelPrefix()},
+			Settings: clinePassSettings{
+				StripModelPrefix:            a.clinePass.StripModelPrefix(),
+				DeepseekUpstreamConsistency: a.clinePass.DeepseekUpstreamConsistency(),
+			},
 		})
 	case http.MethodPut:
 		var request clinePassSettingsUpdateRequest
-		if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil || request.StripModelPrefix == nil {
+		if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil ||
+			request.StripModelPrefix == nil && request.DeepseekUpstreamConsistency == nil {
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid Cline Pass settings request"})
 		}
-		if errSet := a.clinePass.SetStripModelPrefix(*request.StripModelPrefix); errSet != nil {
-			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "Cline Pass settings could not be persisted"})
+		if request.DeepseekUpstreamConsistency != nil {
+			if errSet := a.clinePass.SetDeepseekUpstreamConsistency(*request.DeepseekUpstreamConsistency); errSet != nil {
+				return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "Cline Pass settings could not be persisted"})
+			}
 		}
-		rebound, rebindErrors := a.rebindClinePassAccounts(ctx, managementKey)
+		// Only the published ids need a re-bind; the upstream pin is read from the
+		// request path, so flipping it changes nothing about the channel.
+		rebound, rebindErrors := 0, 0
+		if request.StripModelPrefix != nil {
+			if errSet := a.clinePass.SetStripModelPrefix(*request.StripModelPrefix); errSet != nil {
+				return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "Cline Pass settings could not be persisted"})
+			}
+			rebound, rebindErrors = a.rebindClinePassAccounts(ctx, managementKey)
+		}
 		return jsonResponse(http.StatusOK, clinePassSettingsUpdateResponse{
-			Settings:     clinePassSettings{StripModelPrefix: a.clinePass.StripModelPrefix()},
+			Settings: clinePassSettings{
+				StripModelPrefix:            a.clinePass.StripModelPrefix(),
+				DeepseekUpstreamConsistency: a.clinePass.DeepseekUpstreamConsistency(),
+			},
 			Rebound:      rebound,
 			RebindErrors: rebindErrors,
 		})
@@ -520,13 +546,14 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 		models = append(models, view)
 	}
 	return jsonResponse(http.StatusOK, clinePassModelsResponse{
-		Models:                 models,
-		StripModelPrefix:       stripPrefix,
-		Accounts:               len(accounts),
-		ChannelBound:           channelBound,
-		ChannelStateUnreadable: !channelStateReadable,
-		ChannelModels:          channelModels,
-		DefaultBaseURL:         clinePassDefaultBaseURL,
+		Models:                      models,
+		StripModelPrefix:            stripPrefix,
+		DeepseekUpstreamConsistency: a.clinePass.DeepseekUpstreamConsistency(),
+		Accounts:                    len(accounts),
+		ChannelBound:                channelBound,
+		ChannelStateUnreadable:      !channelStateReadable,
+		ChannelModels:               channelModels,
+		DefaultBaseURL:              clinePassDefaultBaseURL,
 	})
 }
 

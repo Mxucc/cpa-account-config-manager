@@ -234,6 +234,10 @@ type clinePassPersisted struct {
 	// existed has no field, which reads as the documented default (on). The
 	// store version is not bumped so an existing file still loads.
 	StripModelPrefix *bool `json:"strip_model_prefix,omitempty"`
+	// DeepseekUpstreamConsistency is additive as well: a store file written
+	// before the switch existed reads as the documented default (off), so the
+	// store version is not bumped and an existing file still loads.
+	DeepseekUpstreamConsistency *bool `json:"deepseek_upstream_consistency,omitempty"`
 	// UsageEvents is additive as well: a store file written before the ledger was
 	// persisted simply carries none, so the version is not bumped and an existing
 	// file still loads. Each event holds a timestamp, token counts and a reference
@@ -314,6 +318,10 @@ type ClinePassService struct {
 	// stripModelPrefix is the persisted publishing switch: it decides whether
 	// the client-facing model id drops the literal cline-pass/ prefix.
 	stripModelPrefix bool
+	// deepseekPin is the persisted upstream-consistency switch: it decides
+	// whether a Cline Pass DeepSeek request is pinned to DeepSeek's own upstream
+	// before it leaves CPA.
+	deepseekPin bool
 	// usage keeps the reference-priced events of the documented quota windows in
 	// memory. It is fed by the CPA usage callback the plugin already consumes.
 	usage *clinePassUsageLedger
@@ -450,6 +458,9 @@ func (s *ClinePassService) Configure(config Config) {
 			}
 		}
 		s.dataDir = config.DataDir
+		// A store that could not be read leaves the switch at its default rather
+		// than at a value this process may have loaded from another directory.
+		s.deepseekPin = false
 		return
 	}
 	s.dataDir = config.DataDir
@@ -457,6 +468,9 @@ func (s *ClinePassService) Configure(config Config) {
 	// A missing field reads as the documented default (on) so an existing store
 	// file keeps loading with the new behaviour.
 	s.stripModelPrefix = loaded.StripModelPrefix == nil || *loaded.StripModelPrefix
+	// A missing field reads as the documented default (off), so the switch only
+	// changes behaviour where an operator asked for it.
+	s.deepseekPin = loaded.DeepseekUpstreamConsistency != nil && *loaded.DeepseekUpstreamConsistency
 	s.usage.restore(s.now().UTC(), loaded.UsageEvents)
 	s.loaded = true
 	s.loadFailed = false
@@ -573,11 +587,13 @@ func (s *ClinePassService) persistLocked() error {
 		return fmt.Errorf("Cline Pass state is not configured")
 	}
 	stripModelPrefix := s.stripModelPrefix
+	deepseekPin := s.deepseekPin
 	errPersist := savePrivateJSON(clinePassStorePath(s.dataDir), clinePassPersisted{
-		Version:          clinePassStoreVersion,
-		Accounts:         append([]ClinePassAccount(nil), s.accounts...),
-		StripModelPrefix: &stripModelPrefix,
-		UsageEvents:      s.usage.snapshot(s.now().UTC()),
+		Version:                     clinePassStoreVersion,
+		Accounts:                    append([]ClinePassAccount(nil), s.accounts...),
+		StripModelPrefix:            &stripModelPrefix,
+		DeepseekUpstreamConsistency: &deepseekPin,
+		UsageEvents:                 s.usage.snapshot(s.now().UTC()),
 	})
 	if errPersist != nil {
 		s.storageErr = "Cline Pass state could not be persisted"
@@ -685,6 +701,48 @@ func (s *ClinePassService) SetStripModelPrefix(value bool) error {
 		return errPersist
 	}
 	return nil
+}
+
+// DeepseekUpstreamConsistency reports whether the stored switch pins a Cline
+// Pass DeepSeek request to DeepSeek's own upstream. The default is off, also for
+// a service that never loaded a store file.
+func (s *ClinePassService) DeepseekUpstreamConsistency() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deepseekPin
+}
+
+// SetDeepseekUpstreamConsistency persists the upstream-consistency switch. The
+// in-memory value is reverted when the store write fails so a later restart
+// cannot disagree with what the caller was told.
+func (s *ClinePassService) SetDeepseekUpstreamConsistency(value bool) error {
+	if s == nil {
+		return fmt.Errorf("Cline Pass service is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.deepseekPin
+	s.deepseekPin = value
+	if errPersist := s.persistLocked(); errPersist != nil {
+		s.deepseekPin = previous
+		return errPersist
+	}
+	return nil
+}
+
+// PinsRequestsToDeepseekUpstream reports whether the switch is on for a request
+// that could actually reach it: an installation with no stored account has no
+// Cline Pass traffic to pin, so the request path stays untouched.
+func (s *ClinePassService) PinsRequestsToDeepseekUpstream() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deepseekPin && len(s.accounts) > 0
 }
 
 // ListAccounts returns the redacted account list.

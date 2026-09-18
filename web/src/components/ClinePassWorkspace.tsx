@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, CircleDollarSign, ExternalLink, Gauge, KeyRound, Link2, LoaderCircle, RefreshCw, RotateCcw, Save, Trash2, Wallet } from "lucide-react";
 import * as api from "../api/clinePass";
-import type { ClinePassAccountView, ClinePassCatalogModel, ClinePassLoginView, ClinePassModelsResponse, ClinePassModelView } from "../api/clinePassTypes";
+import type { ClinePassAccountView, ClinePassCatalogModel, ClinePassLoginView, ClinePassModelsResponse, ClinePassModelView, ClinePassSettingsPatch } from "../api/clinePassTypes";
 import { operatorMessage } from "../format/operatorMessage";
 import { useI18n } from "../i18n";
 import type { OpenCodeModelTestResult } from "../types";
+import type { UIMessageKey } from "../i18n/uiText";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 import { UsageMetricCards } from "./UsageMetricCards";
@@ -419,13 +420,14 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
   /**
    * Saving the prefix rule re-binds the channel, so the reply reports the rebound accounts and
    * a failed re-bind is only a warning: the setting is stored and the mapping still reloads.
+   * Saving the upstream-consistency switch touches no mapping, so it only leaves a notice.
    */
-  const saveClinePassPrefixSetting = (stripModelPrefix: boolean) => void (async () => {
+  const saveClinePassSetting = (patch: ClinePassSettingsPatch, noticeKey: UIMessageKey) => void (async () => {
     setBusy("cline-pass-settings");
     setClinePassModelsError("");
     try {
-      const response = await api.saveClinePassSettings(stripModelPrefix);
-      onNotice(tx("ui.cline_pass_prefix_saved", { count: String(response.rebound) }));
+      const response = await api.saveClinePassSettings(patch);
+      onNotice(tx(noticeKey, { count: String(response.rebound) }));
       await loadClinePassModels();
       if (response.rebind_errors > 0) {
         setClinePassModelsError(tx("ui.cline_pass_prefix_rebind_errors", { count: String(response.rebind_errors) }));
@@ -442,6 +444,9 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
       setBusy("");
     }
   })();
+
+  const saveClinePassPrefixSetting = (stripModelPrefix: boolean) => saveClinePassSetting({ stripModelPrefix }, "ui.cline_pass_prefix_saved");
+  const saveClinePassConsistencySetting = (deepseekUpstreamConsistency: boolean) => saveClinePassSetting({ deepseekUpstreamConsistency }, "ui.cline_pass_consistency_saved");
 
   /**
    * One row of the mapping is tested through the same dialog every other model page uses, so the
@@ -989,6 +994,22 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                       onChange={(event) => saveClinePassPrefixSetting(event.target.checked)}
                     />
                     <span><b>{tx(clinePassModels.strip_model_prefix ? "ui.on_2" : "ui.off_2")}</b></span>
+                  </label>
+                </div>
+                <div className="opencode-section-heading">
+                  <div>
+                    <strong>{tx("ui.cline_pass_consistency")}</strong>
+                    <span>{tx("ui.cline_pass_consistency_hint")}</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={clinePassModels.deepseek_upstream_consistency}
+                      disabled={busy === "cline-pass-settings"}
+                      aria-label={tx("ui.cline_pass_consistency")}
+                      onChange={(event) => saveClinePassConsistencySetting(event.target.checked)}
+                    />
+                    <span><b>{tx(clinePassModels.deepseek_upstream_consistency ? "ui.on_2" : "ui.off_2")}</b></span>
                   </label>
                 </div>
                 <p className="opencode-price-meta">

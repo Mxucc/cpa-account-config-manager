@@ -41,8 +41,52 @@ func (h *RequestHook) Register(transformer RequestTransformer) {
 	h.mu.Unlock()
 }
 
-func (h *RequestHook) InterceptBefore(cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
-	return cpaapi.RequestInterceptResponse{}
+// requestTransformerBefore marks a transformer that rewrites a request before it
+// leaves CPA. Only these run on the before path: the transformers registered for
+// the after path observe, block or account for a request that already resolved,
+// and running them twice per request would double every one of those effects.
+type requestTransformerBefore interface {
+	RequestInterceptionBeforeActive() bool
+}
+
+// BeforeActive reports whether any transformer rewrites the outgoing request,
+// which is also what decides whether the request payload is read at all.
+func (h *RequestHook) BeforeActive() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, transformer := range h.transformers {
+		before, ok := transformer.(requestTransformerBefore)
+		if ok && before.RequestInterceptionBeforeActive() {
+			return true
+		}
+	}
+	return false
+}
+
+// InterceptBefore runs the before-path transformers, in registration order, and
+// returns their cumulative modification of the outgoing request.
+func (h *RequestHook) InterceptBefore(request cpaapi.RequestInterceptRequest) cpaapi.RequestInterceptResponse {
+	if h == nil {
+		return cpaapi.RequestInterceptResponse{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	response := cpaapi.RequestInterceptResponse{}
+	current := request
+	for _, transformer := range h.transformers {
+		before, ok := transformer.(requestTransformerBefore)
+		if !ok || !before.RequestInterceptionBeforeActive() {
+			continue
+		}
+		response = accumulateRequestModification(response, &current, transformer)
+		if response.Terminate {
+			break
+		}
+	}
+	return response
 }
 
 func (h *RequestHook) Active() bool {
@@ -84,34 +128,44 @@ func (h *RequestHook) InterceptAfter(request cpaapi.RequestInterceptRequest) cpa
 	response := cpaapi.RequestInterceptResponse{}
 	current := request
 	for _, transformer := range h.transformers {
-		modification, changed := transformer.InterceptRequest(current)
-		if !changed {
-			continue
-		}
-		if len(modification.Body) > 0 {
-			// A transformer owns a changed body until the hook returns it. Keep one
-			// reference for the next transformer instead of copying a large body twice.
-			response.Body = modification.Body
-			current.Body = modification.Body
-		}
-		if len(modification.ClearHeaders) > 0 {
-			response.ClearHeaders = appendUniqueHeaderNames(response.ClearHeaders, modification.ClearHeaders...)
-		}
-		if len(modification.Headers) > 0 {
-			if response.Headers == nil {
-				response.Headers = make(http.Header)
-			}
-			for name, values := range modification.Headers {
-				response.Headers[name] = append([]string(nil), values...)
-			}
-		}
-		if modification.Terminate {
-			response.Terminate = true
-			response.StatusCode = modification.StatusCode
-			response.ResponseHeaders = modification.ResponseHeaders.Clone()
-			response.ResponseBody = append([]byte(nil), modification.ResponseBody...)
+		response = accumulateRequestModification(response, &current, transformer)
+		if response.Terminate {
 			break
 		}
+	}
+	return response
+}
+
+// accumulateRequestModification merges one transformer's modification into the
+// cumulative response and hands the next transformer the body the previous one
+// produced.
+func accumulateRequestModification(response cpaapi.RequestInterceptResponse, current *cpaapi.RequestInterceptRequest, transformer RequestTransformer) cpaapi.RequestInterceptResponse {
+	modification, changed := transformer.InterceptRequest(*current)
+	if !changed {
+		return response
+	}
+	if len(modification.Body) > 0 {
+		// A transformer owns a changed body until the hook returns it. Keep one
+		// reference for the next transformer instead of copying a large body twice.
+		response.Body = modification.Body
+		current.Body = modification.Body
+	}
+	if len(modification.ClearHeaders) > 0 {
+		response.ClearHeaders = appendUniqueHeaderNames(response.ClearHeaders, modification.ClearHeaders...)
+	}
+	if len(modification.Headers) > 0 {
+		if response.Headers == nil {
+			response.Headers = make(http.Header)
+		}
+		for name, values := range modification.Headers {
+			response.Headers[name] = append([]string(nil), values...)
+		}
+	}
+	if modification.Terminate {
+		response.Terminate = true
+		response.StatusCode = modification.StatusCode
+		response.ResponseHeaders = modification.ResponseHeaders.Clone()
+		response.ResponseBody = append([]byte(nil), modification.ResponseBody...)
 	}
 	return response
 }

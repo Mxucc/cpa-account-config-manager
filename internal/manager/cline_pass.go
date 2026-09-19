@@ -1009,6 +1009,42 @@ func (s *ClinePassService) updateAccountTokensLocked(id, access, refresh string,
 	return false
 }
 
+// RefreshExpiringAccounts rotates every stored OAuth token that is inside the refresh margin, and
+// reports how many it rotated. A rotating Cline Pass access token expires on its own, and CPA keeps
+// routing through the token published in its channel row, so an expired token shows up as an
+// authorization error until someone refreshes the credential and republishes the row. A management
+// read can do the first half: it holds the management key, so the republish that follows replaces
+// the row that carried the expired token.
+//
+// It is bounded and best effort. One credential that cannot be rotated must not fail the read that
+// asked for it, and the read still reports the stored state.
+func (s *ClinePassService) RefreshExpiringAccounts(ctx context.Context) int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.accounts))
+	for _, account := range s.accounts {
+		if normalizeClinePassAuthMethod(account.AuthMethod) == clinePassAuthMethodAPIKey {
+			continue
+		}
+		if s.tokenNeedsRefresh(account) {
+			ids = append(ids, account.ID)
+		}
+	}
+	s.mu.RUnlock()
+	rotated := 0
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			break
+		}
+		if _, errRefresh := s.refreshAccountToken(ctx, id); errRefresh == nil {
+			rotated++
+		}
+	}
+	return rotated
+}
+
 // RefreshToken forces a token rotation for one account and returns its view.
 func (s *ClinePassService) RefreshToken(ctx context.Context, id string) (ClinePassAccountView, error) {
 	if s == nil {

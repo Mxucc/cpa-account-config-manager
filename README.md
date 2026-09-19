@@ -145,6 +145,7 @@ OpenCode Go 还支持 Workspace ID 与 auth Cookie、5h/7d/30d 配额、重置�
 - 「模型测试」向 `POST {base}/chat/completions` 发起一次最小真实请求，返回状态、原因码、HTTP 状态、延迟、测试时间与脱敏后的上游响应。
 - 「发布到 CPA 路由」会 upsert 一个 `openai-compatibility` CPA 渠道：Base URL 为 `https://api.cline.bot/api/v1`，以访问令牌作为密钥，携带 Cline 产品面识别请求头（`x-client-type: cli`、`x-client-version`、`x-core-version`，以及 `Cline/<version>` User-Agent，版本取自 npm registry 并缓存 24 小时），并把白名单模型写入渠道模型列表。重复绑定同一账号只会更新已有渠道。
 - 令牌轮换会让渠道里保存的旧密钥失效，因此「刷新登录」通过 `POST /opencode/cline-pass/refresh`（`rebind: true`）同时完成令牌轮换与渠道密钥重写。
+- Cline Pass 的令牌会自己过期，而 CPA 只按渠道行里保存的那份密钥路由，于是过期或轮换过的令牌会表现为「AI 供应商账号授权错误、需要重新登录」，而账号页仍显示已绑定。现在每次读取 Cline Pass 账号页或模型页时会自动修复：先轮换落在刷新窗口内的令牌，再比对账号当前令牌与其渠道行里保存的密钥——若账号自己的渠道行仍持有旧密钥（按账号标签唯一识别），就自动重写该行，无需手动刷新登录，也不必删除并重新添加 AI 供应商账号。修复期间该账号会如实显示为「未绑定」而不是假装可用；自动修复受既有 30 秒冷却限制，成功与否都记录在操作历史里（`channel_bound` / `channel_bind_failed`）。标签重复（多个账号共用默认标签）时不猜测归属，保持原状。
 - 所有路由均为固定路径并要求 Management Key，位于 `/v0/management/plugins/cpa-account-config-manager` 下：`GET|POST|DELETE /opencode/cline-pass/accounts`、`GET /opencode/cline-pass/catalog`、`POST /opencode/cline-pass/login/start|poll|cancel`、`POST /opencode/cline-pass/refresh`、`POST /opencode/cline-pass/models`、`POST /opencode/cline-pass/model-test`、`POST /opencode/cline-pass/bind`。
 - 设备码登录在每次管理请求内只完成一次轮询而不阻塞，由页面按 `interval_seconds` 轮询；上游返回 `slow_down` 时把间隔加 5 秒，会话 15 分钟后过期。
 

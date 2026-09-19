@@ -121,6 +121,10 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	managementKey := resolveManagementKey(req.Headers)
 	if method == http.MethodGet {
+		// A rotating token inside the refresh margin is rotated before the list is built, so the
+		// page reports a usable credential and the republish below replaces the channel row that
+		// carried the old one.
+		a.refreshExpiringClinePassAccounts(ctx)
 		accounts := a.clinePass.ListAccounts()
 		views := make([]*ClinePassAccountView, 0, len(accounts))
 		for index := range accounts {
@@ -429,16 +433,29 @@ func (a *App) handleClinePassBind(ctx context.Context, req cpaapi.ManagementRequ
 }
 
 // clinePassChannelLabel names the CPA channel for one account, preferring the
-// operator-supplied name so several subscriptions stay distinguishable.
+// operator-supplied name so several subscriptions stay distinguishable. It shares
+// clinePassChannelLabelForName with the routing checks, so the label a bind writes and the label a
+// repair compares against can never drift apart.
 func (a *App) clinePassChannelLabel(accountID string) string {
 	if a != nil && a.clinePass != nil {
 		if view, found := a.clinePass.AccountView(accountID); found {
-			if name := strings.TrimSpace(view.Name); name != "" {
-				return clinePassBoundChannelName + " " + name
-			}
+			return clinePassChannelLabelForName(view.Name)
 		}
 	}
-	return clinePassBoundChannelName
+	return clinePassChannelLabelForName("")
+}
+
+// refreshExpiringClinePassAccounts rotates the tokens a Cline Pass read finds inside the refresh
+// margin, under the same bound as an automatic bind so a slow token endpoint cannot hold a page
+// read open. A rotation failure is not reported here: the read that follows shows the stored state,
+// and the republish pass reports a row it could not repair.
+func (a *App) refreshExpiringClinePassAccounts(ctx context.Context) {
+	if a == nil || a.clinePass == nil {
+		return
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, clinePassRoutingBindTimeout)
+	defer cancel()
+	a.clinePass.RefreshExpiringAccounts(refreshCtx)
 }
 
 // handleClinePassSettings reads and writes the Cline Pass publishing settings.
@@ -507,6 +524,9 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
+	// Same as the account list: rotate an expiring token first, then read, so the routing decision
+	// below is made on the credential the row will hold.
+	a.refreshExpiringClinePassAccounts(ctx)
 	accounts := a.clinePass.ListAccounts()
 	stripPrefix := a.clinePass.StripModelPrefix()
 	// Reading the page also repairs the channel: an account whose credential was rotated is

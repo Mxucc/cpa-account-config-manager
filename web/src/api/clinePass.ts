@@ -118,6 +118,7 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 				channel_state_unreadable: account.channel_state_unreadable === true,
 				channel_models: isFiniteNonNegativeNumber(account.channel_models) ? account.channel_models : 0,
 				channel_model_gaps: isFiniteNonNegativeNumber(account.channel_model_gaps) ? account.channel_model_gaps : 0,
+				channel_credential_rejected: account.channel_credential_rejected === true,
 			};
 			if (typeof account.name === "string" && account.name.trim()) view.name = account.name;
 			if (typeof account.expires_at === "string" && account.expires_at) view.expires_at = account.expires_at;

@@ -123,8 +123,15 @@ type App struct {
 	// button, while a dead credential costs one attempt per cooldown instead of one per read.
 	clinePassAutoBindMu sync.Mutex
 	clinePassAutoBindAt map[string]time.Time
-	reconfigureRunning  bool
-	reconfigureCycle    chan struct{}
+	// clinePassRepair coordinates the automatic repair of a rejected Cline Pass credential: the
+	// management key the plugin last saw, whether a repair is already running, and when it last ran,
+	// so a burst of rejected requests coalesces into one rotation and one channel write.
+	clinePassRepairMu      sync.Mutex
+	clinePassRepairKey     string
+	clinePassRepairAt      time.Time
+	clinePassRepairRunning bool
+	reconfigureRunning     bool
+	reconfigureCycle       chan struct{}
 	// configApplyMu serializes every service configuration, so a deferred configure and a host
 	// reconfigure never mutate the services at the same time.
 	configApplyMu sync.Mutex
@@ -1198,6 +1205,9 @@ func (a *App) HandleRequestComplete(completion cpaapi.RequestCompletion) {
 	if a.providerRuntime != nil {
 		a.providerRuntime.Complete(completion)
 	}
+	// A rejected Cline Pass credential is learned from the finished request itself: CPA routes only
+	// through the key stored on the channel row, so the repair has to rewrite that row.
+	a.noteClinePassRequestOutcome(completion)
 	// Keep the dedicated model-error journal fed without letting a journal problem
 	// reach CPA's completion path.
 	a.recordModelError(completion)
@@ -1452,6 +1462,9 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		if a.riskControl != nil {
 			a.riskControl.SetManagementCredentials(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer)
 		}
+		// The Cline Pass repair writes a channel row, and this is the only path that hands the plugin
+		// a management key while the operator is simply using the gateway.
+		a.rememberClinePassManagementKey(managementKey)
 		a.policies.Arm(managementKey)
 		if a.policies.Snapshot().Policy.ManagesNewAccountProbe() {
 			a.newAccountProbe.SetManagementKey(managementKey, req.HostCallbackID)

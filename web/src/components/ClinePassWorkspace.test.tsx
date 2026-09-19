@@ -353,6 +353,25 @@ describe("ClinePassWorkspace", () => {
     expect(within(row).queryByText("尚未绑定 CPA 渠道")).not.toBeInTheDocument();
   });
 
+  it("explains a credential the gateway rejected and says the repair is automatic", async () => {
+    // The failure the operator sees: Cline refuses the stored token while CPA keeps routing through
+    // the key on the channel row. The row must name the cause and the automatic repair, because the
+    // account stays unroutable until that republish succeeds.
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({ channel_bound: false, channel_models: 0, channel_model_gaps: 2, channel_credential_rejected: true })],
+    });
+
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("凭据已被网关拒绝，正在自动修复")).toBeInTheDocument();
+    expect(within(row).getByText(/插件已自动轮换令牌并重写该渠道行/)).toBeInTheDocument();
+    // The rejected state takes precedence over the plain unbound wording, which would send the
+    // operator looking for a missing channel instead of a refused credential.
+    expect(within(row).queryByText("尚未绑定 CPA 渠道")).not.toBeInTheDocument();
+  });
+
   it("announces the CPA channel a completed Cline Pass sign-in bound", async () => {
     const user = userEvent.setup();
     clinePassFetchMock({

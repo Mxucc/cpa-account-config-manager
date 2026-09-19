@@ -152,10 +152,12 @@ func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey str
 	for _, account := range accounts {
 		credential := a.clinePass.accessToken(account.ID)
 		_, bound := clinePassChannelRouteLookup(account, credential, routes)
-		// A row that carries this account's label but a superseded credential is not a
-		// binding: CPA routes through the credential inside the row, so the account is
-		// unroutable until that row is written again.
-		if !bound || clinePassRouteRowStale(account, a.clinePassChannelLabel(account.ID), credential, routes) {
+		// A row that carries this account's label but a superseded credential is not a binding: CPA
+		// routes through the credential inside the row, so the account is unroutable until that row is
+		// written again. A credential the gateway rejected counts the same way, even when the row still
+		// holds exactly the stored token: the row has to be rewritten with a token that works.
+		if !bound || clinePassRouteRowStale(account, a.clinePassChannelLabel(account.ID), credential, routes) ||
+			a.clinePass.AuthFailurePending(account.ID) {
 			unbound = append(unbound, account)
 		}
 	}
@@ -372,6 +374,9 @@ func applyClinePassRouteState(view ClinePassAccountView, apiKey string, routes m
 // response carries. The channel list is read once and shared by every view; nil
 // views are skipped. An account that is not routed yet is published here, so a
 // page load repairs the channel a credential rotation left behind.
+//
+// A credential the gateway rejected is reported as unroutable, and flagged, so the operator
+// sees why a Cline Pass account stopped working even while the automatic repair runs.
 func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey string, views ...*ClinePassAccountView) {
 	targets := make([]*ClinePassAccountView, 0, len(views))
 	for _, view := range views {
@@ -398,6 +403,14 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 			credential = a.clinePass.accessToken(view.ID)
 		}
 		*view = applyClinePassRouteState(*view, credential, routes)
+		// A rejected credential is unroutable until the row is rewritten with a working token, so
+		// the page says so instead of showing a binding CPA would refuse to use.
+		if a.clinePass != nil && a.clinePass.AuthFailurePending(view.ID) {
+			view.ChannelCredentialRejected = true
+			view.ChannelBound = false
+			view.ChannelModels = 0
+			view.ChannelModelGaps = len(clinePassAccountModelIDs(*view))
+		}
 	}
 }
 

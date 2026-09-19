@@ -770,6 +770,8 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                   const channelStateUnreadable = account.channel_state_unreadable === true;
                   const publishedModels = account.channel_models ?? 0;
                   const modelGaps = account.channel_model_gaps ?? 0;
+                  /** True when the gateway rejected the stored token and the repair has not answered it. */
+                  const channelCredentialRejected = account.channel_credential_rejected === true;
                   // Cline documents exactly these three ClinePass windows; the USD figures the
                   // backend attributes to them are reference prices, never an amount owed.
                   const usage = account.quota_usage;
@@ -818,7 +820,14 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                       </td>
                       <td data-label={tx("ui.cline_pass_routing")}>
                         <div className="opencode-routing-cell">
-                          {channelStateUnreadable ? (
+                          {channelCredentialRejected ? (
+                            // The gateway refused the stored token, so CPA has nothing it can route
+                            // through until the row is rewritten; the plugin repairs that itself.
+                            <>
+                              <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_credential_rejected")}</span>
+                              <small>{tx("ui.cline_pass_credential_rejected_hint")}</small>
+                            </>
+                          ) : channelStateUnreadable ? (
                             // Not the same as unbound: the list could not be read, so claiming
                             // "unbound" would send the operator to fix a channel that may be fine.
                             <>

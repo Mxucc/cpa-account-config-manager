@@ -62,6 +62,13 @@ const (
 	// model id when the strip_model_prefix setting is on. Only this prefix is
 	// stripped; every other id is published unchanged.
 	clinePassModelPrefix = "cline-pass/"
+	// clinePassAuthRepairCooldown throttles the token rotations a rejected credential asks for: one
+	// attempt per account is what tells a rotated token apart from one that needs a new sign-in, and
+	// a failing request must not hammer the token endpoint.
+	clinePassAuthRepairCooldown = 60 * time.Second
+	// clinePassAuthFailureTTL drops a recorded rejection that nothing could clear, so a credential
+	// that genuinely needs the operator stops asking for a rotation.
+	clinePassAuthFailureTTL = 30 * time.Minute
 )
 
 // Authentication methods an account can be created with.
@@ -70,6 +77,17 @@ const (
 	clinePassAuthMethodAPIKey = "api_key"
 	clinePassAuthMethodCLI    = "cli"
 )
+
+// clinePassAuthFailure records one account whose stored token the gateway rejected, which is how an
+// expired or invalidated Cline Pass credential shows up: CPA keeps routing through the key stored on
+// its channel row, so every call is answered with an authorization error until that row holds a
+// working token again.
+type clinePassAuthFailure struct {
+	// recordedAt is when the rejection was observed.
+	recordedAt time.Time
+	// attemptedAt is when a rotation was last requested for it; the zero value means none yet.
+	attemptedAt time.Time
+}
 
 // clinePassCatalogModel is one allow-listed Cline Pass model. The catalog is
 // curated from the reference implementation's measured catalog: the gateway's
@@ -220,6 +238,10 @@ type ClinePassAccountView struct {
 	// ChannelBound is unknown rather than false. A page must say so instead of telling the
 	// operator to publish a channel that may already be published.
 	ChannelStateUnreadable bool `json:"channel_state_unreadable,omitempty"`
+	// ChannelCredentialRejected marks that the gateway rejected the stored token, so the account is
+	// unroutable until its channel row is rewritten with a token that works. The plugin repairs this
+	// automatically, and the flag tells the operator why calls failed in the meantime.
+	ChannelCredentialRejected bool `json:"channel_credential_rejected,omitempty"`
 	// QuotaUsage is the reference-priced usage of this account over the three
 	// documented Cline Pass windows. It carries token counts and reference-priced
 	// USD amounts only, never a credential, and it is additive: existing keys are
@@ -334,6 +356,10 @@ type ClinePassService struct {
 	// so it is the identity a usage callback reports for Cline Pass traffic; the
 	// map is refreshed from the live channel list on every bind.
 	routeAuthIndexes map[string]string
+	// authFailed records the accounts whose stored token the gateway rejected: the requested
+	// rotation time (so the repair cannot turn into a retry loop) and the last recorded failure.
+	// It is memory-only: a restart re-learns the failure from the next rejected request.
+	authFailed map[string]clinePassAuthFailure
 }
 
 func NewClinePassService() *ClinePassService {
@@ -345,6 +371,7 @@ func NewClinePassService() *ClinePassService {
 		logins:           map[string]*clinePassLoginSession{},
 		usage:            newClinePassUsageLedger(),
 		routeAuthIndexes: map[string]string{},
+		authFailed:       map[string]clinePassAuthFailure{},
 	}
 }
 
@@ -1022,7 +1049,33 @@ func (s *ClinePassService) RefreshExpiringAccounts(ctx context.Context) int {
 	if s == nil {
 		return 0
 	}
-	s.mu.RLock()
+	ids := s.claimRotations()
+	rotated := 0
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			break
+		}
+		if _, errRefresh := s.refreshAccountToken(ctx, id); errRefresh == nil {
+			// A rotation alone does not clear a recorded rejection: CPA still routes through the key
+			// on the channel row, so the record is spent only once that row has been rewritten.
+			rotated++
+		}
+	}
+	return rotated
+}
+
+// claimRotations reports the accounts a rotation is due for, and records the attempt. A rotating
+// token inside the refresh margin is always due. An account whose token the gateway rejected is due
+// once per cooldown: one attempt is what tells a rotated credential apart from one that needs a new
+// sign-in, and repeating it on every read would hammer the token endpoint. A failure older than the
+// TTL is dropped, so a credential that genuinely needs the operator stops asking.
+func (s *ClinePassService) claimRotations() []string {
+	if s == nil {
+		return nil
+	}
+	now := s.now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ids := make([]string, 0, len(s.accounts))
 	for _, account := range s.accounts {
 		if normalizeClinePassAuthMethod(account.AuthMethod) == clinePassAuthMethodAPIKey {
@@ -1030,19 +1083,137 @@ func (s *ClinePassService) RefreshExpiringAccounts(ctx context.Context) int {
 		}
 		if s.tokenNeedsRefresh(account) {
 			ids = append(ids, account.ID)
+			continue
+		}
+		failure, recorded := s.authFailed[account.ID]
+		if !recorded {
+			continue
+		}
+		if now.Sub(failure.recordedAt) > clinePassAuthFailureTTL {
+			delete(s.authFailed, account.ID)
+			continue
+		}
+		if !failure.attemptedAt.IsZero() && now.Sub(failure.attemptedAt) < clinePassAuthRepairCooldown {
+			continue
+		}
+		failure.attemptedAt = now
+		s.authFailed[account.ID] = failure
+		ids = append(ids, account.ID)
+	}
+	return ids
+}
+
+// NoteAuthFailure records that the gateway rejected one account's stored token. The next rotation
+// pass rotates it even though its clock still says it is valid, which is the case a rejection
+// actually reports: the gateway can invalidate a token before its recorded expiry.
+func (s *ClinePassService) NoteAuthFailure(id string) bool {
+	if s == nil {
+		return false
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	now := s.now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, stored := s.accountLocked(id); !stored {
+		return false
+	}
+	failure := s.authFailed[id]
+	failure.recordedAt = now
+	s.authFailed[id] = failure
+	return true
+}
+
+// ClearAuthFailure forgets a recorded rejection, so an account that works again stops asking for a
+// rotation and stops being reported as needing a repair.
+func (s *ClinePassService) ClearAuthFailure(id string) {
+	if s == nil {
+		return
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.authFailed, id)
+}
+
+// AuthFailurePending reports whether the gateway rejected this account's stored token and no
+// rotation has answered it yet.
+func (s *ClinePassService) AuthFailurePending(id string) bool {
+	if s == nil {
+		return false
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	now := s.now().UTC()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	failure, recorded := s.authFailed[id]
+	return recorded && now.Sub(failure.recordedAt) <= clinePassAuthFailureTTL
+}
+
+// AccountIDForAuthIdentity resolves the stored account one CPA auth identity names: the account id
+// itself, or the credential identity of its stored token, which is what a host that reports the auth
+// file id rather than the auth index sends. An identity no stored account claims answers "".
+func (s *ClinePassService) AccountIDForAuthIdentity(identity string) string {
+	if s == nil {
+		return ""
+	}
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if identity == account.ID || identity == clinePassChannelCredentialIdentity(account.AccessToken) {
+			return account.ID
 		}
 	}
-	s.mu.RUnlock()
-	rotated := 0
-	for _, id := range ids {
-		if ctx.Err() != nil {
-			break
-		}
-		if _, errRefresh := s.refreshAccountToken(ctx, id); errRefresh == nil {
-			rotated++
-		}
+	return ""
+}
+
+// AccountIDForAuthIndex resolves the stored account one CPA auth index belongs to, using the index
+// map the bind records from the live channel list.
+func (s *ClinePassService) AccountIDForAuthIndex(authIndex string) string {
+	if s == nil {
+		return ""
 	}
-	return rotated
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	accountID := s.routeAccountForAuthIndexLocked(authIndex)
+	if accountID == "" {
+		return ""
+	}
+	if _, stored := s.accountLocked(accountID); !stored {
+		return ""
+	}
+	return accountID
+}
+
+// SoleAccountID reports the only stored account when exactly one exists. A rejected request that
+// names a published Cline Pass model but no stored identity can only have been served by that
+// account; with several candidates nothing is guessed.
+func (s *ClinePassService) SoleAccountID() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.accounts) != 1 {
+		return ""
+	}
+	return s.accounts[0].ID
 }
 
 // RefreshToken forces a token rotation for one account and returns its view.

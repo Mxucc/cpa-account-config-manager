@@ -114,6 +114,10 @@ const (
 	OperationFailureModelUpstream       = "model_upstream_failed"
 	OperationFailureModelRetryExhausted = "model_retry_exhausted"
 	OperationFailureModelCanceled       = "model_request_canceled"
+	// OperationFailureClinePassCredentialRejected is the Cline Pass credential the gateway refused:
+	// CPA keeps routing through the key on the channel row, so the account is unroutable until the
+	// automatic repair rewrites that row.
+	OperationFailureClinePassCredentialRejected = "cline_pass_credential_rejected"
 )
 
 type OperationFailureDetail struct {

@@ -30,6 +30,11 @@ export interface ClinePassAccountView {
   channel_state_unreadable?: boolean;
   channel_models: number;
   channel_model_gaps: number;
+  /**
+   * The gateway rejected the stored token, so the account is unroutable until its channel row is
+   * rewritten with a working one. The plugin repairs that automatically.
+   */
+  channel_credential_rejected?: boolean;
   /** Usage the Cline gateway attributes to this account; absent until Cline reports it. */
   quota_usage?: ClinePassQuotaUsage;
 }

@@ -447,6 +447,8 @@ export const ruUI: Record<UIMessageKey, string> = {
   "ui.cline_pass_routing_bound": "Привязано · моделей опубликовано: {count}",
   "ui.cline_pass_routing_gaps": "Не опубликовано моделей: {count}",
   "ui.cline_pass_routing_unbound": "Не привязано к каналу CPA",
+  "ui.cline_pass_credential_rejected": "Учётные данные отклонены; идёт автоматическое восстановление",
+  "ui.cline_pass_credential_rejected_hint": "Cline отклонил сохранённый токен, а CPA маршрутизирует только по ключу, записанному в строке канала, поэтому этот аккаунт сейчас недоступен (вышестоящий сервис отвечает \"unauthorized\"). Плагин уже обновил токен и перезаписал эту строку; если состояние не изменится, войдите в аккаунт заново один раз.",
   "ui.cline_pass_routing_hint": "Плагин публикует канал автоматически при открытии этой страницы; если привязка так и не появилась, проверьте, не истёк ли срок действия учётных данных. До привязки клиенты получают ошибку \"unknown provider for model\".",
   "ui.cline_pass_binding_error": "Не удалось привязать канал Cline Pass: {error}",
   "ui.cline_pass_no_accounts": "Учётных записей Cline Pass пока нет.",

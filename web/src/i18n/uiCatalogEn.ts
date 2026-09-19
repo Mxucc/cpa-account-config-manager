@@ -445,6 +445,8 @@ export const enUI = {
   "ui.cline_pass_routing_bound": "Bound · {count} models published",
   "ui.cline_pass_routing_gaps": "{count} models are not published",
   "ui.cline_pass_routing_unbound": "Not bound to a CPA channel",
+  "ui.cline_pass_credential_rejected": "Credential rejected; repairing automatically",
+  "ui.cline_pass_credential_rejected_hint": "Cline refused the stored token, and CPA only routes through the key held on its channel row, so this account cannot be called right now (the upstream answers unauthorized). The plugin has already rotated the token and rewritten that row; if it still looks like this afterwards, sign in again once.",
   "ui.cline_pass_routing_hint": "The plugin publishes the channel automatically when this page loads; if it stays unbound, check whether the credential has expired. Clients get \"unknown provider for model\" until it is bound.",
   "ui.cline_pass_binding_error": "Cline Pass channel was not bound: {error}",
   "ui.cline_pass_no_accounts": "No Cline Pass accounts yet.",

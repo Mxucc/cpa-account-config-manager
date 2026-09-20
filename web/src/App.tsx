@@ -1468,9 +1468,9 @@ function AccountManagerApp() {
               <tr>
                 <th className="select-header"><input type="checkbox" checked={allPageSelected} onChange={togglePage} aria-label={tx("ui.select_editable_accounts_on_this_page")} /></th>
 								<SortableAccountHeader className="identity-header" field="account" label={tx("ui.accounts")} sort={accountSort} onSort={updateAccountSort} />
+								<SortableAccountHeader field="usage" label={tx("ui.usage")} sort={accountSort} onSort={updateAccountSort} />
 								<SortableAccountHeader field="provider" label={tx("ui.provider")} sort={accountSort} onSort={updateAccountSort} />
 								<SortableAccountHeader field="type" label={tx("ui.type")} sort={accountSort} onSort={updateAccountSort} />
-								<SortableAccountHeader field="usage" label={tx("ui.usage")} sort={accountSort} onSort={updateAccountSort} />
 								<SortableAccountHeader field="active_reset_count" label={tx("ui.active_reset_count")} sort={accountSort} onSort={updateAccountSort} />
 								<SortableAccountHeader field="concurrency" label={tx("ui.account_concurrency")} sort={accountSort} onSort={updateAccountSort} />
 								<SortableAccountHeader field="created_at" label={tx("ui.initial_time")} sort={accountSort} onSort={updateAccountSort} />

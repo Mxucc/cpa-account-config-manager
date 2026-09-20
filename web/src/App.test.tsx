@@ -479,7 +479,7 @@ describe("primary account batch flow", () => {
     expect(screen.getByText("账号列表")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "类型" })).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-			"", "账号", "提供方", "类型", "用量", "主动重置次数", "账号并发", "初始时间", "禁用时间", "权限", "状态", "优先级", "路由配置", "操作",
+			"", "账号", "用量", "提供方", "类型", "主动重置次数", "账号并发", "初始时间", "禁用时间", "权限", "状态", "优先级", "路由配置", "操作",
     ]);
 		expect(screen.getByText(formatDateTimeForLocale("zh-CN", account.created_at), { selector: ".account-lifecycle-time" })).toHaveAttribute("datetime", account.created_at);
 		expect(document.querySelector(".account-time-empty")).toHaveTextContent("-");

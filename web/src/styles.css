@@ -361,35 +361,40 @@ html[data-plugin-density="compact"] {
 .routing-cell > span { min-width: 0; display: inline-flex; align-items: center; gap: 3px; font-size: calc(10px * var(--font-size-scale)); overflow-wrap: anywhere; }
 .routing-cell .ws-on { color: var(--success); }
 .account-usage-cell { min-width: 0; display: grid; gap: 5px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-.usage-overview { min-width: 0; height: 18px; display: grid; grid-template-columns: minmax(46px, 1fr) auto auto; align-items: center; gap: 7px; }
+/* Usage cell layout. This column is one of the narrowest in the accounts table, so every field
+   wraps rather than being clipped: the amount and its unit take a line of their own when the
+   column cannot hold them next to the request counters, a quota value keeps its own full width
+   while its bar absorbs the squeeze, and the exhausted-quota action wraps under its label.
+   Nothing in this cell is ellipsized, so no figure is ever abbreviated. */
+.usage-overview { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 7px; }
 .usage-overview > span { min-width: 0; display: inline-flex; align-items: baseline; white-space: nowrap; }
-.usage-token-total { gap: 3px; overflow: hidden; }
-.usage-token-total strong { overflow: hidden; text-overflow: ellipsis; font-size: calc(11px * var(--font-size-scale)); }
+.usage-token-total { flex: 0 1 auto; flex-wrap: wrap; gap: 3px; }
+.usage-token-total strong { overflow-wrap: anywhere; white-space: normal; font-size: calc(11px * var(--font-size-scale)); }
 .usage-token-total small { color: var(--faint); font-size: calc(7px * var(--font-size-scale)); text-transform: uppercase; }
-.usage-request-total { gap: 3px; font-size: calc(9px * var(--font-size-scale)); }
+.usage-request-total { flex: 0 0 auto; gap: 3px; font-size: calc(9px * var(--font-size-scale)); }
 .usage-request-total i { color: var(--line-strong); font-style: normal; }
-.usage-recent-total { gap: 3px; color: var(--muted); font-size: calc(9px * var(--font-size-scale)); }
+.usage-recent-total { flex: 0 0 auto; gap: 3px; color: var(--muted); font-size: calc(9px * var(--font-size-scale)); }
 .usage-recent-total svg { flex: 0 0 auto; color: var(--faint); }
 .usage-quota-list { min-width: 0; min-height: 40px; display: grid; align-content: center; gap: 3px; }
-.usage-quota-row { min-width: 0; height: 12px; display: grid; grid-template-columns: 17px minmax(0, 1fr) 34px; align-items: center; gap: 5px; color: var(--accent); }
-.usage-quota-row > span:first-child { color: var(--muted); font-size: calc(8px * var(--font-size-scale)); font-weight: 700; }
-.usage-quota-row > b { overflow: hidden; color: currentColor; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-size: calc(8px * var(--font-size-scale)); }
-.usage-quota-track { min-width: 0; height: 4px; display: block; overflow: hidden; border-radius: 2px; background: var(--surface-3); }
+.usage-quota-row { min-width: 0; min-height: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; color: var(--accent); }
+.usage-quota-row > span:first-child { flex: 0 0 17px; color: var(--muted); font-size: calc(8px * var(--font-size-scale)); font-weight: 700; }
+.usage-quota-row > b { flex: 0 1 auto; min-width: 0; margin-left: auto; overflow-wrap: anywhere; color: currentColor; text-align: right; font-size: calc(8px * var(--font-size-scale)); }
+.usage-quota-track { min-width: 0; flex: 1 1 24px; height: 4px; display: block; overflow: hidden; border-radius: 2px; background: var(--surface-3); }
 .usage-quota-track > span { height: 100%; display: block; border-radius: inherit; background: currentColor; }
 .usage-quota-row.quota-warning { color: var(--warning); }
 .usage-quota-row.quota-danger { color: var(--danger); }
-.usage-overdraft-panel { min-width: 0; min-height: 18px; display: grid; grid-template-columns: minmax(42px, auto) minmax(0, 1fr); align-items: center; gap: 6px; padding: 2px 4px; border-left: 2px solid var(--warning); background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-secondary); }
-.usage-overdraft-title { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--warning); font-family: inherit; font-size: calc(8px * var(--font-size-scale)); font-weight: 700; }
-.usage-overdraft-values { min-width: 0; display: flex; justify-content: flex-end; gap: 7px; }
-.usage-overdraft-values > span { min-width: 0; display: inline-flex; align-items: baseline; gap: 2px; white-space: nowrap; }
-.usage-overdraft-values small { color: var(--muted); font-size: calc(7px * var(--font-size-scale)); font-weight: 700; }
-.usage-overdraft-values b { color: var(--warning); font-size: calc(9px * var(--font-size-scale)); font-weight: 700; }
-.usage-overdraft-status { color: var(--muted); font-style: normal; font-size: calc(7px * var(--font-size-scale)); font-weight: 600; }
+.usage-overdraft-panel { min-width: 0; min-height: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 2px 4px; border-left: 2px solid var(--warning); background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-secondary); }
+.usage-overdraft-title { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--warning); font-family: inherit; font-size: calc(8px * var(--font-size-scale)); font-weight: 700; }
+.usage-overdraft-values { min-width: 0; flex: 1 1 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 1px 7px; }
+.usage-overdraft-values > span { min-width: 0; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 3px; }
+.usage-overdraft-values small { white-space: nowrap; color: var(--muted); font-size: calc(7px * var(--font-size-scale)); font-weight: 700; }
+.usage-overdraft-values b { white-space: nowrap; color: var(--warning); font-size: calc(9px * var(--font-size-scale)); font-weight: 700; }
+.usage-overdraft-status { white-space: nowrap; color: var(--muted); font-style: normal; font-size: calc(7px * var(--font-size-scale)); font-weight: 600; }
 .usage-quota-empty { min-height: 40px; display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: calc(8px * var(--font-size-scale)); }
-.usage-quota-empty b { color: var(--muted); font-size: calc(9px * var(--font-size-scale)); font-weight: 600; }
-.usage-quota-alert { min-width: 0; height: 12px; display: flex; align-items: center; gap: 4px; color: var(--danger); font-size: calc(8px * var(--font-size-scale)); }
+.usage-quota-empty b { overflow-wrap: anywhere; color: var(--muted); font-size: calc(9px * var(--font-size-scale)); font-weight: 600; }
+.usage-quota-alert { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 1px 4px; color: var(--danger); font-size: calc(8px * var(--font-size-scale)); line-height: 1.3; }
 .usage-quota-alert span { white-space: nowrap; }
-.usage-quota-alert b { min-width: 0; overflow: hidden; color: var(--text-secondary); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.usage-quota-alert b { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-weight: 600; }
 .success, .tone-success { color: var(--success); }
 .danger { color: var(--danger); }
 .account-table time { color: var(--text-secondary); font-size: calc(11px * var(--font-size-scale)); overflow-wrap: anywhere; }
@@ -3302,7 +3307,8 @@ html[data-theme="dark"] .sidebar-nav button.active { color: var(--obs-cyan); }
 /* One quota window inside a credential row: label, bar, percentage, then the reset countdown.
    The label column is wider than the accounts list default because these labels are words. */
 .quota-window-row { min-width: 0; display: grid; gap: 1px; }
-.quota-window-row .usage-quota-row { grid-template-columns: 48px minmax(0, 1fr) 42px; }
+.quota-window-row .usage-quota-row > span:first-child { flex: 0 0 48px; }
+.quota-window-row .usage-quota-row > b { min-width: 42px; }
 .quota-window-row > small { color: var(--text-tertiary); font-size: calc(9px * var(--font-size-scale)); line-height: 1.35; }
 
 .cline-pass-usage-tokens, .cline-pass-usage-reference { color: var(--text-secondary); font-size: calc(10px * var(--font-size-scale)); line-height: 1.35; overflow-wrap: anywhere; }

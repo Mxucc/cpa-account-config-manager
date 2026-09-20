@@ -84,9 +84,11 @@ describe("OpenCodeWorkspace", () => {
     const quota = screen.getByRole("region", { name: "额度" });
     expect(within(quota).getByText("5 小时")).toBeInTheDocument();
     expect(within(quota).getByText("42.5%")).toBeInTheDocument();
-    expect(within(quota).getByText("1 小时后重置")).toBeInTheDocument();
+    // The window carries both the share and the reference-priced usage the runtime attributes to it.
+    expect(within(quota).getByText("1 小时后重置 · 参考价 $0.05")).toBeInTheDocument();
     expect(within(quota).getByText("7 天")).toBeInTheDocument();
     expect(within(quota).getByText("10.0%")).toBeInTheDocument();
+    expect(within(quota).getByText("2 小时后重置 · 参考价 $0.06")).toBeInTheDocument();
     expect(within(quota).getByText("30 天")).toBeInTheDocument();
     expect(within(quota).getByText("3.3%")).toBeInTheDocument();
   });

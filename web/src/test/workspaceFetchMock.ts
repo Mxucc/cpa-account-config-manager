@@ -65,6 +65,8 @@ export function openCodeRuntimeSnapshot(overrides: Record<string, unknown> = {})
     amount_usd: 0.42,
     rated_requests: 9,
     unrated_requests: 1,
+    // The runtime attributes reference-priced usage to the two rolling windows it tracks.
+    quota: { five_hour_amount_usd: 0.05, seven_day_amount_usd: 0.06 },
     updated_at: "2026-09-16T00:00:00Z",
     ...overrides,
   };

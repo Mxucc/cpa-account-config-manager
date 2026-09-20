@@ -7,9 +7,10 @@ import { useI18n } from "../i18n";
 import type { AIProviderChannelSnapshot, AIProviderRuntimeSnapshot, OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
+import { ProductQuotaWindowRow } from "./ProductQuotaWindowRow";
 import { UsageMetricCards } from "./UsageMetricCards";
 import { formatCreditUSD, formatReferenceUSD } from "../format/currency";
-import { channelProductUsage, openCodeQuotaWindows, type ProductQuotaWindow } from "../format/productUsage";
+import { channelProductUsage, openCodeQuotaWindows } from "../format/productUsage";
 import { formatResetDuration, quotaPercent } from "../format/quotaWindow";
 
 interface OpenCodeWorkspaceProps {
@@ -114,33 +115,6 @@ function QuotaWindowRow({ label, window, tx }: {
         <b>{percent.toFixed(1)}%</b>
       </div>
       <small>{tx("ui.resets_in", { duration: formatResetDuration(window.reset_in_sec, tx) })}</small>
-    </div>
-  );
-}
-
-/**
- * One aggregated quota window of the overview. `openCodeQuotaWindows` keeps the tightest
- * credential per window instead of summing shares, so the row names how many credentials stand
- * behind the number rather than implying a product-wide total.
- */
-function AggregateQuotaRow({ label, window, tx, formatNumber }: {
-  label: string;
-  window: ProductQuotaWindow | undefined;
-  tx: ReturnType<typeof useI18n>["tx"];
-  formatNumber: (value: number) => string;
-}) {
-  if (!window) return null;
-  const percent = quotaPercent(window.usagePercent);
-  return (
-    <div className="quota-window-row" title={tx("ui.overview_quota_window_note", { count: formatNumber(window.credentials) })}>
-      <div className={`usage-quota-row${percent >= 90 ? " quota-danger" : percent >= 75 ? " quota-warning" : ""}`}>
-        <span>{label}</span>
-        <span className="usage-quota-track" role="img" aria-label={`${label} ${percent.toFixed(0)}%`}>
-          <span style={{ width: `${percent}%` }} />
-        </span>
-        <b>{percent.toFixed(1)}%</b>
-      </div>
-      {window.resetInSeconds ? <small>{tx("ui.resets_in", { duration: formatResetDuration(window.resetInSeconds, tx) })}</small> : null}
     </div>
   );
 }
@@ -625,9 +599,9 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
           {openCodeQuota.fiveHour || openCodeQuota.weekly || openCodeQuota.monthly ? (
             <section className="opencode-section" aria-label={tx("ui.opencode_quota")}>
               <div className="opencode-section-heading"><div><strong>{tx("ui.opencode_quota")}</strong><span>{tx("ui.opencode_usage_windows")}</span></div></div>
-              <AggregateQuotaRow label={tx("ui.opencode_window_short_rolling")} window={openCodeQuota.fiveHour} tx={tx} formatNumber={formatNumber} />
-              <AggregateQuotaRow label={tx("ui.opencode_window_short_weekly")} window={openCodeQuota.weekly} tx={tx} formatNumber={formatNumber} />
-              <AggregateQuotaRow label={tx("ui.opencode_window_short_monthly")} window={openCodeQuota.monthly} tx={tx} formatNumber={formatNumber} />
+              <ProductQuotaWindowRow label={tx("ui.opencode_window_short_rolling")} window={openCodeQuota.fiveHour} amountUSD={openCodeUsage.fiveHourAmountUSD} />
+              <ProductQuotaWindowRow label={tx("ui.opencode_window_short_weekly")} window={openCodeQuota.weekly} amountUSD={openCodeUsage.sevenDayAmountUSD} />
+              <ProductQuotaWindowRow label={tx("ui.opencode_window_short_monthly")} window={openCodeQuota.monthly} />
             </section>
           ) : null}
           {billingModes.length ? (

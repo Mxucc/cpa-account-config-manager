@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetSessionForTest, setSession } from "../store/session";
+import { formatDateTimeForLocale } from "../i18n";
 import { CodexWorkspace } from "./CodexWorkspace";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -70,7 +71,7 @@ describe("CodexWorkspace", () => {
           return jsonResponse({ accounts: [], total: 0, page: 1, page_size: 100, pages: 0 });
         }
         return jsonResponse({ accounts: [
-          { id: "acct-codex-1", name: "codex-one.json", provider: "codex", type: "codex", status: "active", disabled: false, unavailable: false, editable: true, recommended_action: "keep" },
+          { id: "acct-codex-1", name: "codex-one.json", provider: "codex", type: "codex", status: "active", disabled: false, unavailable: false, editable: true, recommended_action: "keep", usage: { total_tokens: 12_000, input_tokens: 9_000, output_tokens: 3_000, cached_tokens: 2_000, credit: { amount_usd: 0.5, rated_requests: 12, unrated_requests: 0 }, codex: { five_hour: { used_percent: 42.5, reset_at: "2026-09-12T05:00:00Z" }, seven_day: { used_percent: 12, reset_at: "2026-09-15T00:00:00Z" } } } },
         ], total: 1, page: 1, page_size: 100, pages: 1 });
       }
       if (url.endsWith("/codex/overview")) {
@@ -173,6 +174,22 @@ describe("CodexWorkspace", () => {
     expect(effectiveMode.textContent).toBe("设备级（固定 installation_id）");
     expect(within(panel).queryByText("device")).not.toBeInTheDocument();
     expect(within(panel).getByText("AI 提供商渠道")).toBeInTheDocument();
+  });
+
+  // The upstream 5h/7d allowance is what a Codex operator watches, and it exists only on the
+  // credentials themselves, so the overview reports the tightest one that has a snapshot.
+  it("reports the Codex allowance windows of the credentials that have one", async () => {
+    codexFetchMock();
+
+    render(<CodexWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const panel = await screen.findByRole("tabpanel", { name: "总览" });
+    const windows = await within(panel).findByRole("region", { name: "额度窗口" });
+    expect(within(windows).getByText("5 小时用量")).toBeInTheDocument();
+    expect(within(windows).getByText("42.5%")).toBeInTheDocument();
+    expect(within(windows).getByText(`${formatDateTimeForLocale("zh-CN", "2026-09-12T05:00:00Z")} 重置`)).toBeInTheDocument();
+    expect(within(windows).getByText("7 天用量")).toBeInTheDocument();
+    expect(within(windows).getByText("12.0%")).toBeInTheDocument();
   });
 
   it.each([

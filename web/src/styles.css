@@ -1998,6 +1998,8 @@ html[data-typography-distinction="off"] .agent-login-heading p { font-size: calc
 .dashboard-card strong { color: var(--text-primary); font-size: calc(22px * var(--font-size-scale)); line-height: 1.1; }
 .dashboard-card small { color: var(--muted); font-size: calc(10px * var(--font-size-scale)); }
 .dashboard-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* The per-product usage split has one line per product, so it reads as a full-width row. */
+.dashboard-panels > .dashboard-panel-wide { grid-column: 1 / -1; }
 .dashboard-panel { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
 .panel-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; color: var(--text-primary); font-size: calc(13px * var(--font-size-scale)); font-weight: 700; }
 .panel-title > span:first-child { display: inline-flex; align-items: center; gap: 7px; }

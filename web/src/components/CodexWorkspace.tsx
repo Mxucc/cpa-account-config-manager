@@ -9,8 +9,10 @@ import { CodexIdentityPolicyEditor } from "./CodexIdentityPolicyEditor";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
 import { IconButton } from "./IconButton";
 
+import { ProductQuotaWindowRow } from "./ProductQuotaWindowRow";
 import { UsageMetricCards } from "./UsageMetricCards";
 import { formatReferenceUSD } from "../format/currency";
+import { accountProductUsage } from "../format/productUsage";
 interface CodexWorkspaceProps {
   refreshRevision: number;
   onAPIError: (error: unknown) => void;
@@ -128,6 +130,8 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
   const [storageError, setStorageError] = useState("");
   /** Provider runtime snapshots, used for the Codex usage totals on the overview. */
   const [providerRuntime, setProviderRuntime] = useState<AIProviderRuntimeSnapshot[]>([]);
+  /** The Codex credentials themselves: their usage snapshot carries the upstream 5h/7d windows. */
+  const [codexAccounts, setCodexAccounts] = useState<Account[]>([]);
   const [fingerprintSaved, setFingerprintSaved] = useState(false);
   const request = useRef(0);
 
@@ -145,7 +149,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
     setLoading(true);
     setError("");
     try {
-      const [overviewSnapshot, modelsSnapshot, fingerprintSnapshot, experimentsSnapshot, runtimeSnapshot] = await Promise.all([
+      const [overviewSnapshot, modelsSnapshot, fingerprintSnapshot, experimentsSnapshot, runtimeSnapshot, accountsSnapshot] = await Promise.all([
         api.getCodexOverview(signal),
         api.getCodexModels(signal),
         api.getCodexFingerprint(signal),
@@ -154,6 +158,9 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
         // there, keyed by the "codex" provider name. A failure must not blank the workspace,
         // so it degrades to "no totals" instead of failing the load.
         api.getAIProviderRuntime(signal).catch(() => ({ snapshots: [], updated_at: "" })),
+        // The upstream 5h/7d allowance windows are per credential, so the overview needs the
+        // account list; like the runtime totals it stays optional for the rest of the page.
+        api.listAccounts(1, 100, {}, undefined, signal).catch(() => ({ accounts: [], total: 0, page: 1, page_size: 100, pages: 0 })),
       ]);
       if (requestID !== request.current) return;
       setOverview(overviewSnapshot.overview ?? null);
@@ -162,6 +169,7 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
       setExperiments(experimentsSnapshot.settings ?? null);
       setStorageError(fingerprintSnapshot.profile?.storage_error || modelsSnapshot.storage_error || "");
       setProviderRuntime(runtimeSnapshot.snapshots ?? []);
+      setCodexAccounts(accountsSnapshot.accounts ?? []);
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       if (requestID === request.current) handleError(caught);
@@ -402,6 +410,17 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
       unpriced: totals.unpriced + (snapshot.unrated_requests ?? 0),
     }), { available: snapshots.length > 0, input: 0, output: 0, cached: 0, total: 0, amountUSD: 0, requests: 0, unpriced: 0 });
   }, [providerRuntime]);
+
+  /**
+   * The Codex allowance of the overview: the 5h/7d windows come from the credentials' own usage
+   * snapshots (the runtime aggregates carry the plugin's budget policy instead), so the tightest
+   * reporting credential is what limits the pool. An installation without a Codex credential
+   * reports no window at all, which is why the section renders nothing rather than 0%.
+   */
+  const codexAccountUsage = useMemo(
+    () => accountProductUsage(codexAccounts.filter((account) => `${account.provider ?? ""}`.trim().toLowerCase() === "codex" || `${account.type ?? ""}`.trim().toLowerCase() === "codex")),
+    [codexAccounts],
+  );
   const groups = useMemo(() => {
     const known = GROUP_ORDER.filter((group) => fields.some((field) => field.group === group));
     const rest = fields.map((field) => field.group).filter((group) => !known.includes(group));
@@ -479,6 +498,21 @@ export function CodexWorkspace({ refreshRevision, onAPIError, onNotice }: CodexW
             <div><dt>{tx("ui.codex_counts_provider_overrides")}</dt><dd>{overview?.provider_overrides ?? "-"}</dd></div>
             <div><dt>{tx("ui.codex_counts_fingerprint_fields")}</dt><dd>{overview?.fingerprint_overridden_fields ?? "-"}</dd></div>
           </dl>
+          {/* The Codex allowance the operator is actually burning: the upstream 5h/7d windows live
+              in each credential's own usage snapshot, so this reports the tightest credential that
+              has one, not a sum of percentages. */}
+          {codexAccountUsage.fiveHour || codexAccountUsage.sevenDay ? (
+            <section className="codex-section" aria-label={tx("ui.quota_window")}>
+              <div className="codex-section-heading">
+                <div>
+                  <strong>{tx("ui.quota_window")}</strong>
+                  <span>{tx("ui.codex_quota_window_description")}</span>
+                </div>
+              </div>
+              <ProductQuotaWindowRow label={tx("ui.5_hour_usage")} window={codexAccountUsage.fiveHour} />
+              <ProductQuotaWindowRow label={tx("ui.7_day_usage")} window={codexAccountUsage.sevenDay} />
+            </section>
+          ) : null}
 
           <section className="codex-section codex-runtime" aria-label={tx("ui.codex_model_control_active")}>
             <div className="codex-section-heading">

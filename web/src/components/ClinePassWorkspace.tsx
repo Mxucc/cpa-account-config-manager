@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, CircleDollarSign, ExternalLink, Gauge, KeyRound, Link2, LoaderCircle, RefreshCw, RotateCcw, Save, Trash2, Wallet } from "lucide-react";
+import { Activity, AlertTriangle, CircleDollarSign, ExternalLink, Gauge, KeyRound, Link2, LoaderCircle, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import * as api from "../api/clinePass";
 import type { ClinePassAccountView, ClinePassCatalogModel, ClinePassLoginView, ClinePassModelsResponse, ClinePassModelView, ClinePassSettingsPatch } from "../api/clinePassTypes";
 import { operatorMessage } from "../format/operatorMessage";
@@ -525,11 +525,6 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
     (value, account) => value ?? account.quota_usage?.monthly_subscription_usd,
     undefined,
   );
-  // The balance is the documented subscription minus the reference-priced month. It stays
-  // undefined until Cline reports a month, because a missing window is not zero usage.
-  const clinePassRemainingUSD = clinePassMonthlyUsage.reported > 0 && typeof clinePassSubscriptionUSD === "number"
-    ? clinePassSubscriptionUSD - clinePassMonthlyUsage.usd
-    : undefined;
   const clinePassBoundChannels = clinePassAccounts.filter((account) => account.channel_bound === true).length;
   const clinePassModelCount = clinePassAccounts.reduce((total, account) => total + (account.models?.length ?? 0), 0);
 
@@ -624,27 +619,15 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                     : undefined,
                 },
                 {
-                  key: "amount",
+                  key: "used",
                   tone: "accent",
                   icon: <CircleDollarSign size={18} />,
-                  label: tx("ui.overview_priced_amount"),
+                  label: tx("ui.overview_used_allowance"),
                   value: formatAllowanceUSD(clinePassMonthlyUsage.usd, formatNumber),
                   note: typeof clinePassSubscriptionUSD === "number"
-                    ? tx("ui.opencode_billing_subscription", { amount: formatAllowanceUSD(clinePassSubscriptionUSD, formatNumber) })
+                    ? tx("ui.cline_pass_used", { subscription: formatAllowanceUSD(clinePassSubscriptionUSD, formatNumber) })
                     : undefined,
                   title: tx("ui.cline_pass_usage_reference_note"),
-                },
-                {
-                  key: "balance",
-                  icon: <Wallet size={18} />,
-                  label: tx("ui.overview_balance"),
-                  value: clinePassRemainingUSD === undefined ? "-" : formatAllowanceUSD(clinePassRemainingUSD, formatNumber),
-                  note: clinePassRemainingUSD === undefined
-                    ? tx("ui.overview_balance_unavailable")
-                    : tx("ui.cline_pass_balance", { subscription: formatAllowanceUSD(clinePassSubscriptionUSD, formatNumber) }),
-                  title: clinePassRemainingUSD === undefined
-                    ? tx("ui.overview_balance_unavailable")
-                    : tx("ui.cline_pass_usage_reference_note"),
                 },
               ]}
             />

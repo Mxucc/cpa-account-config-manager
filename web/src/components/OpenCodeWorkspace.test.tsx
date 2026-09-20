@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { billingPricingFixture, CHANNEL_GO_BASE, CHANNEL_ZEN_BASE, channelView, goAccountView, GO_ACCOUNT_ID, GO_WORKSPACE, resetWorkspaceTestSession, selectTab, stubWorkspaceFetch, UNRENDERED_SECRET, WorkspaceFetchMockOptions, ZEN_ACCOUNT_ID, zenAccountView } from "../test/workspaceFetchMock";
+import { billingPricingFixture, CHANNEL_GO_BASE, CHANNEL_ZEN_BASE, channelView, goAccountView, GO_ACCOUNT_ID, GO_WORKSPACE, openCodeRuntimeSnapshot, resetWorkspaceTestSession, selectTab, stubWorkspaceFetch, UNRENDERED_SECRET, WorkspaceFetchMockOptions, ZEN_ACCOUNT_ID, zenAccountView } from "../test/workspaceFetchMock";
 import { OpenCodeWorkspace } from "./OpenCodeWorkspace";
 
 describe("OpenCodeWorkspace", () => {
@@ -52,6 +52,55 @@ describe("OpenCodeWorkspace", () => {
     expect(within(tablist).getByRole("tab", { name: "渠道" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel", { name: "渠道" })).toBeInTheDocument();
     expect(screen.queryByRole("tabpanel", { name: "总览" })).not.toBeInTheDocument();
+  });
+
+  // The overview has to answer "how much has this product used" without a click, so it reports
+  // the usage CPA recorded for this plugin's own OpenCode channels and each quota window.
+  it("reports the usage of its own channels on the overview", async () => {
+    openCodeFetchMock({
+      accounts: [goAccountView()],
+      runtimeSnapshots: [openCodeRuntimeSnapshot()],
+      quota: {
+        [GO_ACCOUNT_ID]: {
+          success: true,
+          rolling: { usage_percent: 42.5, reset_in_sec: 3600 },
+          weekly: { usage_percent: 10, reset_in_sec: 7200 },
+          monthly: { usage_percent: 3.25, reset_in_sec: 0 },
+        },
+      },
+    });
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const cards = await screen.findByRole("group", { name: "OpenCode 累计用量" });
+    expect(within(cards).getByText("2,000")).toBeInTheDocument();
+    expect(within(cards).getByText("输入 1,200 · 输出 800 · 缓存 300 token")).toBeInTheDocument();
+    expect(within(cards).getByText("10")).toBeInTheDocument();
+    // One request of the aggregate carries no price, which stays visible instead of looking free.
+    expect(within(cards).getByText("未计价 1")).toBeInTheDocument();
+    expect(within(cards).getByText("$0.42")).toBeInTheDocument();
+
+    // Every window reports the tightest credential that reported it, not a sum of shares.
+    const quota = screen.getByRole("region", { name: "额度" });
+    expect(within(quota).getByText("5 小时")).toBeInTheDocument();
+    expect(within(quota).getByText("42.5%")).toBeInTheDocument();
+    expect(within(quota).getByText("1 小时后重置")).toBeInTheDocument();
+    expect(within(quota).getByText("7 天")).toBeInTheDocument();
+    expect(within(quota).getByText("10.0%")).toBeInTheDocument();
+    expect(within(quota).getByText("30 天")).toBeInTheDocument();
+    expect(within(quota).getByText("3.3%")).toBeInTheDocument();
+  });
+
+  it("says no OpenCode traffic was recorded instead of printing zeroes", async () => {
+    openCodeFetchMock();
+
+    render(<OpenCodeWorkspace refreshRevision={0} onAPIError={() => undefined} onNotice={() => undefined} />);
+
+    const cards = await screen.findByRole("group", { name: "OpenCode 累计用量" });
+    expect(within(cards).getByText("尚未记录到 OpenCode 供应商流量")).toBeInTheDocument();
+    expect(within(cards).getByText("-")).toBeInTheDocument();
+    // No window reported anything, so the section is not rendered as an empty panel.
+    expect(screen.queryByRole("region", { name: "额度" })).not.toBeInTheDocument();
   });
 
   it("renders a Go workspace row with its quota windows and model count from the initial load", async () => {

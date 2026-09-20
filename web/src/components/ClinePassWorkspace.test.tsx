@@ -428,6 +428,14 @@ describe("ClinePassWorkspace", () => {
     // The usage cards reuse the dashboard stat cards the operator already knows.
     expect(within(overview).getByText("总 Tokens")).toBeInTheDocument();
     expect(within(overview).getByRole("group", { name: "用量与参考价" })).toBeInTheDocument();
+    // The money card reports the used allowance. The plugin no longer derives a remaining balance:
+    // a balance priced at reference rates is not the allowance the subscription actually has left.
+    const usageCards = within(overview).getByRole("group", { name: "用量与参考价" });
+    expect(within(usageCards).getByText("已用额度")).toBeInTheDocument();
+    expect(within(usageCards).getByText("$7.85")).toBeInTheDocument();
+    expect(within(usageCards).getByText("相对于 $9.99 订阅的已用额度（按文档参考价折算）")).toBeInTheDocument();
+    expect(within(overview).queryByText("余额")).not.toBeInTheDocument();
+    expect(within(overview).queryByText("$2.14")).not.toBeInTheDocument();
     expect(screen.queryByText("对话会话")).not.toBeInTheDocument();
   });
 

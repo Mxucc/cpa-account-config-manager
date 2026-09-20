@@ -44,6 +44,32 @@ export function goAccountView(overrides: Record<string, unknown> = {}): Record<s
   };
 }
 
+/**
+ * One runtime aggregate CPA recorded for this plugin's own OpenCode Go channel. The auth index is
+ * the account or workspace id the channel entry carries, which is how the workspace attributes a
+ * snapshot to OpenCode instead of to an OAuth account.
+ */
+export function openCodeRuntimeSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    provider: "openai-compatible-opencode go",
+    identity: `account:${GO_ACCOUNT_ID}`,
+    auth_index: GO_ACCOUNT_ID,
+    supported: true,
+    active: 0,
+    limit: 0,
+    input_tokens: 1_200,
+    output_tokens: 800,
+    reasoning_tokens: 0,
+    cached_tokens: 300,
+    total_tokens: 2_000,
+    amount_usd: 0.42,
+    rated_requests: 9,
+    unrated_requests: 1,
+    updated_at: "2026-09-16T00:00:00Z",
+    ...overrides,
+  };
+}
+
 export function zenAccountView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: ZEN_ACCOUNT_ID,
@@ -258,6 +284,8 @@ export interface WorkspaceFetchMockOptions {
   clinePassSettingsStatus?: number;
   clinePassSettingsRebound?: number;
   clinePassModelTest?: Record<string, unknown>;
+  /** Runtime aggregates CPA recorded for the OpenCode channels, for the overview usage cards. */
+  runtimeSnapshots?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -396,6 +424,11 @@ export function stubWorkspaceFetch(options: WorkspaceFetchMockOptions = {}): Arr
       return jsonResponse({ ...modelControlBody(options), disabled: disabledModels, models: controlRows(disabledModels) });
     }
     if (url.endsWith("/opencode/session")) return jsonResponse({ session: options.session ?? {} });
+    // The plugin's own runtime route. The workspace reads it for the usage of its own channels,
+    // so a test states the aggregates CPA recorded (none by default).
+    if (url.endsWith("/ai-providers/runtime")) {
+      return jsonResponse({ updated_at: "2026-09-16T00:00:00Z", snapshots: options.runtimeSnapshots ?? [] });
+    }
     return jsonResponse({});
   });
   vi.stubGlobal("fetch", fetchMock);

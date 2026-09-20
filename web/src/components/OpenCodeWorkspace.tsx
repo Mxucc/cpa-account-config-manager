@@ -1,13 +1,14 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, Coins, Download, ExternalLink, KeyRound, Link2, LoaderCircle, Plus, Power, Radio, RefreshCw, RotateCcw, Save, Search, Trash2, Wrench } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertTriangle, CircleDollarSign, Coins, Download, ExternalLink, Gauge, KeyRound, Link2, LoaderCircle, Plus, Power, Radio, RefreshCw, RotateCcw, Save, Search, Trash2, Wrench } from "lucide-react";
 import * as api from "../api/client";
 import { operatorMessage } from "../format/operatorMessage";
 import { openCodeProbeHintKey, openCodeReasonKey } from "../format/openCodeModelTest";
 import { useI18n } from "../i18n";
-import type { OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
+import type { AIProviderChannelSnapshot, AIProviderRuntimeSnapshot, OpenCodeAccountView, OpenCodeChannelView, OpenCodeStorageInfo, OpenCodeModelControlSnapshot, OpenCodeModelPrice, OpenCodeModelTestResult, OpenCodePricingSnapshot, OpenCodeQuotaResult, OpenCodeSessionSnapshot, OpenCodeZenAccountView } from "../types";
 import { IconButton } from "./IconButton";
 import { ModelProbeDialog, ModelProbeOutcome } from "./ModelProbeDialog";
-import { formatCreditUSD } from "../format/currency";
+import { UsageMetricCards } from "./UsageMetricCards";
+import { formatCreditUSD, formatReferenceUSD } from "../format/currency";
 import { channelProductUsage, openCodeQuotaWindows, type ProductQuotaWindow } from "../format/productUsage";
 import { formatResetDuration, quotaPercent } from "../format/quotaWindow";
 
@@ -118,6 +119,33 @@ function QuotaWindowRow({ label, window, tx }: {
 }
 
 /**
+ * One aggregated quota window of the overview. `openCodeQuotaWindows` keeps the tightest
+ * credential per window instead of summing shares, so the row names how many credentials stand
+ * behind the number rather than implying a product-wide total.
+ */
+function AggregateQuotaRow({ label, window, tx, formatNumber }: {
+  label: string;
+  window: ProductQuotaWindow | undefined;
+  tx: ReturnType<typeof useI18n>["tx"];
+  formatNumber: (value: number) => string;
+}) {
+  if (!window) return null;
+  const percent = quotaPercent(window.usagePercent);
+  return (
+    <div className="quota-window-row" title={tx("ui.overview_quota_window_note", { count: formatNumber(window.credentials) })}>
+      <div className={`usage-quota-row${percent >= 90 ? " quota-danger" : percent >= 75 ? " quota-warning" : ""}`}>
+        <span>{label}</span>
+        <span className="usage-quota-track" role="img" aria-label={`${label} ${percent.toFixed(0)}%`}>
+          <span style={{ width: `${percent}%` }} />
+        </span>
+        <b>{percent.toFixed(1)}%</b>
+      </div>
+      {window.resetInSeconds ? <small>{tx("ui.resets_in", { duration: formatResetDuration(window.resetInSeconds, tx) })}</small> : null}
+    </div>
+  );
+}
+
+/**
  * OpenCode workspace: the single place that manages OpenCode Go workspaces and
  * Zen credentials, including the model catalog, a real model test, and the action
  * that makes the models routable through CPA.
@@ -128,6 +156,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
   const [zenAccounts, setZenAccounts] = useState<OpenCodeZenAccountView[]>([]);
   const [channels, setChannels] = useState<OpenCodeChannelView[]>([]);
   const [quota, setQuota] = useState<Record<string, OpenCodeQuotaResult>>({});
+  const [runtimeSnapshots, setRuntimeSnapshots] = useState<AIProviderRuntimeSnapshot[]>([]);
+  const [providerChannels, setProviderChannels] = useState<AIProviderChannelSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -177,7 +207,7 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
     setLoading(true);
     setError("");
     try {
-      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot, channelSnapshot, controlSnapshot, storageSnapshot] = await Promise.all([
+      const [go, zen, quotaSnapshot, pricingSnapshot, sessionSnapshot, channelSnapshot, controlSnapshot, storageSnapshot, runtimeSnapshot, providerChannelSnapshot] = await Promise.all([
         api.listOpenCodeAccounts(signal),
         api.listOpenCodeZenAccounts(signal),
         api.getOpenCodeQuota(signal),
@@ -186,6 +216,10 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
         api.getOpenCodeChannels(signal),
         api.getOpenCodeModelControl(signal),
         api.getOpenCodeStorage(signal),
+        // The usage aggregates are optional: a host that cannot answer them must not blank out
+        // the accounts, quota and prices this page is for.
+        api.getAIProviderRuntime(signal).catch(() => ({ snapshots: [], updated_at: "" })),
+        api.listAIProviderChannels(signal),
       ]);
       if (requestID !== request.current) return;
       setGoAccounts(go.accounts);
@@ -196,6 +230,8 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       setSession(sessionSnapshot.session ?? null);
       setModelControl(controlSnapshot);
       setStorage(storageSnapshot.storage ?? null);
+      setRuntimeSnapshots(runtimeSnapshot.snapshots ?? []);
+      setProviderChannels(providerChannelSnapshot ?? []);
       setStorageError(go.storage_error || zen.storage_error || quotaSnapshot.storage_error || pricingSnapshot.pricing?.storage_error || controlSnapshot.storage_error || "");
     } catch (caught) {
       if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
@@ -213,6 +249,20 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
       request.current += 1;
     };
   }, [refresh, refreshRevision]);
+
+  /**
+   * OpenCode usage for the overview. CPA records this product's traffic under its own channel
+   * entries and `channelProductUsage` keeps the attribution guards, so a runtime aggregate that
+   * cannot be proven to belong here contributes nothing instead of a wrong number. Go and Zen
+   * credentials are identified by the workspace or account id their channel entry carries, so no
+   * CPA account list has to be loaded for this workspace.
+   */
+  const openCodeUsage = useMemo(
+    () => channelProductUsage(providerChannels, runtimeSnapshots, ["opencode-go", "opencode-zen"]),
+    [providerChannels, runtimeSnapshots],
+  );
+  /** Each window is the tightest credential that reported it, never a sum of shares. */
+  const openCodeQuota = useMemo(() => openCodeQuotaWindows(quota), [quota]);
 
   // Selection is keyed by model id; ids that disappear from the snapshot are dropped.
   useEffect(() => {
@@ -559,6 +609,27 @@ export function OpenCodeWorkspace({ refreshRevision, onAPIError, onNotice }: Ope
 
       {activeTab === "overview" ? (
         <section className="opencode-tab-panel" role="tabpanel" aria-label={tabLabel("overview")}>
+          {/* OpenCode's own usage. CPA records this product's channel traffic, so the overview can
+              report tokens, requests and the reference-priced amount instead of billing and counts
+              only; nothing recorded says so rather than printing zeroes. */}
+          <UsageMetricCards
+            label={tx("ui.opencode_usage")}
+            metrics={openCodeUsage.observed ? [
+              { key: "tokens", icon: <Gauge size={18} />, label: tx("ui.total_tokens"), value: formatNumber(openCodeUsage.totalTokens), note: tx("ui.overview_usage_tokens", { input: formatNumber(openCodeUsage.inputTokens), output: formatNumber(openCodeUsage.outputTokens), cached: formatNumber(openCodeUsage.cachedTokens) }) },
+              { key: "requests", icon: <Activity size={18} />, label: tx("ui.overview_requests"), value: formatNumber(openCodeUsage.requests), note: openCodeUsage.unratedRequests > 0 ? tx("ui.unrated_requests_count", { count: formatNumber(openCodeUsage.unratedRequests) }) : undefined, title: openCodeUsage.unratedRequests > 0 ? tx("ui.some_requests_could_not_be_priced", { count: formatNumber(openCodeUsage.unratedRequests) }) : undefined },
+              { key: "amount", tone: "accent" as const, icon: <CircleDollarSign size={18} />, label: tx("ui.opencode_usage_reference_amount"), value: formatReferenceUSD(openCodeUsage.amountUSD, formatNumber), note: tx("ui.opencode_usage_reference_note") },
+            ] : [
+              { key: "empty", icon: <Activity size={18} />, label: tx("ui.total_tokens"), value: "-", note: tx("ui.opencode_usage_unavailable") },
+            ]}
+          />
+          {openCodeQuota.fiveHour || openCodeQuota.weekly || openCodeQuota.monthly ? (
+            <section className="opencode-section" aria-label={tx("ui.opencode_quota")}>
+              <div className="opencode-section-heading"><div><strong>{tx("ui.opencode_quota")}</strong><span>{tx("ui.opencode_usage_windows")}</span></div></div>
+              <AggregateQuotaRow label={tx("ui.opencode_window_short_rolling")} window={openCodeQuota.fiveHour} tx={tx} formatNumber={formatNumber} />
+              <AggregateQuotaRow label={tx("ui.opencode_window_short_weekly")} window={openCodeQuota.weekly} tx={tx} formatNumber={formatNumber} />
+              <AggregateQuotaRow label={tx("ui.opencode_window_short_monthly")} window={openCodeQuota.monthly} tx={tx} formatNumber={formatNumber} />
+            </section>
+          ) : null}
           {billingModes.length ? (
             <div className="opencode-billing" role="group" aria-label={tx("ui.opencode_billing")}>
               {billingModes.map((mode) => {

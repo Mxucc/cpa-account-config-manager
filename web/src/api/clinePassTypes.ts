@@ -35,6 +35,15 @@ export interface ClinePassAccountView {
    * rewritten with a working one. The plugin repairs that automatically.
    */
   channel_credential_rejected?: boolean;
+  /**
+   * The gateway answered this account with its weekly quota rejection (HTTP 429) and named the
+   * window that resets it, so the plugin disabled this account's own CPA channel row until then.
+   * The account stays bound but is not routable: CPA routes to a sibling account of the same
+   * gateway meanwhile, and the plugin re-enables the row when the window ends.
+   */
+  quota_limited?: boolean;
+  /** The moment the gateway's quota window ends; present whenever quota_limited is true. */
+  quota_limited_until?: string;
   /** Usage the Cline gateway attributes to this account; absent until Cline reports it. */
   quota_usage?: ClinePassQuotaUsage;
 }

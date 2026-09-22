@@ -460,6 +460,8 @@ export const zhTWUI: Record<UIMessageKey, string> = {
   "ui.cline_pass_routing_unbound": "\u5c1a\u672a\u7d81\u5b9a CPA \u983b\u9053",
   "ui.cline_pass_credential_rejected": "憑證已被閘道拒絕，正在自動修復",
   "ui.cline_pass_credential_rejected_hint": "Cline 拒絕了目前儲存的權杖，而 CPA 只按頻道列中保存的那把金鑰路由，因此這個帳號暫時無法呼叫（上游回傳未授權）。外掛已自動輪換權杖並重寫該頻道列；若之後仍是如此，請重新登入一次該帳號。",
+  "ui.cline_pass_quota_limited": "已暫時停用（額度受限）",
+  "ui.cline_pass_quota_limited_hint": "閘道以 429 拒絕了本帳號並給出了該視窗的結束時間；在此之前 CPA 會把請求改由同一閘道的其他帳號承接，到 {time} 本帳號自動恢復路由。",
   "ui.cline_pass_routing_hint": "\u5916\u639b\u5728\u958b\u555f\u672c\u9801\u6642\u6703\u81ea\u52d5\u767c\u4f48\u6e20\u9053\uff1b\u82e5\u4e00\u76f4\u672a\u7d81\u5b9a\uff0c\u8acb\u6aa2\u67e5\u5e33\u865f\u6191\u8b49\u662f\u5426\u5df2\u904e\u671f\u3002\u7d81\u5b9a\u524d\u7528\u6236\u7aef\u6703\u6536\u5230 \u201cunknown provider for model\u201d \u932f\u8aa4\u3002",
   "ui.cline_pass_binding_error": "Cline Pass \u983b\u9053\u7d81\u5b9a\u5931\u6557\uff1a{error}",
   "ui.cline_pass_no_accounts": "尚無 Cline Pass 帳號。",

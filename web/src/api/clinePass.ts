@@ -119,6 +119,9 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 				channel_models: isFiniteNonNegativeNumber(account.channel_models) ? account.channel_models : 0,
 				channel_model_gaps: isFiniteNonNegativeNumber(account.channel_model_gaps) ? account.channel_model_gaps : 0,
 				channel_credential_rejected: account.channel_credential_rejected === true,
+				// A quota hold keeps the account bound but out of routing, so it must survive
+				// normalization: dropping it would show a disabled row as a healthy one.
+				quota_limited: account.quota_limited === true,
 			};
 			if (typeof account.name === "string" && account.name.trim()) view.name = account.name;
 			if (typeof account.expires_at === "string" && account.expires_at) view.expires_at = account.expires_at;
@@ -127,6 +130,7 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();
 			if (typeof account.models_fetched_at === "string" && account.models_fetched_at) view.models_fetched_at = account.models_fetched_at;
 			if (typeof account.created_at === "string" && account.created_at) view.created_at = account.created_at;
+			if (typeof account.quota_limited_until === "string" && account.quota_limited_until) view.quota_limited_until = account.quota_limited_until;
 			const quotaUsage = normalizeClinePassQuotaUsage(account.quota_usage);
 			if (quotaUsage) view.quota_usage = quotaUsage;
 			return view;

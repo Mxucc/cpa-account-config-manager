@@ -33,6 +33,10 @@ type clinePassChannelRoute struct {
 	// expired token leaves behind: the account looks bound while the gateway answers an
 	// authorization error.
 	rows []clinePassChannelRow
+	// shared reports that no row of this base URL holds a credential, so the group is a
+	// gateway-wide legacy row every account of it may be reported through. A group that
+	// holds a credential is one account's binding, and only that account resolves to it.
+	shared bool
 }
 
 // clinePassChannelRouteKey indexes one channel row by its base URL and, when it has one, by its
@@ -93,12 +97,25 @@ func (a *App) clinePassChannelRoutes(ctx context.Context, managementKey string) 
 				credential: clinePassChannelCredentialIdentity(aiProviderChannelCredential(entry)),
 			})
 		}
+		// shared reports that no row of this gateway holds a credential at all. Such a
+		// group is the only one an account without a row of its own may be reported
+		// through: a group that holds another account's credential is that account's
+		// binding, and claiming it here would hide exactly the state this page has to
+		// show - this account publishes nothing, so CPA can never route to it.
+		shared := true
+		for _, row := range rows {
+			if row.credential != "" {
+				shared = false
+				break
+			}
+		}
 		for index, entry := range group {
 			route := clinePassChannelRoute{
 				published: aiProviderChannelPublishedModels(entry),
 				aliases:   aiProviderChannelModelAliases(entry),
 				models:    clinePassChannelModelCount(entry),
 				rows:      rows,
+				shared:    shared,
 			}
 			// The first row of a base URL is what a summary over every account reports.
 			if index == 0 {
@@ -180,8 +197,15 @@ func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey str
 	return routes, readable
 }
 
-// clinePassChannelRouteLookup prefers the account's own row (base URL plus its credential) and
-// falls back to the base-URL row, which is what a deployment that has not re-bound yet still has.
+// clinePassChannelRouteLookup resolves the row one account is published on. The account's own
+// row is the row that carries the credential this account binds with. A group of rows that
+// holds no credential at all is a gateway-wide legacy row, so every account of it may report
+// through that group; a group that holds a credential belongs to the one account that
+// published it.
+//
+// Reporting "bound" through a sibling's credential is what used to hide a missing row: the
+// account looked published while CPA only ever routed to the sibling, so nothing republished
+// it. An account that owns no row of its own is unbound, which is what asks for the bind.
 func clinePassChannelRouteLookup(view ClinePassAccountView, apiKey string, routes map[string]clinePassChannelRoute) (clinePassChannelRoute, bool) {
 	baseURL := clinePassChannelBaseURL(view.BaseURL)
 	if credentialKey := clinePassChannelRouteKey(baseURL, apiKey); credentialKey != "" {
@@ -194,14 +218,27 @@ func clinePassChannelRouteLookup(view ClinePassAccountView, apiKey string, route
 		return clinePassChannelRoute{}, false
 	}
 	route, ok := routes[baseKey]
-	return route, ok
+	if !ok || !route.shared {
+		return clinePassChannelRoute{}, false
+	}
+	return route, true
 }
 
 // clinePassChannelLabelForName is the label a Cline Pass account's own row publishes. The bind
 // matches a rotation by that label, because CPA drops fields it does not know when the channel
 // list is written back and the label is the only stable identity a row carries.
-func clinePassChannelLabelForName(name string) string {
+//
+// An account the operator never renamed is labelled with its own account id instead of the bare
+// product name, exactly like an OpenCode Zen account: several accounts share one gateway base URL,
+// so the label is what tells their rows apart. With the bare name every unnamed account produced
+// the same label, and a bind then could not tell its own row from a sibling's - it adopted the
+// sibling's row and replaced its credential, so only one account of the gateway could ever be
+// bound. An empty account id keeps the bare name for a caller that has no identity to offer.
+func clinePassChannelLabelForName(name, accountID string) string {
 	if trimmed := strings.TrimSpace(name); trimmed != "" {
+		return clinePassBoundChannelName + " " + trimmed
+	}
+	if trimmed := strings.TrimSpace(accountID); trimmed != "" {
 		return clinePassBoundChannelName + " " + trimmed
 	}
 	return clinePassBoundChannelName
@@ -352,7 +389,7 @@ func clinePassAccountModelIDs(view ClinePassAccountView) []string {
 func applyClinePassRouteState(view ClinePassAccountView, apiKey string, routes map[string]clinePassChannelRoute) ClinePassAccountView {
 	models := clinePassAccountModelIDs(view)
 	route, bound := clinePassChannelRouteLookup(view, apiKey, routes)
-	if !bound || clinePassRouteRowStale(view, clinePassChannelLabelForName(view.Name), apiKey, routes) {
+	if !bound || clinePassRouteRowStale(view, clinePassChannelLabelForName(view.Name, view.ID), apiKey, routes) {
 		view.ChannelBound = false
 		view.ChannelModels = 0
 		view.ChannelModelGaps = len(models)
@@ -392,6 +429,13 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 		accounts = append(accounts, *view)
 	}
 	routes, readable := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
+	// A recorded quota hold has to reach the live channel list even when the operator only
+	// looks at the page: disabling the limited account's row is what moves the traffic to a
+	// sibling account, and the row that was enabled again is what brings a recovered
+	// account back. The pass writes only what actually differs.
+	if readable && a.applyClinePassQuotaRowStates(ctx, managementKey) {
+		routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
+	}
 	for _, view := range targets {
 		// Reporting "not bound" for a list this plugin could not read would send the operator
 		// looking for a missing channel that may well be published; the pages say which it is.

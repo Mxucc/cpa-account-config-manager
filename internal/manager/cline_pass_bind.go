@@ -18,7 +18,73 @@ import (
 // auth-index of that row, and the re-read records it so a usage callback can be
 // attributed to this account.
 func (a *App) bindClinePassChannel(ctx context.Context, managementKey, accountID, baseURL, accessToken, label string, models []string, version string) (ProviderChannelBindingResult, error) {
-	return a.bindOpenAICompatibleChannelForAccount(ctx, managementKey, accountID, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version), clinePassChannelModelAliases(models, a.clinePassStripModelPrefix()))
+	return a.bindOpenAICompatibleChannelForAccount(ctx, managementKey, accountID, clinePassChannelBaseURL(baseURL), accessToken, label, clinePassBoundChannelName, models, clinePassChannelHeaders(version), clinePassChannelModelAliases(models, a.clinePassStripModelPrefix()), a.clinePassChannelOwnership(accountID, label))
+}
+
+// clinePassChannelOwnership reports what proves that a channel row publishing this
+// bind's label is this account's own row. Several accounts share one gateway base
+// URL and the label is the only identity a CPA row carries, so a bind that cannot
+// prove ownership publishes its own row instead of rewriting a sibling's - which is
+// exactly how two accounts used to collapse into one row.
+//
+// The shared default name is renamed on this bind as well: a row that still carries it was
+// written by a release that had no per-account label, so naming it after this account keeps
+// its siblings' rows distinguishable. Such a row is only adopted when it does not currently
+// carry another stored account's credential, which is what stops the migration from taking
+// that account's routing away.
+func (a *App) clinePassChannelOwnership(accountID, label string) ProviderChannelOwnership {
+	ownership := ProviderChannelOwnership{
+		ExclusiveLabel:           a.clinePassChannelLabelIsExclusive(accountID, label),
+		RenameSharedDefaultLabel: true,
+	}
+	if a != nil && a.clinePass != nil {
+		ownership.PublishedCredential = a.clinePass.RoutePublishedCredential(accountID)
+		ownership.DigestCredential = clinePassChannelCredentialIdentity
+		ownership.ForeignCredentials = a.clinePassForeignCredentialIdentities(accountID)
+	}
+	return ownership
+}
+
+// clinePassForeignCredentialIdentities digests the credentials every OTHER stored account
+// publishes. The row of such an account is never adopted by this bind, however its label
+// reads, so binding one account can never silently unbind another.
+func (a *App) clinePassForeignCredentialIdentities(accountID string) []string {
+	if a == nil || a.clinePass == nil {
+		return nil
+	}
+	own := strings.TrimSpace(accountID)
+	identities := make([]string, 0, 2)
+	for _, account := range a.clinePass.ListAccounts() {
+		if account.ID == own {
+			continue
+		}
+		if digest := clinePassChannelCredentialIdentity(a.clinePass.accessToken(account.ID)); digest != "" {
+			identities = append(identities, digest)
+		}
+	}
+	return identities
+}
+
+// clinePassChannelLabelIsExclusive reports whether this account is the only stored
+// account that publishes this label. Such a label can only have been written by this
+// account, so the row carrying it may be adopted even when the row's credential is
+// already unknown (a restart, or a credential rotated more than once).
+func (a *App) clinePassChannelLabelIsExclusive(accountID, label string) bool {
+	wanted := strings.TrimSpace(label)
+	if wanted == "" || a == nil || a.clinePass == nil {
+		return false
+	}
+	matches := 0
+	for _, account := range a.clinePass.ListAccounts() {
+		if !strings.EqualFold(a.clinePassChannelLabel(account.ID), wanted) {
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return false
+		}
+	}
+	return matches == 1
 }
 
 // clinePassRouteAuthIndexes collects the CPA auth indexes the account's own row

@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stubWorkspaceFetch, WorkspaceFetchMockOptions, clinePassAccountView, clinePassLoginView, clinePassQuotaUsage, resetWorkspaceTestSession, UNRENDERED_SECRET } from "../test/workspaceFetchMock";
+import { formatDateTimeForLocale } from "../i18n";
 import { ClinePassWorkspace } from "./ClinePassWorkspace";
 import { OpenCodeWorkspace } from "./OpenCodeWorkspace";
 
@@ -370,6 +371,50 @@ describe("ClinePassWorkspace", () => {
     // The rejected state takes precedence over the plain unbound wording, which would send the
     // operator looking for a missing channel instead of a refused credential.
     expect(within(row).queryByText("尚未绑定 CPA 渠道")).not.toBeInTheDocument();
+  });
+
+  // The gateway answered 429 for this account, so the plugin disabled its channel row until the
+  // window it named passes. The operator must read that apart from "not bound" (the row is still
+  // published) and from a rejected credential (nothing needs repairing by hand).
+  it("shows a quota-limited account as temporarily disabled while its published row stays listed", async () => {
+    const until = "2026-10-03T12:00:00Z";
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        channel_bound: true,
+        channel_models: 2,
+        channel_model_gaps: 0,
+        quota_limited: true,
+        quota_limited_until: until,
+      })],
+    });
+
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("已临时停用（额度受限）")).toBeInTheDocument();
+    expect(within(row).getByText(/网关以 429 拒绝了本账号/)).toBeInTheDocument();
+    // The moment the gateway named is on screen, not just the fact that the account is held back.
+    expect(row.textContent).toContain(formatDateTimeForLocale("zh-CN", until));
+    // The row is still bound, so the cell must not read as a missing channel.
+    expect(within(row).getByText("已绑定 · 已发布 2 个模型")).toBeInTheDocument();
+    expect(within(row).queryByText("尚未绑定 CPA 渠道")).not.toBeInTheDocument();
+    expect(within(row).queryByText("凭据已被网关拒绝，正在自动修复")).not.toBeInTheDocument();
+  });
+
+  // Every other routing state keeps its own wording: a served account must not carry the quota hold.
+  it("omits the quota hold from an account the gateway still serves", async () => {
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({ channel_bound: true, channel_models: 2, channel_model_gaps: 0 })],
+    });
+
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("已绑定 · 已发布 2 个模型")).toBeInTheDocument();
+    expect(within(row).queryByText("已临时停用（额度受限）")).not.toBeInTheDocument();
+    expect(within(row).queryByText(/网关以 429 拒绝了本账号/)).not.toBeInTheDocument();
   });
 
   it("announces the CPA channel a completed Cline Pass sign-in bound", async () => {

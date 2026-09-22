@@ -184,6 +184,15 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "account_id is required"})
 		}
 		startedAt := time.Now().UTC()
+		// An account that is out of allowance holds its own channel row disabled, and
+		// removing the account removes the record that would have enabled it again. The row
+		// is enabled first, so a deletion leaves no orphan credential that CPA can never
+		// route to; the credential itself is removed with the row when the account is gone.
+		if _, bound := a.clinePass.AccountView(accountID); bound && !a.clinePass.QuotaLimitedUntil(accountID).IsZero() {
+			if _, errRelease := a.clinePass.ReleaseQuotaLimited(accountID); errRelease == nil {
+				a.applyClinePassQuotaRowStates(ctx, managementKey)
+			}
+		}
 		if errRemove := a.clinePass.RemoveAccount(accountID); errRemove != nil {
 			a.operations.Record(OperationEntry{
 				Category: OperationCategoryOpenCode, Action: OperationActionOpenCodeRemove,
@@ -383,7 +392,8 @@ func (a *App) handleClinePassModelTest(ctx context.Context, req cpaapi.Managemen
 	if a == nil || a.clinePass == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
 	}
-	if resolveManagementKey(req.Headers) == "" {
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	var request clinePassModelRequest
@@ -400,6 +410,9 @@ func (a *App) handleClinePassModelTest(ctx context.Context, req cpaapi.Managemen
 	if errProbe != nil {
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": errProbe.Error()})
 	}
+	// A probe is the most direct signal the plugin has about one account: it names the
+	// account and carries the gateway's own answer, so the routing state follows it.
+	a.noteClinePassProbeQuota(ctx, managementKey, request.AccountID, result)
 	return jsonResponse(http.StatusOK, map[string]any{"result": result})
 }
 
@@ -433,16 +446,17 @@ func (a *App) handleClinePassBind(ctx context.Context, req cpaapi.ManagementRequ
 }
 
 // clinePassChannelLabel names the CPA channel for one account, preferring the
-// operator-supplied name so several subscriptions stay distinguishable. It shares
+// operator-supplied name and falling back to the account id, so several
+// subscriptions of one gateway stay distinguishable. It shares
 // clinePassChannelLabelForName with the routing checks, so the label a bind writes and the label a
 // repair compares against can never drift apart.
 func (a *App) clinePassChannelLabel(accountID string) string {
 	if a != nil && a.clinePass != nil {
 		if view, found := a.clinePass.AccountView(accountID); found {
-			return clinePassChannelLabelForName(view.Name)
+			return clinePassChannelLabelForName(view.Name, accountID)
 		}
 	}
-	return clinePassChannelLabelForName("")
+	return clinePassChannelLabelForName("", accountID)
 }
 
 // refreshExpiringClinePassAccounts rotates the tokens a Cline Pass read finds inside the refresh

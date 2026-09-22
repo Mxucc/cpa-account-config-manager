@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -205,10 +206,20 @@ func TestClinePassRoutingStateIsPerAccount(t *testing.T) {
 	if got := views[secondID]; !got.ChannelBound || got.ChannelModels != 2 {
 		t.Fatalf("the second account's routing state = %#v, want its own row with 2 models", got)
 	}
-	// An account with no row of its own still resolves through the gateway row it shares, so a
-	// deployment that has not re-bound yet keeps reporting a bound account instead of a broken one.
+	// An account that owns no row of its own is published by the same read: a row belonging
+	// to a sibling says nothing about this account - CPA routes through the credential inside
+	// a row - so reporting it "bound" through that row is what used to leave the second
+	// subscription idle while the page said it was fine.
 	if got := views[thirdID]; !got.ChannelBound {
-		t.Fatalf("an account without its own row lost the shared-gateway fallback: %#v", got)
+		t.Fatalf("an account without its own row was not published: %#v", got)
+	}
+	entries, _ := store.snapshot()
+	owners := map[string]bool{}
+	for _, entry := range entries {
+		owners[channelCredentialKey(t, entry)] = true
+	}
+	if !owners["sk-third-secret"] {
+		t.Fatalf("the read did not publish the account that owned no row: %#v", owners)
 	}
 }
 
@@ -465,5 +476,197 @@ func TestClinePassAmbiguousLabelIsNotTreatedAsStale(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("the read changed the row count: %d", len(entries))
+	}
+}
+
+// newClinePassUnnamedPublicationApp binds one app to an in-memory channel store and
+// the given number of accounts the operator never renamed, which is what a
+// device-code sign-in leaves behind: the name is optional there. The credentials are
+// numbered so a test can tell the accounts apart.
+func newClinePassUnnamedPublicationApp(t *testing.T, accounts int, models []string) (*App, *clinePassChannelStore, []string, http.Header) {
+	t.Helper()
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	ids := make([]string, 0, accounts)
+	for index := 0; index < accounts; index++ {
+		accountID, errSave := service.SaveAPIKeyAccount("", "", "", fmt.Sprintf("sk-secret-%d", index))
+		if errSave != nil {
+			t.Fatalf("SaveAPIKeyAccount() error = %v", errSave)
+		}
+		service.mu.Lock()
+		for position := range service.accounts {
+			if service.accounts[position].ID == accountID {
+				service.accounts[position].Models = append([]string(nil), models...)
+			}
+		}
+		service.mu.Unlock()
+		ids = append(ids, accountID)
+	}
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	return app, store, ids, http.Header{"Authorization": []string{"Bearer management-secret"}}
+}
+
+// Two accounts of one gateway that were never renamed must each own a channel row.
+// The label they publish is per account (the id stands in for a missing name), so a
+// bind can tell its own row from a sibling's instead of adopting - and rewriting -
+// it. Before that, both accounts computed the same label: the second bind replaced
+// the first account's credential, so exactly one of them was routable at a time and
+// the other was reported as "not bound" no matter how often the page was reloaded.
+func TestClinePassUnnamedAccountsWithOneGatewayGetTheirOwnChannelRows(t *testing.T) {
+	app, store, ids, headers := newClinePassUnnamedPublicationApp(t, 2, []string{"cline-pass/glm-5.3"})
+
+	first := bindClinePassPublicationAccount(t, app, headers, ids[0])
+	if !first.Created {
+		t.Fatalf("the first bind did not create a row: %#v", first)
+	}
+	second := bindClinePassPublicationAccount(t, app, headers, ids[1])
+	if !second.Created {
+		t.Fatalf("the second unnamed account reused the first account's row: %#v", second)
+	}
+	entries, _ := store.snapshot()
+	if len(entries) != 2 {
+		t.Fatalf("rows after binding two unnamed accounts = %d, want 2", len(entries))
+	}
+	names := map[string]string{}
+	for _, entry := range entries {
+		names[channelCredentialKey(t, entry)] = channelName(t, entry)
+	}
+	for _, key := range []string{"sk-secret-0", "sk-secret-1"} {
+		if names[key] == "" {
+			t.Fatalf("account %q owns no row of its own: %#v", key, names)
+		}
+	}
+	if names["sk-secret-0"] == names["sk-secret-1"] {
+		t.Fatalf("both accounts publish the same label again: %#v", names)
+	}
+
+	// The point of the fix: one read must report every account of the gateway as
+	// bound, which is what the operator sees as a published account.
+	for _, account := range getClinePassAccounts(t, app, headers).Accounts {
+		if !account.ChannelBound {
+			t.Fatalf("account %s is not bound: %#v", account.ID, account)
+		}
+	}
+}
+
+// Two accounts can still be renamed to the same name, and then one label describes
+// both of them. Such a label must never authorize an adoption: the second bind
+// publishes its own row instead of replacing the credential the first row routes
+// through.
+func TestClinePassAccountsWithTheSameNameDoNotStealEachOthersRow(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	save := func(key string) string {
+		accountID, errSave := service.SaveAPIKeyAccount("", "shared laptop", "", key)
+		if errSave != nil {
+			t.Fatalf("SaveAPIKeyAccount(%s) error = %v", key, errSave)
+		}
+		service.mu.Lock()
+		for position := range service.accounts {
+			if service.accounts[position].ID == accountID {
+				service.accounts[position].Models = []string{"cline-pass/glm-5.3"}
+			}
+		}
+		service.mu.Unlock()
+		return accountID
+	}
+	firstID, secondID := save("sk-first-secret"), save("sk-second-secret")
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+
+	bindClinePassPublicationAccount(t, app, headers, firstID)
+	second := bindClinePassPublicationAccount(t, app, headers, secondID)
+	if !second.Created {
+		t.Fatalf("a shared label let the second account adopt the first account's row: %#v", second)
+	}
+	entries, _ := store.snapshot()
+	if len(entries) != 2 {
+		t.Fatalf("rows = %d, want one row per account", len(entries))
+	}
+	keys := map[string]bool{}
+	for _, entry := range entries {
+		keys[channelCredentialKey(t, entry)] = true
+	}
+	if !keys["sk-first-secret"] || !keys["sk-second-secret"] {
+		t.Fatalf("an account lost its credential: %#v", keys)
+	}
+}
+
+// A row that still carries the shared default name was written before the label held
+// an account identity. A bind of its own account renames that row instead of adding a
+// second one, so the two accounts of a gateway end up distinguishable without
+// leaving an orphan row behind.
+func TestClinePassBindRenamesTheSharedDefaultRow(t *testing.T) {
+	app, store, accountID, headers := newClinePassPublicationApp(t, []string{"cline-pass/glm-5.3"})
+	store.setEntries([]map[string]any{{
+		"base-url":        clinePassDefaultBaseURL,
+		"name":            clinePassBoundChannelName,
+		"api-key-entries": []any{map[string]any{"api-key": "sk-publication-secret"}},
+		"models":          []any{map[string]any{"name": "cline-pass/glm-5.3", "alias": "cline-pass/glm-5.3"}},
+	}})
+
+	result := bindClinePassPublicationAccount(t, app, headers, accountID)
+	if result.Created {
+		t.Fatalf("the account's own row was duplicated: %#v", result)
+	}
+	entries, _ := store.snapshot()
+	if len(entries) != 1 {
+		t.Fatalf("rows = %d, want the renamed row alone", len(entries))
+	}
+	if got := channelName(t, entries[0]); got != "Cline Pass publication" {
+		t.Fatalf("row name = %q, want the account's own label", got)
+	}
+	if got := channelCredentialKey(t, entries[0]); got != "sk-publication-secret" {
+		t.Fatalf("the rename changed the credential: %q", got)
+	}
+}
+
+// Two accounts renamed to the same name cannot be told apart by their label, so the digest the
+// account's last bind recorded is what keeps a rotation on its own row - including after a
+// restart, because the digest is persisted with the account. A second row for the same account
+// would leave CPA routing half the traffic through a credential the gateway already revoked.
+func TestClinePassSameNamedRotationStaysOnOneRow(t *testing.T) {
+	service, _ := newConfiguredClinePassService(t, t.TempDir())
+	save := func(key string) string {
+		accountID, errSave := service.SaveAPIKeyAccount("", "shared laptop", "", key)
+		if errSave != nil {
+			t.Fatalf("SaveAPIKeyAccount(%s) error = %v", key, errSave)
+		}
+		service.mu.Lock()
+		for position := range service.accounts {
+			if service.accounts[position].ID == accountID {
+				service.accounts[position].Models = []string{"cline-pass/glm-5.3"}
+			}
+		}
+		service.mu.Unlock()
+		return accountID
+	}
+	firstID, secondID := save("sk-first-secret"), save("sk-second-secret")
+	store := &clinePassChannelStore{}
+	app := NewApp(&fakeAuthHost{}, nil)
+	app.clinePass = service
+	app.managementDoer = store.doer()
+	headers := http.Header{"Authorization": []string{"Bearer management-secret"}}
+	bindClinePassPublicationAccount(t, app, headers, firstID)
+	bindClinePassPublicationAccount(t, app, headers, secondID)
+
+	rotateClinePassStoredToken(t, app, firstID, "sk-first-rotated")
+	if result := bindClinePassPublicationAccount(t, app, headers, firstID); result.Created {
+		t.Fatalf("a rotation after the same-name bind added a second row: %#v", result)
+	}
+	entries, _ := store.snapshot()
+	if len(entries) != 2 {
+		t.Fatalf("rows = %d, want one per account", len(entries))
+	}
+	keys := map[string]bool{}
+	for _, entry := range entries {
+		keys[channelCredentialKey(t, entry)] = true
+	}
+	if !keys["sk-first-rotated"] || !keys["sk-second-secret"] {
+		t.Fatalf("the rotation did not stay on the account's own row: %#v", keys)
 	}
 }

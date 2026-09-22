@@ -755,6 +755,12 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                   const modelGaps = account.channel_model_gaps ?? 0;
                   /** True when the gateway rejected the stored token and the repair has not answered it. */
                   const channelCredentialRejected = account.channel_credential_rejected === true;
+                  /**
+                   * True while the gateway's own quota window holds this account out of routing. The
+                   * row stays published; CPA routes the same models through a sibling account until then.
+                   */
+                  const quotaLimited = account.quota_limited === true;
+                  const quotaLimitedUntil = formatDateTime(account.quota_limited_until);
                   // Cline documents exactly these three ClinePass windows; the USD figures the
                   // backend attributes to them are reference prices, never an amount owed.
                   const usage = account.quota_usage;
@@ -816,6 +822,17 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                             <>
                               <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_channel_unreadable")}</span>
                               <small>{tx("ui.cline_pass_channel_unreadable_hint")}</small>
+                            </>
+                          ) : quotaLimited ? (
+                            // The account is still bound, so neither the model-gap nor the "unbound"
+                            // wording may speak here: the row is disabled because the gateway refused
+                            // this account's quota, not because its channel is missing.
+                            <>
+                              <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_quota_limited")}</span>
+                              {bound ? (
+                                <span className="opencode-routing-badge is-bound">{tx("ui.cline_pass_routing_bound", { count: String(publishedModels) })}</span>
+                              ) : null}
+                              <small>{tx("ui.cline_pass_quota_limited_hint", { time: quotaLimitedUntil })}</small>
                             </>
                           ) : bound && modelGaps > 0 ? (
                             <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_routing_gaps", { count: String(modelGaps) })}</span>

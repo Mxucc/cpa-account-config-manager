@@ -56,16 +56,35 @@ func (a *App) noteClinePassRequestOutcome(completion cpaapi.RequestCompletion) {
 		_ = recover()
 	}()
 	outcome := strings.ToLower(strings.TrimSpace(completion.Outcome))
+	accountID := a.clinePassAccountForCompletion(completion)
+	// The gateway's quota answer needs no rotation: the credential is fine, the account
+	// is simply out of allowance for its window. The hold takes it out of routing until
+	// that window ends, which is what lets a sibling account of the same gateway serve
+	// the models in the meantime.
+	if clinePassCompletionQuotaLimited(completion) {
+		if accountID == "" {
+			return
+		}
+		if _, marked := a.noteClinePassQuotaLimited(accountID, completion.Error, time.Now().UTC()); marked {
+			a.requestClinePassAuthRepair()
+		}
+		return
+	}
 	if outcome != requestCompletionSucceeded && !clinePassCompletionLooksAuthorizationFailure(completion, outcome) {
 		return
 	}
-	accountID := a.clinePassAccountForCompletion(completion)
 	if accountID == "" {
 		return
 	}
 	if outcome == requestCompletionSucceeded {
 		// The credential works, so a recorded rejection is spent and the account stops asking.
 		a.clinePass.ClearAuthFailure(accountID)
+		// A request that went through proves the account serves traffic again, so a
+		// recorded quota hold is released as well; the row is enabled by the maintenance
+		// pass, which holds the management key this path does not have.
+		if released, _ := a.clinePass.ReleaseQuotaLimited(accountID); released {
+			a.requestClinePassAuthRepair()
+		}
 		return
 	}
 	if !a.clinePass.NoteAuthFailure(accountID) {
@@ -233,13 +252,17 @@ func (a *App) requestClinePassAuthRepair() {
 }
 
 // repairRejectedClinePassAccounts rotates the rejected tokens and republishes the channel rows that
-// carried them. Rotation happens first, so the republish writes the new key.
+// carried them, and then applies the recorded quota holds to the same list. Rotation happens first,
+// so the republish writes the new key. One maintenance pass owns both writers of the channel list,
+// which is why the quota hold of a request that arrived off the page path is applied here instead
+// of by a second background task: two passes writing the whole list would lose each other's update.
 func (a *App) repairRejectedClinePassAccounts(ctx context.Context, managementKey string) {
 	if a == nil || a.clinePass == nil || strings.TrimSpace(managementKey) == "" {
 		return
 	}
 	a.clinePass.RefreshExpiringAccounts(ctx)
 	a.rebindRejectedClinePassAccounts(ctx, managementKey)
+	a.applyClinePassQuotaRowStates(ctx, managementKey)
 }
 
 // rebindRejectedClinePassAccounts republishes every account whose credential is still recorded as

@@ -18,8 +18,10 @@ import (
 //
 // One exception is deliberate: a bind whose row belongs to a stored account (the
 // accountID argument) records the CPA auth indexes that row carries, which is what
-// attributes a usage callback. Only Cline Pass stores such accounts today, so the
-// hook checks for that service; an OpenCode bind passes no account id and skips it.
+// attributes a usage callback, and the digest of the credential the row now holds,
+// which is what lets a later bind prove that a row is that account's own. Only
+// Cline Pass stores such accounts today, so the hook checks for that service; an
+// OpenCode bind passes no account id and skips it.
 
 // ProviderChannelBindingResult reports the CPA channel this account was bound to.
 type ProviderChannelBindingResult struct {
@@ -29,6 +31,72 @@ type ProviderChannelBindingResult struct {
 	Created    bool   `json:"created"`
 	ChannelKey string `json:"channel_key"`
 	Models     int    `json:"models"`
+}
+
+// ProviderChannelOwnership is the proof a bind can offer that a live channel row
+// publishing its label is its own row and not a sibling account's. CPA drops fields it does not
+// know when the channel list is written back, so a row carries no owner id: the label is the only
+// identity, and two accounts can compute the same label (the same operator name, or a release that
+// named every unnamed account with one shared default).
+//
+// The zero value accepts the label as proof, which is what a bind with nothing else to offer
+// relies on. A bind that can prove ownership sets ExclusiveLabel, PublishedCredential together
+// with DigestCredential, or both, and then a row must satisfy one of them before it is adopted.
+type ProviderChannelOwnership struct {
+	// ExclusiveLabel reports that no other account of the caller publishes this
+	// same label, so a row carrying it can only be the account's own row.
+	ExclusiveLabel bool
+	// PublishedCredential is the digest of the credential this account's previous
+	// bind wrote, and DigestCredential digests a live row's credential the same
+	// way, so the two compare without either side keeping the other's secret. A row
+	// that still carries that credential is this account's own row whose credential
+	// was rotated since.
+	PublishedCredential string
+	DigestCredential    func(string) string
+	// RenameSharedDefaultLabel reports that a row which still carries the bare
+	// defaultLabel holds no operator name yet, so this bind may name it.
+	RenameSharedDefaultLabel bool
+	// ForeignCredentials digests the credentials the caller's OTHER accounts publish. A row
+	// that currently carries one of them belongs to that account, so a bind must never adopt
+	// it, however its label reads.
+	ForeignCredentials []string
+}
+
+// HoldsForeignCredential reports whether one live row publishes a credential that belongs to
+// another account of the caller. Adopting such a row would take that account's routing away,
+// which is exactly what used to leave one of two subscriptions unroutable.
+func (o ProviderChannelOwnership) HoldsForeignCredential(entry map[string]any) bool {
+	if len(o.ForeignCredentials) == 0 || o.DigestCredential == nil {
+		return false
+	}
+	credential := aiProviderChannelCredential(entry)
+	if credential == "" {
+		return false
+	}
+	digest := o.DigestCredential(credential)
+	for _, foreign := range o.ForeignCredentials {
+		if foreign != "" && foreign == digest {
+			return true
+		}
+	}
+	return false
+}
+
+// Owns reports whether this proof accepts one live row that publishes the bind's label as the
+// bind's own row. An empty proof accepts it, which keeps the historical rule for a caller that has
+// no way to identify its row.
+func (o ProviderChannelOwnership) Owns(entry map[string]any) bool {
+	if !o.ExclusiveLabel && o.PublishedCredential == "" && o.DigestCredential == nil {
+		return true
+	}
+	if o.ExclusiveLabel {
+		return true
+	}
+	if o.PublishedCredential == "" || o.DigestCredential == nil {
+		return false
+	}
+	credential := aiProviderChannelCredential(entry)
+	return credential != "" && o.DigestCredential(credential) == o.PublishedCredential
 }
 
 // bindOpenAICompatibleChannel upserts one OpenAI-compatible CPA channel that
@@ -51,7 +119,17 @@ func (a *App) bindOpenAICompatibleChannel(ctx context.Context, managementKey, ch
 // recorded for that account there, so a usage callback that only names the index
 // CPA assigned is still attributed to the account whose figures the operator
 // reads. The OpenCode path passes no account id and records nothing.
-func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managementKey, accountID, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string][]string) (ProviderChannelBindingResult, error) {
+//
+// The optional ownership proof decides whether a row that publishes this bind's
+// label may be adopted as its own row: two accounts of one gateway can compute the
+// same label, and adopting a sibling's row would replace the credential that row
+// routes through, leaving the sibling unroutable. Without a proof the label alone
+// is accepted, which is the historical rule the product-neutral callers rely on.
+func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managementKey, accountID, channelBaseURL, apiKey, label, defaultLabel string, models []string, headers map[string]string, aliases map[string][]string, ownership ...ProviderChannelOwnership) (ProviderChannelBindingResult, error) {
+	proof := ProviderChannelOwnership{}
+	if len(ownership) > 0 {
+		proof = ownership[0]
+	}
 	result := ProviderChannelBindingResult{Kind: "openai-compatibility", BaseURL: channelBaseURL, Index: -1}
 	if a == nil {
 		return result, fmt.Errorf("AI provider channel service is unavailable")
@@ -73,7 +151,9 @@ func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managem
 	// second row for the same account, so the row is matched by its credential first and by its
 	// label second: the label is per account (for example "Cline Pass work laptop"), which is the
 	// only stable identity a channel row carries, since CPA drops fields it does not know when the
-	// list is written back.
+	// list is written back. The label is only accepted as proof of ownership when the caller offers
+	// one (see ProviderChannelOwnership): a label two accounts share would otherwise let this bind
+	// rewrite a sibling's row and replace the credential that row routes through.
 	byLabel := -1
 	// unclaimed is a row for the same gateway that carries no credential at all. It is what an
 	// older release left behind before every account got its own row, so this account adopts it
@@ -96,7 +176,16 @@ func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managem
 				if target < 0 {
 					target = index
 				}
-			case strings.EqualFold(strings.TrimSpace(aiProviderChannelName(cloned)), wantedLabel) && byLabel < 0:
+			case strings.EqualFold(strings.TrimSpace(aiProviderChannelName(cloned)), wantedLabel) && byLabel < 0 && proof.Owns(cloned):
+				byLabel = index
+			case proof.RenameSharedDefaultLabel && byLabel < 0 && strings.EqualFold(strings.TrimSpace(aiProviderChannelName(cloned)), strings.TrimSpace(defaultLabel)) && !proof.HoldsForeignCredential(cloned):
+				// A row that still carries the bare shared default label was written before the
+				// label held an account identity, and a caller that asks for the rename owns
+				// those rows: once the credential has rotated, the default label is the only
+				// trace of which product wrote the row, and adopting it here is what keeps a
+				// rotated account on one row instead of leaving a second row behind that still
+				// holds the dead credential. A row that carries another account's live
+				// credential is never adopted this way: it is that account's routing.
 				byLabel = index
 			case !providerChannelHoldsAnyCredential(cloned) && unclaimed < 0:
 				unclaimed = index
@@ -128,10 +217,15 @@ func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managem
 	}
 	entry := items[target]
 	entry["base-url"] = result.BaseURL
-	// Only a row this bind created (or a row that carries no label at all yet) is
-	// named: the operator's name has to survive a plain re-bind, and a bind must
-	// never rename a sibling account's row.
-	if result.Created || strings.TrimSpace(aiProviderChannelName(entry)) == "" {
+	// Only a row this bind created, a row that carries no label at all yet, or - for a product
+	// that asks for it - a row that still carries the shared default label is named: the
+	// operator's name has to survive a plain re-bind, and a bind must never rename a sibling
+	// account's row. The shared default label is not an operator name: it is what a release
+	// wrote for every unnamed account before the label carried an account identity, so replacing
+	// it with this account's own label is what makes two rows of one gateway distinguishable.
+	existingName := strings.TrimSpace(aiProviderChannelName(entry))
+	if result.Created || existingName == "" ||
+		proof.RenameSharedDefaultLabel && strings.EqualFold(existingName, strings.TrimSpace(defaultLabel)) {
 		entry["name"] = label
 	}
 	// The credential lives in the weighted key list; the legacy top-level field is
@@ -167,6 +261,12 @@ func (a *App) bindOpenAICompatibleChannelForAccount(ctx context.Context, managem
 	defer clearManagementWriterSecrets(writer)
 	if errWrite := writer.putAIProviderChannel(ctx, listKind, items); errWrite != nil {
 		return result, fmt.Errorf("CPA channel could not be saved")
+	}
+	// The row now carries this credential, so a later bind of this account can prove
+	// that the row publishing its label is its own even after the credential rotates;
+	// only a digest is kept there, never the credential itself.
+	if accountID != "" && a.clinePass != nil {
+		a.clinePass.SetRoutePublishedCredential(accountID, apiKey)
 	}
 	// Re-read the channel list so the newly written channel's CPA auth index is
 	// recorded for session attribution immediately after binding.
@@ -524,4 +624,112 @@ func (c *managementClient) putAIProviderChannel(ctx context.Context, kind string
 		return fmt.Errorf("AI provider channel payload could not be encoded")
 	}
 	return c.requestJSON(ctx, http.MethodPut, "/v0/management/"+kind, strings.NewReader(string(encoded)), "application/json", nil)
+}
+
+// providerChannelRowTarget identifies one channel row a product owns: the gateway it belongs
+// to, the credential it publishes, the digest of a credential it was written with before
+// that one (a rotation), and the label as the last resort. Disabled is the state the caller
+// wants the row to have.
+type providerChannelRowTarget struct {
+	BaseURL  string
+	APIKey   string
+	Label    string
+	Digest   string
+	Disabled bool
+}
+
+// setProviderChannelRowsDisabled writes the enabled flag of every given row in one pass: the
+// channel list is read once, each target's own row is updated in place, and the list is
+// written back only when at least one row actually differs from the wanted state. CPA keeps a
+// disabled row together with its credential and its published models, so enabling it again
+// restores the route without a rebind and the model list never disappears while a credential
+// is briefly out of allowance.
+//
+// The row is found the same way a bind finds it: the credential being published first, the
+// digest the account's last bind recorded second (a credential that rotated since), and the
+// label last (a row written before either was known). A target whose row is missing is
+// skipped: an account that publishes nothing is not routed anywhere, which is what a disabled
+// row achieves as well. Another target's row is never taken as this target's.
+func (a *App) setProviderChannelRowsDisabled(ctx context.Context, managementKey string, targets []providerChannelRowTarget) (bool, error) {
+	if a == nil {
+		return false, fmt.Errorf("AI provider channel service is unavailable")
+	}
+	if strings.TrimSpace(managementKey) == "" {
+		return false, fmt.Errorf("management key is unavailable")
+	}
+	if len(targets) == 0 {
+		return false, nil
+	}
+	listKind := "openai-compatibility"
+	entries, errRead := a.aiProviderChannelEntries(ctx, managementKey, listKind)
+	if errRead != nil {
+		return false, fmt.Errorf("CPA channels could not be read")
+	}
+	items := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		cloned := make(map[string]any, len(entry)+1)
+		for key, value := range entry {
+			cloned[key] = value
+		}
+		items = append(items, cloned)
+	}
+	claimed := make(map[int]bool, len(targets))
+	changed := false
+	for _, target := range targets {
+		index := providerChannelRowIndex(items, target, claimed)
+		if index < 0 {
+			continue
+		}
+		claimed[index] = true
+		current, flagged := items[index]["disabled"].(bool)
+		if !flagged && !target.Disabled {
+			// A row without the flag is already enabled, so enabling it is a no-op.
+			continue
+		}
+		if flagged && current == target.Disabled {
+			continue
+		}
+		items[index]["disabled"] = target.Disabled
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	writer, errWriter := a.newWriteManagementClient(managementKey)
+	if errWriter != nil {
+		return false, errWriter
+	}
+	defer clearManagementWriterSecrets(writer)
+	if errWrite := writer.putAIProviderChannel(ctx, listKind, items); errWrite != nil {
+		return false, fmt.Errorf("CPA channel could not be saved")
+	}
+	return true, nil
+}
+
+// providerChannelRowIndex finds the row one target owns in an already cloned channel list.
+// Rows another target already claimed are skipped, so two accounts of one gateway can never
+// converge on the same row through the label fallback.
+func providerChannelRowIndex(items []map[string]any, target providerChannelRowTarget, claimed map[int]bool) int {
+	channelBase := canonicalProviderBaseURL(target.BaseURL)
+	if channelBase == "" {
+		return -1
+	}
+	label := strings.TrimSpace(target.Label)
+	digest := strings.TrimSpace(target.Digest)
+	fallback := -1
+	for index, entry := range items {
+		if claimed[index] || canonicalProviderBaseURL(aiProviderChannelBaseURL(entry)) != channelBase {
+			continue
+		}
+		if providerChannelHoldsCredential(entry, target.APIKey) {
+			return index
+		}
+		if digest != "" && clinePassChannelCredentialIdentity(aiProviderChannelCredential(entry)) == digest {
+			return index
+		}
+		if fallback < 0 && label != "" && strings.EqualFold(strings.TrimSpace(aiProviderChannelName(entry)), label) {
+			fallback = index
+		}
+	}
+	return fallback
 }

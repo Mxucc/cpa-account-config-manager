@@ -35,7 +35,10 @@ type clinePassFakeGateway struct {
 	chatStatus       int
 	registerBody     string
 	refreshBody      string
-	modelsBody       string
+	// chatBody overrides the canned answer of a failed chat completion, so a test can
+	// reproduce the gateway's own quota message instead of the generic error.
+	chatBody   string
+	modelsBody string
 	// chatPayload records the last chat completion request the probe sent, so a
 	// test can pin the output budget it asks for.
 	chatPayload map[string]any
@@ -96,6 +99,9 @@ func (g *clinePassFakeGateway) Do(request *http.Request) (*http.Response, error)
 		}
 		g.chatPayload = payload
 		if g.chatStatus >= 400 {
+			if g.chatBody != "" {
+				return jsonHTTPResponse(g.chatStatus, g.chatBody), nil
+			}
 			if g.chatStatus == http.StatusNotFound {
 				return jsonHTTPResponse(g.chatStatus, `{"error":{"message":"ModelError: not supported"}}`), nil
 			}

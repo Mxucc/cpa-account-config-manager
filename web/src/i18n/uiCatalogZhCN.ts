@@ -460,6 +460,8 @@ export const zhCNUI: Record<UIMessageKey, string> = {
   "ui.cline_pass_routing_unbound": "\u5c1a\u672a\u7ed1\u5b9a CPA \u6e20\u9053",
   "ui.cline_pass_credential_rejected": "凭据已被网关拒绝，正在自动修复",
   "ui.cline_pass_credential_rejected_hint": "Cline 拒绝了当前存储的令牌，而 CPA 只按渠道行里保存的那份密钥路由，因此这个账号暂时无法调用（上游返回未授权）。插件已自动轮换令牌并重写该渠道行；若接下来仍然如此，请重新登录一次该账号。",
+  "ui.cline_pass_quota_limited": "已临时停用（额度受限）",
+  "ui.cline_pass_quota_limited_hint": "网关以 429 拒绝了本账号并给出了该窗口的结束时间；在此之前 CPA 会把请求改由同一网关的其他账号承接，到 {time} 本账号自动恢复路由。",
   "ui.cline_pass_routing_hint": "\u63d2\u4ef6\u5728\u6253\u5f00\u672c\u9875\u65f6\u4f1a\u81ea\u52a8\u53d1\u5e03\u6e20\u9053\uff1b\u82e5\u4e00\u76f4\u672a\u7ed1\u5b9a\uff0c\u8bf7\u68c0\u67e5\u8d26\u53f7\u51ed\u636e\u662f\u5426\u5df2\u8fc7\u671f\u3002\u7ed1\u5b9a\u524d\u5ba2\u6237\u7aef\u4f1a\u6536\u5230 \u201cunknown provider for model\u201d \u9519\u8bef\u3002",
   "ui.cline_pass_binding_error": "Cline Pass \u6e20\u9053\u7ed1\u5b9a\u5931\u8d25\uff1a{error}",
   "ui.cline_pass_no_accounts": "暂无 Cline Pass 账号。",

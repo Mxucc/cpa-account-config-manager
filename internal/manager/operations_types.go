@@ -118,6 +118,10 @@ const (
 	// CPA keeps routing through the key on the channel row, so the account is unroutable until the
 	// automatic repair rewrites that row.
 	OperationFailureClinePassCredentialRejected = "cline_pass_credential_rejected"
+	// OperationFailureClinePassQuotaLimited is the gateway's quota answer for a Cline Pass
+	// account: the plugin holds the account out of routing until the window it named ends
+	// and journals the hold, so the operator can see why an account stopped serving.
+	OperationFailureClinePassQuotaLimited = "cline_pass_quota_limited"
 )
 
 type OperationFailureDetail struct {

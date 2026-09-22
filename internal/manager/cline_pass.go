@@ -210,6 +210,17 @@ type ClinePassAccount struct {
 	ModelsError     string    `json:"models_error,omitempty"`
 	ModelsFetchedAt time.Time `json:"models_fetched_at,omitempty"`
 	CreatedAt       time.Time `json:"created_at,omitempty"`
+	// RouteCredential is the digest of the credential this account's channel row was last
+	// written with, and it is what lets a later bind prove that a row publishing the
+	// account's label is its own - even after a restart, and even when two accounts were
+	// given the same operator name. Only the digest is stored, never the credential itself:
+	// the access token above already owns that secret.
+	RouteCredential string `json:"route_credential,omitempty"`
+	// QuotaLimitedUntil is the moment the gateway's own quota window ends, recorded when the
+	// account was answered with a 429. It is persisted, because the hold is what keeps the
+	// account's channel row disabled while CPA would otherwise keep selecting a credential
+	// the gateway is refusing; a restart must not lift it.
+	QuotaLimitedUntil time.Time `json:"quota_limited_until,omitempty"`
 }
 
 // ClinePassAccountView is the redacted public shape of a bound Cline Pass
@@ -247,8 +258,16 @@ type ClinePassAccountView struct {
 	// USD amounts only, never a credential, and it is additive: existing keys are
 	// untouched.
 	QuotaUsage ClinePassQuotaUsage `json:"quota_usage"`
+	// QuotaLimited marks that the gateway answered this account with its quota
+	// rejection, so the plugin disabled the account's channel row until the window the
+	// gateway named has passed. QuotaLimitedUntil carries that moment.
+	QuotaLimited      bool       `json:"quota_limited,omitempty"`
+	QuotaLimitedUntil *time.Time `json:"quota_limited_until,omitempty"`
 }
 
+// clinePassPersisted is the on-disk state: the accounts plus the publishing settings and
+// the usage ledger. Every added field is optional, so a store file written by an older
+// release still loads and the version stays 1.
 type clinePassPersisted struct {
 	Version  int                `json:"version"`
 	Accounts []ClinePassAccount `json:"accounts"`
@@ -443,6 +462,183 @@ func (s *ClinePassService) routeAccountForAuthIndexLocked(authIndex string) stri
 		return ""
 	}
 	return s.routeAuthIndexes[index]
+}
+
+// SetRoutePublishedCredential records the digest of the credential this account's channel
+// row was last written with, so a later bind can prove that a row publishing the account's
+// label is its own: the label alone cannot tell two accounts apart when they were given the
+// same operator name, and the digest also survives a restart. Only the digest is stored,
+// never the credential, and a persistence failure is not reported to the caller - the row
+// write that preceded it already succeeded and the next bind simply has one proof less.
+func (s *ClinePassService) SetRoutePublishedCredential(accountID, credential string) {
+	if s == nil {
+		return
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return
+	}
+	digest := clinePassChannelCredentialIdentity(credential)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != id {
+			continue
+		}
+		if s.accounts[index].RouteCredential == digest {
+			return
+		}
+		previous := s.accounts[index].RouteCredential
+		s.accounts[index].RouteCredential = digest
+		if errPersist := s.persistLocked(); errPersist != nil {
+			s.accounts[index].RouteCredential = previous
+		}
+		return
+	}
+}
+
+// RoutePublishedCredential returns the credential digest recorded for one account, or an
+// empty string when no bind published a credential for it yet.
+func (s *ClinePassService) RoutePublishedCredential(accountID string) string {
+	if s == nil {
+		return ""
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID == id {
+			return account.RouteCredential
+		}
+	}
+	return ""
+}
+
+// MarkQuotaLimited records until when the gateway's own quota window keeps this account out
+// of routing. The hold is persisted, so the account keeps its row disabled across a restart
+// instead of being selected again. A moment that is not in the future records a hold that is
+// already over, which is how ReleaseQuotaLimited releases one early; an unknown account is
+// ignored.
+//
+// The reported boolean says whether the record changed. A rejection that arrives while a
+// hold is already recorded must not rewrite the store on every request: the window the
+// gateway named does not move, so only a change that extends the recorded hold by more than
+// clinePassQuotaHoldExtendThreshold is written.
+func (s *ClinePassService) MarkQuotaLimited(accountID string, until time.Time) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" || until.IsZero() {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != id {
+			continue
+		}
+		previous := s.accounts[index].QuotaLimitedUntil
+		next := until.UTC()
+		if next.Equal(previous) {
+			return false, nil
+		}
+		if previous.After(s.now().UTC()) && next.After(previous) && next.Sub(previous) < clinePassQuotaHoldExtendThreshold {
+			return false, nil
+		}
+		s.accounts[index].QuotaLimitedUntil = next
+		if errPersist := s.persistLocked(); errPersist != nil {
+			s.accounts[index].QuotaLimitedUntil = previous
+			return false, errPersist
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// ReleaseQuotaLimited records that the gateway's window no longer holds this account
+// out of routing. The record is kept as a moment that has already passed rather than
+// dropped, because the pass that enables the account's channel row keys on it: dropping
+// the record here would leave a disabled row behind with nothing left to fix it. A
+// successful probe or a routed request releases the hold this way.
+func (s *ClinePassService) ReleaseQuotaLimited(accountID string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return false, nil
+	}
+	recorded := s.QuotaLimitedUntil(id)
+	if recorded.IsZero() || !recorded.After(s.now().UTC()) {
+		// Nothing to release, or the hold is already spent: a released record is kept as a
+		// moment in the past until the maintenance pass clears it, so this must not write
+		// the store again on every successful request.
+		return false, nil
+	}
+	return s.MarkQuotaLimited(id, s.now().UTC().Add(-time.Second))
+}
+
+// QuotaLimitedUntil reports the recorded quota hold of one account, or the zero time
+// when the gateway never limited it. An expired hold is still reported so the caller
+// can tell "the window has passed" apart from "never limited": only the first needs
+// the account's channel row enabled again.
+func (s *ClinePassService) QuotaLimitedUntil(accountID string) time.Time {
+	if s == nil {
+		return time.Time{}
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return time.Time{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID == id {
+			return account.QuotaLimitedUntil
+		}
+	}
+	return time.Time{}
+}
+
+// QuotaLimited reports whether the account is inside a recorded quota hold, which is
+// what keeps its channel row disabled.
+func (s *ClinePassService) QuotaLimited(accountID string) bool {
+	until := s.QuotaLimitedUntil(accountID)
+	return !until.IsZero() && until.After(s.now().UTC())
+}
+
+// ClearQuotaLimited drops the recorded hold of one account so its row may be enabled
+// again. It reports whether a record was actually dropped.
+func (s *ClinePassService) ClearQuotaLimited(accountID string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != id {
+			continue
+		}
+		if s.accounts[index].QuotaLimitedUntil.IsZero() {
+			return false, nil
+		}
+		previous := s.accounts[index].QuotaLimitedUntil
+		s.accounts[index].QuotaLimitedUntil = time.Time{}
+		if errPersist := s.persistLocked(); errPersist != nil {
+			s.accounts[index].QuotaLimitedUntil = previous
+			return false, errPersist
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // removeRouteAuthIndexesLocked drops every index recorded for one account. A
@@ -806,6 +1002,13 @@ func (s *ClinePassService) clinePassViewOfLocked(account ClinePassAccount) Cline
 		view.Expired = !expires.After(s.now().UTC())
 	}
 	view.QuotaUsage = s.clinePassQuotaUsageLocked(account)
+	// A recorded hold is reported with its own moment: the operator has to see when
+	// the window the gateway named ends, not just that the account is out of routing.
+	if !account.QuotaLimitedUntil.IsZero() {
+		until := account.QuotaLimitedUntil.UTC()
+		view.QuotaLimitedUntil = &until
+		view.QuotaLimited = until.After(s.now().UTC())
+	}
 	return view
 }
 

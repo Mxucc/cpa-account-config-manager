@@ -431,10 +431,13 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 	routes, readable := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	// A recorded quota hold has to reach the live channel list even when the operator only
 	// looks at the page: disabling the limited account's row is what moves the traffic to a
-	// sibling account, and the row that was enabled again is what brings a recovered
-	// account back. The pass writes only what actually differs.
-	if readable && a.applyClinePassQuotaRowStates(ctx, managementKey) {
-		routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
+	// sibling account, and the row that was enabled again is what brings a recovered account
+	// back. The pass writes only what actually differs.
+	if readable {
+		report, _ := a.applyClinePassQuotaRowStates(ctx, managementKey)
+		if report.Wrote {
+			routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
+		}
 	}
 	for _, view := range targets {
 		// Reporting "not bound" for a list this plugin could not read would send the operator

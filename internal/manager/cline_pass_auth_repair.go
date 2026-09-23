@@ -65,7 +65,7 @@ func (a *App) noteClinePassRequestOutcome(completion cpaapi.RequestCompletion) {
 		if accountID == "" {
 			return
 		}
-		if _, marked := a.noteClinePassQuotaLimited(accountID, completion.Error, time.Now().UTC()); marked {
+		if _, changed, _ := a.noteClinePassQuotaLimited(accountID, completion.Error, time.Now().UTC()); changed {
 			a.requestClinePassAuthRepair()
 		}
 		return
@@ -82,7 +82,7 @@ func (a *App) noteClinePassRequestOutcome(completion cpaapi.RequestCompletion) {
 		// A request that went through proves the account serves traffic again, so a
 		// recorded quota hold is released as well; the row is enabled by the maintenance
 		// pass, which holds the management key this path does not have.
-		if released, _ := a.clinePass.ReleaseQuotaLimited(accountID); released {
+		if a.clinePassReleaseQuotaHoldOnSuccess(accountID) {
 			a.requestClinePassAuthRepair()
 		}
 		return
@@ -262,7 +262,7 @@ func (a *App) repairRejectedClinePassAccounts(ctx context.Context, managementKey
 	}
 	a.clinePass.RefreshExpiringAccounts(ctx)
 	a.rebindRejectedClinePassAccounts(ctx, managementKey)
-	a.applyClinePassQuotaRowStates(ctx, managementKey)
+	_, _ = a.applyClinePassQuotaRowStates(ctx, managementKey)
 }
 
 // rebindRejectedClinePassAccounts republishes every account whose credential is still recorded as

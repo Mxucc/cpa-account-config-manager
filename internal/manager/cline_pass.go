@@ -221,6 +221,12 @@ type ClinePassAccount struct {
 	// account's channel row disabled while CPA would otherwise keep selecting a credential
 	// the gateway is refusing; a restart must not lift it.
 	QuotaLimitedUntil time.Time `json:"quota_limited_until,omitempty"`
+	// QuotaRowDisabled records that THIS plugin disabled the account's own channel row
+	// because the gateway refused the credential, so only this plugin may enable it again: a
+	// row the operator disabled by hand is never touched. It is persisted for the same reason
+	// the window is - a restart must not leave a row disabled with nothing left to enable it,
+	// and must not enable a row the operator meant to keep out of the pool.
+	QuotaRowDisabled bool `json:"quota_row_disabled,omitempty"`
 }
 
 // ClinePassAccountView is the redacted public shape of a bound Cline Pass
@@ -551,8 +557,11 @@ func (s *ClinePassService) MarkQuotaLimited(accountID string, until time.Time) (
 		}
 		s.accounts[index].QuotaLimitedUntil = next
 		if errPersist := s.persistLocked(); errPersist != nil {
-			s.accounts[index].QuotaLimitedUntil = previous
-			return false, errPersist
+			// The hold stands in memory: a credential the gateway is refusing must leave the
+			// routing pool now, and losing the record across a restart is the smaller
+			// problem. The caller reports the failure, and the next successful persist (any
+			// account or usage write) stores it.
+			return true, errPersist
 		}
 		return true, nil
 	}
@@ -580,6 +589,55 @@ func (s *ClinePassService) ReleaseQuotaLimited(accountID string) (bool, error) {
 		return false, nil
 	}
 	return s.MarkQuotaLimited(id, s.now().UTC().Add(-time.Second))
+}
+
+// SetQuotaRowDisabled records whether this plugin is what holds the account's own channel row
+// out of routing. It is the switch that keeps this plugin's bookkeeping and an operator's
+// decision apart: a hold may only enable a row this flag claims.
+func (s *ClinePassService) SetQuotaRowDisabled(accountID string, disabled bool) error {
+	if s == nil {
+		return nil
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.accounts {
+		if s.accounts[index].ID != id {
+			continue
+		}
+		if s.accounts[index].QuotaRowDisabled == disabled {
+			return nil
+		}
+		s.accounts[index].QuotaRowDisabled = disabled
+		if errPersist := s.persistLocked(); errPersist != nil {
+			return errPersist
+		}
+		return nil
+	}
+	return nil
+}
+
+// QuotaRowDisabled reports whether this plugin disabled the account's own channel row and is
+// therefore the one that may enable it again.
+func (s *ClinePassService) QuotaRowDisabled(accountID string) bool {
+	if s == nil {
+		return false
+	}
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.ID == id {
+			return account.QuotaRowDisabled
+		}
+	}
+	return false
 }
 
 // QuotaLimitedUntil reports the recorded quota hold of one account, or the zero time

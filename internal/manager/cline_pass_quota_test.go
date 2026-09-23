@@ -353,3 +353,172 @@ func waitForClinePassRowDisabled(t *testing.T, store *clinePassChannelStore, cre
 	}
 	return false
 }
+
+// runClinePassModelTestResponse runs one model test and hands back both the probe result and
+// the whole response body, so a test can assert on the quota outcome the dialog reads.
+func runClinePassModelTestResponse(t *testing.T, app *App, headers http.Header, accountID, model string) (OpenCodeModelTestResult, map[string]any) {
+	t.Helper()
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodPost, Path: "/v0/management" + managementRoutePrefix + "/opencode/cline-pass/model-test", Headers: headers,
+		Body: []byte(`{"account_id":"` + accountID + `","model":"` + model + `"}`),
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("model-test status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var payload map[string]any
+	if errDecode := json.Unmarshal(response.Body, &payload); errDecode != nil {
+		t.Fatalf("decode model-test: %v", errDecode)
+	}
+	encoded, errMarshal := json.Marshal(payload["result"])
+	if errMarshal != nil {
+		t.Fatalf("re-encode result: %v", errMarshal)
+	}
+	var result OpenCodeModelTestResult
+	if errDecode := json.Unmarshal(encoded, &result); errDecode != nil {
+		t.Fatalf("decode result: %v", errDecode)
+	}
+	return result, payload
+}
+
+// setClinePassRowDisabledByCredential edits the stored row of one credential directly, which is
+// how a test acts as the operator who toggles the switch on the AI provider page.
+func setClinePassRowDisabledByCredential(t *testing.T, store *clinePassChannelStore, credential string, disabled bool) {
+	t.Helper()
+	entries, _ := store.snapshot()
+	found := false
+	for _, entry := range entries {
+		if channelCredentialKey(t, entry) != credential {
+			continue
+		}
+		entry["disabled"] = disabled
+		found = true
+	}
+	if !found {
+		t.Fatalf("no channel row carries %q", credential)
+	}
+	store.setEntries(entries)
+}
+
+const clinePassQuotaWeeklyBody = `{"error":{"code":"INFERENCE_CAP_ERROR","message":"Error 429: You have reached your weekly Clinepass limit. The limit resets in 2d 22h, please try again later."}}`
+
+// The gateway keeps refusing an account for the whole window, so its rejection repeats the same
+// message. A repeated rejection changes nothing about the recorded window, and it must still
+// take the account out of routing: the row may have been enabled again in between (by an
+// operator, by a failed write, or by a lost state), and the record not changing says nothing
+// about the row. This is the case that left a rate-limited subscription routable and, because
+// both accounts of one gateway publish the same models, took the whole gateway down with it.
+func TestClinePassRepeatedQuotaAnswerStillDisablesTheRow(t *testing.T) {
+	app, store, gateway, ids, headers := newClinePassQuotaApp(t, 1, []string{"cline-pass/glm-5.3"})
+	bindClinePassPublicationAccount(t, app, headers, ids[0])
+	gateway.mu.Lock()
+	gateway.chatStatus = http.StatusTooManyRequests
+	gateway.chatBody = clinePassQuotaWeeklyBody
+	gateway.mu.Unlock()
+
+	if _, payload := runClinePassModelTestResponse(t, app, headers, ids[0], "cline-pass/glm-5.3"); payload["quota"] == nil {
+		t.Fatalf("the model test reported no quota outcome: %#v", payload)
+	}
+	if !rowDisabledByCredential(t, store, "sk-quota-a") {
+		t.Fatal("the first rejection did not take the account out of routing")
+	}
+
+	// The row is enabled again while the gateway still refuses the credential.
+	setClinePassRowDisabledByCredential(t, store, "sk-quota-a", false)
+	if _, errMark := app.clinePass.MarkQuotaLimited(ids[0], time.Now().UTC().Add(2*time.Hour)); errMark != nil {
+		t.Fatalf("MarkQuotaLimited() error = %v", errMark)
+	}
+
+	result, payload := runClinePassModelTestResponse(t, app, headers, ids[0], "cline-pass/glm-5.3")
+	if result.ReasonCode != "quota_limited" {
+		t.Fatalf("probe reason = %q", result.ReasonCode)
+	}
+	if !rowDisabledByCredential(t, store, "sk-quota-a") {
+		t.Fatal("a repeated rejection left the rate-limited account in the routing pool")
+	}
+	outcome, _ := payload["quota"].(map[string]any)
+	if state, _ := outcome["row"].(string); state != providerChannelRowDisabled {
+		t.Fatalf("the reported row state = %#v, want %q", outcome["row"], providerChannelRowDisabled)
+	}
+}
+
+// A row the operator disabled by hand is not this plugin's to enable: a spent hold (or a hold
+// whose record was lost) must leave that row exactly as the operator left it, and still clear
+// the record so the pages stop reporting a hold that is over.
+func TestClinePassSpentHoldNeverEnablesAnOperatorsRow(t *testing.T) {
+	app, store, _, ids, headers := newClinePassQuotaApp(t, 1, []string{"cline-pass/glm-5.3"})
+	bindClinePassPublicationAccount(t, app, headers, ids[0])
+	// The operator turned the account off, and a hold of ours ran out at the same time.
+	setClinePassRowDisabledByCredential(t, store, "sk-quota-a", true)
+	if _, errMark := app.clinePass.MarkQuotaLimited(ids[0], time.Now().UTC().Add(-time.Minute)); errMark != nil {
+		t.Fatalf("MarkQuotaLimited() error = %v", errMark)
+	}
+
+	getClinePassAccounts(t, app, headers)
+
+	entries, _ := store.snapshot()
+	if !clinePassRowDisabled(t, entries[0]) {
+		t.Fatal("a spent hold enabled a row the operator had disabled")
+	}
+	if !app.clinePass.QuotaLimitedUntil(ids[0]).IsZero() {
+		t.Fatal("the spent hold was not dropped")
+	}
+}
+
+// A request CPA attributes to an account whose row this plugin took out of routing cannot have
+// reached the gateway through that account's credential, so it must not clear the hold and put
+// a rate-limited credential back in the pool.
+func TestClinePassMisattributedSuccessDoesNotReleaseAQuotaHold(t *testing.T) {
+	app, store, _, ids, headers := newClinePassQuotaApp(t, 2, []string{"cline-pass/glm-5.3"})
+	bindClinePassPublicationAccount(t, app, headers, ids[0])
+	bindClinePassPublicationAccount(t, app, headers, ids[1])
+	if _, errMark := app.clinePass.MarkQuotaLimited(ids[1], time.Now().UTC().Add(2*time.Hour)); errMark != nil {
+		t.Fatalf("MarkQuotaLimited() error = %v", errMark)
+	}
+	getClinePassAccounts(t, app, headers)
+	if !rowDisabledByCredential(t, store, "sk-quota-b") {
+		t.Fatal("the held account's row was not disabled")
+	}
+	app.clinePass.SetRouteAuthIndexes(ids[1], []string{"index-b"})
+
+	app.HandleRequestComplete(cpaapi.RequestCompletion{
+		RequestID: "misattributed", Outcome: "succeeded", StatusCode: http.StatusOK,
+		Model: "cline-pass/glm-5.3", Metadata: map[string]any{"selected_auth_index": "index-b"},
+	})
+
+	if !app.clinePass.QuotaLimited(ids[1]) {
+		t.Fatal("a success attributed to an unroutable account cleared its hold")
+	}
+	if !rowDisabledByCredential(t, store, "sk-quota-b") {
+		t.Fatal("a success attributed to an unroutable account put its row back in the pool")
+	}
+}
+
+// A probe that answers is the one signal that proves the credential serves traffic again, so it
+// releases the hold and enables the row this plugin disabled.
+func TestClinePassAnsweringProbeEnablesTheRowAgain(t *testing.T) {
+	app, store, gateway, ids, headers := newClinePassQuotaApp(t, 1, []string{"cline-pass/glm-5.3"})
+	bindClinePassPublicationAccount(t, app, headers, ids[0])
+	gateway.mu.Lock()
+	gateway.chatStatus = http.StatusTooManyRequests
+	gateway.chatBody = clinePassQuotaWeeklyBody
+	gateway.mu.Unlock()
+	runClinePassModelTestResponse(t, app, headers, ids[0], "cline-pass/glm-5.3")
+	if !rowDisabledByCredential(t, store, "sk-quota-a") {
+		t.Fatal("the limited account's row was not disabled")
+	}
+
+	gateway.mu.Lock()
+	gateway.chatStatus = http.StatusOK
+	gateway.chatBody = ""
+	gateway.mu.Unlock()
+	if result := runClinePassModelTest(t, app, headers, ids[0], "cline-pass/glm-5.3"); result.Status != "available" {
+		t.Fatalf("probe status = %q", result.Status)
+	}
+
+	if rowDisabledByCredential(t, store, "sk-quota-a") {
+		t.Fatal("an answering probe left the account out of routing")
+	}
+	if !app.clinePass.QuotaLimitedUntil(ids[0]).IsZero() || app.clinePass.QuotaRowDisabled(ids[0]) {
+		t.Fatalf("the released hold left state behind: until=%v rowDisabled=%v", app.clinePass.QuotaLimitedUntil(ids[0]), app.clinePass.QuotaRowDisabled(ids[0]))
+	}
+}

@@ -629,14 +629,27 @@ func (c *managementClient) putAIProviderChannel(ctx context.Context, kind string
 // providerChannelRowTarget identifies one channel row a product owns: the gateway it belongs
 // to, the credential it publishes, the digest of a credential it was written with before
 // that one (a rotation), and the label as the last resort. Disabled is the state the caller
-// wants the row to have.
+// wants the row to have. AccountID is what the caller gets back in the report, so a caller that
+// asked for several rows can tell which of them was actually reached.
 type providerChannelRowTarget struct {
-	BaseURL  string
-	APIKey   string
-	Label    string
-	Digest   string
-	Disabled bool
+	AccountID string
+	BaseURL   string
+	APIKey    string
+	Label     string
+	Digest    string
+	Disabled  bool
 }
+
+// The states one target's row can end up in. They are reported instead of a bare boolean so a
+// caller can tell "the row is now what I asked for" apart from "there was no row of that account
+// at all", which is the difference between a rate-limited credential being taken out of routing
+// and a hold that silently did nothing.
+const (
+	providerChannelRowDisabled  = "disabled"
+	providerChannelRowEnabled   = "enabled"
+	providerChannelRowMissing   = "missing"
+	providerChannelRowUnchanged = "unchanged"
+)
 
 // setProviderChannelRowsDisabled writes the enabled flag of every given row in one pass: the
 // channel list is read once, each target's own row is updated in place, and the list is
@@ -647,23 +660,28 @@ type providerChannelRowTarget struct {
 //
 // The row is found the same way a bind finds it: the credential being published first, the
 // digest the account's last bind recorded second (a credential that rotated since), and the
-// label last (a row written before either was known). A target whose row is missing is
-// skipped: an account that publishes nothing is not routed anywhere, which is what a disabled
-// row achieves as well. Another target's row is never taken as this target's.
-func (a *App) setProviderChannelRowsDisabled(ctx context.Context, managementKey string, targets []providerChannelRowTarget) (bool, error) {
+// label last (a row written before either was known). Another target's row is never taken as
+// this target's.
+//
+// The report states, per target account id, what its row became: "disabled", "enabled",
+// "missing" (the account publishes no row of its own) or "unchanged" (it already had the wanted
+// state). A caller that only wants the write to happen can ignore it; a caller that must tell
+// the operator whether a rate-limited credential really left the pool needs it.
+func (a *App) setProviderChannelRowsDisabled(ctx context.Context, managementKey string, targets []providerChannelRowTarget) (bool, map[string]string, error) {
 	if a == nil {
-		return false, fmt.Errorf("AI provider channel service is unavailable")
+		return false, nil, fmt.Errorf("AI provider channel service is unavailable")
 	}
 	if strings.TrimSpace(managementKey) == "" {
-		return false, fmt.Errorf("management key is unavailable")
+		return false, nil, fmt.Errorf("management key is unavailable")
 	}
 	if len(targets) == 0 {
-		return false, nil
+		return false, nil, nil
 	}
+	states := make(map[string]string, len(targets))
 	listKind := "openai-compatibility"
 	entries, errRead := a.aiProviderChannelEntries(ctx, managementKey, listKind)
 	if errRead != nil {
-		return false, fmt.Errorf("CPA channels could not be read")
+		return false, states, fmt.Errorf("CPA channels could not be read")
 	}
 	items := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
@@ -678,32 +696,40 @@ func (a *App) setProviderChannelRowsDisabled(ctx context.Context, managementKey 
 	for _, target := range targets {
 		index := providerChannelRowIndex(items, target, claimed)
 		if index < 0 {
+			states[target.AccountID] = providerChannelRowMissing
 			continue
 		}
 		claimed[index] = true
 		current, flagged := items[index]["disabled"].(bool)
 		if !flagged && !target.Disabled {
 			// A row without the flag is already enabled, so enabling it is a no-op.
+			states[target.AccountID] = providerChannelRowUnchanged
 			continue
 		}
 		if flagged && current == target.Disabled {
+			states[target.AccountID] = providerChannelRowUnchanged
 			continue
 		}
 		items[index]["disabled"] = target.Disabled
+		if target.Disabled {
+			states[target.AccountID] = providerChannelRowDisabled
+		} else {
+			states[target.AccountID] = providerChannelRowEnabled
+		}
 		changed = true
 	}
 	if !changed {
-		return false, nil
+		return false, states, nil
 	}
 	writer, errWriter := a.newWriteManagementClient(managementKey)
 	if errWriter != nil {
-		return false, errWriter
+		return false, states, errWriter
 	}
 	defer clearManagementWriterSecrets(writer)
 	if errWrite := writer.putAIProviderChannel(ctx, listKind, items); errWrite != nil {
-		return false, fmt.Errorf("CPA channel could not be saved")
+		return false, states, fmt.Errorf("CPA channel could not be saved")
 	}
-	return true, nil
+	return true, states, nil
 }
 
 // providerChannelRowIndex finds the row one target owns in an already cloned channel list.

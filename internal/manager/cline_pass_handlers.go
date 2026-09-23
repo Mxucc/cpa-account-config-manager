@@ -184,13 +184,14 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "account_id is required"})
 		}
 		startedAt := time.Now().UTC()
-		// An account that is out of allowance holds its own channel row disabled, and
-		// removing the account removes the record that would have enabled it again. The row
-		// is enabled first, so a deletion leaves no orphan credential that CPA can never
-		// route to; the credential itself is removed with the row when the account is gone.
-		if _, bound := a.clinePass.AccountView(accountID); bound && !a.clinePass.QuotaLimitedUntil(accountID).IsZero() {
+		// An account that is out of allowance holds its own channel row disabled, and removing
+		// the account removes the record that would have enabled it again. The row is enabled
+		// first, so a deletion leaves no orphan credential CPA can never route to. Only a row
+		// this plugin disabled is touched: a row the operator disabled stays as it is, because
+		// the account is only gone from this plugin's own list.
+		if a.clinePass.QuotaRowDisabled(accountID) {
 			if _, errRelease := a.clinePass.ReleaseQuotaLimited(accountID); errRelease == nil {
-				a.applyClinePassQuotaRowStates(ctx, managementKey)
+				_, _ = a.applyClinePassQuotaRowStates(ctx, managementKey)
 			}
 		}
 		if errRemove := a.clinePass.RemoveAccount(accountID); errRemove != nil {
@@ -411,9 +412,15 @@ func (a *App) handleClinePassModelTest(ctx context.Context, req cpaapi.Managemen
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": errProbe.Error()})
 	}
 	// A probe is the most direct signal the plugin has about one account: it names the
-	// account and carries the gateway's own answer, so the routing state follows it.
-	a.noteClinePassProbeQuota(ctx, managementKey, request.AccountID, result)
-	return jsonResponse(http.StatusOK, map[string]any{"result": result})
+	// account and carries the gateway's own answer, so the routing state follows it. The
+	// outcome travels back with the result, so an operator who just watched the gateway
+	// refuse a credential also sees whether it left the routing pool.
+	quota := a.noteClinePassProbeQuota(ctx, managementKey, request.AccountID, result)
+	response := map[string]any{"result": result}
+	if quota.Limited {
+		response["quota"] = quota
+	}
+	return jsonResponse(http.StatusOK, response)
 }
 
 // handleClinePassBind publishes the account's models to CPA routing by writing

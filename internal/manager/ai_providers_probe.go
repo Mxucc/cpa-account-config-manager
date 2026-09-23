@@ -80,6 +80,10 @@ func (a *App) handleAIProviderProbe(ctx context.Context, req cpaapi.ManagementRe
 	} else {
 		result = a.probeAIProviderEndpointWithKey(ctx, kind, baseURL, apiKey, request.AuthID, request.ProviderKey, request.Headers, timeout)
 	}
+	// A refused credential on a row that belongs to a stored Cline Pass account is learned here as
+	// well: the operator's own channel test is where they notice the failure, and the repair has to
+	// follow it instead of waiting for a routed request to fail.
+	a.noteClinePassChannelTestRejection(kind, apiKey, result)
 	status := http.StatusOK
 	// Model tests return a structured result even for expected upstream
 	// failures (401/400/429), matching account model-test semantics. Keep the

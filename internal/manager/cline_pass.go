@@ -1460,6 +1460,28 @@ func (s *ClinePassService) AccountIDForAuthIdentity(identity string) string {
 	return ""
 }
 
+// AccountIDForPublishedCredential resolves the stored account whose channel row was last published
+// with this credential. A row can hold a token the account has since rotated, so matching the stored
+// token alone cannot name the account a rejected row belongs to; the digest the last bind recorded
+// can.
+func (s *ClinePassService) AccountIDForPublishedCredential(credential string) string {
+	if s == nil {
+		return ""
+	}
+	digest := clinePassChannelCredentialIdentity(credential)
+	if digest == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.RouteCredential == digest {
+			return account.ID
+		}
+	}
+	return ""
+}
+
 // AccountIDForAuthIndex resolves the stored account one CPA auth index belongs to, using the index
 // map the bind records from the live channel list.
 func (s *ClinePassService) AccountIDForAuthIndex(authIndex string) string {

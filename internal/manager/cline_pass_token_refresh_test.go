@@ -213,3 +213,89 @@ func TestClinePassRotationBoundsANonsenseExpiry(t *testing.T) {
 		t.Fatalf("recorded expiry = %v from now, want it bounded by %v", remaining, clinePassMaxTokenLifetime)
 	}
 }
+
+// The AI-provider channel test the operator runs when calls fail exercises the credential CPA
+// routes through. A refusal there has to start the same repair a failing request starts, otherwise
+// the row stays exactly as it was and the next call fails the same way.
+func TestClinePassChannelTestRejectionStartsTheRepair(t *testing.T) {
+	app, store, accountID, headers := publishedOAuthClinePassApp(t)
+	app.operations.Configure(Config{DataDir: t.TempDir()})
+
+	// The operator tests the published row and the gateway refuses that credential.
+	app.noteClinePassChannelTestRejection("openai-compatibility", "workos:live-access", AIProviderProbeResult{
+		Reachable: true, StatusCode: http.StatusUnauthorized, ReasonCode: "authentication_failed",
+	})
+	if !app.clinePass.AuthFailurePending(accountID) {
+		t.Fatal("a refused channel test did not mark the account as rejected")
+	}
+	journal := app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize})
+	found := false
+	for _, operation := range journal.Operations {
+		if operation.ReasonCode == OperationFailureClinePassCredentialRejected {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the refused channel test was not journaled: %#v", journal.Operations)
+	}
+
+	// The maintenance pass rotates the token and republishes the row it routes through.
+	app.repairRejectedClinePassAccounts(context.Background(), resolveManagementKey(headers))
+	if app.clinePass.AuthFailurePending(accountID) {
+		t.Fatal("the repair did not spend the rejection record")
+	}
+	if credentials := allRowCredentials(t, store); len(credentials) != 1 || credentials[0] != "workos:rotated-access" {
+		t.Fatalf("published rows = %#v, want the row republished with the rotated token", credentials)
+	}
+}
+
+// The plugin's own model test is the other place the operator looks, and a 401 there means the same
+// thing: the account is recorded and its row is rotated and republished. The automatic repair may
+// already have run by the time the response is read (the request itself hands the plugin a management
+// key), so the test asserts the outcome the operator depends on - a recorded rejection and a row that
+// ends up carrying the rotated token - instead of a race-sensitive intermediate flag.
+func TestClinePassModelTestRejectionStartsTheRepair(t *testing.T) {
+	app, store, gateway, accountID, headers := newClinePassRotatingQuotaApp(t, []string{"cline-pass/glm-5.3"})
+	app.operations.Configure(Config{DataDir: t.TempDir()})
+	gateway.mu.Lock()
+	gateway.chatStatus = http.StatusUnauthorized
+	gateway.chatBody = `{"error":"unauthorized: Please make sure you're using the latest version of Cline and re-authenticate your Cline account."}`
+	gateway.mu.Unlock()
+
+	result := runClinePassModelTest(t, app, headers, accountID, "cline-pass/glm-5.3")
+	if result.ReasonCode != "authentication_failed" {
+		t.Fatalf("probe reason = %q, want the gateway's authentication failure", result.ReasonCode)
+	}
+	journal := app.operations.List(OperationQuery{Page: 1, PageSize: operationPageSize})
+	rejected := false
+	for _, operation := range journal.Operations {
+		if operation.ReasonCode == OperationFailureClinePassCredentialRejected {
+			rejected = true
+		}
+	}
+	if !rejected {
+		t.Fatalf("the refused model test was not journaled: %#v", journal.Operations)
+	}
+
+	// Whether the automatic repair ran on its own or not, the row must end up carrying a working
+	// token: the test is what the operator ran because calls were failing.
+	app.repairRejectedClinePassAccounts(context.Background(), resolveManagementKey(headers))
+	if credentials := allRowCredentials(t, store); len(credentials) != 1 || credentials[0] != "workos:rotated-access" {
+		t.Fatalf("published rows = %#v, want the row republished with the rotated token", credentials)
+	}
+	if app.clinePass.AuthFailurePending(accountID) {
+		t.Fatal("a repaired account is still reported as rejected")
+	}
+}
+
+// A probe that failed for another reason says nothing about the stored credential, so it must not
+// put the account into the repair loop.
+func TestClinePassUnrelatedProbeFailureIsNotACredentialRejection(t *testing.T) {
+	app, _, _, accountID, _ := newClinePassRotatingQuotaApp(t, []string{"cline-pass/glm-5.3"})
+	app.noteClinePassChannelTestRejection("openai-compatibility", "workos:live-access", AIProviderProbeResult{
+		Reachable: true, StatusCode: http.StatusNotFound, ReasonCode: "model_not_found",
+	})
+	if app.clinePass.AuthFailurePending(accountID) {
+		t.Fatal("a probe that only failed to find a model was treated as a credential rejection")
+	}
+}

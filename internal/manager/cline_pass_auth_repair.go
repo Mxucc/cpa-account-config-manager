@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
@@ -249,6 +250,65 @@ func (a *App) requestClinePassAuthRepair() {
 		defer cancel()
 		a.repairRejectedClinePassAccounts(ctx, managementKey)
 	}()
+}
+
+// noteClinePassChannelTestRejection learns from a refused AI-provider channel test. The test is what
+// the operator runs when calls fail, and it exercises exactly the credential CPA routes through, so
+// a refusal there is the strongest evidence available that the published row is dead: the account is
+// recorded, the maintenance pass rotates and republishes its row, and a rotation that is refused in
+// turn tells the operator to sign in again. Before this the test reported the failure and left the
+// row exactly as it was.
+func (a *App) noteClinePassChannelTestRejection(kind, apiKey string, result AIProviderProbeResult) {
+	if a == nil || a.clinePass == nil || normalizeAIProviderKind(kind) != "openai-compatibility" {
+		return
+	}
+	a.noteClinePassCredentialRejected(aiProviderProbeRejectedCredential(result), func() string {
+		if accountID := a.clinePass.AccountIDForAuthIdentity(apiKey); accountID != "" {
+			return accountID
+		}
+		return a.clinePass.AccountIDForPublishedCredential(apiKey)
+	}(), result.StatusCode)
+}
+
+// noteClinePassProbeRejection learns from a Cline Pass model test the gateway answered with an
+// authorization error. The test names the account outright, so no attribution is needed, and the
+// same repair the request path runs is asked for here.
+func (a *App) noteClinePassProbeRejection(accountID string, result OpenCodeModelTestResult) {
+	rejected := strings.EqualFold(strings.TrimSpace(result.ReasonCode), "authentication_failed") ||
+		result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden
+	a.noteClinePassCredentialRejected(rejected, accountID, result.StatusCode)
+}
+
+// aiProviderProbeRejectedCredential reports whether an AI-provider probe failed because the upstream
+// refused the credential, which is the only probe failure that says anything about the stored
+// account: a missing model or an unreachable gateway is not a credential problem.
+func aiProviderProbeRejectedCredential(result AIProviderProbeResult) bool {
+	if strings.EqualFold(strings.TrimSpace(result.ReasonCode), "authentication_failed") {
+		return true
+	}
+	return result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden
+}
+
+// noteClinePassCredentialRejected records one gateway refusal of a stored credential, whatever
+// signal reported it, and asks for the repair. It is deliberately one path for every signal - the
+// request completion callback, the AI-provider channel test and the Cline Pass model test - so a
+// refusal can never be visible on one page and invisible on another.
+func (a *App) noteClinePassCredentialRejected(rejected bool, accountID string, statusCode int) {
+	if a == nil || a.clinePass == nil || !rejected {
+		return
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return
+	}
+	alreadyPending := a.clinePass.AuthFailurePending(accountID)
+	if !a.clinePass.NoteAuthFailure(accountID) {
+		return
+	}
+	if !alreadyPending {
+		a.recordClinePassAuthFailure(accountID, cpaapi.RequestCompletion{StatusCode: statusCode})
+	}
+	a.requestClinePassAuthRepair()
 }
 
 // repairRejectedClinePassAccounts rotates the tokens that are due, republishes every channel row

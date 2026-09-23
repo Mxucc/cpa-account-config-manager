@@ -422,6 +422,10 @@ func (a *App) handleClinePassModelTest(ctx context.Context, req cpaapi.Managemen
 		a.noteClinePassProbeRefreshFailure(request.AccountID, errProbe)
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": errProbe.Error()})
 	}
+	// A probe the gateway answered with an authorization error is the strongest signal that the
+	// stored credential is dead, and it has to start the same repair the request path starts: the
+	// operator runs this test precisely because calls are failing.
+	a.noteClinePassProbeRejection(request.AccountID, result)
 	// A probe is the most direct signal the plugin has about one account: it names the
 	// account and carries the gateway's own answer, so the routing state follows it. The
 	// outcome travels back with the result, so an operator who just watched the gateway

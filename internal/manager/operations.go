@@ -798,7 +798,8 @@ func safeOperationReason(value string) string {
 		"quota_limited", "request_timeout", "upstream_unavailable", "invalid_response", "unsupported_provider",
 		"passive_circuit_open", "quota_reset", "passive_circuit_recovered", "health_recovered", "credential_refreshed",
 		OperationFailureModelUpstream, OperationFailureModelRetryExhausted, OperationFailureModelCanceled,
-		OperationFailureClinePassCredentialRejected, OperationFailureClinePassQuotaLimited:
+		OperationFailureClinePassCredentialRejected, OperationFailureClinePassQuotaLimited,
+		OperationFailureClinePassTokenRefresh:
 		return value
 	default:
 		return "operation_failed"

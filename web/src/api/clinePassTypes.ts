@@ -36,6 +36,13 @@ export interface ClinePassAccountView {
    */
   channel_credential_rejected?: boolean;
   /**
+   * The sanitized reason the last attempt to publish this account's CPA channel row failed, above
+   * all a stored token that could not be rotated (a refused refresh), which needs a new sign-in.
+   * A quota hold is a different state: it keeps the cell's leading wording even when a stale bind
+   * reason is still attached to the account.
+   */
+  channel_binding_error?: string;
+  /**
    * The gateway answered this account with its weekly quota rejection (HTTP 429) and named the
    * window that resets it, so the plugin disabled this account's own CPA channel row until then.
    * The account stays bound but is not routable: CPA routes to a sibling account of the same

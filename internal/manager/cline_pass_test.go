@@ -35,6 +35,10 @@ type clinePassFakeGateway struct {
 	chatStatus       int
 	registerBody     string
 	refreshBody      string
+	// refreshStatus and refreshErrorBody let a test make the token endpoint refuse a
+	// rotation, which is the failure that needs a new sign-in rather than a retry.
+	refreshStatus    int
+	refreshErrorBody string
 	// chatBody overrides the canned answer of a failed chat completion, so a test can
 	// reproduce the gateway's own quota message instead of the generic error.
 	chatBody   string
@@ -82,6 +86,13 @@ func (g *clinePassFakeGateway) Do(request *http.Request) (*http.Response, error)
 		return jsonHTTPResponse(http.StatusOK, g.registerBody), nil
 	case strings.HasSuffix(host, "cline.bot") && strings.HasSuffix(path, "/auth/refresh"):
 		g.refreshCalls++
+		if g.refreshStatus >= 400 {
+			body := g.refreshErrorBody
+			if body == "" {
+				body = `{"error":"invalid_grant","error_description":"refresh token expired"}`
+			}
+			return jsonHTTPResponse(g.refreshStatus, body), nil
+		}
 		return jsonHTTPResponse(http.StatusOK, g.refreshBody), nil
 	case strings.HasSuffix(path, "/models"):
 		g.modelsCalls++

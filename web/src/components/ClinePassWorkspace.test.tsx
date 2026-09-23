@@ -402,6 +402,80 @@ describe("ClinePassWorkspace", () => {
     expect(within(row).queryByText("凭据已被网关拒绝，正在自动修复")).not.toBeInTheDocument();
   });
 
+  // The bind failure the operator cannot read apart from "never published": the stored token could
+  // not be rotated (a refused refresh), so the channel row was never written and the account needs a
+  // new sign-in. The reason has to survive normalization and reach the cell, and the unbound badge
+  // has to stay because the channel really is missing.
+  it("names the bind reason when the account's channel row could not be published", async () => {
+    const reason = "token refresh was refused (invalid_grant): the account needs a new sign-in";
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        channel_bound: false,
+        channel_models: 0,
+        channel_model_gaps: 2,
+        channel_binding_error: reason,
+      })],
+    });
+
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("尚未绑定 CPA 渠道")).toBeInTheDocument();
+    expect(row.textContent).toContain(reason);
+    expect(within(row).queryByText(/插件在打开本页时会自动发布渠道/)).not.toBeInTheDocument();
+  });
+
+  // A quota hold is the state the operator acts on first, and an account can be held by the gateway
+  // and still carry an older bind failure, so the hold keeps the cell and the stale reason stays out.
+  it("keeps the quota hold in front of a stale bind reason", async () => {
+    const until = "2026-10-03T12:00:00Z";
+    const reason = "token refresh was refused (invalid_grant): the account needs a new sign-in";
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        channel_bound: true,
+        channel_models: 2,
+        channel_model_gaps: 0,
+        quota_limited: true,
+        quota_limited_until: until,
+        channel_binding_error: reason,
+      })],
+    });
+
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("已临时停用（额度受限）")).toBeInTheDocument();
+    expect(within(row).getByText(/网关以 429 拒绝了本账号/)).toBeInTheDocument();
+    expect(row.textContent).toContain(formatDateTimeForLocale("zh-CN", until));
+    expect(row.textContent).not.toContain(reason);
+  });
+
+  // The rejected-credential and unreadable-channel branches each explain themselves, and the bind
+  // reason joins them instead of replacing them: it is what says why the automatic repair did not
+  // help, while the branch hint still names the states the operator must not confuse with unbound.
+  it("adds the bind reason to a rejected credential instead of replacing the repair hint", async () => {
+    const reason = "token refresh was refused (invalid_grant): the account needs a new sign-in";
+    clinePassFetchMock({
+      clinePassAccounts: [clinePassAccountView({
+        channel_bound: false,
+        channel_models: 0,
+        channel_model_gaps: 2,
+        channel_credential_rejected: true,
+        channel_binding_error: reason,
+      })],
+    });
+
+    await renderClinePass();
+    const panel = await screen.findByRole("tabpanel", { name: "账号" });
+    const row = (await within(panel).findByText("Work laptop")).closest("tr") as HTMLElement;
+
+    expect(within(row).getByText("凭据已被网关拒绝，正在自动修复")).toBeInTheDocument();
+    expect(within(row).getByText(/插件已自动轮换令牌并重写该渠道行/)).toBeInTheDocument();
+    expect(row.textContent).toContain(reason);
+  });
+
   // Every other routing state keeps its own wording: a served account must not carry the quota hold.
   it("omits the quota hold from an account the gateway still serves", async () => {
     clinePassFetchMock({

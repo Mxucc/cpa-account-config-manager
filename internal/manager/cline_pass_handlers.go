@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -363,11 +364,16 @@ func (a *App) handleClinePassRefresh(ctx context.Context, req cpaapi.ManagementR
 }
 
 // handleClinePassModels validates a stored credential against the gateway catalog.
+//
+// Validation rotates an expiring token first, and a rotation invalidates the token CPA still
+// routes through, so the account's channel row is republished here: loading a model list must
+// never be what breaks routed traffic until the next page load.
 func (a *App) handleClinePassModels(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	if a == nil || a.clinePass == nil {
 		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "Cline Pass service is unavailable"})
 	}
-	if resolveManagementKey(req.Headers) == "" {
+	managementKey := resolveManagementKey(req.Headers)
+	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	var request clinePassModelRequest
@@ -378,6 +384,7 @@ func (a *App) handleClinePassModels(ctx context.Context, req cpaapi.ManagementRe
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "account_id is required"})
 	}
 	view, errRefresh := a.clinePass.RefreshModels(ctx, request.AccountID, request.TimeoutSeconds)
+	a.republishClinePassRows(ctx, managementKey, false)
 	if errRefresh != nil {
 		if view.ID == "" {
 			return jsonResponse(http.StatusNotFound, map[string]any{"error": errRefresh.Error()})
@@ -409,12 +416,21 @@ func (a *App) handleClinePassModelTest(ctx context.Context, req cpaapi.Managemen
 	}
 	result, errProbe := a.clinePass.ProbeModel(ctx, request.AccountID, request.Model, request.TimeoutSeconds)
 	if errProbe != nil {
+		// A probe that could not run because the stored credential could not be rotated is the
+		// failure the operator has to act on, and the model test is where they look: it is
+		// recorded here rather than left as one error line in the dialog.
+		a.noteClinePassProbeRefreshFailure(request.AccountID, errProbe)
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": errProbe.Error()})
 	}
 	// A probe is the most direct signal the plugin has about one account: it names the
 	// account and carries the gateway's own answer, so the routing state follows it. The
 	// outcome travels back with the result, so an operator who just watched the gateway
 	// refuse a credential also sees whether it left the routing pool.
+	//
+	// The probe also rotates an expiring token before it runs, and a rotation invalidates the
+	// token CPA still routes through, so the row is republished here: testing one model must
+	// never be what breaks the account for every other request.
+	a.republishClinePassRows(ctx, managementKey, false)
 	quota := a.noteClinePassProbeQuota(ctx, managementKey, request.AccountID, result)
 	response := map[string]any{"result": result}
 	if quota.Limited {
@@ -466,17 +482,103 @@ func (a *App) clinePassChannelLabel(accountID string) string {
 	return clinePassChannelLabelForName("", accountID)
 }
 
+// noteClinePassProbeRefreshFailure records a model test whose credential could not be rotated. Only
+// a rotation failure is recorded here: a probe that reached the gateway and was refused for another
+// reason is already reported by its own result, and the request path records the auth-grade ones.
+func (a *App) noteClinePassProbeRefreshFailure(accountID string, cause error) {
+	var refreshFailure clinePassRefreshFailure
+	if !errors.As(cause, &refreshFailure) {
+		return
+	}
+	a.noteClinePassRotationFailure(accountID, refreshFailure)
+}
+
 // refreshExpiringClinePassAccounts rotates the tokens a Cline Pass read finds inside the refresh
 // margin, under the same bound as an automatic bind so a slow token endpoint cannot hold a page
-// read open. A rotation failure is not reported here: the read that follows shows the stored state,
-// and the republish pass reports a row it could not repair.
-func (a *App) refreshExpiringClinePassAccounts(ctx context.Context) {
+// read open.
+//
+// A rotation the gateway refuses is journaled and recorded against the account: it is exactly the
+// failure that has to reach the operator, because the stored credential no longer rotates and the
+// account has to be signed in again - and until now the only trace of it was an account that had
+// quietly turned "unbound". A rotation that succeeded is reported so the caller can republish the
+// rows whose published token it just replaced.
+func (a *App) refreshExpiringClinePassAccounts(ctx context.Context) int {
 	if a == nil || a.clinePass == nil {
-		return
+		return 0
 	}
 	refreshCtx, cancel := context.WithTimeout(ctx, clinePassRoutingBindTimeout)
 	defer cancel()
-	a.clinePass.RefreshExpiringAccounts(refreshCtx)
+	rotated := 0
+	for _, accountID := range a.clinePass.claimRotations() {
+		if refreshCtx.Err() != nil {
+			break
+		}
+		if _, errRefresh := a.clinePass.refreshAccountToken(refreshCtx, accountID); errRefresh != nil {
+			a.noteClinePassRotationFailure(accountID, errRefresh)
+			continue
+		}
+		rotated++
+	}
+	return rotated
+}
+
+// noteClinePassRotationFailure records a rotation the gateway refused. A refusal that means the
+// stored refresh token is dead marks the account as rejected, which is what the page shows and what
+// makes the maintenance pass rotate it again under the repair cooldown, and it is journaled once
+// per failure: a page read retries an expiring token on every load, and one entry per load would
+// bury the reason in noise. A transient failure - a timeout, an unreachable gateway - is left
+// alone: the stored token still works until it expires, so nothing needs the operator's attention.
+func (a *App) noteClinePassRotationFailure(accountID string, cause error) {
+	if a == nil || a.clinePass == nil || !clinePassRefreshFailureNeedsSignIn(cause) {
+		return
+	}
+	alreadyPending := a.clinePass.AuthFailurePending(accountID)
+	if !a.clinePass.NoteAuthFailure(accountID) {
+		return
+	}
+	if alreadyPending {
+		return
+	}
+	a.recordClinePassRotationFailure(accountID, cause)
+}
+
+// clinePassRefreshFailureNeedsSignIn reports whether a failed rotation means the stored credential
+// has to be replaced by a new sign-in rather than retried: the gateway answered with an
+// authorization-grade refusal, or there was nothing to rotate with in the first place.
+func clinePassRefreshFailureNeedsSignIn(cause error) bool {
+	if cause == nil {
+		return false
+	}
+	message := strings.ToLower(cause.Error())
+	for _, marker := range []string{"invalid_grant", "invalid_token", "unauthorized", "unauthenticated", "refresh token is missing", "http 400", "http 401", "http 403"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// recordClinePassRotationFailure journals one rotation the gateway refused. The reason code is
+// allow-listed and the message is the sanitized cause, so no credential can reach the history.
+func (a *App) recordClinePassRotationFailure(accountID string, cause error) {
+	if a == nil || a.operations == nil {
+		return
+	}
+	now := time.Now().UTC()
+	a.operations.Record(OperationEntry{
+		Category:    OperationCategoryOpenCode,
+		Action:      OperationActionOpenCodeRefresh,
+		Status:      OperationStatusFailed,
+		Source:      OperationSourceBackground,
+		Scope:       OperationScopeSingle,
+		TargetID:    strings.TrimSpace(accountID),
+		TargetCount: 1,
+		Failed:      1,
+		ReasonCode:  OperationFailureClinePassTokenRefresh,
+		Message:     sanitizeClinePassError(cause.Error()),
+		StartedAt:   now,
+		FinishedAt:  now,
+	})
 }
 
 // handleClinePassSettings reads and writes the Cline Pass publishing settings.
@@ -552,7 +654,7 @@ func (a *App) handleClinePassModelPage(ctx context.Context, req cpaapi.Managemen
 	stripPrefix := a.clinePass.StripModelPrefix()
 	// Reading the page also repairs the channel: an account whose credential was rotated is
 	// published again here, so the page never reports a state the plugin would fix on a click.
-	routes, channelStateReadable := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
+	routes, channelStateReadable, _ := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	published := map[string]struct{}{}
 	channelBound := false
 	channelModels := 0

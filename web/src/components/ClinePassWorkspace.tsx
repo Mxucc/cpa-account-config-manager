@@ -761,6 +761,16 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                    */
                   const quotaLimited = account.quota_limited === true;
                   const quotaLimitedUntil = formatDateTime(account.quota_limited_until);
+                  /**
+                   * The sanitized reason the last channel publish for this account failed, rendered in
+                   * the same hint element as the other routing explanations. A quota hold is a different
+                   * state that owns the cell (an account can be quota-held and still carry a stale bind
+                   * error), so the reason stays out of that branch; every other routing branch keeps it,
+                   * because it is what tells "the credential is dead" apart from "never published".
+                   */
+                  const bindFailureHint = !quotaLimited && account.channel_binding_error
+                    ? <small>{tx("ui.cline_pass_binding_error", { error: operatorMessage(account.channel_binding_error, locale) })}</small>
+                    : null;
                   // Cline documents exactly these three ClinePass windows; the USD figures the
                   // backend attributes to them are reference prices, never an amount owed.
                   const usage = account.quota_usage;
@@ -815,6 +825,7 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                             <>
                               <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_credential_rejected")}</span>
                               <small>{tx("ui.cline_pass_credential_rejected_hint")}</small>
+                              {bindFailureHint}
                             </>
                           ) : channelStateUnreadable ? (
                             // Not the same as unbound: the list could not be read, so claiming
@@ -822,6 +833,7 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                             <>
                               <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_channel_unreadable")}</span>
                               <small>{tx("ui.cline_pass_channel_unreadable_hint")}</small>
+                              {bindFailureHint}
                             </>
                           ) : quotaLimited ? (
                             // The account is still bound, so neither the model-gap nor the "unbound"
@@ -835,13 +847,19 @@ export function ClinePassWorkspace({ refreshRevision, onAPIError, onNotice }: Cl
                               <small>{tx("ui.cline_pass_quota_limited_hint", { time: quotaLimitedUntil })}</small>
                             </>
                           ) : bound && modelGaps > 0 ? (
-                            <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_routing_gaps", { count: String(modelGaps) })}</span>
+                            <>
+                              <span className="opencode-routing-badge is-warning">{tx("ui.cline_pass_routing_gaps", { count: String(modelGaps) })}</span>
+                              {bindFailureHint}
+                            </>
                           ) : bound ? (
-                            <span className="opencode-routing-badge is-bound">{tx("ui.cline_pass_routing_bound", { count: String(publishedModels) })}</span>
+                            <>
+                              <span className="opencode-routing-badge is-bound">{tx("ui.cline_pass_routing_bound", { count: String(publishedModels) })}</span>
+                              {bindFailureHint}
+                            </>
                           ) : (
                             <>
                               <span className="opencode-routing-badge is-unbound">{tx("ui.cline_pass_routing_unbound")}</span>
-                              <small>{tx("ui.cline_pass_routing_hint")}</small>
+                              {bindFailureHint ?? <small>{tx("ui.cline_pass_routing_hint")}</small>}
                             </>
                           )}
                           {usage ? (

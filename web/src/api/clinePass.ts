@@ -125,6 +125,11 @@ function normalizeClinePassAccountsResponse(response: unknown): ClinePassAccount
 			};
 			if (typeof account.name === "string" && account.name.trim()) view.name = account.name;
 			if (typeof account.expires_at === "string" && account.expires_at) view.expires_at = account.expires_at;
+			// The reason the last channel publish failed is additive, so it must survive this
+			// allow-list: dropping it would leave an unroutable account looking merely unbound.
+			if (typeof account.channel_binding_error === "string" && account.channel_binding_error.trim()) {
+				view.channel_binding_error = account.channel_binding_error.trim();
+			}
 			const models = stringArrayOrUndefined(account.models);
 			if (models) view.models = models;
 			if (typeof account.models_error === "string" && account.models_error.trim()) view.models_error = account.models_error.trim();

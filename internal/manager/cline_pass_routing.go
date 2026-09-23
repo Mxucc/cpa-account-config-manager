@@ -158,12 +158,17 @@ func (a *App) clinePassAutoBindDue(accountID string) bool {
 // load renders is where the missing row is noticed and where it is published again. Every
 // unbound account may attempt one bind under the shared cooldown, and the index is re-read
 // only after one of them succeeded.
-func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey string, accounts []ClinePassAccountView) (map[string]clinePassChannelRoute, bool) {
+//
+// The third value reports, per account, why a bind attempt failed. A page that renders the
+// "not bound" badge alone leaves the operator guessing, and the failure that matters most
+// here - a token that could not be rotated - has no other way of reaching them.
+func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey string, accounts []ClinePassAccountView) (map[string]clinePassChannelRoute, bool, map[string]string) {
 	routes, readable := a.clinePassChannelRoutes(ctx, managementKey)
+	bindErrors := map[string]string{}
 	if a == nil || a.clinePass == nil || len(accounts) == 0 || !readable {
 		// An unreadable list is not an empty one: binding on top of it could publish a
 		// duplicate row, and every account would be reported unbound for the wrong reason.
-		return routes, readable
+		return routes, readable, bindErrors
 	}
 	unbound := make([]ClinePassAccountView, 0, len(accounts))
 	for _, account := range accounts {
@@ -179,22 +184,27 @@ func (a *App) clinePassRoutesWithAutoBind(ctx context.Context, managementKey str
 		}
 	}
 	if len(unbound) == 0 {
-		return routes, readable
+		return routes, readable, bindErrors
 	}
 	bound := false
 	for _, account := range unbound {
 		if !a.clinePassAutoBindDue(account.ID) {
 			continue
 		}
-		if outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, account.ID, false); outcome.Bound {
+		outcome := a.bindClinePassAccountBestEffort(ctx, managementKey, account.ID, false)
+		if outcome.Bound {
 			bound = true
+			continue
+		}
+		if outcome.ErrorText != "" {
+			bindErrors[account.ID] = outcome.ErrorText
 		}
 	}
 	if !bound {
-		return routes, readable
+		return routes, readable, bindErrors
 	}
 	routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
-	return routes, readable
+	return routes, readable, bindErrors
 }
 
 // clinePassChannelRouteLookup resolves the row one account is published on. The account's own
@@ -428,7 +438,7 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 	for _, view := range targets {
 		accounts = append(accounts, *view)
 	}
-	routes, readable := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
+	routes, readable, bindErrors := a.clinePassRoutesWithAutoBind(ctx, managementKey, accounts)
 	// A recorded quota hold has to reach the live channel list even when the operator only
 	// looks at the page: disabling the limited account's row is what moves the traffic to a
 	// sibling account, and the row that was enabled again is what brings a recovered account
@@ -457,6 +467,12 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 			view.ChannelBound = false
 			view.ChannelModels = 0
 			view.ChannelModelGaps = len(clinePassAccountModelIDs(*view))
+		}
+		// Why the account could not be published, when an attempt just failed: without it the
+		// page can only say "not bound", and a token that could not be rotated - the failure
+		// that matters most here - would stay invisible.
+		if reason, failed := bindErrors[view.ID]; failed {
+			view.ChannelBindingError = reason
 		}
 	}
 }

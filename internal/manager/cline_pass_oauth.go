@@ -261,27 +261,27 @@ func registerClinePassWorkOSTokens(ctx context.Context, baseURL, accessToken, re
 // exchangeClinePassRefreshToken rotates a Cline Pass access token server-side.
 // The gateway may rotate the refresh token, so the returned pair always replaces
 // the stored one.
-func exchangeClinePassRefreshToken(ctx context.Context, baseURL, refreshToken string, doer HTTPDoer) (string, string, error) {
+func exchangeClinePassRefreshToken(ctx context.Context, baseURL, refreshToken string, doer HTTPDoer) (string, string, time.Time, error) {
 	base := normalizeClinePassBaseURL(baseURL)
 	if !validClinePassBaseURL(base) {
-		return "", "", fmt.Errorf("Cline Pass base URL is invalid")
+		return "", "", time.Time{}, fmt.Errorf("Cline Pass base URL is invalid")
 	}
 	trimmedRefresh := strings.TrimSpace(refreshToken)
 	if trimmedRefresh == "" {
-		return "", "", fmt.Errorf("the Cline Pass refresh token is missing; sign in again")
+		return "", "", time.Time{}, fmt.Errorf("the Cline Pass refresh token is missing; sign in again")
 	}
 	payload, errMarshal := json.Marshal(map[string]string{
 		"granttype":    "refresh_token",
 		"refreshToken": trimmedRefresh,
 	})
 	if errMarshal != nil {
-		return "", "", fmt.Errorf("the Cline Pass refresh request could not be encoded")
+		return "", "", time.Time{}, fmt.Errorf("the Cline Pass refresh request could not be encoded")
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, clinePassRefreshTimeout)
 	defer cancel()
 	request, errRequest := http.NewRequestWithContext(requestCtx, http.MethodPost, base+clinePassRefreshEndpointPath, bytes.NewReader(payload))
 	if errRequest != nil {
-		return "", "", fmt.Errorf("the Cline Pass refresh request could not be created")
+		return "", "", time.Time{}, fmt.Errorf("the Cline Pass refresh request could not be created")
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
@@ -289,52 +289,82 @@ func exchangeClinePassRefreshToken(ctx context.Context, baseURL, refreshToken st
 	client := &http.Client{Timeout: clinePassRefreshTimeout, Transport: doerTransport(doer)}
 	response, errDo := client.Do(request)
 	if errDo != nil {
-		return "", "", fmt.Errorf("Cline Pass token refresh failed: %s", sanitizeClinePassError(errDo.Error()))
+		return "", "", time.Time{}, fmt.Errorf("Cline Pass token refresh failed: %s", sanitizeClinePassError(errDo.Error()))
 	}
 	if response == nil || response.Body == nil {
-		return "", "", fmt.Errorf("Cline Pass token refresh returned an empty response")
+		return "", "", time.Time{}, fmt.Errorf("Cline Pass token refresh returned an empty response")
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, errRead := io.ReadAll(io.LimitReader(response.Body, clinePassMaxTokenBytes))
 	if errRead != nil {
-		return "", "", fmt.Errorf("Cline Pass token refresh could not be read")
+		return "", "", time.Time{}, fmt.Errorf("Cline Pass token refresh could not be read")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", "", fmt.Errorf("Cline Pass token refresh failed (HTTP %d): %s", response.StatusCode, sanitizeClinePassError(string(body)))
+		return "", "", time.Time{}, fmt.Errorf("Cline Pass token refresh failed (HTTP %d): %s", response.StatusCode, sanitizeClinePassError(string(body)))
 	}
-	access, refresh, ok := parseClinePassTokenPair(body)
+	access, refresh, expiresAt, ok := parseClinePassTokenPair(body)
 	if !ok {
-		return "", "", fmt.Errorf("Cline Pass token refresh returned an unrecognized response")
+		return "", "", time.Time{}, fmt.Errorf("Cline Pass token refresh returned an unrecognized response")
 	}
 	if strings.TrimSpace(refresh) == "" {
 		refresh = trimmedRefresh
 	}
-	return access, refresh, nil
+	return access, refresh, expiresAt, nil
 }
 
 // parseClinePassTokenPair accepts the nested and flat token shapes the Cline API
-// returns.
-func parseClinePassTokenPair(body []byte) (string, string, bool) {
+// returns, together with the expiry the answer carries when it carries one.
+//
+// The expiry matters: the plugin used to assume a fixed lifetime for every rotated
+// token, so a gateway that hands out shorter-lived tokens left the stored one looking
+// valid long after the gateway had stopped accepting it - and every routed request then
+// failed with an authorization error the plugin only learned about from the failure.
+func parseClinePassTokenPair(body []byte) (string, string, time.Time, bool) {
 	var nested struct {
 		Data struct {
 			AccessToken  string `json:"accessToken"`
 			RefreshToken string `json:"refreshToken"`
+			ExpiresAt    string `json:"expiresAt"`
+			ExpiresIn    int    `json:"expiresIn"`
 		} `json:"data"`
 		AccessToken  string `json:"accessToken"`
 		RefreshToken string `json:"refreshToken"`
+		ExpiresAt    string `json:"expiresAt"`
+		ExpiresIn    int    `json:"expiresIn"`
 	}
-	if errDecode := json.Unmarshal(body, &nested); errDecode == nil {
-		access := strings.TrimSpace(nested.Data.AccessToken)
-		refresh := strings.TrimSpace(nested.Data.RefreshToken)
-		if access == "" {
-			access = strings.TrimSpace(nested.AccessToken)
-			refresh = strings.TrimSpace(nested.RefreshToken)
-		}
-		if access != "" {
-			return access, refresh, true
+	if errDecode := json.Unmarshal(body, &nested); errDecode != nil {
+		return "", "", time.Time{}, false
+	}
+	access := strings.TrimSpace(nested.Data.AccessToken)
+	refresh := strings.TrimSpace(nested.Data.RefreshToken)
+	expiresAt := clinePassTokenExpiry(nested.Data.ExpiresAt, nested.Data.ExpiresIn)
+	if access == "" {
+		access = strings.TrimSpace(nested.AccessToken)
+		refresh = strings.TrimSpace(nested.RefreshToken)
+		expiresAt = clinePassTokenExpiry(nested.ExpiresAt, nested.ExpiresIn)
+	}
+	if access == "" {
+		return "", "", time.Time{}, false
+	}
+	return access, refresh, expiresAt, true
+}
+
+// clinePassTokenExpiry reads the expiry a token answer carries: an absolute timestamp, a
+// lifetime in seconds, or nothing. A nonsense value is treated as absent rather than trusted, so
+// a gateway that answers with a stray number cannot park an account behind a made-up lifetime.
+func clinePassTokenExpiry(rawExpiresAt string, expiresIn int) time.Time {
+	if trimmed := strings.TrimSpace(rawExpiresAt); trimmed != "" {
+		if parsed, errParse := time.Parse(time.RFC3339, trimmed); errParse == nil {
+			return parsed.UTC()
 		}
 	}
-	return "", "", false
+	switch {
+	case expiresIn > 0 && expiresIn <= int(clinePassMaxTokenLifetime/time.Second):
+		return time.Now().UTC().Add(time.Duration(expiresIn) * time.Second)
+	case expiresIn > int(clinePassMaxTokenLifetime/time.Second):
+		return time.Now().UTC().Add(clinePassMaxTokenLifetime)
+	}
+	return time.Time{}
 }
 
 // refreshAccountToken rotates the stored tokens of one OAuth account and
@@ -349,11 +379,15 @@ func (s *ClinePassService) refreshAccountToken(ctx context.Context, id string) (
 	if normalizeClinePassAuthMethod(account.AuthMethod) == clinePassAuthMethodAPIKey {
 		return account, nil
 	}
-	access, refresh, errExchange := exchangeClinePassRefreshToken(ctx, account.BaseURL, account.RefreshToken, s.httpDoer())
+	access, refresh, expiresAt, errExchange := exchangeClinePassRefreshToken(ctx, account.BaseURL, account.RefreshToken, s.httpDoer())
 	if errExchange != nil {
 		return ClinePassAccount{}, errExchange
 	}
-	expiresAt := s.now().UTC().Add(clinePassTokenLifetime - clinePassTokenRefreshMargin)
+	if expiresAt.IsZero() {
+		// The gateway did not name a window, so the documented lifetime is used - discounted by
+		// the refresh margin, because the token is rotated before it runs out.
+		expiresAt = s.now().UTC().Add(clinePassTokenLifetime - clinePassTokenRefreshMargin)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, stillPresent := s.accountLocked(account.ID); !stillPresent {
@@ -490,10 +524,13 @@ func (s *ClinePassService) CompleteClineCLILogin(ctx context.Context, name strin
 		return ClinePassLoginView{}, fmt.Errorf("no Cline CLI sign-in was found on this host")
 	}
 	if expiresAt.IsZero() || !expiresAt.After(s.now().UTC().Add(clinePassTokenRefreshMargin)) {
-		rotatedAccess, rotatedRefresh, errRotate := exchangeClinePassRefreshToken(ctx, clinePassDefaultBaseURL, refresh, s.httpDoer())
+		rotatedAccess, rotatedRefresh, rotatedExpiry, errRotate := exchangeClinePassRefreshToken(ctx, clinePassDefaultBaseURL, refresh, s.httpDoer())
 		if errRotate == nil {
 			access, refresh = rotatedAccess, rotatedRefresh
-			expiresAt = s.now().UTC().Add(clinePassTokenLifetime - clinePassTokenRefreshMargin)
+			expiresAt = rotatedExpiry
+			if expiresAt.IsZero() {
+				expiresAt = s.now().UTC().Add(clinePassTokenLifetime - clinePassTokenRefreshMargin)
+			}
 		} else if expiresAt.IsZero() || !expiresAt.After(s.now().UTC()) {
 			return ClinePassLoginView{}, errRotate
 		}

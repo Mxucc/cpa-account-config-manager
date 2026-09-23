@@ -122,6 +122,10 @@ const (
 	// account: the plugin holds the account out of routing until the window it named ends
 	// and journals the hold, so the operator can see why an account stopped serving.
 	OperationFailureClinePassQuotaLimited = "cline_pass_quota_limited"
+	// OperationFailureClinePassTokenRefresh is a Cline Pass token the gateway refused to rotate:
+	// the stored refresh token is spent or invalid, so the account needs a new sign-in instead of
+	// another retry.
+	OperationFailureClinePassTokenRefresh = "cline_pass_token_refresh_failed"
 )
 
 type OperationFailureDetail struct {

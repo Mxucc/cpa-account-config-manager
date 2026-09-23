@@ -27,18 +27,21 @@ import (
 // Credentials never leave the plugin private data directory: the management API
 // returns a redacted view and only reports whether a token is stored.
 const (
-	clinePassStoreVersion         = 1
-	clinePassStoreFileName        = "cline-pass.json"
-	clinePassDefaultBaseURL       = "https://api.cline.bot/api/v1"
-	clinePassDefaultTimeout       = 20
-	clinePassMaxTimeoutSeconds    = 60
-	clinePassMaxAccounts          = 64
-	clinePassMaxNameLength        = 120
-	clinePassMaxModelIDLength     = 256
-	clinePassMaxProbeBytes        = 1 << 20
-	clinePassMaxResponseBytes     = 8 << 20
-	clinePassErrorSummaryLength   = 180
-	clinePassTokenLifetime        = 55 * time.Minute
+	clinePassStoreVersion       = 1
+	clinePassStoreFileName      = "cline-pass.json"
+	clinePassDefaultBaseURL     = "https://api.cline.bot/api/v1"
+	clinePassDefaultTimeout     = 20
+	clinePassMaxTimeoutSeconds  = 60
+	clinePassMaxAccounts        = 64
+	clinePassMaxNameLength      = 120
+	clinePassMaxModelIDLength   = 256
+	clinePassMaxProbeBytes      = 1 << 20
+	clinePassMaxResponseBytes   = 8 << 20
+	clinePassErrorSummaryLength = 180
+	clinePassTokenLifetime      = 55 * time.Minute
+	// clinePassMaxTokenLifetime bounds a lifetime the gateway itself reports, so a nonsense
+	// answer cannot park an account behind an expiry far in the future.
+	clinePassMaxTokenLifetime     = 7 * 24 * time.Hour
 	clinePassTokenRefreshMargin   = 5 * time.Minute
 	clinePassRequestTimeout       = 20 * time.Second
 	clinePassRefreshTimeout       = 15 * time.Second
@@ -259,6 +262,11 @@ type ClinePassAccountView struct {
 	// unroutable until its channel row is rewritten with a token that works. The plugin repairs this
 	// automatically, and the flag tells the operator why calls failed in the meantime.
 	ChannelCredentialRejected bool `json:"channel_credential_rejected,omitempty"`
+	// ChannelBindingError carries why the last attempt to publish this account's channel row
+	// failed, sanitized and without any credential. It turns the "not bound" badge, which the
+	// operator could only guess about, into a state with a reason - a token that could not be
+	// rotated above all, because that is what a silent page read hides.
+	ChannelBindingError string `json:"channel_binding_error,omitempty"`
 	// QuotaUsage is the reference-priced usage of this account over the three
 	// documented Cline Pass windows. It carries token counts and reference-priced
 	// USD amounts only, never a credential, and it is additive: existing keys are
@@ -291,6 +299,15 @@ type clinePassPersisted struct {
 	// amount only - never a credential and never a model id.
 	UsageEvents map[string][]clinePassPersistedUsageEvent `json:"usage_events,omitempty"`
 }
+
+// clinePassRefreshFailure marks a rotation failure, so a caller can tell "the stored refresh token
+// was refused" apart from every other credential error it may receive. The message is the cause's
+// own, so nothing about the text a page shows changes.
+type clinePassRefreshFailure struct{ cause error }
+
+func (e clinePassRefreshFailure) Error() string { return e.cause.Error() }
+
+func (e clinePassRefreshFailure) Unwrap() error { return e.cause }
 
 // ClinePassProbeResult reports whether the gateway accepted a credential.
 type ClinePassProbeResult struct {
@@ -1239,7 +1256,10 @@ func (s *ClinePassService) credential(ctx context.Context, id string) (OpenCodeG
 	if normalizeClinePassAuthMethod(account.AuthMethod) != clinePassAuthMethodAPIKey && s.tokenNeedsRefresh(account) {
 		refreshed, errRefresh := s.refreshAccountToken(ctx, id)
 		if errRefresh != nil {
-			return OpenCodeGoCredential{}, errRefresh
+			// The failure is marked as a rotation failure: a caller that turns it into an
+			// operator-facing message has to be able to tell "sign in again" apart from a
+			// rejected credential.
+			return OpenCodeGoCredential{}, clinePassRefreshFailure{cause: errRefresh}
 		}
 		account = refreshed
 	}

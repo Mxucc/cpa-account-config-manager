@@ -323,7 +323,7 @@ func (a *App) repairRejectedClinePassAccounts(ctx context.Context, managementKey
 	}
 	a.refreshExpiringClinePassAccounts(ctx)
 	a.republishClinePassRows(ctx, managementKey, true)
-	_, _ = a.applyClinePassQuotaRowStates(ctx, managementKey)
+	a.applyClinePassQuotaRows(ctx, managementKey)
 }
 
 // republishClinePassRows republishes the accounts whose channel row is not the row they route

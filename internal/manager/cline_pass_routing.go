@@ -443,11 +443,8 @@ func (a *App) annotateClinePassRouteState(ctx context.Context, managementKey str
 	// looks at the page: disabling the limited account's row is what moves the traffic to a
 	// sibling account, and the row that was enabled again is what brings a recovered account
 	// back. The pass writes only what actually differs.
-	if readable {
-		report, _ := a.applyClinePassQuotaRowStates(ctx, managementKey)
-		if report.Wrote {
-			routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
-		}
+	if readable && a.applyClinePassQuotaRows(ctx, managementKey) {
+		routes, readable = a.clinePassChannelRoutes(ctx, managementKey)
 	}
 	for _, view := range targets {
 		// Reporting "not bound" for a list this plugin could not read would send the operator
@@ -511,6 +508,11 @@ func (a *App) bindClinePassAccountBestEffort(ctx context.Context, managementKey,
 	if a == nil || a.clinePass == nil || strings.TrimSpace(managementKey) == "" {
 		return clinePassBindOutcome{ErrorText: "management key is unavailable"}
 	}
+	// The channel list is one document: this bind reads it, changes its own row and writes it
+	// back, so it may not interleave with the quota pass or the upkeep loop writing the same
+	// list - the update that would be lost is the credential CPA routes through.
+	a.clinePassWriteMu.Lock()
+	defer a.clinePassWriteMu.Unlock()
 	bindCtx, cancel := context.WithTimeout(ctx, clinePassRoutingBindTimeout)
 	defer cancel()
 	startedAt := time.Now().UTC()

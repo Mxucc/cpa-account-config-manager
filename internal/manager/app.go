@@ -130,8 +130,25 @@ type App struct {
 	clinePassRepairKey     string
 	clinePassRepairAt      time.Time
 	clinePassRepairRunning bool
-	reconfigureRunning     bool
-	reconfigureCycle       chan struct{}
+	// clinePassMaintenance runs the Cline Pass credential upkeep on its own timetable. Cline
+	// Pass routes through the token stored on the channel row, that token expires on its own,
+	// and nothing else in the plugin touches the row while the operator is simply using the
+	// gateway: without this loop a lapsed token is only repaired when a page happens to be
+	// open, and until then CPA answers "no auth available ... re-authenticate your Cline
+	// account" for every request. The loop needs a management key to write the row, so it
+	// starts with the first management request and stops with the instance.
+	clinePassMaintenanceOnce    sync.Once
+	clinePassMaintenanceStop    chan struct{}
+	clinePassMaintenanceDone    chan struct{}
+	clinePassMaintenanceStopped bool
+	// clinePassWriteMu serializes every whole-list write to the Cline Pass channel rows. The
+	// quota pass, the automatic repair and the credential upkeep loop each read the list,
+	// change one row and write the list back, so two of them running at once would lose one
+	// another's update - and the update that gets lost can be the credential CPA routes
+	// through.
+	clinePassWriteMu   sync.Mutex
+	reconfigureRunning bool
+	reconfigureCycle   chan struct{}
 	// configApplyMu serializes every service configuration, so a deferred configure and a host
 	// reconfigure never mutate the services at the same time.
 	configApplyMu sync.Mutex
@@ -921,6 +938,11 @@ func (a *App) HandleUsage(record cpaapi.UsageRecord) {
 		// windows; no additional host callback or observer is registered, and the
 		// tracker itself decides whether the record is Cline Pass traffic.
 		a.clinePass.ObserveUsage(record)
+		// A failed record also carries the upstream answer, so a credential the gateway
+		// refused is learned here even when the request-completion callback never reaches
+		// the plugin. Without it a row CPA has cooled down would stay in the routing pool
+		// until somebody opened the Cline Pass page.
+		a.noteClinePassUsageOutcome(record)
 	}
 	if !a.isKnownAccountUsageRecord(record) && isAIProviderUsageRecord(record) {
 		// Provider credentials and native OAuth accounts share CPA's usage
@@ -989,6 +1011,7 @@ func (a *App) quiesceRetiredInstance() {
 	}
 	a.quiesceOnce.Do(func() {
 		superseded := a.runtime != nil && a.runtime.Snapshot().Superseded
+		a.stopClinePassMaintenance()
 		a.force.Shutdown()
 		a.inspection.Shutdown()
 		a.newAccountProbe.Shutdown()
@@ -1463,8 +1486,12 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			a.riskControl.SetManagementCredentials(resolveManagementBaseURL(a.configSnapshot().ManagementBaseURL), managementKey, a.managementDoer)
 		}
 		// The Cline Pass repair writes a channel row, and this is the only path that hands the plugin
-		// a management key while the operator is simply using the gateway.
+		// a management key while the operator is simply using the gateway. The key also starts the
+		// credential upkeep loop, which keeps the row's token valid between page loads.
 		a.rememberClinePassManagementKey(managementKey)
+		if strings.TrimSpace(managementKey) != "" {
+			a.startClinePassMaintenance()
+		}
 		a.policies.Arm(managementKey)
 		if a.policies.Snapshot().Policy.ManagesNewAccountProbe() {
 			a.newAccountProbe.SetManagementKey(managementKey, req.HostCallbackID)

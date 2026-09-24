@@ -192,7 +192,7 @@ func (a *App) handleClinePassAccounts(ctx context.Context, req cpaapi.Management
 		// the account is only gone from this plugin's own list.
 		if a.clinePass.QuotaRowDisabled(accountID) {
 			if _, errRelease := a.clinePass.ReleaseQuotaLimited(accountID); errRelease == nil {
-				_, _ = a.applyClinePassQuotaRowStates(ctx, managementKey)
+				a.applyClinePassQuotaRows(ctx, managementKey)
 			}
 		}
 		if errRemove := a.clinePass.RemoveAccount(accountID); errRemove != nil {

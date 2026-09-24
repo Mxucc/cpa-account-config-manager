@@ -309,7 +309,7 @@ func (a *App) noteClinePassProbeQuota(ctx context.Context, managementKey, accoun
 		// still be enabled because an earlier write failed, because the operator enabled it
 		// again, or because the state was lost, and a credential the gateway refuses must not
 		// stay in the routing pool.
-		report, errApply := a.applyClinePassQuotaRowStates(ctx, managementKey)
+		report, errApply := a.applyClinePassQuotaRowStatesLocked(ctx, managementKey)
 		if state, ok := report.States[strings.TrimSpace(accountID)]; ok {
 			outcome.Row = state
 		}

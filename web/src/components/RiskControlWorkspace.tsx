@@ -48,6 +48,12 @@ function providerModels(entry: AIProviderChannelEntry): AIProviderChannelModel[]
 type RiskAuditFormValue = RiskAuditConfig & { prompt_options?: RiskSystemPrompt[] };
 function auditWithoutUIOptions(value: RiskAuditFormValue): RiskAuditConfig { const { prompt_options: _uiOptions, ...audit } = value; return audit; }
 
+// The built-in prompt is immutable and the backend prepends its own canonical copy whenever the
+// payload does not carry one, so a save never sends built-in entries back. That keeps saving
+// independent of the exact prompt text that travelled through the CPA plugin host (issue #8:
+// "system_prompts default prompt is immutable" when the escaped prompt came back).
+function customPrompts(prompts: RiskSystemPrompt[]): RiskSystemPrompt[] { return (prompts ?? []).filter((prompt) => !prompt.builtin); }
+
 
 // A persisted audit prompt_id can dangle when an older release deleted its prompt; the backend
 // rejects such a save, so fall back to the first prompt that still exists (issue #8 follow-up).
@@ -218,7 +224,7 @@ export function RiskControlWorkspace({ onAPIError, onNotice }: RiskControlWorksp
   const save = async () => {
     setSaving(true); setError("");
     try {
-      const next = await api.saveRiskControl({ ...config, blocked_keywords: lines((config.blocked_keywords ?? []).join("\n")), model_filter: { mode: config.model_filter?.mode ?? "all", models: lines((config.model_filter?.models ?? []).join("\n")) }, block_status: Math.round(Number(config.block_status) || 403), event_retention_days: Math.round(Number(config.event_retention_days) || 30), max_events: Math.round(Number(config.max_events) || 500), audit: { ...config.audit, scanners: lines((config.audit.scanners ?? []).join("\n")), api_key: (config.audit.model_source ?? "external") === "external" ? config.audit.api_key : "", endpoint: (config.audit.model_source ?? "external") === "external" ? config.audit.endpoint : "" } });
+      const next = await api.saveRiskControl({ ...config, blocked_keywords: lines((config.blocked_keywords ?? []).join("\n")), model_filter: { mode: config.model_filter?.mode ?? "all", models: lines((config.model_filter?.models ?? []).join("\n")) }, block_status: Math.round(Number(config.block_status) || 403), event_retention_days: Math.round(Number(config.event_retention_days) || 30), max_events: Math.round(Number(config.max_events) || 500), audit: { ...config.audit, scanners: lines((config.audit.scanners ?? []).join("\n")), api_key: (config.audit.model_source ?? "external") === "external" ? config.audit.api_key : "", endpoint: (config.audit.model_source ?? "external") === "external" ? config.audit.endpoint : "" }, system_prompts: customPrompts(config.system_prompts) });
       const normalized = mergeSnapshot(next); setSnapshot(normalized); setConfig(normalized.config); onNotice(tx("ui.risk_control_saved"));
     } catch (caught) { setError(tx("ui.risk_control_save_failed")); onAPIError(caught); } finally { setSaving(false); }
   };

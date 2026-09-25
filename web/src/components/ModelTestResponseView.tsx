@@ -1,4 +1,3 @@
-import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { useI18n } from "../i18n";
 import type { ModelTestResponsePreview } from "../types";
 
@@ -9,7 +8,8 @@ import type { ModelTestResponsePreview } from "../types";
 export function ModelTestResponseView({ response }: { response: ModelTestResponsePreview }) {
   const { tx } = useI18n();
   const responseHeaders = Array.isArray(response.headers) ? response.headers : [];
-  const responseBody = response.body ? decodeHTMLCharacterReferences(response.body) : tx("ui.empty_response_body");
+  // The API boundary already undid the CPA host's HTML escaping, so render the body as-is.
+  const responseBody = response.body || tx("ui.empty_response_body");
   return (
     <div className="model-test-response">
       <div className="model-test-response-heading">

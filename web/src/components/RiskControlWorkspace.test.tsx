@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RiskControlSnapshot } from "../types";
+import type { RiskControlSnapshot, RiskSystemPrompt } from "../types";
 import { DEFAULT_RISK_SYSTEM_PROMPT } from "../constants/riskAuditPrompt";
 import { _resetSessionForTest, setSession } from "../store/session";
 import { RiskControlWorkspace } from "./RiskControlWorkspace";
@@ -24,6 +24,11 @@ const snapshot: RiskControlSnapshot = {
   status: { active: false, mode: "off", total_events: 0, observed: 0, blocked: 0, keyword_hits: 0, hash_hits: 0, remembered_hashes: 0, audit: { active: false, mode: "off", queue_length: 0, queue_capacity: 128, worker_count: 2, processed: 0, blocked: 0, errors: 0, dropped: 0, api_key_configured: false, api_key_available: false } },
   events: [],
 };
+
+// A custom prompt carries the characters the plugin host escapes, so the round trip has to survive
+// it; the built-in entry stays in the snapshot but must never be submitted (issue #8).
+const customPrompt: RiskSystemPrompt = { id: "custom-guard", name: "Custom guard", system_prompt: "guard <user_input> & reasons", builtin: false };
+const withCustomPrompt: RiskControlSnapshot = { ...snapshot, config: { ...snapshot.config, system_prompts: [defaultPrompt, customPrompt] } };
 
 beforeEach(() => {
   _resetSessionForTest();
@@ -86,7 +91,7 @@ describe("RiskControlWorkspace", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       requests.push({ url, init });
-      return respond();
+      return respond(withCustomPrompt);
     });
 
     render(<RiskControlWorkspace onAPIError={vi.fn()} onNotice={vi.fn()} />);
@@ -100,6 +105,11 @@ describe("RiskControlWorkspace", () => {
     const putRequest = requests.find(({ init }) => init?.method === "PUT");
     const body = JSON.parse(String(putRequest?.init?.body));
     expect(body.audit).not.toHaveProperty("prompt_options");
+    // A save must not echo the built-in prompt back: it is immutable, the backend prepends its own
+    // canonical copy whenever the payload omits one, and the CPA plugin host HTML-escapes every
+    // response string - an echoed escaped prompt used to fail the whole save with
+    // "system_prompts default prompt is immutable" (issue #8).
+    expect(body.system_prompts).toEqual([customPrompt]);
     // The backend decodes this payload with DisallowUnknownFields, so any key outside the Go
     // RiskAuditConfig struct fails the whole save: keep the body inside that allow-list.
     const knownAuditKeys = new Set(["enabled", "mode", "endpoint", "model", "model_source", "account_id", "provider_auth_index", "provider_name", "api_key", "api_key_set", "api_key_clear", "scanners", "latest_turn_only", "store_pass_events", "timeout_ms", "input_limit", "worker_count", "queue_capacity", "failure_policy", "block_status", "block_message", "confidence_threshold", "prompt_id"]);

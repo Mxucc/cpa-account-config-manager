@@ -49,6 +49,7 @@ Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, and Codex Manage
 - The workspace reports observed, blocked, keyword-hit, and hash-hit totals with sanitized events, and can clear events or remembered hashes independently.
 - Risk-control storage and Management APIs never retain prompt text, excerpts, request headers, tokens, cookies, API keys, or proxy credentials. Account identifiers are SHA-256-pseudonymized and matched rules are stored only as irreversible `kw:` references.
 - The risk center contains content moderation, prompt auditing, and custom auditing modules; external audits persist only the endpoint, model, scanners, queue/timeout settings, and credential environment-variable name, with fail-open/fail-closed policies.
+- The built-in `default-security-audit` prompt is immutable: the UI no longer submits that entry and the backend restores the canonical text, while also accepting the CPA plugin host's HTML-escaped form of the prompt, so the host's transport escaping cannot fail a save. Management API response strings are un-escaped once at the client boundary, so `<` and `&` inside a custom prompt survive a save/reload round trip.
 - Account quota limits use only CPA-collected official Codex 5-hour and 7-day usage percentages; each window has an independent threshold, blank means unlimited, and missing official usage is passed through rather than fabricated.
 
 ### Model Tests, Routing, And Codex Identity

@@ -4,7 +4,6 @@ import { AlertTriangle, CheckCircle2, Pencil, ShieldQuestion, XCircle } from "lu
 import * as api from "../api/client";
 import { technicalLabel } from "../format/accountDisplay";
 import { operatorMessage } from "../format/operatorMessage";
-import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { useI18n } from "../i18n";
 import { ModelTestResponseView } from "./ModelTestResponseView";
 import type { UIMessageKey } from "../i18n/uiText";

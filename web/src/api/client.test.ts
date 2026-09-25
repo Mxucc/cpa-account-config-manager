@@ -56,6 +56,7 @@ import {
   testAIProviderChannelForKind,
   getSelfUpdate,
   saveSelfUpdateSettings,
+  requestRecord,
 } from "./client";
 import { _resetSessionForTest, setSession } from "../store/session";
 
@@ -1868,6 +1869,35 @@ describe("management API client", () => {
     await expect(getAIProviderRuntime()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
     await expect(getOperationRetentionSettings()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
     await expect(clearOperations()).rejects.toMatchObject({ message: "ui.invalid_api_response" });
+  });
+
+  it("undoes the CPA plugin host HTML escaping of management response values", async () => {
+    setSession("https://cpa.example", "management-secret");
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      system_prompts: [{ id: "default-security-audit", name: "Default security audit", system_prompt: "[SYSTEM] &lt;user_input&gt; &#34;confidence&#34;: 0.00 &amp; reason" }],
+      nested: { list: ["&lt;b&gt;", "plain"] },
+      "&amp;key": "value",
+      once: "&amp;#34;message&amp;#34;",
+      untouched: "no entity here",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const payload = await requestRecord<Record<string, unknown>>("/risk-control");
+    expect(payload.system_prompts).toEqual([{ id: "default-security-audit", name: "Default security audit", system_prompt: "[SYSTEM] <user_input> \"confidence\": 0.00 & reason" }]);
+    expect(payload.nested).toEqual({ list: ["<b>", "plain"] });
+    // Object keys are not escaped by the host, so they are left alone.
+    expect(payload["&amp;key"]).toBe("value");
+    // Exactly one pass: a value the host escaped twice is not decoded twice.
+    expect(payload.once).toBe("&#34;message&#34;");
+    expect(payload.untouched).toBe("no entity here");
+  });
+
+  it("undoes the CPA plugin host HTML escaping of a management error message", async () => {
+    setSession("https://cpa.example", "management-secret");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ error: "system_prompts default prompt is immutable &lt;at index 0&gt;" }, 400)));
+
+    await expect(requestRecord("/risk-control", { method: "PUT", body: "{}" }))
+      .rejects.toMatchObject({ status: 400, message: "system_prompts default prompt is immutable <at index 0>" });
   });
 
 });

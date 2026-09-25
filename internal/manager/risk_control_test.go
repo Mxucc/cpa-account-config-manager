@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -443,6 +444,53 @@ func TestRiskSystemPromptAcceptsTrimmedCanonicalDefault(t *testing.T) {
 	}
 	if len(prompts) != 1 || prompts[0] != defaultRiskSystemPrompts()[0] {
 		t.Fatalf("trimmed canonical prompt was not restored: %#v", prompts)
+	}
+}
+
+func TestRiskSystemPromptAcceptsHostEscapedDefaultPrompt(t *testing.T) {
+	// CPA's plugin host HTML-escapes every string value of a plugin management response, so a client
+	// that echoes a snapshot back without undoing the transport escaping submits the escaped body.
+	// It must restore the canonical default instead of failing the whole save (issue #8).
+	escaped := html.EscapeString(strings.TrimSpace(defaultRiskSystemPrompt))
+	if escaped == defaultRiskSystemPrompt {
+		t.Fatal("expected the canonical prompt to contain characters the plugin host escapes")
+	}
+	for _, body := range []string{escaped, html.EscapeString(defaultRiskSystemPromptLegacy)} {
+		prompts, err := normalizeRiskSystemPrompts([]RiskSystemPrompt{{
+			ID:           defaultRiskSystemPromptID,
+			Name:         "Default security audit",
+			SystemPrompt: body,
+			BuiltIn:      true,
+		}})
+		if err != nil {
+			t.Fatalf("escaped built-in prompt was rejected: %v", err)
+		}
+		if len(prompts) != 1 || prompts[0] != defaultRiskSystemPrompts()[0] {
+			t.Fatalf("escaped built-in prompt was not restored: %#v", prompts)
+		}
+	}
+	// Anything else - including an escaped custom edit of the built-in prompt - stays immutable.
+	for _, body := range []string{escaped + " extra", strings.Replace(escaped, "&#34;", "&#39;", 1), defaultRiskSystemPrompt + " extra"} {
+		if _, err := normalizeRiskSystemPrompts([]RiskSystemPrompt{{
+			ID:           defaultRiskSystemPromptID,
+			Name:         "Default security audit",
+			SystemPrompt: body,
+			BuiltIn:      true,
+		}}); err == nil {
+			t.Fatalf("tampered default prompt was accepted: %q", body)
+		}
+	}
+}
+
+func TestRiskSystemPromptSaveOmittingBuiltInRestoresCanonicalDefault(t *testing.T) {
+	// The UI no longer submits built-in entries; the backend must prepend the canonical one.
+	custom := RiskSystemPrompt{ID: "custom-1", Name: "custom", SystemPrompt: "custom <prompt> & rules"}
+	prompts, err := normalizeRiskSystemPrompts([]RiskSystemPrompt{custom})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prompts) != 2 || prompts[0] != defaultRiskSystemPrompts()[0] || prompts[1] != custom {
+		t.Fatalf("custom-only save was not completed with the canonical default: %#v", prompts)
 	}
 }
 

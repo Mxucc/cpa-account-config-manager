@@ -162,7 +162,7 @@ describe("ModelTestDialog", () => {
     expect(responseBody).toHaveTextContent("rate_limit_exceeded");
   });
 
-  it("decodes CPA-host character references as inert response text", () => {
+  it("renders a decoded upstream response body as inert text", () => {
     render(<ModelTestDialog
       account={{ ...account, provider: "codex-agent-identity", plan_type: "k12" }}
       result={{
@@ -172,7 +172,9 @@ describe("ModelTestDialog", () => {
         experiment: { name: "weekly_overdraft", applied: true, call_id: "call_cpa_overdraft_2f026e0867cc9a9400c58a07" },
         response: {
           format: "json",
-          body: "{\n  &#34;error&#34;: {\n    &#34;_omitted_fields&#34;: 4,\n    &#34;message&#34;: &#34;The usage limit has been reached &lt;img src=x onerror=alert(1)&gt;&#34;,\n    &#34;type&#34;: &#34;usage_limit_reached&#34;\n  }\n}",
+          // The management API boundary already undid the CPA plugin host's HTML escaping (issue #8),
+          // so this view receives a decoded body and must still render it as inert, markup-free text.
+          body: "{\n  \"error\": {\n    \"_omitted_fields\": 4,\n    \"message\": \"The usage limit has been reached <img src=x onerror=alert(1)>\",\n    \"type\": \"usage_limit_reached\"\n  }\n}",
           headers: [
             { name: "cf-ray", value: "a1f9ebf56c42e3c4-IAD" },
             { name: "content-type", value: "application/json" },

@@ -1,3 +1,4 @@
+import { decodeHTMLCharacterReferences } from "../format/htmlCharacterReferences";
 import { getSession } from "../store/session";
 import type {
   Account,
@@ -104,12 +105,30 @@ function buildURL(path: string, query?: URLSearchParams): string {
   return `${session.baseUrl}${API_ROOT}${path}${suffix}`;
 }
 
+// CPA serves plugin management routes through its plugin host, which HTML-escapes every string
+// VALUE of a JSON response body (internal/pluginhost -> htmlsanitize.JSONBody: & < > " ' become
+// character references; object keys are left alone). The plugin cannot opt out, so the transform
+// has to be inverted exactly once, right here after parsing. Skipping it made the UI echo an
+// escaped built-in audit prompt back on save, which the backend rejected as
+// "system_prompts default prompt is immutable" (issue #8), and silently re-escaped every custom
+// prompt on each round trip.
+function decodeManagementStrings(value: unknown): unknown {
+  if (typeof value === "string") return decodeHTMLCharacterReferences(value);
+  if (Array.isArray(value)) return value.map(decodeManagementStrings);
+  if (value && typeof value === "object") {
+    const decoded: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) decoded[key] = decodeManagementStrings(item);
+    return decoded;
+  }
+  return value;
+}
+
 async function parseJSONResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) return {} as T;
   const text = await response.text();
   if (!text.trim()) return {} as T;
   try {
-    return JSON.parse(text) as T;
+    return decodeManagementStrings(JSON.parse(text)) as T;
   } catch {
     throw new APIError(response.status, "ui.invalid_json_response");
   }
@@ -120,9 +139,11 @@ async function responseErrorMessage(response: Response, fallback: string, prefer
     const text = await response.text();
     if (!text.trim()) return fallback;
     const body = JSON.parse(text) as { error?: unknown; message?: unknown };
-    if (preferError && typeof body.error === "string" && body.error.trim()) return body.error;
-    if (typeof body.message === "string" && body.message.trim()) return body.message;
-    if (typeof body.error === "string" && body.error.trim()) return body.error;
+    const error = typeof body.error === "string" ? decodeHTMLCharacterReferences(body.error) : "";
+    const message = typeof body.message === "string" ? decodeHTMLCharacterReferences(body.message) : "";
+    if (preferError && error.trim()) return error;
+    if (message.trim()) return message;
+    if (error.trim()) return error;
   } catch {
     // Keep the status-only error when the response is not JSON.
   }

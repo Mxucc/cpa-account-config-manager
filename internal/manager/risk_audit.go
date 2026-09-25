@@ -498,12 +498,16 @@ func normalizeRiskSystemPrompts(prompts []RiskSystemPrompt) ([]RiskSystemPrompt,
 		seen[prompt.ID] = struct{}{}
 		if prompt.ID == defaultRiskSystemPromptID {
 			// The built-in prompt is a stable safety boundary. Older persisted
-			// installations used the short English prompt; transparently migrate
-			// that exact legacy value, while still rejecting all user tampering.
-			// TrimSpace is applied to every catalog entry, so compare against the
-			// trimmed canonical body and then restore the immutable default.
+			// installations used the short English prompt, and CPA's plugin host
+			// HTML-escapes every management response string, so a client can echo
+			// the built-in prompt back escaped without ever editing it.
+			// Transparently migrate those exact values and restore the canonical
+			// default, while still rejecting all user tampering. TrimSpace is
+			// applied to every catalog entry, so compare the trimmed bodies.
 			switch {
 			case prompt.Name == defaultPrompt.Name && prompt.BuiltIn && prompt.SystemPrompt == strings.TrimSpace(defaultPrompt.SystemPrompt):
+				prompt = defaultPrompt
+			case prompt.Name == defaultPrompt.Name && prompt.BuiltIn && riskSystemPromptEscapedMatch(prompt.SystemPrompt):
 				prompt = defaultPrompt
 			case prompt.Name == defaultPrompt.Name && prompt.BuiltIn && prompt.SystemPrompt == defaultRiskSystemPromptLegacy:
 				prompt = defaultPrompt

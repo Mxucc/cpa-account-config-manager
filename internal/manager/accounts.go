@@ -306,6 +306,10 @@ func (s *AccountService) CurrentAuthDocument(ctx context.Context, account Accoun
 	if errGet != nil {
 		return currentAuthDocument{}, fmt.Errorf("read physical auth file: %w", errGet)
 	}
+	return authDocumentFromDetail(account, detail)
+}
+
+func authDocumentFromDetail(account Account, detail cpaapi.HostAuthGetResponse) (currentAuthDocument, error) {
 	raw := bytes.TrimSpace(detail.JSON)
 	if len(raw) == 0 || !json.Valid(raw) {
 		return currentAuthDocument{}, fmt.Errorf("physical auth file is invalid")

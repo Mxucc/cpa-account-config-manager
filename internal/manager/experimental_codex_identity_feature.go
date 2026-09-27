@@ -355,6 +355,15 @@ func (e *CodexIdentityExperiment) accountGate(ctx context.Context, authIndex str
 	if e == nil || e.accounts == nil || strings.TrimSpace(authIndex) == "" {
 		return codexAccountWithMetadata{}
 	}
+	if lookup, ok := e.accounts.(interface {
+		identityAccount(context.Context, string) (Account, currentAuthDocument, error)
+	}); ok {
+		account, document, errLookup := lookup.identityAccount(ctx, authIndex)
+		if errLookup != nil {
+			return codexAccountWithMetadata{}
+		}
+		return codexGateFromDocument(account, document)
+	}
 	response, err := e.accounts.List(ctx, ListQuery{Page: 1, PageSize: maxPageSize, Filters: AccountFilters{}})
 	if err != nil {
 		return codexAccountWithMetadata{}
@@ -367,17 +376,19 @@ func (e *CodexIdentityExperiment) accountGate(ctx context.Context, authIndex str
 		if err != nil {
 			return codexAccountWithMetadata{}
 		}
-		selected := account
-		return codexAccountWithMetadata{
-			account:  &selected,
-			metadata: metadata.Metadata,
-			codexAccountGateState: codexAccountGateState{
-				codexCLIOnly:          codexExtraBool(metadata.Metadata["codex_cli_only"]),
-				codexCLIOnlyAppServer: codexExtraBool(metadata.Metadata["codex_cli_only_allow_app_server"]),
-			},
-		}
+		return codexGateFromDocument(account, metadata)
 	}
 	return codexAccountWithMetadata{}
+}
+
+func codexGateFromDocument(account Account, document currentAuthDocument) codexAccountWithMetadata {
+	return codexAccountWithMetadata{
+		account: &account, metadata: document.Metadata,
+		codexAccountGateState: codexAccountGateState{
+			codexCLIOnly:          codexExtraBool(document.Metadata["codex_cli_only"]),
+			codexCLIOnlyAppServer: codexExtraBool(document.Metadata["codex_cli_only_allow_app_server"]),
+		},
+	}
 }
 
 func (e *CodexIdentityExperiment) accountOverride(account *Account) (CodexIdentityOverride, bool) {

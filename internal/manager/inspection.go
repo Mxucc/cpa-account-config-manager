@@ -1216,11 +1216,20 @@ func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result Mod
 // account the probe pass already resolved, carried in the result, or a
 // single-target resolution when the caller did not run a probe first.
 func (e *InspectionEngine) modelTestTarget(ctx context.Context, result ModelTestResult, accountID string) (Account, error) {
-	if resolved := result.resolvedAccount; strings.TrimSpace(resolved.ID) != "" && strings.TrimSpace(resolved.ID) == accountID {
-		return resolved, nil
-	}
 	if e == nil || e.accounts == nil {
 		return Account{}, fmt.Errorf("inspection engine is unavailable")
+	}
+	resolved := result.resolvedAccount
+	if strings.TrimSpace(resolved.ID) == accountID {
+		// A probe pass can run for over a minute, so one physical read confirms the
+		// credential the probe used is still the one on record. A credential deleted
+		// or replaced in that window falls through to the resolution below, which
+		// reports the account as missing exactly as a fresh resolution did, while the
+		// common case no longer lists every account to re-answer a question the probe
+		// already answered.
+		if _, errDocument := e.accounts.CurrentAuthDocument(ctx, resolved); errDocument == nil {
+			return resolved, nil
+		}
 	}
 	targets, errResolve := e.accounts.ResolveTargets(ctx, TargetScope{Mode: "selected", IDs: []string{accountID}})
 	if errResolve != nil || len(targets.Accounts) != 1 {

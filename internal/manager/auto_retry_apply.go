@@ -100,15 +100,13 @@ func (a *App) applyAutoRetryToCodexAuthFiles(ctx context.Context, attempts int) 
 	if a.accounts == nil {
 		return 0
 	}
-	// One bounded page of the largest size the account service serves: it covers
-	// a realistic installation without an unbounded walk that could outlive the
-	// pass deadline.
-	response, errList := a.accounts.List(ctx, ListQuery{Page: 1, PageSize: maxPageSize})
-	if errList != nil {
-		return 0
-	}
+	// Walk every page: one page silently left the stored budget unapplied for
+	// every account past the first 1000. A walk that stops early (host error, or
+	// the pass deadline the caller supplies through ctx) still applies the pages it
+	// already read, which is what the previous single-page pass did for its page.
+	accounts, _ := a.accounts.ListAllAccounts(ctx)
 	updated := 0
-	for _, account := range response.Accounts {
+	for _, account := range accounts {
 		if ctx.Err() != nil {
 			break
 		}

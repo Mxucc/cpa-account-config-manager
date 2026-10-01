@@ -461,6 +461,17 @@ func ensureCodexFingerprintSeed(ctx context.Context, store fingerprintAccountSto
 	return seed, true
 }
 
+// codexSeedResolution is one request's fingerprint-seed lookup for the selected
+// account. The request path builds it from the credential document the gate
+// already read and reuses it for every identity derivation in that request, so
+// one intercepted request reads the credential at most once.
+type codexSeedResolution struct {
+	document currentAuthDocument
+	seed     string
+	ok       bool
+	resolved bool
+}
+
 // resolveCodexFingerprintSeed chooses the reference fork's persisted OAuth-like
 // seed when credential storage is available. AI-provider credentials are not
 // represented by editable auth JSON, so derive a stable non-persisted seed from
@@ -469,6 +480,7 @@ func resolveCodexFingerprintSeed(
 	ctx context.Context,
 	store fingerprintSeedStore,
 	account Account,
+	resolutions ...codexSeedResolution,
 ) (string, bool) {
 	// A fixed seed pins every account to one fingerprint; the default derives a
 	// separate seed per account.
@@ -478,6 +490,22 @@ func resolveCodexFingerprintSeed(
 		}
 	}
 	if isCodexOAuthLikeAccount(account) {
+		for _, resolution := range resolutions {
+			if resolution.resolved {
+				// This request already resolved the seed. Reuse that answer instead
+				// of reading the credential again, which also keeps a seed that could
+				// not be stored down to one attempt per request.
+				return resolution.seed, resolution.ok
+			}
+		}
+		for _, resolution := range resolutions {
+			// A document the caller already read supplies an existing seed with no
+			// host read of its own. A missing seed still goes through the atomic
+			// create path below.
+			if seed := canonicalCodexFingerprintSeed(resolution.document.Metadata[codexFingerprintSeedExtraKey]); seed != "" {
+				return seed, true
+			}
+		}
 		return ensureCodexFingerprintSeed(ctx, store, account)
 	}
 	identity := strings.TrimSpace(firstNonEmpty(account.ID, account.AuthID))

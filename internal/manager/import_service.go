@@ -324,7 +324,11 @@ func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResu
 		Results:   make([]ImportResultItem, 0, len(preview.Items)),
 	}
 	knownNames := importAuthNameSet(entries)
-	for index, item := range preview.Items {
+	// Re-sync with the host only after this run actually wrote a file: a pass that
+	// skipped or failed every item leaves the listing unchanged, so re-reading it
+	// for each item was one full host listing per candidate for no new information.
+	rewrote := false
+	for _, item := range preview.Items {
 		entryResult := ImportResultItem{
 			Index:      item.Public.Index,
 			SourceName: item.Public.SourceName,
@@ -341,15 +345,18 @@ func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResu
 			result.Results = append(result.Results, entryResult)
 			continue
 		}
-		if index > 0 {
+		if rewrote {
 			currentEntries, errRefresh := s.host.ListAuth(ctx)
 			if errRefresh != nil {
+				// Keep rewrote set so the next item retries the re-read instead of
+				// checking a name set that predates the last write.
 				entryResult.Status = ImportResultFailed
 				entryResult.Error = "could not verify the target Auth filename"
 				result.Failed++
 				result.Results = append(result.Results, entryResult)
 				continue
 			}
+			rewrote = false
 			currentEntries = filterPluginOwnedAuthEntries(currentEntries)
 			for name := range importAuthNameSet(currentEntries) {
 				knownNames[name] = struct{}{}
@@ -371,6 +378,7 @@ func (s *ImportService) Start(ctx context.Context, previewID string) (ImportResu
 			continue
 		}
 		knownNames[nameKey] = struct{}{}
+		rewrote = true
 		entryResult.Status = ImportResultImported
 		result.Imported++
 		result.Results = append(result.Results, entryResult)

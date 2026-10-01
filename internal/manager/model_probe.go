@@ -79,6 +79,13 @@ type ModelTestResult struct {
 	// was withheld. It is never serialized because no client acts on it.
 	PolicySkipReason string                     `json:"-"`
 	ModelPolicy      *ModelTestPolicyAdjustment `json:"model_policy,omitempty"`
+	// resolvedAccount carries the credential this probe already resolved to the
+	// follow-up steps of the same pass (allow-list apply and inspection record), so
+	// they do not each walk the whole account list for the same account. It is a
+	// probe-time snapshot: every path that writes or disables anything re-reads the
+	// document or re-resolves the account first, so only the recorded evidence view
+	// can be as old as the probe. It is never serialized.
+	resolvedAccount Account
 }
 
 type ModelTestPolicyAdjustment struct {
@@ -322,6 +329,29 @@ func (s *ModelTestService) SetAgentIdentityExperiment(experiment *AgentIdentityE
 	s.agentIdentity = experiment
 }
 
+// modelProbeTarget returns the credential a model-probe follow-up step acts on:
+// the account the pass already resolved when it is the requested one, and
+// otherwise a fresh single-target resolution. One probe pass touches the same
+// credential three times (probe, allow-list write, inspection record), and
+// re-resolving it each time walked the whole account list each time.
+func (a *App) modelProbeTarget(ctx context.Context, resolved Account, accountID string) (Account, error) {
+	wanted := strings.TrimSpace(accountID)
+	if resolvedID := strings.TrimSpace(resolved.ID); resolvedID != "" && resolvedID == wanted {
+		return resolved, nil
+	}
+	if a == nil || a.accounts == nil {
+		return Account{}, ErrModelTestAccountNotFound
+	}
+	targets, errResolve := a.accounts.ResolveTargets(ctx, TargetScope{Mode: "selected", IDs: []string{wanted}})
+	if errResolve != nil {
+		return Account{}, errResolve
+	}
+	if len(targets.Accounts) != 1 {
+		return Account{}, ErrModelTestAccountNotFound
+	}
+	return targets.Accounts[0], nil
+}
+
 func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, managementBaseURL, managementKey string, hostCallbackID ...string) (ModelTestResult, error) {
 	accountID := safeOperationIdentifier(request.AccountID, 256)
 	if accountID == "" {
@@ -364,6 +394,8 @@ func (s *ModelTestService) Run(ctx context.Context, request ModelTestRequest, ma
 		Provider:  provider,
 		Model:     model,
 		TestedAt:  startedAt,
+		// Hand the resolved credential to the follow-up steps of this pass.
+		resolvedAccount: account,
 	}
 	if request.ExperimentalWeeklyOverdraft && (probeProvider != "codex" || metadata.usesAPIKey()) {
 		return ModelTestResult{}, fmt.Errorf("weekly overdraft experiment requires a Codex OAuth account")

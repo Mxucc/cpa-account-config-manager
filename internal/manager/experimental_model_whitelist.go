@@ -18,6 +18,15 @@ func (a *App) applyDetectedModelWhitelist(ctx context.Context, accountID string,
 	if len(requestedSource) > 0 && normalizeOperationSource(requestedSource[0]) != "" {
 		source = normalizeOperationSource(requestedSource[0])
 	}
+	return a.applyDetectedModelWhitelistForAccount(ctx, Account{}, accountID, models, config, managementKey, source)
+}
+
+// applyDetectedModelWhitelistForAccount applies the detected allow-list to the
+// account a probe pass already resolved. Resolving the same single credential
+// again for every follow-up step cost one full host listing per step, so a caller
+// that already holds the account hands it in; only a caller without one resolves
+// the target here.
+func (a *App) applyDetectedModelWhitelistForAccount(ctx context.Context, resolved Account, accountID string, models []string, config Config, managementKey, source string) *ModelTestPolicyAdjustment {
 	adjustment := &ModelTestPolicyAdjustment{
 		Mode: ModelPolicyModeAllowOnly, Models: append([]string(nil), models...), Status: "failed", ReasonCode: "operation_failed",
 	}
@@ -26,14 +35,13 @@ func (a *App) applyDetectedModelWhitelist(ctx context.Context, accountID string,
 		return adjustment
 	}
 	adjustment.Models = append([]string(nil), validated.Models...)
-	resolved, errResolve := a.accounts.ResolveTargets(ctx, TargetScope{Mode: "selected", IDs: []string{accountID}})
-	if errResolve != nil || len(resolved.Accounts) != 1 || !resolved.Accounts[0].Editable {
+	account, errResolve := a.modelProbeTarget(ctx, resolved, accountID)
+	if errResolve != nil || !account.Editable {
 		adjustment.Status = "skipped"
 		adjustment.ReasonCode = "account_read_only"
 		a.recordAutoModelWhitelist(accountID, adjustment, source)
 		return adjustment
 	}
-	account := resolved.Accounts[0]
 	ownerID, errID := randomIdentifier()
 	if errID != nil || !a.jobs.mutations.TryAcquire(autoModelWhitelistMutationPrefix+ownerID) {
 		adjustment.Status = "skipped"

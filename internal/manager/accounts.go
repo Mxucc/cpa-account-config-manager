@@ -218,6 +218,119 @@ func (s *AccountService) List(ctx context.Context, query ListQuery) (ListRespons
 	return response, nil
 }
 
+// maxAccountListPages bounds a paginated walk even when a host or provider
+// ignores the requested page and keeps returning the same rows. The list page
+// limit is 1000 accounts, so this covers installations far larger than any
+// known one while never letting a walk spin forever.
+const maxAccountListPages = 100
+
+// walkAccountPages walks the management list page by page. It stops when visit
+// asks it to, when a page comes back short or empty, when the reported total is
+// covered, when the page count is exhausted, or at the defensive page cap, so no
+// provider can turn the walk into an endless one.
+func walkAccountPages(ctx context.Context, pageSize int, fetch func(page int) (ListResponse, error), visit func(page []Account) bool) error {
+	if pageSize < 1 {
+		pageSize = maxPageSize
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	seen := 0
+	for page := 1; page <= maxAccountListPages; page++ {
+		response, errFetch := fetch(page)
+		if errFetch != nil {
+			return errFetch
+		}
+		seen += len(response.Accounts)
+		if visit != nil && visit(response.Accounts) {
+			return nil
+		}
+		if errContext := ctx.Err(); errContext != nil {
+			return errContext
+		}
+		// A short or empty page ends the walk, as does a covered total or an
+		// exhausted page count. The size the caller asked for is the yardstick when
+		// the provider reports none, so a provider that ignores the page number and
+		// answers with a short page still cannot spin here; a provider that ignores it
+		// and answers with full pages is bounded by the page cap above.
+		effective := pageSize
+		if response.PageSize > 0 {
+			effective = response.PageSize
+		}
+		if len(response.Accounts) == 0 || len(response.Accounts) < effective ||
+			(response.Total > 0 && seen >= response.Total) || (response.Pages > 0 && page >= response.Pages) {
+			return nil
+		}
+	}
+	return nil
+}
+
+// ListAllAccounts walks every page the management list serves. Callers that
+// must not silently truncate at the first page (the retry-budget write and the
+// credential-gate fallbacks) use it instead of List(Page: 1, PageSize:
+// maxPageSize), which stops at 1000 accounts and drops the rest. A walk that
+// stops early returns what it already read together with the error.
+func (s *AccountService) ListAllAccounts(ctx context.Context) ([]Account, error) {
+	if s == nil || s.host == nil {
+		return nil, fmt.Errorf("auth host is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	all := make([]Account, 0, maxPageSize)
+	errWalk := walkAccountPages(ctx, maxPageSize,
+		func(page int) (ListResponse, error) { return s.List(ctx, ListQuery{Page: page, PageSize: maxPageSize}) },
+		func(page []Account) bool { all = append(all, page...); return false })
+	// A walk that stops early returns what it already read together with the
+	// error, so a caller that can act on partial progress does not discard it.
+	return all, errWalk
+}
+
+// ReadAuthDocuments reads one physical auth document per account with bounded
+// concurrency. Entries that cannot be read are omitted from the result, so a
+// caller degrades per account instead of failing the whole operation.
+func (s *AccountService) ReadAuthDocuments(ctx context.Context, accounts []Account) map[string]currentAuthDocument {
+	documents := make(map[string]currentAuthDocument, len(accounts))
+	if s == nil || s.host == nil || len(accounts) == 0 {
+		return documents
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	workers := accountDetailWorkers
+	if workers > len(accounts) {
+		workers = len(accounts)
+	}
+	indexes := make(chan int, workers)
+	var group sync.WaitGroup
+	var mu sync.Mutex
+	group.Add(workers)
+	for range workers {
+		go func() {
+			defer group.Done()
+			for index := range indexes {
+				account := accounts[index]
+				if account.ID == "" || ctx.Err() != nil {
+					continue
+				}
+				document, errDocument := s.CurrentAuthDocument(ctx, account)
+				if errDocument != nil {
+					continue
+				}
+				mu.Lock()
+				documents[account.ID] = document
+				mu.Unlock()
+			}
+		}()
+	}
+	for index := range accounts {
+		indexes <- index
+	}
+	close(indexes)
+	group.Wait()
+	return documents
+}
+
 func (s *AccountService) accountConcurrencyAvailability() AccountConcurrencyAvailability {
 	if s == nil || s.concurrency == nil {
 		return AccountConcurrencyAvailability{RequiredSchemaVersion: cpaapi.SchemaVersion, HostSchemaVersion: cpaapi.LegacySchemaVersion, Reason: "host_schema_v2_required"}

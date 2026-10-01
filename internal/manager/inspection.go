@@ -1212,6 +1212,23 @@ func (e *InspectionEngine) RecordManualModelTest(ctx context.Context, result Mod
 	return e.RecordModelTest(ctx, result, InspectionProbeSourceManual)
 }
 
+// modelTestTarget returns the credential an inspection record belongs to: the
+// account the probe pass already resolved, carried in the result, or a
+// single-target resolution when the caller did not run a probe first.
+func (e *InspectionEngine) modelTestTarget(ctx context.Context, result ModelTestResult, accountID string) (Account, error) {
+	if resolved := result.resolvedAccount; strings.TrimSpace(resolved.ID) != "" && strings.TrimSpace(resolved.ID) == accountID {
+		return resolved, nil
+	}
+	if e == nil || e.accounts == nil {
+		return Account{}, fmt.Errorf("inspection engine is unavailable")
+	}
+	targets, errResolve := e.accounts.ResolveTargets(ctx, TargetScope{Mode: "selected", IDs: []string{accountID}})
+	if errResolve != nil || len(targets.Accounts) != 1 {
+		return Account{}, fmt.Errorf("inspection account was not found")
+	}
+	return targets.Accounts[0], nil
+}
+
 func (e *InspectionEngine) RecordModelTest(ctx context.Context, result ModelTestResult, source string) error {
 	if e == nil || e.accounts == nil {
 		return fmt.Errorf("inspection engine is unavailable")
@@ -1220,11 +1237,12 @@ func (e *InspectionEngine) RecordModelTest(ctx context.Context, result ModelTest
 	if accountID == "" {
 		return fmt.Errorf("account_id is required")
 	}
-	resolved, errResolve := e.accounts.ResolveTargets(ctx, TargetScope{Mode: "selected", IDs: []string{accountID}})
-	if errResolve != nil || len(resolved.Accounts) != 1 {
-		return fmt.Errorf("inspection account was not found")
+	// The probe pass already resolved this credential and handed it over in the
+	// result; resolving it again here listed every account a second time.
+	account, errTarget := e.modelTestTarget(ctx, result, accountID)
+	if errTarget != nil {
+		return errTarget
 	}
-	account := resolved.Accounts[0]
 	e.scanMu.Lock()
 	defer e.scanMu.Unlock()
 	e.mu.Lock()

@@ -120,12 +120,21 @@ func (e *CodexIdentityExperiment) InterceptRequest(request cpaapi.RequestInterce
 	enforceCodexIdentityHeaders(headers)
 
 	body := request.Body
+	// Resolve the account's persisted seed once for this request. The document the
+	// gate already read supplies an existing seed without a second physical read,
+	// and the identity namespace and the converged fingerprint below both reuse
+	// this one answer instead of re-reading the same credential.
+	seedResolution := codexSeedResolution{document: gate.document}
+	if e.seeds != nil && gate.account != nil {
+		seed, seedOK := resolveCodexFingerprintSeed(requestContext, e.seeds, *gate.account, seedResolution)
+		seedResolution.seed, seedResolution.ok, seedResolution.resolved = seed, seedOK, true
+	}
 	// Account identity isolation is independent from fingerprint convergence:
 	// preserve each client's ID cardinality, but never send one client's IDs to
 	// a different upstream account during failover. Convergence, when enabled,
 	// then overwrites these values with its account-stable fingerprint.
 	if gate.account != nil {
-		namespace := e.resolveCodexAccountIdentityNamespace(requestContext, *gate.account)
+		namespace := e.resolveCodexAccountIdentityNamespace(requestContext, *gate.account, seedResolution)
 		if namespace != "" {
 			applyCodexAccountIdentityHeaders(headers, namespace)
 			if decoded, errDecode := decodeJSONObjectBody(body); errDecode == nil &&
@@ -138,12 +147,10 @@ func (e *CodexIdentityExperiment) InterceptRequest(request cpaapi.RequestInterce
 	}
 
 	var fingerprint *codexFingerprintIDs
-	if e.seeds != nil && gate.account != nil {
-		if seed, ok := resolveCodexFingerprintSeed(requestContext, e.seeds, *gate.account); ok {
-			fingerprint = resolveCodexFingerprintIDs(
-				*gate.account, seed, extractClientSessionID(request.Headers), mode,
-			)
-		}
+	if e.seeds != nil && gate.account != nil && seedResolution.ok {
+		fingerprint = resolveCodexFingerprintIDs(
+			*gate.account, seedResolution.seed, extractClientSessionID(request.Headers), mode,
+		)
 	}
 	if fingerprint != nil {
 		applyCodexFingerprintHeaders(headers, fingerprint)
@@ -182,11 +189,26 @@ func decodeJSONObjectBody(raw []byte) (map[string]any, error) {
 	return decoded, nil
 }
 
+// identityDocument prefers the credential document the caller already read for
+// this request. Only a caller without one falls back to a host read, so the
+// request path never reads the same credential twice.
+func (e *CodexIdentityExperiment) identityDocument(ctx context.Context, account Account, resolutions ...codexSeedResolution) (currentAuthDocument, error) {
+	for _, resolution := range resolutions {
+		if resolution.document.Metadata != nil {
+			return resolution.document, nil
+		}
+	}
+	if e == nil || e.accounts == nil {
+		return currentAuthDocument{}, fmt.Errorf("auth document store is unavailable")
+	}
+	return e.accounts.CurrentAuthDocument(ctx, account)
+}
+
 // resolveCodexAccountIdentityNamespace derives the reference fork's stable
 // upstream-account scope. Prefer immutable ChatGPT identifiers, then the
 // persisted fingerprint seed. Setup tokens and API keys use irreversible
 // fingerprints of their stable host identity; they never leak credential bytes.
-func (e *CodexIdentityExperiment) resolveCodexAccountIdentityNamespace(ctx context.Context, account Account) string {
+func (e *CodexIdentityExperiment) resolveCodexAccountIdentityNamespace(ctx context.Context, account Account, resolutions ...codexSeedResolution) string {
 	if e == nil || e.accounts == nil {
 		return ""
 	}
@@ -194,11 +216,11 @@ func (e *CodexIdentityExperiment) resolveCodexAccountIdentityNamespace(ctx conte
 	// host row identifier it remains stable across duplicate physical files and
 	// cannot be reused accidentally across deployments.
 	if isCodexOAuthLikeAccount(account) && e.seeds != nil {
-		if seed, ok := resolveCodexFingerprintSeed(ctx, e.seeds, account); ok {
+		if seed, ok := resolveCodexFingerprintSeed(ctx, e.seeds, account, resolutions...); ok {
 			return "seed:" + seed
 		}
 	}
-	document, errRead := e.accounts.CurrentAuthDocument(ctx, account)
+	document, errRead := e.identityDocument(ctx, account, resolutions...)
 	if errRead == nil && document.Metadata != nil {
 		accountID := safeQuotaAccountID(firstMapValue(document.Metadata, "account_id", "chatgpt_account_id"))
 		userID := safeQuotaAccountID(firstMapValue(document.Metadata, "chatgpt_user_id", "user_id"))
@@ -364,26 +386,40 @@ func (e *CodexIdentityExperiment) accountGate(ctx context.Context, authIndex str
 		}
 		return codexGateFromDocument(account, document)
 	}
-	response, err := e.accounts.List(ctx, ListQuery{Page: 1, PageSize: maxPageSize, Filters: AccountFilters{}})
-	if err != nil {
+	// Fallback for account providers without the single-credential lookup: walk
+	// every page rather than one capped page, so a selected credential past the
+	// first page still resolves instead of silently degrading to no gate.
+	var found codexAccountWithMetadata
+	matched := false
+	errWalk := walkAccountPages(ctx, maxPageSize,
+		func(page int) (ListResponse, error) {
+			return e.accounts.List(ctx, ListQuery{Page: page, PageSize: maxPageSize, Filters: AccountFilters{}})
+		},
+		func(page []Account) bool {
+			for _, account := range page {
+				if account.AuthID != authIndex && account.ID != authIndex {
+					continue
+				}
+				metadata, err := e.accounts.CurrentAuthDocument(ctx, account)
+				if err != nil {
+					// Same as before: a credential that cannot be read yields no gate.
+					return true
+				}
+				found = codexGateFromDocument(account, metadata)
+				matched = true
+				return true
+			}
+			return false
+		})
+	if errWalk != nil || !matched {
 		return codexAccountWithMetadata{}
 	}
-	for _, account := range response.Accounts {
-		if account.AuthID != authIndex && account.ID != authIndex {
-			continue
-		}
-		metadata, err := e.accounts.CurrentAuthDocument(ctx, account)
-		if err != nil {
-			return codexAccountWithMetadata{}
-		}
-		return codexGateFromDocument(account, metadata)
-	}
-	return codexAccountWithMetadata{}
+	return found
 }
 
 func codexGateFromDocument(account Account, document currentAuthDocument) codexAccountWithMetadata {
 	return codexAccountWithMetadata{
-		account: &account, metadata: document.Metadata,
+		account: &account, metadata: document.Metadata, document: document,
 		codexAccountGateState: codexAccountGateState{
 			codexCLIOnly:          codexExtraBool(document.Metadata["codex_cli_only"]),
 			codexCLIOnlyAppServer: codexExtraBool(document.Metadata["codex_cli_only_allow_app_server"]),
@@ -557,20 +593,32 @@ func (e *CodexIdentityExperiment) accountRequiresIngressGate(ctx context.Context
 }
 
 func (p restrictedCodexAccountProvider) requiresIngressGate(ctx context.Context) bool {
-	response, err := p.accounts.List(ctx, ListQuery{Page: 1, PageSize: maxPageSize})
-	if err != nil {
+	// Every page: the gate decision must not depend on where an account sorts,
+	// so a restricted account past the first page still turns the gate on.
+	restricted := false
+	errWalk := walkAccountPages(ctx, maxPageSize,
+		func(page int) (ListResponse, error) {
+			return p.accounts.List(ctx, ListQuery{Page: page, PageSize: maxPageSize})
+		},
+		func(page []Account) bool {
+			for _, account := range page {
+				metadata, err := p.accounts.CurrentAuthDocument(ctx, account)
+				if err != nil {
+					// An unreadable credential fails closed, as before.
+					restricted = true
+					return true
+				}
+				if codexExtraBool(metadata.Metadata["codex_cli_only"]) || codexExtraBool(metadata.Metadata["codex_cli_only_allow_app_server"]) {
+					restricted = true
+					return true
+				}
+			}
+			return false
+		})
+	if errWalk != nil {
 		return true
 	}
-	for _, account := range response.Accounts {
-		metadata, err := p.accounts.CurrentAuthDocument(ctx, account)
-		if err != nil {
-			return true
-		}
-		if codexExtraBool(metadata.Metadata["codex_cli_only"]) || codexExtraBool(metadata.Metadata["codex_cli_only_allow_app_server"]) {
-			return true
-		}
-	}
-	return false
+	return restricted
 }
 
 // codexExtraBool accepts only JSON booleans. String aliases are intentionally

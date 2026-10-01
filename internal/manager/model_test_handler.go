@@ -40,7 +40,7 @@ func (a *App) handleAccountModelTest(ctx context.Context, req cpaapi.ManagementR
 	if request.DetectRestrictedModels {
 		switch {
 		case len(result.CompatibleModels) > 0:
-			result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, config, managementKey, OperationSourceManual)
+			result.ModelPolicy = a.applyDetectedModelWhitelistForAccount(ctx, result.resolvedAccount, result.AccountID, result.CompatibleModels, config, managementKey, OperationSourceManual)
 		case result.PolicySkipReason != "":
 			a.recordAutoModelWhitelistSkip(result.AccountID, result.PolicySkipReason, OperationSourceManual)
 		}
@@ -101,7 +101,7 @@ func (a *App) runNewAccountModelProbe(ctx context.Context, account Account, mana
 	if a.experiments.AutoModelWhitelistEnabled() {
 		switch {
 		case len(result.CompatibleModels) > 0:
-			result.ModelPolicy = a.applyDetectedModelWhitelist(ctx, result.AccountID, result.CompatibleModels, a.configSnapshot(), managementKey, OperationSourceBackground)
+			result.ModelPolicy = a.applyDetectedModelWhitelistForAccount(ctx, result.resolvedAccount, result.AccountID, result.CompatibleModels, a.configSnapshot(), managementKey, OperationSourceBackground)
 		case result.PolicySkipReason != "":
 			a.recordAutoModelWhitelistSkip(result.AccountID, result.PolicySkipReason, OperationSourceBackground)
 		}

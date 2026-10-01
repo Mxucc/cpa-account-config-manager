@@ -161,6 +161,95 @@ func TestIdentityAccountRejectsInvalidSources(t *testing.T) {
 	}
 }
 
+// The provider fallback used to read one capped page, so a selected credential
+// past the first page resolved to no gate at all.
+func TestCodexIdentityGateFallbackResolvesAccountPastTheFirstPage(t *testing.T) {
+	const size = maxPageSize + 200
+	fixture := newIdentityLookupHost(size)
+	lastIndex := fmt.Sprintf("auth-%04d", size-1)
+	listCalls := 0
+	provider := codexGateAccountProviderFunc{
+		list: func(_ context.Context, query ListQuery) (ListResponse, error) {
+			listCalls++
+			page, pageSize := normalizePage(query.Page, query.PageSize)
+			start := (page - 1) * pageSize
+			if start > len(fixture.entries) {
+				start = len(fixture.entries)
+			}
+			end := start + pageSize
+			if end > len(fixture.entries) {
+				end = len(fixture.entries)
+			}
+			accounts := make([]Account, 0, end-start)
+			for _, entry := range fixture.entries[start:end] {
+				accounts = append(accounts, projectHostEntry(entry, nil, nil, nil))
+			}
+			return ListResponse{
+				Accounts: accounts, Total: len(fixture.entries),
+				Page: page, PageSize: pageSize, Pages: (len(fixture.entries)-1)/pageSize + 1,
+			}, nil
+		},
+		currentAuthDocument: func(context.Context, Account) (currentAuthDocument, error) {
+			return currentAuthDocument{Metadata: map[string]any{"codex_cli_only": true}}, nil
+		},
+	}
+	gate := NewCodexIdentityExperiment(nil, provider).accountGate(context.Background(), lastIndex)
+	if gate.account == nil || gate.account.ID != lastIndex || !gate.codexCLIOnly {
+		t.Fatalf("the credential past the first page did not resolve: %#v", gate.account)
+	}
+	if listCalls < 2 {
+		t.Fatalf("the fallback read %d page(s), want a walk past the first page", listCalls)
+	}
+}
+
+// One intercepted request must not read the same credential more than once: the
+// gate already read the document, and identity resolution reuses it instead of
+// reading the credential again for the identity namespace and the seed.
+func TestCodexIdentityRequestReadsTheCredentialOnce(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		host func() (AuthHost, *fakeAuthHost)
+	}{
+		{name: "runtime host", host: func() (AuthHost, *fakeAuthHost) {
+			host := newIdentityLookupHost(1)
+			return host, host.fakeAuthHost
+		}},
+		{name: "legacy host", host: func() (AuthHost, *fakeAuthHost) {
+			host := newIdentityLookupHost(1).fakeAuthHost
+			return host, host
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			host, fake := test.host()
+			experiment := NewCodexIdentityExperiment(
+				stubCodexSettings{settings: ExperimentalCodexIdentitySettings{OutboundConvergenceEnabled: true}},
+				NewAccountService(host),
+			)
+			request := cpaapi.RequestInterceptRequest{RequestID: "r1", ToFormat: "codex", Metadata: map[string]any{"auth_index": "auth-0000"}}
+			// The first request may create the persisted per-account seed.
+			if _, changed := experiment.InterceptRequest(request); !changed {
+				t.Fatal("the experiment did not rewrite the request")
+			}
+			fake.mu.Lock()
+			warm := fake.getCalls["auth-0000"]
+			saves := len(fake.saves)
+			fake.mu.Unlock()
+			if saves != 1 {
+				t.Fatalf("seed writes = %d, want 1", saves)
+			}
+			if _, changed := experiment.InterceptRequest(request); !changed {
+				t.Fatal("the experiment did not rewrite the second request")
+			}
+			fake.mu.Lock()
+			after := fake.getCalls["auth-0000"]
+			fake.mu.Unlock()
+			if delta := after - warm; delta != 1 {
+				t.Fatalf("one intercepted request read the credential %d times, want 1", delta)
+			}
+		})
+	}
+}
+
 func BenchmarkCodexIdentityGate(b *testing.B) {
 	for _, size := range []int{1, 100, 2000} {
 		b.Run(fmt.Sprintf("accounts_%d", size), func(b *testing.B) {

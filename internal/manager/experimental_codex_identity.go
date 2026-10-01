@@ -557,8 +557,12 @@ type codexPolicyProvider interface {
 
 type codexAccountWithMetadata struct {
 	codexAccountGateState
-	account     *Account
-	metadata    map[string]any
+	account  *Account
+	metadata map[string]any
+	// document is the physical credential the gate already read for this
+	// account. The request path hands it to identity resolution so the same
+	// document is never read twice for one request.
+	document    currentAuthDocument
 	providerKey string
 }
 

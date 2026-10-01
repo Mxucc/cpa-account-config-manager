@@ -12,6 +12,12 @@ import (
 const (
 	autoModelWhitelistRecentDefaultPageSize = 20
 	autoModelWhitelistRecentMaxPageSize     = 100
+
+	// The route walks the journal's own pages until it can serve the requested
+	// window. This bounds that walk, and the window offset it accepts, so a route
+	// page past the first journal page no longer comes back empty.
+	autoModelWhitelistRecentMaxJournalPages = 20
+	autoModelWhitelistRecentMaxEntries      = autoModelWhitelistRecentMaxJournalPages * operationPageSize
 )
 
 // autoModelWhitelistStatusResponse is the stable, credential-free payload for the
@@ -54,18 +60,18 @@ func (a *App) handleAutoModelWhitelistStatus(ctx context.Context, req cpaapi.Man
 	accounts := a.codexInventoryAccounts(ctx)
 	response.AutoModelWhitelist.Accounts = len(accounts)
 	labels := make(map[string]string, len(accounts))
+	// This route counts stored auto-detected policies, so it needs each
+	// credential document, but it never fans out one unbounded serial host read
+	// per account: the reads run with the same bounded concurrency the account
+	// list uses, and an unreadable credential is simply not counted.
+	documents := a.accounts.ReadAuthDocuments(ctx, accounts)
 	var newestDetected time.Time
 	for _, account := range accounts {
 		if identity := strings.TrimSpace(account.ID); identity != "" {
 			labels[identity] = accountDisplayLabel(account)
 		}
-		if a.accounts == nil {
-			continue
-		}
-		document, errDocument := a.accounts.CurrentAuthDocument(ctx, account)
-		if errDocument != nil {
-			// A failed read must not fail the response; the account is simply not
-			// counted as auto-detected.
+		document, read := documents[account.ID]
+		if !read {
 			continue
 		}
 		policy, ok := readStoredModelPolicy(document.Metadata)
@@ -103,16 +109,37 @@ func (a *App) autoModelWhitelistRecentEntries(req cpaapi.ManagementRequest, labe
 	if pageSize > autoModelWhitelistRecentMaxPageSize {
 		pageSize = autoModelWhitelistRecentMaxPageSize
 	}
-	// The journal list is already ordered newest first. It pages in units of its
-	// own retention page, so the route slices the newest matching entries itself.
-	listed := a.operations.List(OperationQuery{Page: 1, Search: OperationActionAutoModelWhitelist}).Operations
-	matching := make([]OperationEntry, 0, len(listed))
-	for _, entry := range listed {
-		if entry.Action == OperationActionAutoModelWhitelist {
-			matching = append(matching, entry)
+	// The journal list is already ordered newest first and pages in units of its
+	// own retention page, so the route walks those pages and stops as soon as it
+	// can serve the requested window. Reading only the first journal page returned
+	// an empty list for every route page past it.
+	//
+	// Avoid multiplying an attacker-controlled page by pageSize before checking
+	// bounds; a very large page would overflow int.
+	start := autoModelWhitelistRecentMaxEntries
+	if page-1 <= autoModelWhitelistRecentMaxEntries/pageSize {
+		start = (page - 1) * pageSize
+	}
+	if start >= autoModelWhitelistRecentMaxEntries {
+		// The window starts past everything this route can serve, so walking the
+		// journal for it would scan every retained page to answer with nothing.
+		return recent
+	}
+	needed := start + pageSize
+	matching := make([]OperationEntry, 0, needed)
+	for journalPage := 1; journalPage <= autoModelWhitelistRecentMaxJournalPages; journalPage++ {
+		listed := a.operations.List(OperationQuery{
+			Page: journalPage, PageSize: operationPageSize, Search: OperationActionAutoModelWhitelist,
+		})
+		for _, entry := range listed.Operations {
+			if entry.Action == OperationActionAutoModelWhitelist {
+				matching = append(matching, entry)
+			}
+		}
+		if len(matching) >= needed || len(listed.Operations) == 0 || (listed.Pages > 0 && journalPage >= listed.Pages) {
+			break
 		}
 	}
-	start := (page - 1) * pageSize
 	if start > len(matching) {
 		start = len(matching)
 	}

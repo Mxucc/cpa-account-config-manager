@@ -30,10 +30,6 @@ type fingerprintSeedStore interface {
 	fingerprintAccountStore
 }
 
-type restrictedCodexAccountProvider struct {
-	accounts codexAccountGateProvider
-}
-
 func NewCodexIdentityExperiment(settings codexPolicyProvider, accounts codexAccountGateProvider) *CodexIdentityExperiment {
 	experiment := &CodexIdentityExperiment{settings: settings, accounts: accounts}
 	if store, ok := accounts.(fingerprintSeedStore); ok {
@@ -582,43 +578,6 @@ func (e *CodexIdentityExperiment) effectiveProviderAllowAppServer(providerKey st
 		}
 	}
 	return e != nil && e.settings != nil && e.settings.CodexIdentity().AllowAppServerClients
-}
-
-func (e *CodexIdentityExperiment) accountRequiresIngressGate(ctx context.Context) bool {
-	if e == nil || e.accounts == nil {
-		return false
-	}
-	provider := restrictedCodexAccountProvider{accounts: e.accounts}
-	return provider.requiresIngressGate(ctx)
-}
-
-func (p restrictedCodexAccountProvider) requiresIngressGate(ctx context.Context) bool {
-	// Every page: the gate decision must not depend on where an account sorts,
-	// so a restricted account past the first page still turns the gate on.
-	restricted := false
-	errWalk := walkAccountPages(ctx, maxPageSize,
-		func(page int) (ListResponse, error) {
-			return p.accounts.List(ctx, ListQuery{Page: page, PageSize: maxPageSize})
-		},
-		func(page []Account) bool {
-			for _, account := range page {
-				metadata, err := p.accounts.CurrentAuthDocument(ctx, account)
-				if err != nil {
-					// An unreadable credential fails closed, as before.
-					restricted = true
-					return true
-				}
-				if codexExtraBool(metadata.Metadata["codex_cli_only"]) || codexExtraBool(metadata.Metadata["codex_cli_only_allow_app_server"]) {
-					restricted = true
-					return true
-				}
-			}
-			return false
-		})
-	if errWalk != nil {
-		return true
-	}
-	return restricted
 }
 
 // codexExtraBool accepts only JSON booleans. String aliases are intentionally

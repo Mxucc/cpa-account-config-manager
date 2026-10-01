@@ -73,38 +73,3 @@ func (p codexGateAccountProviderFunc) List(ctx context.Context, query ListQuery)
 func (p codexGateAccountProviderFunc) CurrentAuthDocument(ctx context.Context, account Account) (currentAuthDocument, error) {
 	return p.currentAuthDocument(ctx, account)
 }
-
-func TestCodexIdentityRestrictedAccountsRequireIngressScan(t *testing.T) {
-	restricted := currentAuthDocument{Metadata: map[string]any{"codex_cli_only": true}}
-	tests := []struct {
-		name string
-		list func(context.Context, ListQuery) (ListResponse, error)
-		read func(context.Context, Account) (currentAuthDocument, error)
-		want bool
-	}{
-		{name: "restricted account", want: true, list: func(context.Context, ListQuery) (ListResponse, error) {
-			return ListResponse{Accounts: []Account{{ID: "restricted"}}}, nil
-		}, read: func(context.Context, Account) (currentAuthDocument, error) { return restricted, nil }},
-		{name: "unrestricted accounts", list: func(context.Context, ListQuery) (ListResponse, error) {
-			return ListResponse{Accounts: []Account{{ID: "one"}, {ID: "two"}}}, nil
-		}, read: func(context.Context, Account) (currentAuthDocument, error) {
-			return currentAuthDocument{}, nil
-		}},
-		{name: "unreadable account fails closed", want: true, list: func(context.Context, ListQuery) (ListResponse, error) {
-			return ListResponse{Accounts: []Account{{ID: "one"}}}, nil
-		}, read: func(context.Context, Account) (currentAuthDocument, error) {
-			return currentAuthDocument{}, errors.New("read failed")
-		}},
-		{name: "list failure fails closed", want: true, list: func(context.Context, ListQuery) (ListResponse, error) {
-			return ListResponse{}, errors.New("list failed")
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			experiment := NewCodexIdentityExperiment(codexPolicyProvider(nil), codexGateAccountProviderFunc{list: test.list, currentAuthDocument: test.read})
-			if got := experiment.accountRequiresIngressGate(context.Background()); got != test.want {
-				t.Fatalf("accountRequiresIngressGate() = %t, want %t", got, test.want)
-			}
-		})
-	}
-}

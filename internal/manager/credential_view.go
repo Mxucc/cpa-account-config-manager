@@ -67,33 +67,9 @@ func credentialSummaryFromAccount(account Account) CredentialSummary {
 	}
 }
 
-func (s *AccountService) CredentialSummary(ctx context.Context, rawID string) (CredentialSummary, error) {
-	id := strings.TrimSpace(rawID)
-	if id == "" {
-		return CredentialSummary{}, ErrAccountConfigNotFound
-	}
-	accounts, err := s.baseAccounts(ctx)
-	if err != nil {
-		return CredentialSummary{}, err
-	}
-	var account *Account
-	for i := range accounts {
-		if accounts[i].ID == id || accounts[i].AuthID == id || accounts[i].Name == id {
-			account = &accounts[i]
-			break
-		}
-	}
-	if account == nil {
-		return CredentialSummary{}, ErrAccountConfigNotFound
-	}
-	// Credential details are an explicit, on-demand operation. Do not make
-	// account-list requests fan out into one runtime callback per account.
-	s.enrichAccountDetail(ctx, account)
-	summary := credentialSummaryFromAccount(*account)
-	s.enrichRuntimeCredential(ctx, account, &summary)
-	return summary, nil
-}
-
+// enrichRuntimeCredential is the explicit, on-demand runtime lookup: credential
+// details are fetched for one resolved account, never as a fan-out from an
+// account-list request.
 func (s *AccountService) enrichRuntimeCredential(ctx context.Context, account *Account, summary *CredentialSummary) {
 	if summary == nil || account == nil {
 		return

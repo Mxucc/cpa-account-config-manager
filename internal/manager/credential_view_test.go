@@ -29,26 +29,50 @@ func (h *runtimeCredentialHost) GetAuthRuntime(_ context.Context, authIndex stri
 	return entry, nil
 }
 
-func TestCredentialSummaryRedactsSecretsAndUsesRuntimeIdentity(t *testing.T) {
-	host := &runtimeCredentialHost{
-		fakeAuthHost: &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{AuthIndex: "auth-index", ID: "cpa-id", Name: "account.json", Provider: "codex", Type: "codex", Email: "user@example.com", Source: "file", Path: "/auth/account.json"}}, details: map[string]cpaapi.HostAuthGetResponse{"auth-index": {AuthIndex: "auth-index", Path: "/auth/account.json", JSON: json.RawMessage(`{"type":"codex","access_token":"access-secret","refresh_token":"refresh-secret"}`)}}},
-		runtime:      map[string]cpaapi.HostAuthFileEntry{"auth-index": {ID: "runtime-id", AuthIndex: "auth-index", Name: "account.json", Provider: "codex", Type: "codex", Account: "upstream-account-id", AccountType: "oauth", PlanType: "k12", Status: "active", Source: "file", Path: "/auth/account.json"}},
+func newRuntimeCredentialHost(runtimeErr error) *runtimeCredentialHost {
+	return &runtimeCredentialHost{
+		fakeAuthHost: &fakeAuthHost{
+			entries: []cpaapi.HostAuthFileEntry{{
+				AuthIndex: "auth-index", ID: "cpa-id", Name: "account.json",
+				Provider: "codex", Type: "codex", Email: "user@example.com", Source: "file", Path: "/auth/account.json",
+			}},
+			details: map[string]cpaapi.HostAuthGetResponse{"auth-index": {
+				AuthIndex: "auth-index", Name: "account.json", Path: "/auth/account.json",
+				JSON: json.RawMessage(`{"type":"codex","access_token":"access-secret","refresh_token":"refresh-secret"}`),
+			}},
+		},
+		runtimeErr: runtimeErr,
+		runtime: map[string]cpaapi.HostAuthFileEntry{"auth-index": {
+			ID: "runtime-id", AuthIndex: "auth-index", Name: "account.json", Provider: "codex", Type: "codex",
+			Account: "upstream-account-id", AccountType: "oauth", PlanType: "k12", Status: "active",
+			Source: "file", Path: "/auth/account.json",
+		}},
 	}
-	summary, err := NewAccountService(host).CredentialSummary(t.Context(), "auth-index")
-	if err != nil {
-		t.Fatalf("CredentialSummary() error = %v", err)
+}
+
+// The credential view of the editable-config route takes its upstream identity
+// from the runtime callback, and the serialized account never carries
+// credential material.
+func TestEditableConfigCredentialUsesRuntimeIdentityAndRedactsSecrets(t *testing.T) {
+	host := newRuntimeCredentialHost(nil)
+	config, errConfig := NewAccountService(host).EditableConfig(context.Background(), "auth-index")
+	if errConfig != nil {
+		t.Fatalf("EditableConfig() error = %v", errConfig)
 	}
-	if !summary.RuntimeLoaded || summary.AccountID != "upstream-account-id" || summary.PlanType != "k12" {
-		t.Fatalf("summary = %#v", summary)
+	if config.Credential == nil || !config.Credential.RuntimeLoaded ||
+		config.Credential.AccountID != "upstream-account-id" || config.Credential.PlanType != "k12" {
+		t.Fatalf("credential = %#v", config.Credential)
 	}
-	if summary.AccountID == summary.AuthID || summary.AccountID == summary.ID {
-		t.Fatalf("credential identity conflated: %#v", summary)
+	if config.Credential.AccountID == config.Credential.AuthID || config.Credential.AccountID == config.Credential.ID {
+		t.Fatalf("credential identity conflated: %#v", config.Credential)
 	}
-	encoded, _ := json.Marshal(summary)
-	text := string(encoded)
+	encoded, errEncode := json.Marshal(config)
+	if errEncode != nil {
+		t.Fatalf("encode config: %v", errEncode)
+	}
 	for _, secret := range []string{"access-secret", "refresh-secret", "access_token", "refresh_token"} {
-		if strings.Contains(text, secret) {
-			t.Fatalf("summary leaked %q: %s", secret, text)
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("the credential view leaked %q: %s", secret, encoded)
 		}
 	}
 	if host.runtimeCalls != 1 {
@@ -56,11 +80,13 @@ func TestCredentialSummaryRedactsSecretsAndUsesRuntimeIdentity(t *testing.T) {
 	}
 }
 
-func TestCredentialSummaryRuntimeFailureIsNonBlockingAndListDoesNotCallRuntime(t *testing.T) {
-	host := &runtimeCredentialHost{fakeAuthHost: &fakeAuthHost{entries: []cpaapi.HostAuthFileEntry{{AuthIndex: "auth-index", ID: "cpa-id", Name: "account.json", Provider: "codex", Source: "file", Path: "/auth/account.json"}}, details: map[string]cpaapi.HostAuthGetResponse{"auth-index": {AuthIndex: "auth-index", Path: "/auth/account.json", JSON: json.RawMessage(`{"type":"codex"}`)}}}, runtimeErr: errors.New("upstream token secret must not be echoed")}
-	list, err := NewAccountService(host).List(t.Context(), ListQuery{Page: 1, PageSize: 20})
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
+// An account-list request must not fan out into one runtime callback per
+// account, and a host error must not echo credential-like text back.
+func TestAccountListDoesNotCallTheRuntimeCredentialCallback(t *testing.T) {
+	host := newRuntimeCredentialHost(errors.New("upstream token secret must not be echoed"))
+	list, errList := NewAccountService(host).List(context.Background(), ListQuery{Page: 1, PageSize: 20})
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
 	}
 	if host.runtimeCalls != 0 {
 		t.Fatalf("List() runtime callback calls = %d, want 0", host.runtimeCalls)
@@ -68,11 +94,12 @@ func TestCredentialSummaryRuntimeFailureIsNonBlockingAndListDoesNotCallRuntime(t
 	if list.Accounts[0].Credential == nil || list.Accounts[0].Credential.AccountID != "" {
 		t.Fatalf("list credential = %#v", list.Accounts[0].Credential)
 	}
-	summary, err := NewAccountService(host).CredentialSummary(t.Context(), "auth-index")
-	if err != nil {
-		t.Fatalf("CredentialSummary() error = %v", err)
+
+	config, errConfig := NewAccountService(host).EditableConfig(context.Background(), "auth-index")
+	if errConfig != nil {
+		t.Fatalf("EditableConfig() error = %v", errConfig)
 	}
-	if summary.RuntimeError != "runtime credential details unavailable" {
-		t.Fatalf("runtime error = %q", summary.RuntimeError)
+	if config.Credential == nil || config.Credential.RuntimeError != "runtime credential details unavailable" {
+		t.Fatalf("runtime error = %#v", config.Credential)
 	}
 }

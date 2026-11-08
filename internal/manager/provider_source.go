@@ -202,8 +202,10 @@ func clinePassInput(view ClinePassAccountView) provider.ClinePassInput {
 	allowance := view.QuotaUsage.MonthlySubscriptionUSD
 	monthlyUsed := view.QuotaUsage.Monthly.USD
 	input := provider.ClinePassInput{
-		AccountID:       view.ID,
-		DisplayName:     firstNonEmptyValue(view.Name, view.BaseURL),
+		AccountID: view.ID,
+		// An account with no name falls back to its own id, never to the shared base
+		// URL: eighteen accounts on one host would otherwise read as one row.
+		DisplayName:     firstNonEmptyValue(view.Name, view.ID),
 		BaseURL:         view.BaseURL,
 		BalanceUSD:      nil,
 		LimitedUntil:    view.QuotaLimitedUntil,

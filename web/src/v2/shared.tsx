@@ -91,6 +91,22 @@ export function quotaTone(window: QuotaWindow): Tone {
   return "blue";
 }
 
+// A limit or a balance is a display value. The vendor's float noise
+// (1.9980000000000002 USD) must never reach the page, and a currency unit
+// formats as money rather than a bare number.
+export function formatAmount(value: number, unit?: string): string {
+  if (unit && /^[A-Z]{3}$/.test(unit)) return formatMoney(value, unit);
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+}
+
+// Known vendor notes carry a caveat the page must not hide. The wire value is a
+// fixed English sentence, so the page maps the ones it knows to its own language
+// and shows anything else unchanged.
+export function noteLabel(note: string, copy: ReturnType<typeof useCopy>): string {
+  if (note === "Reference-priced usage") return copy.quota.notes.referencePricedUsage;
+  return note;
+}
+
 export function QuotaBar({ window }: { window: QuotaWindow }) {
   const copy = useCopy();
   const used = quotaUsedPercent(window);
@@ -100,7 +116,7 @@ export function QuotaBar({ window }: { window: QuotaWindow }) {
       <div className="flex items-center justify-between gap-3 text-sm">
         <span className="text-gray-600">{window.label}</span>
         <span className="font-medium text-gray-900">
-          {window.balance} {window.unit ?? ""}
+          {formatAmount(window.balance, window.unit)}
         </span>
       </div>
     );
@@ -117,11 +133,11 @@ export function QuotaBar({ window }: { window: QuotaWindow }) {
       {used === null ? null : <Progress value={used} tone={quotaTone(window)} />}
       <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
         <span>
-          {typeof window.limit === "number" ? `${copy.quota.limit} ${window.limit} ${window.unit ?? ""}` : ""}
+          {typeof window.limit === "number" ? `${copy.quota.limit} ${formatAmount(window.limit, window.unit)}` : ""}
         </span>
         <span>{window.reset_at ? `${copy.quota.reset} ${formatDateTime(window.reset_at)}` : ""}</span>
       </div>
-      {window.note ? <p className="text-xs text-gray-400">{window.note}</p> : null}
+      {window.note ? <p className="text-xs text-gray-400">{noteLabel(window.note, copy)}</p> : null}
     </div>
   );
 }

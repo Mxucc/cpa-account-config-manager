@@ -158,6 +158,50 @@ func (c *managementClient) readAPIKeyGroupV8(ctx context.Context, kind string) (
 	return items, response.Header.Get("ETag"), nil
 }
 
+// v8APIKeyGroups converts the row shape this plugin builds into the group shape the
+// v8 tree stores: one group per base URL, carrying a keys list. Sending the v0 row
+// straight to v8 is rejected with 422, which is how a finished community sign-in
+// failed at the last step.
+func v8APIKeyGroups(items []map[string]any) []map[string]any {
+	groups := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		baseURL, _ := item["base-url"].(string)
+		if strings.TrimSpace(baseURL) == "" {
+			continue
+		}
+		group := map[string]any{"base-url": baseURL}
+		if headers, found := item["headers"]; found {
+			group["headers"] = headers
+		}
+		keys := make([]map[string]any, 0, 1)
+		switch entries := item["api-key-entries"].(type) {
+		case []map[string]any:
+			for _, entry := range entries {
+				if key, ok := entry["api-key"].(string); ok && strings.TrimSpace(key) != "" {
+					keys = append(keys, map[string]any{"api-key": key})
+				}
+			}
+		case []any:
+			for _, raw := range entries {
+				if entry, ok := raw.(map[string]any); ok {
+					if key, okKey := entry["api-key"].(string); okKey && strings.TrimSpace(key) != "" {
+						keys = append(keys, map[string]any{"api-key": key})
+					}
+				}
+			}
+		}
+		if key, ok := item["api-key"].(string); ok && strings.TrimSpace(key) != "" && len(keys) == 0 {
+			keys = append(keys, map[string]any{"api-key": key})
+		}
+		if len(keys) == 0 {
+			continue
+		}
+		group["keys"] = keys
+		groups = append(groups, group)
+	}
+	return groups
+}
+
 func decodeAPIKeyGroup(raw []byte) ([]map[string]any, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -178,7 +222,7 @@ func decodeAPIKeyGroup(raw []byte) ([]map[string]any, error) {
 // patchAPIKeyGroupV8 replaces one group with If-Match. 412 means another writer
 // saved between our read and our write; the caller re-reads and retries once.
 func (c *managementClient) patchAPIKeyGroupV8(ctx context.Context, kind string, items []map[string]any, ifMatch string) error {
-	payload, errMarshal := json.Marshal(items)
+	payload, errMarshal := json.Marshal(v8APIKeyGroups(items))
 	if errMarshal != nil {
 		return fmt.Errorf("AI provider channel payload could not be encoded")
 	}

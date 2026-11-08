@@ -72,7 +72,11 @@ func newV8TestClient(t *testing.T, server *httptest.Server) *managementClient {
 }
 
 func TestV8ChannelWriteReadsETagAndPatchesGroup(t *testing.T) {
-	items := []map[string]any{{"name": "opencode", "base-url": "https://example.test"}}
+	items := []map[string]any{{
+		"name":            "opencode",
+		"base-url":        "https://example.test",
+		"api-key-entries": []map[string]any{{"api-key": "test-key"}},
+	}}
 	server := &recordingManagementServer{handler: func(call recordedManagementCall) (int, http.Header, string) {
 		switch {
 		case call.Method == http.MethodGet && call.Path == "/v8/management/config":
@@ -111,8 +115,16 @@ func TestV8ChannelWriteReadsETagAndPatchesGroup(t *testing.T) {
 	if errDecode := json.Unmarshal([]byte(patch.Body), &decoded); errDecode != nil {
 		t.Fatalf("decode PATCH body: %v", errDecode)
 	}
-	if len(decoded) != 1 || decoded[0]["name"] != "opencode" {
+	// The v8 tree stores one group per base URL with a keys list, not a v0 row.
+	if len(decoded) != 1 || decoded[0]["base-url"] != "https://example.test" {
 		t.Fatalf("PATCH body = %s", patch.Body)
+	}
+	keys, ok := decoded[0]["keys"].([]any)
+	if !ok || len(keys) != 1 {
+		t.Fatalf("PATCH body has no keys: %s", patch.Body)
+	}
+	if key, _ := keys[0].(map[string]any)["api-key"].(string); key != "test-key" {
+		t.Fatalf("key = %q body = %s", key, patch.Body)
 	}
 	for _, call := range calls {
 		if call.Method == http.MethodPut {

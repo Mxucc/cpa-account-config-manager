@@ -305,15 +305,12 @@ export function AccountsPage({
                     )}
                   </Td>
                   <Td>{account.models.count}</Td>
+                  {/* Two actions keep the row inside the viewport; edit and
+                      delete live in the drawer, one click from the name. */}
                   <Td className="v2-cell-actions">
                     <Button variant="ghost" size="sm" onClick={() => onSelect(account.id)}>
                       {copy.common.details}
                     </Button>
-                    {account.cpaID ? (
-                      <Button variant="secondary" size="sm" onClick={() => openDialog("edit", account)}>
-                        {managementCopy.edit}
-                      </Button>
-                    ) : null}
                     <Button
                       variant="secondary"
                       size="sm"
@@ -323,11 +320,6 @@ export function AccountsPage({
                     >
                       {copy.accounts.refresh}
                     </Button>
-                    {account.cpaID ? (
-                      <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => openDialog("delete", account)}>
-                        {managementCopy.delete}
-                      </Button>
-                    ) : null}
                   </Td>
                 </tr>
               ))}

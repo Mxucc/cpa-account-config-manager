@@ -65,7 +65,7 @@ func (a *App) isImportedProvider(id string) bool {
 		return false
 	}
 	for _, entry := range a.providerImportStore().List() {
-		if entry.ID == trimmed {
+		if strings.EqualFold(strings.TrimSpace(entry.ID), trimmed) {
 			return true
 		}
 	}

@@ -90,7 +90,9 @@ func (a *App) installProviderPackage(ctx context.Context, name string) (string, 
 func (a *App) importedProviderDirectory(ctx context.Context, id string) (string, string, error) {
 	store := a.providerImportStore()
 	for _, entry := range store.List() {
-		if entry.ID != id {
+		// The page sends the id the catalog published; a case difference must not
+		// turn an installed provider into "not imported".
+		if !strings.EqualFold(strings.TrimSpace(entry.ID), id) {
 			continue
 		}
 		if directory := strings.TrimSpace(entry.Directory); directory != "" {

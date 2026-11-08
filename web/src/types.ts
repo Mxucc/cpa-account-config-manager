@@ -765,7 +765,7 @@ export interface ImportResult {
   usage_collection_targets?: number;
 }
 
-export type AccountExportFormat = "cpa" | "sub2api" | "cockpit" | "9router" | "codex" | "axonhub" | "codexmanager";
+export type AccountExportFormat = "cpa" | "sub2api" | "cockpit" | "9router" | "codex" | "axonhub" | "codexmanager" | "json" | "jsonl" | "csv";
 
 export type ResultExportFormat = "json" | "csv" | "jsonl";
 

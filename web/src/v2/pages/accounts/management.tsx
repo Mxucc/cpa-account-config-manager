@@ -1077,7 +1077,7 @@ export function ExportAccountsDialog({
         <label className="block text-sm font-medium text-gray-700">
           {copy.format}
           <Select className="mt-1 w-full" value={format} onChange={(event) => setFormat(event.target.value as AccountExportFormat)}>
-            {(["cpa", "sub2api", "cockpit", "9router", "codex", "axonhub", "codexmanager"] as AccountExportFormat[]).map((value) => (
+            {(["cpa", "sub2api", "cockpit", "9router", "codex", "axonhub", "codexmanager", "json", "jsonl", "csv"] as AccountExportFormat[]).map((value) => (
               <option key={value} value={value}>
                 {value}
               </option>

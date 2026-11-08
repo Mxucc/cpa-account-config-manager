@@ -215,7 +215,7 @@ func TestCredentialExportRoutesRequireExplicitFormatAndDoNotLeakErrors(t *testin
 		t.Fatalf("missing format response = %d %s", missing.StatusCode, missing.Body)
 	}
 	invalid := app.HandleManagement(t.Context(), cpaapi.ManagementRequest{
-		Method: http.MethodGet, Path: path, Query: map[string][]string{"format": {"csv"}},
+		Method: http.MethodGet, Path: path, Query: map[string][]string{"format": {"toml"}},
 	})
 	if invalid.StatusCode != http.StatusBadRequest || strings.Contains(string(invalid.Body), "access-secret") {
 		t.Fatalf("invalid format response = %d %s", invalid.StatusCode, invalid.Body)
@@ -403,5 +403,67 @@ func assertCredentialTargetShape(t *testing.T, format string, document any) {
 		if object["tokens"] == nil || object["meta"] == nil {
 			t.Fatalf("Codex-Manager account = %#v", object)
 		}
+	}
+}
+
+func TestCredentialExportPortableFormatsCarryTheSameAuthObjects(t *testing.T) {
+	now := time.Date(2026, time.July, 15, 10, 30, 0, 0, time.UTC)
+	collection, errSources := NewAccountService(credentialExportHost()).ExportCredentialSources(t.Context(), AccountFilters{Provider: "codex"})
+	if errSources != nil {
+		t.Fatalf("ExportCredentialSources() error = %v", errSources)
+	}
+	defer clearCredentialExportCollection(&collection)
+	if len(collection.Sources) != 2 {
+		t.Fatalf("sources = %d, want 2", len(collection.Sources))
+	}
+
+	asJSON, errJSON := renderCredentialExport(CredentialExportFormatJSON, collection, now)
+	if errJSON != nil {
+		t.Fatalf("renderCredentialExport(json) error = %v", errJSON)
+	}
+	if asJSON.Filename != "cpa-accounts.json" || asJSON.ContentType != "application/json; charset=utf-8" || asJSON.Exported != 2 || !asJSON.Credential {
+		t.Fatalf("json download = %#v", asJSON)
+	}
+	var documents []map[string]any
+	if errDecode := json.Unmarshal(asJSON.Body, &documents); errDecode != nil || len(documents) != 2 {
+		t.Fatalf("decode json export: %v documents=%d", errDecode, len(documents))
+	}
+	if !strings.Contains(fmt.Sprint(documents[0]["access_token"]), "access-secret-a") || documents[0]["name"] == nil {
+		t.Fatalf("json export document = %#v", documents[0])
+	}
+
+	asLines, errLines := renderCredentialExport(CredentialExportFormatJSONL, collection, now)
+	if errLines != nil {
+		t.Fatalf("renderCredentialExport(jsonl) error = %v", errLines)
+	}
+	lines := bytes.Split(bytes.TrimSpace(asLines.Body), []byte("\n"))
+	if len(lines) != 2 || asLines.Filename != "cpa-accounts.jsonl" || asLines.Exported != 2 {
+		t.Fatalf("jsonl download = %#v lines=%d", asLines, len(lines))
+	}
+	var firstLine map[string]any
+	if errDecode := json.Unmarshal(lines[0], &firstLine); errDecode != nil || !strings.Contains(fmt.Sprint(firstLine["access_token"]), "access-secret-a") {
+		t.Fatalf("jsonl first line = %#v error=%v", firstLine, errDecode)
+	}
+
+	asCSV, errCSV := renderCredentialExport(CredentialExportFormatCSV, collection, now)
+	if errCSV != nil {
+		t.Fatalf("renderCredentialExport(csv) error = %v", errCSV)
+	}
+	if asCSV.Filename != "cpa-accounts.csv" || asCSV.ContentType != "text/csv; charset=utf-8" || asCSV.Exported != 2 {
+		t.Fatalf("csv download = %#v", asCSV)
+	}
+	rows, errRead := csv.NewReader(bytes.NewReader(asCSV.Body)).ReadAll()
+	if errRead != nil {
+		t.Fatalf("read csv export: %v", errRead)
+	}
+	if len(rows) != 3 || len(rows[0]) != 9 || rows[0][8] != "auth_json" {
+		t.Fatalf("csv rows = %#v", rows)
+	}
+	var csvAuth map[string]any
+	if errDecode := json.Unmarshal([]byte(rows[1][8]), &csvAuth); errDecode != nil || !strings.Contains(fmt.Sprint(csvAuth["access_token"]), "access-secret-a") {
+		t.Fatalf("csv auth column = %v", errDecode)
+	}
+	if rows[1][0] == "" || rows[2][0] == "" {
+		t.Fatalf("csv name column is empty: %#v", rows)
 	}
 }

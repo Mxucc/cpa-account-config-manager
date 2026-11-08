@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,9 @@ const (
 	CredentialExportFormatCodex        = "codex"
 	CredentialExportFormatAxonHub      = "axonhub"
 	CredentialExportFormatCodexManager = "codexmanager"
+	CredentialExportFormatJSON         = "json"
+	CredentialExportFormatJSONL        = "jsonl"
+	CredentialExportFormatCSV          = "csv"
 
 	maxCredentialExportAccounts = 500
 	maxCredentialExportEntry    = defaultImportMaxEntryBytes
@@ -76,7 +80,7 @@ func credentialExportFormatFromValues(values map[string][]string) (string, error
 	format := strings.ToLower(strings.TrimSpace(firstQuery(values, "format")))
 	switch format {
 	case "":
-		return "", fmt.Errorf("format is required: cpa, sub2api, cockpit, 9router, codex, axonhub, or codexmanager")
+		return "", fmt.Errorf("format is required: cpa, sub2api, cockpit, 9router, codex, axonhub, codexmanager, json, jsonl, or csv")
 	case "codex-manager", "codex_manager":
 		format = CredentialExportFormatCodexManager
 	case "9-router", "nine-router", "ninerouter":
@@ -85,10 +89,11 @@ func credentialExportFormatFromValues(values map[string][]string) (string, error
 	switch format {
 	case CredentialExportFormatCPA, CredentialExportFormatSub2API, CredentialExportFormatCockpit,
 		CredentialExportFormat9Router, CredentialExportFormatCodex, CredentialExportFormatAxonHub,
-		CredentialExportFormatCodexManager:
+		CredentialExportFormatCodexManager, CredentialExportFormatJSON, CredentialExportFormatJSONL,
+		CredentialExportFormatCSV:
 		return format, nil
 	default:
-		return "", fmt.Errorf("format must be cpa, sub2api, cockpit, 9router, codex, axonhub, or codexmanager")
+		return "", fmt.Errorf("format must be cpa, sub2api, cockpit, 9router, codex, axonhub, codexmanager, json, jsonl, or csv")
 	}
 }
 
@@ -199,8 +204,11 @@ func renderCredentialExport(format string, collection credentialExportCollection
 	if len(collection.Sources) == 0 {
 		return exportDownload{}, ErrCredentialExportNoAccounts
 	}
-	if format == CredentialExportFormatCPA {
+	switch format {
+	case CredentialExportFormatCPA:
 		return renderCPACredentialExport(collection, now)
+	case CredentialExportFormatJSON, CredentialExportFormatJSONL, CredentialExportFormatCSV:
+		return renderPortableCredentialExport(collection, format)
 	}
 
 	records := make([]credentialExportRecord, 0, len(collection.Sources))
@@ -237,6 +245,105 @@ func renderCredentialExport(format string, collection credentialExportCollection
 		Filename: filename, ContentType: "application/json; charset=utf-8", Body: body,
 		Credential: true, Exported: len(records), Skipped: skipped,
 	}, nil
+}
+
+// renderPortableCredentialExport writes the same auth objects the CPA ZIP carries
+// in a single portable container: one JSON array, one JSON object per line, or a
+// flattened CSV sheet whose last column keeps the untouched auth object.
+func renderPortableCredentialExport(collection credentialExportCollection, format string) (exportDownload, error) {
+	documents := make([]map[string]any, 0, len(collection.Sources))
+	for index, source := range collection.Sources {
+		document := make(map[string]any, len(source.Object)+1)
+		for key, value := range source.Object {
+			document[key] = value
+		}
+		if strings.TrimSpace(firstImportString(document, []string{"name"})) == "" {
+			document["name"] = credentialFileStem(source, index)
+		}
+		documents = append(documents, document)
+	}
+
+	var body []byte
+	contentType := "application/json; charset=utf-8"
+	filename := "cpa-accounts." + format
+	switch format {
+	case CredentialExportFormatCSV:
+		encoded, errEncode := encodePortableCredentialCSV(collection, documents)
+		if errEncode != nil {
+			return exportDownload{}, errEncode
+		}
+		body = encoded
+		contentType = "text/csv; charset=utf-8"
+	case CredentialExportFormatJSONL:
+		var builder bytes.Buffer
+		for _, document := range documents {
+			line, errMarshal := json.Marshal(document)
+			if errMarshal != nil {
+				return exportDownload{}, fmt.Errorf("encode credential export line: %w", errMarshal)
+			}
+			builder.Write(line)
+			builder.WriteByte('\n')
+			if int64(builder.Len()) > maxCredentialExportBytes {
+				return exportDownload{}, ErrCredentialExportTooLarge
+			}
+		}
+		body = builder.Bytes()
+	default:
+		encoded, errMarshal := json.MarshalIndent(documents, "", "  ")
+		if errMarshal != nil {
+			return exportDownload{}, fmt.Errorf("encode credential export: %w", errMarshal)
+		}
+		body = append(encoded, '\n')
+	}
+	if int64(len(body)) > maxCredentialExportBytes {
+		return exportDownload{}, ErrCredentialExportTooLarge
+	}
+	return exportDownload{
+		Filename: filename, ContentType: contentType, Body: body,
+		Credential: true, Exported: len(documents), Skipped: collection.Skipped,
+	}, nil
+}
+
+func encodePortableCredentialCSV(collection credentialExportCollection, documents []map[string]any) ([]byte, error) {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	header := []string{"name", "provider", "email", "account_id", "plan_type", "expires_at", "priority", "disabled", "auth_json"}
+	if errHeader := writer.Write(header); errHeader != nil {
+		return nil, fmt.Errorf("write credential CSV header: %w", errHeader)
+	}
+	for index, document := range documents {
+		authJSON, errMarshal := json.Marshal(document)
+		if errMarshal != nil {
+			return nil, fmt.Errorf("encode credential CSV row: %w", errMarshal)
+		}
+		source := collection.Sources[index]
+		priority := ""
+		if source.Account.Priority != nil {
+			priority = strconv.Itoa(*source.Account.Priority)
+		}
+		row := []string{
+			firstImportString(document, []string{"name"}),
+			firstNonEmpty(firstImportString(document, []string{"type"}, []string{"provider"}), source.Account.Provider),
+			firstNonEmpty(firstImportString(document, []string{"email"}, []string{"user", "email"}), source.Account.Email),
+			firstImportString(document, []string{"account_id"}),
+			firstNonEmpty(firstImportString(document, []string{"plan_type"}), source.Account.PlanType),
+			firstImportString(document, []string{"expires_at"}, []string{"expired"}, []string{"expiry"}),
+			priority,
+			strconv.FormatBool(source.Account.Disabled),
+			string(authJSON),
+		}
+		if errRow := writer.Write(row); errRow != nil {
+			return nil, fmt.Errorf("write credential CSV row: %w", errRow)
+		}
+		if int64(buffer.Len()) > maxCredentialExportBytes {
+			return nil, ErrCredentialExportTooLarge
+		}
+	}
+	writer.Flush()
+	if errFlush := writer.Error(); errFlush != nil {
+		return nil, fmt.Errorf("finish credential CSV export: %w", errFlush)
+	}
+	return buffer.Bytes(), nil
 }
 
 func isCodexCredentialSource(source credentialExportSource) bool {

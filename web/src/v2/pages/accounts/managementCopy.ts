@@ -85,6 +85,8 @@ export interface ManagementCopy {
   runtimeInstall: string;
   runtimeInstalling: string;
   runtimeReady: string;
+  apiKey: string;
+  apiKeyHint: string;
   openLoginPage: string;
   userCode: string;
   loginWaiting: string;
@@ -185,6 +187,8 @@ const zh: ManagementCopy = {
   runtimeInstall: "安装运行时",
   runtimeInstalling: "正在安装运行时…",
   runtimeReady: "运行时已就绪",
+  apiKey: "供应商 API Key",
+  apiKeyHint: "这个供应商的登录方式是粘贴密钥，密钥只用于在 CPA 里建立渠道。",
   openLoginPage: "打开登录页",
   userCode: "设备码",
   loginWaiting: "等待授权…",
@@ -285,6 +289,8 @@ const en: ManagementCopy = {
   runtimeInstall: "Install runtime",
   runtimeInstalling: "Installing the runtime…",
   runtimeReady: "Runtime ready",
+  apiKey: "Provider API key",
+  apiKeyHint: "This provider signs in with a pasted key; it is only used to create the CPA channel.",
   openLoginPage: "Open sign-in page",
   userCode: "Device code",
   loginWaiting: "Waiting for approval…",

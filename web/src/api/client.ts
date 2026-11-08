@@ -2944,10 +2944,10 @@ export async function listAccountLoginProviders(): Promise<AccountLoginProviders
 	};
 }
 
-export async function startAccountLogin(provider: string): Promise<AccountLoginFlow> {
+export async function startAccountLogin(provider: string, inputs?: Record<string, string>): Promise<AccountLoginFlow> {
 	return requestRecord<AccountLoginFlow>("/accounts/login/start", {
 		method: "POST",
-		body: JSON.stringify({ provider }),
+		body: JSON.stringify({ provider, ...(inputs ? { inputs } : {}) }),
 	});
 }
 

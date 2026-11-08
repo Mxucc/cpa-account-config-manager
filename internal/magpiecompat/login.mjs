@@ -236,7 +236,26 @@ async function run() {
   const method = methods.find((entry) => entry.id === wanted) ?? methods.find((entry) => entry.interactive) ?? methods[0];
   if (!method) fail("this plugin declares no sign-in method");
   const raw = Array.isArray(auth?.methods) ? auth.methods[method.index] : null;
-  if (!raw || typeof raw.authorize !== "function") fail("this sign-in method cannot run without a browser prompt");
+  if (!raw) fail("this plugin declares no sign-in method");
+  if (typeof raw.authorize !== "function") {
+    // A key method: the operator pastes the credential, and the plugin's own
+    // parser decides whether it is usable. No browser step exists.
+    const inputs = argument.inputs && typeof argument.inputs === "object" ? argument.inputs : {};
+    const pasted = String(inputs.key ?? inputs.api_key ?? inputs.token ?? "").trim();
+    if (!pasted) {
+      report({
+        phase: "waiting",
+        provider: providerID(hooks),
+        method: method.id,
+        mode: "key",
+        url: "",
+        instructions: "Paste the provider's API key.",
+      });
+      return;
+    }
+    finish({ type: "success", access: pasted, refresh: "", expires: 0 }, {}, method, report);
+    return;
+  }
 
   const inputs = argument.inputs && typeof argument.inputs === "object" ? argument.inputs : {};
   const answer = await raw.authorize(

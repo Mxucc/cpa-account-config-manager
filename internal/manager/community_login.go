@@ -151,6 +151,11 @@ func (a *App) startCommunityLogin(ctx context.Context, req cpaapi.ManagementRequ
 		answer.Status = "failed"
 		answer.Message = status.Message
 	}
+	// A key-based method has no browser step: the page asks for the key and starts
+	// the sign-in again with it.
+	if status.Mode == "key" && strings.TrimSpace(status.URL) == "" {
+		answer.Mode = "key"
+	}
 	return jsonResponse(http.StatusOK, answer)
 }
 

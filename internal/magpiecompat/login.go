@@ -111,6 +111,10 @@ func (r *Runner) Methods(ctx context.Context, directory string) (LoginMethods, e
 	return methods, nil
 }
 
+// LoginMethods exposes a plugin's declared methods to the caller, which needs them
+// to decide between a browser flow and a pasted key.
+func (s *LoginSession) Method() string { return s.method }
+
 // StartLogin launches one sign-in and returns the session the caller polls. The
 // URL is read from the status file before this returns, so the page can show it
 // immediately.

@@ -1123,6 +1123,10 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 	// install button instead of a dead end.
 	const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
 	const [installingRuntime, setInstallingRuntime] = useState(false);
+	// A key-based community method asks for the credential instead of opening a
+	// browser page.
+	const [pendingKeyProvider, setPendingKeyProvider] = useState("");
+	const [apiKey, setApiKey] = useState("");
 
 	useEffect(() => {
 		if (!open) {
@@ -1186,6 +1190,29 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 		return () => clearInterval(timer);
 	}, [open, flow, status?.done]);
 
+	const startWithKey = async () => {
+		if (!pendingKeyProvider || apiKey.trim() === "") return;
+		const provider = community.find((entry) => entry.id === pendingKeyProvider);
+		if (!provider) return;
+		setBusy(provider.id);
+		setError("");
+		try {
+			const answer = await api.startAccountLogin(provider.id, { key: apiKey.trim() });
+			setApiKey("");
+			setPendingKeyProvider("");
+			if (answer.error) {
+				setError(answer.reason ? `${answer.error}: ${answer.reason}` : answer.error);
+				return;
+			}
+			setFlow(answer);
+			if (answer.state) void poll(answer.state);
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setBusy("");
+		}
+	};
+
 	const start = async (provider: AccountLoginProvider) => {
 		setBusy(provider.id);
 		setError("");
@@ -1201,6 +1228,12 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 			}
 			if (answer.status === "failed") {
 				setError(answer.message ?? copy.loginFailed);
+				setFlow(null);
+				return;
+			}
+			// A key method has nothing to open: ask for the key instead.
+			if (answer.mode === "key" && !answer.url) {
+				setPendingKeyProvider(provider.id);
 				setFlow(null);
 				return;
 			}
@@ -1283,6 +1316,26 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 								</li>
 							))}
 						</ul>
+					</div>
+				) : null}
+				{pendingKeyProvider ? (
+					<div className="space-y-2 rounded-lg border border-gray-200 p-3">
+						<p className="text-sm font-medium text-gray-900">{copy.apiKey}</p>
+						<p className="v2-hint">{copy.apiKeyHint}</p>
+						<Input
+							value={apiKey}
+							onChange={(event) => setApiKey(event.target.value)}
+							placeholder={copy.apiKey}
+							aria-label={copy.apiKey}
+						/>
+						<div className="flex justify-end gap-2">
+							<Button variant="ghost" size="sm" onClick={() => { setPendingKeyProvider(""); setApiKey(""); }}>
+								{copy.close}
+							</Button>
+							<Button size="sm" loading={Boolean(busy)} disabled={apiKey.trim() === ""} onClick={() => void startWithKey()}>
+								{copy.start}
+							</Button>
+						</div>
 					</div>
 				) : null}
 				{flow ? (

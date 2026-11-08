@@ -224,6 +224,24 @@ async function run() {
   };
   const hooks = await loadHooks(log);
   const auth = hooks.auth;
+  // Some providers publish their API base only through the config hook, which is
+  // what OpenCode applies to the provider entry. Ask it for that shape once.
+  let configuredBase = "";
+  try {
+    if (typeof hooks.config === "function") {
+      const config = { provider: {} };
+      await hooks.config(config);
+      for (const entry of Object.values(config.provider ?? {})) {
+        const api = entry && typeof entry === "object" ? entry.api : "";
+        if (typeof api === "string" && /^https?:\/\//i.test(api.trim())) {
+          configuredBase = api.trim();
+          break;
+        }
+      }
+    }
+  } catch {
+    // A config hook that throws leaves the base URL unknown, not the sign-in broken.
+  }
 
   if (action === "methods") {
     const methods = methodList(auth);
@@ -324,7 +342,7 @@ async function run() {
     provider: providerID(hooks),
     method: method.id,
     mode,
-    base_url: providerBaseURL(hooks, raw),
+    base_url: providerBaseURL(hooks, raw) || configuredBase,
     url: String(answer.url ?? "").slice(0, 2000),
     instructions: String(answer.instructions ?? "").slice(0, 400),
   });

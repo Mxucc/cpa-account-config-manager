@@ -237,6 +237,38 @@ async function run() {
   if (!method) fail("this plugin declares no sign-in method");
   const raw = Array.isArray(auth?.methods) ? auth.methods[method.index] : null;
   if (!raw) fail("this plugin declares no sign-in method");
+  // An api method answers a credential directly: keyless ones need nothing from the
+  // operator, and a keyed one asks for the key. Either way there is no browser step,
+  // so authorize() is called with the inputs and its answer is the credential.
+  if (String(raw.type ?? "").toLowerCase() === "api") {
+    const inputs = argument.inputs && typeof argument.inputs === "object" ? argument.inputs : {};
+    if (raw.keyless !== true) {
+      const pasted = String(inputs.key ?? inputs.api_key ?? inputs.token ?? "").trim();
+      if (!pasted) {
+        report({
+          phase: "waiting",
+          provider: providerID(hooks),
+          method: method.id,
+          mode: "key",
+          url: "",
+          instructions: String(raw.label ?? "Paste the provider's API key."),
+        });
+        return;
+      }
+      inputs.key = pasted;
+    }
+    const answer = await raw.authorize(
+      Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, String(value)])),
+    );
+    if (!answer || typeof answer !== "object") fail("the sign-in method answered nothing");
+    if (String(answer.type ?? "").toLowerCase() === "success") {
+      finish(answer, {}, method, report);
+      return;
+    }
+    report({ phase: "failed", message: String(answer.error ?? "the provider refused the key").slice(0, 300) });
+    return;
+  }
+
   if (typeof raw.authorize !== "function") {
     // A key method: the operator pastes the credential, and the plugin's own
     // parser decides whether it is usable. No browser step exists.
@@ -295,7 +327,7 @@ function finish(result, answer, method, report) {
   }
   const saved = captured.value && typeof captured.value === "object" ? captured.value : {};
   const credential = {
-    access: String(result.access ?? saved.access ?? saved.key ?? ""),
+    access: String(result.access ?? result.key ?? saved.access ?? saved.key ?? ""),
     refresh: String(result.refresh ?? saved.refresh ?? ""),
     expires: Number(result.expires ?? saved.expires ?? 0) || 0,
     account_id: String(result.accountId ?? saved.accountId ?? "").slice(0, 200),

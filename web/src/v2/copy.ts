@@ -24,6 +24,8 @@ export interface Copy {
   statusNotes: { quotaLimited: string; credentialRejected: string };
   // A provider kind is a wire enum; the page owns its words.
   kinds: { oauth: string; subscription: string; wallet: string; channel: string };
+  // Capability keys are the same identifiers the API uses.
+  capabilities: { login: string; quota: string; models: string; binding: string; billing: string; refresh: string; test: string; host_auth: string };
   billing_allowance: string;
   billing_used: string;
   billing_remaining: string;
@@ -49,6 +51,7 @@ const zh: Copy = {
   status: { ready: "可用", quota_limited: "额度受限", credential_invalid: "凭据异常", repairing: "自动修复中", disabled: "已停用", unknown: "未知" },
   statusNotes: { quotaLimited: "额度窗口已用尽，窗口重置后自动恢复", credentialRejected: "渠道拒绝了该凭据，正在自动修复" },
   kinds: { oauth: "登录授权", subscription: "订阅", wallet: "钱包", channel: "渠道" },
+  capabilities: { login: "登录", quota: "额度", models: "模型", binding: "发布渠道", billing: "计费", refresh: "刷新", test: "测试", host_auth: "宿主鉴权" },
   billing_allowance: "额度上限",
   billing_used: "已用额度",
   billing_remaining: "剩余额度",
@@ -74,6 +77,7 @@ const en: Copy = {
   status: { ready: "Ready", quota_limited: "Quota limited", credential_invalid: "Credential invalid", repairing: "Repairing", disabled: "Disabled", unknown: "Unknown" },
   statusNotes: { quotaLimited: "The gateway limited this account; it recovers after the window ends", credentialRejected: "The gateway rejected this credential; automatic repair is running" },
   kinds: { oauth: "OAuth", subscription: "Subscription", wallet: "Wallet", channel: "Channel" },
+  capabilities: { login: "Login", quota: "Quota", models: "Models", binding: "Channel binding", billing: "Billing", refresh: "Refresh", test: "Test", host_auth: "Host auth" },
   billing_allowance: "Allowance",
   billing_used: "Used",
   billing_remaining: "Remaining",

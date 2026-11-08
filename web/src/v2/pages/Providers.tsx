@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { providerApi } from "../api";
 import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
-import { StatusBadge, kindLabel, useAsync, useCopy } from "../shared";
+import { StatusBadge, capabilityLabel, kindLabel, useAsync, useCopy } from "../shared";
 import { AccountsPage } from "./Accounts";
 import { QuotaPage } from "./Quota";
 import { RoutingPage } from "./Routing";
@@ -66,7 +66,7 @@ export function ProvidersPage({
                     .filter(([, enabled]) => enabled)
                     .map(([capability]) => (
                       <Badge key={capability} tone="blue">
-                        {capability}
+                        {capabilityLabel(capability, copy)}
                       </Badge>
                     ))}
                 </div>

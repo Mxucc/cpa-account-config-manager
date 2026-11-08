@@ -65,6 +65,12 @@ export function statusTone(status: ProviderStatus | string): Tone {
 }
 
 
+// A capability key is a wire identifier; the page shows its own word for it.
+export function capabilityLabel(key: string, copy: ReturnType<typeof useCopy>): string {
+  const labels = copy.capabilities as Record<string, string>;
+  return labels[key] ?? key;
+}
+
 // A provider kind is a wire enum, so the page supplies its label.
 export function kindLabel(kind: string, copy: ReturnType<typeof useCopy>): string {
   switch (kind) {

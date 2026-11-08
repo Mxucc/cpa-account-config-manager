@@ -28,7 +28,7 @@ export function RoutingPage({ providerFilter }: { providerFilter?: string }) {
         <Card className="overflow-x-auto p-0">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
+              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
                 <th className="px-4 py-3">{copy.accounts.provider}</th>
                 <th className="px-4 py-3">{copy.routing.channel}</th>
                 <th className="px-4 py-3">{copy.routing.published}</th>

@@ -64,13 +64,26 @@ export function statusTone(status: ProviderStatus | string): Tone {
   }
 }
 
+
+// Status notes are fixed English sentences from the wire. The page owns the ones
+// it knows and shows any other note (an imported plugin warning) unchanged.
+export function statusNoteLabel(note: string, copy: ReturnType<typeof useCopy>): string {
+  switch (note) {
+    case "The gateway limited this account; it recovers after the window ends":
+      return copy.statusNotes.quotaLimited;
+    case "The gateway rejected this credential; automatic repair is running":
+      return copy.statusNotes.credentialRejected;
+    default:
+      return note;
+  }
+}
 export function StatusBadge({ status, note }: { status: ProviderStatus | string; note?: string }) {
   const copy = useCopy();
   const label = (copy.status as Record<string, string>)[status] ?? status;
   return (
     <span className="inline-flex items-center gap-2">
       <Badge tone={statusTone(status)}>{label}</Badge>
-      {note ? <span className="text-xs text-gray-500">{note}</span> : null}
+      {note ? <span className="text-xs text-gray-500">{statusNoteLabel(note, copy)}</span> : null}
     </span>
   );
 }
@@ -174,15 +187,33 @@ export function formatMoney(value: number | null | undefined, currency = "USD"):
   }
 }
 
-export function billingLabel(mode: string): string {
+// Billing mode is a wire enum, so the page owns its words. A badge that reads
+// "subscription" in a Chinese shell is a missing label, not a vendor value.
+export function billingLabel(mode: string, copy: ReturnType<typeof useCopy>): string {
   switch (mode) {
     case "subscription":
-      return "subscription";
+      return copy.usage.subscription;
     case "metered":
-      return "metered";
+      return copy.usage.metered;
     case "wallet":
-      return "wallet";
+      return copy.usage.wallet;
     default:
-      return "unknown";
+      return copy.common.unknown;
+  }
+}
+
+// A cycle kind is normalized by the server, so the page supplies its label.
+export function cycleLabel(kind: string, copy: ReturnType<typeof useCopy>): string {
+  switch (kind) {
+    case "monthly":
+      return copy.cycle.monthly;
+    case "weekly":
+      return copy.cycle.weekly;
+    case "rolling":
+      return copy.cycle.rolling;
+    case "none":
+      return copy.cycle.none;
+    default:
+      return copy.common.unknown;
   }
 }

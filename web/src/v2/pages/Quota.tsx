@@ -1,6 +1,6 @@
 import { providerApi } from "../api";
 import { Card, EmptyState, ErrorState, PageHeader, Skeleton } from "../../ui/kit";
-import { QuotaBar, StatusBadge, accountWindows, useAsync, useCopy } from "../shared";
+import { QuotaBar, StatusBadge, accountWindows, cycleLabel, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 
 // Every provider's windows are already normalized, so this page is a flat
@@ -35,7 +35,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
         <Card className="overflow-x-auto p-0">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
+              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
                 <th className="px-4 py-3">{copy.accounts.provider}</th>
                 <th className="px-4 py-3">{copy.accounts.plan}</th>
                 <th className="px-4 py-3">{copy.quota.window}</th>
@@ -56,8 +56,8 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
                       {account.plan.cycle.kind === "none"
                         ? "—"
                         : account.plan.cycle.renews_at
-                          ? `${account.plan.cycle.kind} · ${formatDateTime(account.plan.cycle.renews_at)}`
-                          : account.plan.cycle.kind}
+                          ? `${cycleLabel(account.plan.cycle.kind, copy)} · ${formatDateTime(account.plan.cycle.renews_at)}`
+                          : cycleLabel(account.plan.cycle.kind, copy)}
                     </span>
                   </td>
                   <td className="min-w-[18rem] px-4 py-4">

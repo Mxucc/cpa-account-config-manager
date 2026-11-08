@@ -150,7 +150,7 @@ function ModelsPanel({ providerID }: { providerID: string }) {
       <Card className="p-0">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
+            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
               <th className="px-4 py-3">{copy.accounts.provider}</th>
               <th className="px-4 py-3">{copy.accounts.models}</th>
               <th className="px-4 py-3">{copy.usage.priceSource}</th>
@@ -208,7 +208,7 @@ function AdvancedPanel({
   // The legacy workspaces are embedded unchanged so the deep controls (Codex
   // identity policy, OpenCode session routing, Cline Pass repair) keep their
   // existing behavior while the new IA owns navigation and the shared account view.
-  return <div className="rounded-xl border border-gray-200 bg-white p-4">{workspace}</div>;
+  return <div className="legacy-console rounded-xl border border-gray-200 bg-white p-4">{workspace}</div>;
 }
 
 function summarize(accounts: Array<{ status: string }>): Record<string, number> {

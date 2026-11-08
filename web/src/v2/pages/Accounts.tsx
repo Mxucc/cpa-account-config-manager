@@ -15,7 +15,7 @@ import {
   Skeleton,
   Toolbar,
 } from "../../ui/kit";
-import { AccountQuota, StatusBadge, billingLabel, formatMoney, useAsync, useCopy } from "../shared";
+import { AccountQuota, StatusBadge, billingLabel, cycleLabel, formatMoney, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
 
@@ -132,7 +132,7 @@ export function AccountsPage({
         <Card className="overflow-x-auto p-0">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
+              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
                 <th className="px-4 py-3">{copy.accounts.provider}</th>
                 <th className="px-4 py-3">{copy.accounts.status}</th>
                 <th className="px-4 py-3">{copy.accounts.plan}</th>
@@ -164,17 +164,20 @@ export function AccountsPage({
                   <td className="px-4 py-3">
                     <span className="text-gray-900">{account.plan.name || copy.common.unknown}</span>
                     <span className="block text-xs text-gray-500">
-                      {account.plan.cycle.kind === "none" ? "—" : account.plan.cycle.kind}
+                      {account.plan.cycle.kind === "none" ? "—" : cycleLabel(account.plan.cycle.kind, copy)}
                     </span>
                   </td>
                   <td className="px-4 py-3">
                     <AccountQuota account={account} compact />
                   </td>
-                  <td className="px-4 py-3">
-                    <Badge tone={account.billing.mode === "unknown" ? "gray" : "blue"}>{billingLabel(account.billing.mode)}</Badge>
-                    <span className="mt-1 block text-xs text-gray-500">
-                      {formatMoney(account.billing.remaining, account.billing.currency)}
-                    </span>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <Badge tone={account.billing.mode === "unknown" ? "gray" : "blue"}>{billingLabel(account.billing.mode, copy)}</Badge>
+                    {/* A mode with no remaining amount renders the badge alone rather than a stray dash. */}
+                    {account.billing.remaining == null ? null : (
+                      <span className="mt-1 block text-xs text-gray-500">
+                        {formatMoney(account.billing.remaining, account.billing.currency)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-900">{account.models.count}</td>
                   <td className="px-4 py-3 text-right">
@@ -224,8 +227,8 @@ export function AccountDrawer({ account, open, onClose }: { account: ProviderAcc
             {account.plan.cycle.kind === "none"
               ? copy.common.unknown
               : account.plan.cycle.renews_at
-                ? `${account.plan.cycle.kind} · ${formatDateTime(account.plan.cycle.renews_at)}`
-                : account.plan.cycle.kind}
+                ? `${cycleLabel(account.plan.cycle.kind, copy)} · ${formatDateTime(account.plan.cycle.renews_at)}`
+                : cycleLabel(account.plan.cycle.kind, copy)}
           </KeyValue>
           <KeyValue label={copy.common.updated}>{formatDateTime(account.updated_at)}</KeyValue>
         </section>
@@ -246,7 +249,7 @@ export function AccountDrawer({ account, open, onClose }: { account: ProviderAcc
 
         <section>
           <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.billing}</h3>
-          <KeyValue label={copy.usage.mode}>{billingLabel(account.billing.mode)}</KeyValue>
+          <KeyValue label={copy.usage.mode}>{billingLabel(account.billing.mode, copy)}</KeyValue>
           <KeyValue label={copy.billing_allowance}>{formatMoney(account.billing.allowance, account.billing.currency)}</KeyValue>
           <KeyValue label={copy.billing_used}>{formatMoney(account.billing.used, account.billing.currency)}</KeyValue>
           <KeyValue label={copy.billing_remaining}>{formatMoney(account.billing.remaining, account.billing.currency)}</KeyValue>

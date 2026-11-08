@@ -60,7 +60,7 @@ export function UsagePage() {
             <div className="mt-3 flex flex-wrap gap-2">
               {[...provider.modes].map((mode) => (
                 <Badge key={mode} tone={mode === "unknown" ? "gray" : "blue"}>
-                  {billingLabel(mode)}
+                  {billingLabel(mode, copy)}
                 </Badge>
               ))}
             </div>
@@ -80,7 +80,7 @@ export function UsagePage() {
       <Card className="overflow-x-auto p-0">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
+            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
               <th className="px-4 py-3">{copy.accounts.provider}</th>
               <th className="px-4 py-3">{copy.usage.mode}</th>
               <th className="px-4 py-3">{copy.usage.tokens}</th>
@@ -97,7 +97,7 @@ export function UsagePage() {
                   <span className="block text-xs text-gray-500">{account.provider.display_name}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge tone={account.billing.mode === "unknown" ? "gray" : "blue"}>{billingLabel(account.billing.mode)}</Badge>
+                  <Badge tone={account.billing.mode === "unknown" ? "gray" : "blue"}>{billingLabel(account.billing.mode, copy)}</Badge>
                 </td>
                 <td className="px-4 py-3 text-gray-900">{account.usage.total_tokens}</td>
                 <td className="px-4 py-3 text-gray-900">{formatMoney(account.usage.cost_usd)}</td>

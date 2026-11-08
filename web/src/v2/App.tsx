@@ -126,7 +126,7 @@ export function V2App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-gray-900">
+    <div className="v2-shell min-h-screen bg-slate-50 text-gray-900">
       <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col lg:flex-row">
         <aside className="border-b border-gray-200 bg-white lg:w-64 lg:shrink-0 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3 px-4 py-4">

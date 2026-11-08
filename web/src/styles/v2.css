@@ -17,6 +17,20 @@ body {
   outline: none;
 }
 
+/* Tailwind preflight stays off because the legacy stylesheet owns the embedded
+   old workspaces. Without it a native button keeps the user agent's 2px outset
+   border, which turned every text button in the new shell into an outlined box.
+   The reset is scoped to the new shell, skips the legacy console, and keeps a
+   specificity of zero through :where() so any Tailwind utility still wins. */
+:where(.v2-shell) :where(button):not(:where(.legacy-console, .legacy-console *)) {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+
 /* Corporate Clean caps motion at 200ms and offers a reduced-motion path. */
 @media (prefers-reduced-motion: reduce) {
   *,

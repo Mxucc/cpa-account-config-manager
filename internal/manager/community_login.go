@@ -38,6 +38,8 @@ type communityLogin struct {
 	provider  string
 	name      string
 	directory string
+	// baseURL is the provider's API base, which the channel needs to route models.
+	baseURL   string
 	session   *magpiecompat.LoginSession
 	startedAt time.Time
 	// finished records the credential once, so a repeated poll cannot create a
@@ -130,6 +132,7 @@ func (a *App) startCommunityLogin(ctx context.Context, req cpaapi.ManagementRequ
 		provider:  providerID,
 		name:      name,
 		directory: directory,
+		baseURL:   status.BaseURL,
 		session:   session,
 		startedAt: time.Now(),
 	}
@@ -226,14 +229,17 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 	// The channel name is what an operator sees in CPA's channel list, so it names
 	// the provider and the account the sign-in produced.
 	label := fmt.Sprintf("%s · %s", name, firstNonEmptyText(credential.AccountID, login.provider))
+	baseURL := strings.TrimSpace(login.baseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("this provider published no base URL, so no channel can route it")
+	}
 	body := map[string]any{
-		"name":      label,
-		"base-url":  "",
-		"api-key":   credential.Access,
-		"provider":  login.provider,
-		"source":    "community-plugin",
-		"auth_type": "oauth",
-		"note":      "created by the CPA account manager from the provider plugin's own sign-in",
+		"name":     label,
+		"base-url": baseURL,
+		"api-key-entries": []map[string]any{
+			{"api-key": credential.Access},
+		},
+		"disabled": false,
 	}
 	if errSave := a.writeCommunityChannel(label, body); errSave != nil {
 		return "", errSave

@@ -77,6 +77,7 @@ type LoginStatus struct {
 	Method       string           `json:"method,omitempty"`
 	Mode         string           `json:"mode,omitempty"`
 	URL          string           `json:"url,omitempty"`
+	BaseURL      string           `json:"base_url,omitempty"`
 	Instructions string           `json:"instructions,omitempty"`
 	Message      string           `json:"message,omitempty"`
 	Credential   *LoginCredential `json:"credential,omitempty"`

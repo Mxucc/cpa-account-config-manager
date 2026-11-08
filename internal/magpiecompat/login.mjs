@@ -185,6 +185,25 @@ function normalizeForm(raw) {
     .filter(Boolean);
 }
 
+// providerBaseURL reads the API base the provider declares, which is what a CPA
+// channel needs to route the provider's models.
+function providerBaseURL(hooks, method) {
+  const candidates = [
+    method?.provider?.api,
+    method?.api,
+    hooks?.provider?.api,
+    hooks?.config?.api,
+    manifest?.magpie?.baseURL,
+    manifest?.magpie?.base_url,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && /^https?:\/\//i.test(candidate.trim())) {
+      return candidate.trim().slice(0, 300);
+    }
+  }
+  return "";
+}
+
 function providerID(hooks) {
   const provider = hooks?.provider;
   if (provider && typeof provider === "object") {
@@ -265,7 +284,10 @@ async function run() {
       finish(answer, {}, method, report);
       return;
     }
-    report({ phase: "failed", message: String(answer.error ?? "the provider refused the key").slice(0, 300) });
+    report({
+      phase: "failed",
+      message: String(answer.error ?? answer.message ?? "the provider refused the key").slice(0, 300),
+    });
     return;
   }
 
@@ -302,6 +324,7 @@ async function run() {
     provider: providerID(hooks),
     method: method.id,
     mode,
+    base_url: providerBaseURL(hooks, raw),
     url: String(answer.url ?? "").slice(0, 2000),
     instructions: String(answer.instructions ?? "").slice(0, 400),
   });

@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -127,11 +128,42 @@ func New(bunPath, script string, options Options) *Runner {
 }
 
 func resolveBun() string {
-	path, errLook := exec.LookPath(allowedBunNames)
-	if errLook != nil {
-		return ""
+	// An operator-installed runtime wins, then a copy this plugin installed into
+	// its own data directory. Without the second location a host that has no Bun
+	// could never run a community plugin's own sign-in, and telling the operator to
+	// install a JavaScript runtime by hand is not a feature.
+	if path, errLook := exec.LookPath(allowedBunNames); errLook == nil {
+		return path
 	}
-	return path
+	for _, candidate := range managedBunCandidates() {
+		if info, errStat := os.Stat(candidate); errStat == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// managedBunCandidates lists where a plugin-managed runtime may live: the data
+// directory the host configured, then the user's home.
+func managedBunCandidates() []string {
+	name := "bun"
+	if runtime.GOOS == "windows" {
+		name = "bun.exe"
+	}
+	candidates := make([]string, 0, 4)
+	if dir := strings.TrimSpace(os.Getenv("CPA_ACCOUNT_MANAGER_DATA_DIR")); dir != "" {
+		candidates = append(candidates, filepath.Join(dir, "runtime", name))
+	}
+	if dir := strings.TrimSpace(os.Getenv("CPA_DATA_DIR")); dir != "" {
+		candidates = append(candidates, filepath.Join(dir, ".cpa-account-config-manager", "runtime", name))
+	}
+	if home, errHome := os.UserHomeDir(); errHome == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".cpa-account-config-manager", "runtime", name),
+			filepath.Join(home, ".bun", "bin", name),
+		)
+	}
+	return candidates
 }
 
 // Available reports whether a runtime was resolved.

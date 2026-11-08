@@ -1459,6 +1459,8 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/operations/record", Description: "Record a strict browser-owned plugin-store update outcome."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/quota", Description: "Read cached OpenCode Go quota results for every bound workspace."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/usage-document", Description: "Read the raw OpenCode Go usage answer for one workspace, for diagnosing a changed upstream shape."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/providers/runtime", Description: "Report whether the JavaScript runtime a community plugin needs is available."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/providers/runtime", Description: "Install the JavaScript runtime into the plugin's own data directory."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/refresh", Description: "Force refresh OpenCode Go quota results for every bound workspace."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/refresh-account", Description: "Refresh one OpenCode Go workspace quota result by account ID."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/accounts", Description: "List redacted bound OpenCode Go workspaces."},
@@ -1735,6 +1737,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeQuota(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/usage-document":
 		return a.handleOpenCodeUsageDocument(req)
+	case (method == http.MethodGet || method == http.MethodPost) && path == "/v0/management"+managementRoutePrefix+"/providers/runtime":
+		return a.handleProviderRuntime(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/refresh":
 		return a.handleOpenCodeRefresh(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/refresh-account":

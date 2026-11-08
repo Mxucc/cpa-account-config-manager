@@ -3,10 +3,15 @@ package manager
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"cpa-account-config-manager/internal/cpaapi"
+
+	"cpa-account-config-manager/internal/magpiecompat"
 	"cpa-account-config-manager/internal/provider"
 )
 
@@ -18,6 +23,9 @@ import (
 // this plugin is the one that offers the provider. So the import also installs the
 // package into the plugin's private directory, and the add-account dialog runs its
 // declared sign-in.
+
+// providerRuntimeInstallTimeout bounds one runtime download.
+const providerRuntimeInstallTimeout = 6 * time.Minute
 
 // providerPackageInstallTimeout bounds one package download: a package is a few
 // megabytes, and a stalled mirror must not hold the request open.
@@ -84,4 +92,50 @@ func (a *App) importedProviderDirectory(ctx context.Context, id string) (string,
 		return directory, entry.Name, nil
 	}
 	return "", "", fmt.Errorf("provider %q is not imported", id)
+}
+
+// handleProviderRuntime reports and installs the JavaScript runtime the community
+// plugins need. A host without it can still list and import plugins, but their
+// sign-in and model hooks cannot run, so the page offers to install it here rather
+// than asking the operator to provision the gateway host by hand.
+func (a *App) handleProviderRuntime(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if resolveManagementKey(req.Headers) == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	dataDir := strings.TrimSpace(a.configSnapshot().DataDir)
+	snapshot := map[string]any{
+		"available": magpiecompat.BunAvailable(),
+		"managed":   false,
+		"data_dir":  dataDir != "",
+	}
+	if managed := magpiecompat.RuntimePath(dataDir); dataDir != "" {
+		if info, errStat := os.Stat(managed); errStat == nil && !info.IsDir() {
+			snapshot["managed"] = true
+			snapshot["managed_path"] = managed
+		}
+	}
+	if req.Method == http.MethodGet {
+		return jsonResponse(http.StatusOK, snapshot)
+	}
+	// A POST installs the runtime.
+	if dataDir == "" {
+		return jsonResponse(http.StatusOK, map[string]any{
+			"installed": false,
+			"reason":    "the plugin data directory is unavailable, so the runtime cannot be stored",
+		})
+	}
+	installContext, cancel := context.WithTimeout(ctx, providerRuntimeInstallTimeout)
+	defer cancel()
+	result, errInstall := magpiecompat.InstallRuntime(installContext, a.managementDoer, dataDir)
+	if errInstall != nil {
+		return jsonResponse(http.StatusOK, map[string]any{
+			"installed": false,
+			"reason":    errInstall.Error(),
+		})
+	}
+	return jsonResponse(http.StatusOK, map[string]any{
+		"installed": result.Installed,
+		"path":      result.Path,
+		"reason":    result.Reason,
+	})
 }

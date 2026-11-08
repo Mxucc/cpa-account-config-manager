@@ -2955,3 +2955,23 @@ export async function getAccountLoginStatus(state: string): Promise<AccountLogin
 	const query = new URLSearchParams({ state });
 	return requestRecord<AccountLoginStatus>("/accounts/login/status", {}, query);
 }
+
+// The JavaScript runtime a community plugin's sign-in needs. A host without it can
+// install one through the plugin instead of provisioning the gateway by hand.
+export interface ProviderRuntimeStatus {
+	available: boolean;
+	managed: boolean;
+	managed_path?: string;
+	data_dir: boolean;
+	installed?: boolean;
+	path?: string;
+	reason?: string;
+}
+
+export async function getProviderRuntime(): Promise<ProviderRuntimeStatus> {
+	return requestRecord<ProviderRuntimeStatus>("/providers/runtime");
+}
+
+export async function installProviderRuntime(): Promise<ProviderRuntimeStatus> {
+	return requestRecord<ProviderRuntimeStatus>("/providers/runtime", { method: "POST" });
+}

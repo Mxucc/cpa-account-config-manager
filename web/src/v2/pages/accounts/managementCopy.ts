@@ -81,6 +81,10 @@ export interface ManagementCopy {
   flowExternal: string;
   communityInstructions: string;
   communityMissing: string;
+  runtimeMissing: string;
+  runtimeInstall: string;
+  runtimeInstalling: string;
+  runtimeReady: string;
   openLoginPage: string;
   userCode: string;
   loginWaiting: string;
@@ -177,6 +181,10 @@ const zh: ManagementCopy = {
   flowExternal: "原插件内登录",
   communityInstructions: "在浏览器里完成该供应商的登录，完成后这里会自动继续。",
   communityMissing: "该社区供应商还没有安装代码，无法在这里登录。",
+  runtimeMissing: "该供应商的登录代码需要 JavaScript 运行时，这台服务器上还没有。点这里由插件自己装一个。",
+  runtimeInstall: "安装运行时",
+  runtimeInstalling: "正在安装运行时…",
+  runtimeReady: "运行时已就绪",
   openLoginPage: "打开登录页",
   userCode: "设备码",
   loginWaiting: "等待授权…",
@@ -273,6 +281,10 @@ const en: ManagementCopy = {
   flowExternal: "Signed in by the original plugin",
   communityInstructions: "Finish the provider sign-in in the browser; this dialog continues on its own.",
   communityMissing: "This community provider has no installed code, so it cannot sign in here.",
+  runtimeMissing: "This provider signs in with JavaScript, and this server has no runtime for it yet. Install one from here.",
+  runtimeInstall: "Install runtime",
+  runtimeInstalling: "Installing the runtime…",
+  runtimeReady: "Runtime ready",
   openLoginPage: "Open sign-in page",
   userCode: "Device code",
   loginWaiting: "Waiting for approval…",

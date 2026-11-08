@@ -1119,6 +1119,10 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 	const [flow, setFlow] = useState<AccountLoginFlow | null>(null);
 	const [status, setStatus] = useState<AccountLoginStatus | null>(null);
 	const [error, setError] = useState("");
+	// The JavaScript runtime a community sign-in needs. A host without one gets an
+	// install button instead of a dead end.
+	const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
+	const [installingRuntime, setInstallingRuntime] = useState(false);
 
 	useEffect(() => {
 		if (!open) {
@@ -1145,6 +1149,14 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 			})
 			.finally(() => {
 				if (!cancelled) setLoading(false);
+			});
+		api
+			.getProviderRuntime()
+			.then((status) => {
+				if (!cancelled) setRuntimeReady(status.available);
+			})
+			.catch(() => {
+				if (!cancelled) setRuntimeReady(null);
 			});
 		return () => {
 			cancelled = true;
@@ -1199,6 +1211,23 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 			onError(message);
 		} finally {
 			setBusy("");
+		}
+	};
+
+	const installRuntime = async () => {
+		setInstallingRuntime(true);
+		setError("");
+		try {
+			const status = await api.installProviderRuntime();
+			if (status.installed || status.available) {
+				setRuntimeReady(true);
+			} else {
+				setError(status.reason ?? copy.runtimeMissing);
+			}
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setInstallingRuntime(false);
 		}
 	};
 
@@ -1274,6 +1303,16 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 							{status?.done ? copy.loginDone : status && (status.status === "error" || status.status === "expired") ? `${copy.loginFailed}: ${status.message ?? status.status}` : copy.loginWaiting}
 						</p>
 					</div>
+				) : null}
+				{runtimeReady === false && community.some((entry) => entry.flow === "community") ? (
+					<Notice tone="warn">
+						<div className="flex flex-wrap items-center justify-between gap-2">
+							<span>{copy.runtimeMissing}</span>
+							<Button size="sm" loading={installingRuntime} onClick={() => void installRuntime()}>
+								{installingRuntime ? copy.runtimeInstalling : copy.runtimeInstall}
+							</Button>
+						</div>
+					</Notice>
 				) : null}
 				{community.length > 0 ? (
 					<div className="space-y-2">

@@ -641,10 +641,28 @@ func (s *OpenCodeQuotaService) RefreshAll(force bool) map[string]*OpenCodeQuotaR
 // each caller decides how a failed entry is stored.
 func (s *OpenCodeQuotaService) fetchAll(accounts []OpenCodeAccount, timeout time.Duration) map[string]*OpenCodeQuotaResult {
 	results := make(map[string]*OpenCodeQuotaResult, len(accounts))
+	// One upstream read per workspace, run concurrently and bounded: reading them
+	// in sequence meant the second workspace could be dropped when the request
+	// budget ran out, which left one row with no windows at all.
+	const maxConcurrent = 4
+	type fetched struct {
+		id     string
+		result *OpenCodeQuotaResult
+	}
+	completed := make(chan fetched, len(accounts))
+	guard := make(chan struct{}, maxConcurrent)
 	for _, account := range accounts {
-		result := s.queryOpenCodeGoQuota(account.WorkspaceID, account.AuthCookie, timeout)
-		result.AccountID = account.ID
-		results[account.ID] = &result
+		go func(account OpenCodeAccount) {
+			guard <- struct{}{}
+			defer func() { <-guard }()
+			result := s.queryOpenCodeGoQuota(account.WorkspaceID, account.AuthCookie, timeout)
+			result.AccountID = account.ID
+			completed <- fetched{id: account.ID, result: &result}
+		}(account)
+	}
+	for range accounts {
+		entry := <-completed
+		results[entry.id] = entry.result
 	}
 	return results
 }

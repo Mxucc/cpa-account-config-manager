@@ -131,9 +131,9 @@ function JobProgress({ job, copy }: { job: JobSnapshot | null; copy: ManagementC
       <Progress value={Math.round((job.done / total) * 100)} tone={job.failed > 0 ? "amber" : "blue"} />
       <div className="v2-metrics">
         <Metric label={copy.eligible} value={job.eligible} />
-        <Metric label="ok" value={job.succeeded} />
-        <Metric label="failed" value={job.failed} />
-        <Metric label="skipped" value={job.skipped} />
+        <Metric label={copy.metrics.ok} value={job.succeeded} />
+        <Metric label={copy.metrics.failed} value={job.failed} />
+        <Metric label={copy.metrics.skipped} value={job.skipped} />
       </div>
       {job.storage_error ? <p className="text-xs text-amber-700">{job.storage_error}</p> : null}
     </div>
@@ -560,7 +560,7 @@ export function TestModelDialog({
             <div className="v2-metrics">
               <Metric label={copy.status} value={result.status} />
               <Metric label={copy.latency} value={`${result.latency_ms} ms`} />
-              <Metric label="HTTP" value={result.status_code ?? "-"} />
+              <Metric label={copy.metrics.http} value={result.status_code ?? "-"} />
               <Metric label={copy.model} value={result.selected_model ?? result.model} />
             </div>
             <KeyValue label={copy.reason}>{result.reason_code || "-"}</KeyValue>
@@ -1003,9 +1003,9 @@ export function ImportAccountsDialog({ open, onClose, onError, onDone }: DialogP
           <>
             <div className="v2-metrics">
               <Metric label={copy.targets} value={preview.total} />
-              <Metric label="skipped" value={preview.skipped} />
-              <Metric label="files" value={preview.source_files} />
-              <Metric label="type" value={preview.input_type} />
+              <Metric label={copy.metrics.skipped} value={preview.skipped} />
+              <Metric label={copy.metrics.files} value={preview.source_files} />
+              <Metric label={copy.metrics.type} value={preview.input_type} />
             </div>
             {preview.warnings?.map((warning) => (
               <p key={warning} className="text-xs text-amber-700">
@@ -1024,9 +1024,9 @@ export function ImportAccountsDialog({ open, onClose, onError, onDone }: DialogP
         {result ? (
           <div className="v2-metrics">
             <Metric label={copy.status} value={result.state} />
-            <Metric label="imported" value={result.imported} />
-            <Metric label="skipped" value={result.skipped} />
-            <Metric label="failed" value={result.failed} />
+            <Metric label={copy.metrics.imported} value={result.imported} />
+            <Metric label={copy.metrics.skipped} value={result.skipped} />
+            <Metric label={copy.metrics.failed} value={result.failed} />
           </div>
         ) : null}
         {error ? <p className="text-sm text-red-600">{error}</p> : null}

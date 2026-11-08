@@ -153,7 +153,7 @@ export function QuotaBar({ window }: { window: QuotaWindow }) {
   if (window.balance != null && used === null) {
     return (
       <div className="flex items-center justify-between gap-3 text-sm">
-        <span className="text-gray-600">{window.label}</span>
+        <span className="text-gray-600">{windowLabel(window.label, copy)}</span>
         <span className="font-medium text-gray-900">
           {formatAmount(window.balance, window.unit)}
         </span>
@@ -163,7 +163,7 @@ export function QuotaBar({ window }: { window: QuotaWindow }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="text-gray-600">{window.label}</span>
+        <span className="text-gray-600">{windowLabel(window.label, copy)}</span>
         <span className={used === null ? "text-gray-400" : "font-medium text-gray-900"}>
           {used === null ? copy.common.notReported : `${Math.round(used)}%`}
         </span>
@@ -228,6 +228,23 @@ export function billingLabel(mode: string, copy: ReturnType<typeof useCopy>): st
     default:
       return copy.common.unknown;
   }
+}
+
+// Provider copy and metric names arrive in English. The shell owns its language,
+// so it looks a stable key up in the catalog and keeps the server text as the
+// fallback for a provider the catalog does not know yet.
+export function describeProvider(id: string, fallback: string, copy: ReturnType<typeof useCopy>): string {
+  return copy.providerDescriptions[id] ?? fallback;
+}
+
+export function metricLabel(key: string, fallback: string, copy: ReturnType<typeof useCopy>): string {
+  return copy.metricLabels[key] ?? fallback;
+}
+
+// A window label is provider copy ("5 hours", "Monthly"). A known label is
+// translated; anything else is shown exactly as reported.
+export function windowLabel(label: string, copy: ReturnType<typeof useCopy>): string {
+  return copy.windowLabels[label.trim().toLowerCase()] ?? label;
 }
 
 // A cycle kind is normalized by the server, so the page supplies its label.

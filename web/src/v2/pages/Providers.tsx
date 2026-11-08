@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { providerApi } from "../api";
-import { Badge, Button, Card, CardTitle, Chip, Dialog, EmptyState, ErrorState, Input, Notice, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
-import { StatusBadge, capabilityLabel, kindLabel, useAsync, useCopy } from "../shared";
+import { Badge, Button, Card, CardTitle, Chip, Dialog, EmptyState, ErrorState, Input, Notice, PageHeader, Select, Skeleton, Table, Tabs, Td, Th } from "../../ui/kit";
+import { capabilityLabel, describeProvider, kindLabel, StatusBadge, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import { AccountsPage } from "./Accounts";
 import { QuotaPage } from "./Quota";
@@ -59,7 +59,7 @@ export function ProvidersPage({
                   <CardTitle>{provider.display_name}</CardTitle>
                   <Chip>{kindLabel(provider.kind, copy)}</Chip>
                 </div>
-                <p className="mt-1.5 text-xs leading-relaxed text-gray-500">{provider.description}</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-gray-500">{describeProvider(provider.id, provider.description ?? "", copy)}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {Object.entries(provider.capabilities)
                     .filter(([, enabled]) => enabled)
@@ -92,25 +92,27 @@ export function ProvidersPage({
     <div className="v2-page">
       <PageHeader
         title={current.display_name}
-        subtitle={current.description}
+        subtitle={describeProvider(current.id, current.description ?? "", copy)}
         actions={
           <Button variant="secondary" size="sm" onClick={() => onNavigate("/providers")}>
             {copy.providers.title}
           </Button>
         }
       />
-      <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
-          <Badge tone="gray">{kindLabel(current.kind, copy)}</Badge>
-          <span>{current.accounts} {copy.providers.accounts}</span>
-          {Object.entries(summary).map(([status, count]) => (
-            <StatusBadge key={status} status={status} />
-          ))}
-          {Object.entries(summary).map(([status, count]) => (
-            <span key={`count-${status}`} className="text-xs text-gray-500">{count}</span>
-          ))}
-        </div>
-      </Card>
+      {/* One summary line: kind, account count, and each status with its own
+          count, so no bare number is left without a label. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-600">
+        <Chip>{kindLabel(current.kind, copy)}</Chip>
+        <span className="font-medium text-gray-900">
+          {current.accounts} {copy.providers.accounts}
+        </span>
+        {Object.entries(summary).map(([status, count]) => (
+          <span key={status} className="inline-flex items-center gap-1.5">
+            <StatusBadge status={status} />
+            <span className="text-xs tabular-nums text-gray-500">{count}</span>
+          </span>
+        ))}
+      </div>
       <Tabs
         active={activeTab}
         onChange={(id) => onNavigate(`/providers/${current.id}/${id}`)}
@@ -123,7 +125,7 @@ export function ProvidersPage({
         ]}
       />
       {activeTab === "accounts" ? (
-        <AccountsPage providerFilter={current.id} onSelect={() => undefined} onRefreshNeeded={accounts.reload} onNotice={onNotice} />
+        <AccountsPage providerFilter={current.id} embedded onSelect={() => undefined} onRefreshNeeded={accounts.reload} onNotice={onNotice} />
       ) : null}
       {activeTab === "quota" ? <QuotaPage providerFilter={current.id} /> : null}
       {activeTab === "models" ? <ModelsPanel providerID={current.id} /> : null}
@@ -144,30 +146,30 @@ function ModelsPanel({ providerID }: { providerID: string }) {
   if (rows.length === 0) return <EmptyState title={copy.common.empty} description={copy.accounts.empty} />;
   return (
     <div className="v2-page">
-      <Card className="p-0">
-        <table className="w-full border-collapse text-sm">
+      <Card flush>
+        <Table>
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
-              <th className="px-4 py-3">{copy.accounts.provider}</th>
-              <th className="px-4 py-3">{copy.accounts.models}</th>
-              <th className="px-4 py-3">{copy.usage.priceSource}</th>
+            <tr>
+              <Th>{copy.accounts.provider}</Th>
+              <Th>{copy.accounts.models}</Th>
+              <Th>{copy.usage.priceSource}</Th>
             </tr>
           </thead>
           <tbody>
             {rows.map((account) => (
-              <tr key={account.id} className="border-b border-gray-100 last:border-0 transition-colors duration-150 ease-out hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium text-gray-900">{account.display_name}</td>
-                <td className="px-4 py-3 text-gray-900">
+              <tr key={account.id}>
+                <Td className="font-medium text-gray-900">{account.display_name}</Td>
+                <Td>
                   {account.models.count}
-                  {account.models.error ? <span className="block text-xs text-red-600">{account.models.error}</span> : null}
-                </td>
-                <td className="px-4 py-3 text-gray-600">
-                  {account.billing.rate_source ?? (pricing.data?.available ? "plugin price catalog" : copy.common.unknown)}
-                </td>
+                  {account.models.error ? <span className="mt-0.5 block text-xs text-red-600">{account.models.error}</span> : null}
+                </Td>
+                <Td className="text-gray-600">
+                  {account.billing.rate_source ?? (pricing.data?.available ? copy.usage.priceSource : copy.common.unknown)}
+                </Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </Card>
       {pricing.data && !pricing.data.available ? (
         <p className="text-xs text-gray-500">{pricing.data.reason}</p>

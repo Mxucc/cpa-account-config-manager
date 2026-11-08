@@ -15,12 +15,13 @@ import {
   PageHeader,
   Select,
   Skeleton,
+  useErrorMessage,
   Table,
   Td,
   Th,
   Toolbar,
 } from "../../ui/kit";
-import { AccountQuota, StatusBadge, accountWindows, billingLabel, cycleLabel, formatMoney, useAsync, useCopy } from "../shared";
+import { AccountQuota, accountWindows, billingLabel, cycleLabel, formatMoney, metricLabel, StatusBadge, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
 import type { AccountEditableConfig, AccountListResponse, TargetScope } from "../../types";
@@ -95,12 +96,16 @@ export function AccountsPage({
   onSelect,
   onRefreshNeeded,
   onNotice,
+  // The provider page renders this list inside its own header and tabs, so the
+  // page header and the provider filter would only repeat what is above.
+  embedded = false,
 }: {
   providerFilter?: string;
   selectedID?: string;
   onSelect: (id: string | undefined) => void;
   onRefreshNeeded: () => void;
   onNotice: (message: string) => void;
+  embedded?: boolean;
 }) {
   const copy = useCopy();
   const managementCopy = useAccountManagementCopy();
@@ -112,6 +117,7 @@ export function AccountsPage({
   const [provider, setProvider] = useState(providerFilter ?? "");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
+  const actionErrorText = useErrorMessage(actionError);
   // Which management dialog is open, and for which account. One slot keeps the
   // page from stacking unrelated dialogs on top of each other.
   const [dialog, setDialog] = useState<DialogKind | null>(null);
@@ -175,7 +181,7 @@ export function AccountsPage({
   if (accounts.loading && !accounts.data) {
     return (
       <div className="v2-page">
-        <PageHeader title={copy.accounts.title} subtitle={copy.accounts.subtitle} />
+        {embedded ? null : <PageHeader title={copy.accounts.title} subtitle={copy.accounts.subtitle} />}
         <Skeleton className="h-12" />
         <Skeleton className="h-96" />
       </div>
@@ -187,7 +193,7 @@ export function AccountsPage({
 
   return (
     <div className="v2-page">
-      <PageHeader title={copy.accounts.title} subtitle={copy.accounts.subtitle} />
+      {embedded ? null : <PageHeader title={copy.accounts.title} subtitle={copy.accounts.subtitle} />}
       <Card className="space-y-3 p-4">
         {/* Filters and the actions they scope live in one card, separated by a
             hairline: the page has one control area, not two stacked ones. */}
@@ -202,14 +208,16 @@ export function AccountsPage({
               className="w-52 pl-8"
             />
           </div>
-          <Select value={provider} onChange={(event) => setProvider(event.target.value)} aria-label={copy.accounts.filterProvider}>
-            <option value="">{copy.common.all} · {copy.accounts.provider}</option>
-            {(providers.data?.providers ?? []).map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.display_name}
-              </option>
-            ))}
-          </Select>
+          {embedded ? null : (
+            <Select value={provider} onChange={(event) => setProvider(event.target.value)} aria-label={copy.accounts.filterProvider}>
+              <option value="">{copy.common.all} · {copy.accounts.provider}</option>
+              {(providers.data?.providers ?? []).map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.display_name}
+                </option>
+              ))}
+            </Select>
+          )}
           <Select value={status} onChange={(event) => setStatus(event.target.value)} aria-label={copy.accounts.filterStatus}>
             <option value="">{copy.common.all} · {copy.accounts.status}</option>
             {Object.entries(copy.status).map(([value, label]) => (
@@ -250,7 +258,7 @@ export function AccountsPage({
             {managementCopy.exportAccounts}
           </Button>
         </Toolbar>
-        {actionError ? <Notice tone="error">{actionError}</Notice> : null}
+        {actionError ? <Notice tone="error">{actionErrorText}</Notice> : null}
       </Card>
 
       {filtered.length === 0 ? (
@@ -487,7 +495,7 @@ export function AccountDrawer({
           {account.metrics?.length ? (
             <div className="mt-3 space-y-1">
               {account.metrics.map((metric) => (
-                <KeyValue key={metric.key} label={metric.label}>
+                <KeyValue key={metric.key} label={metricLabel(metric.key, metric.label, copy)}>
                   {metric.format === "currency" ? formatMoney(metric.value, metric.currency ?? "USD") : `${metric.value} ${metric.unit ?? ""}`}
                 </KeyValue>
               ))}

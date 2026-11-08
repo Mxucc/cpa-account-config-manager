@@ -1,5 +1,5 @@
 import { providerApi } from "../api";
-import { Card, EmptyState, ErrorState, PageHeader, Skeleton } from "../../ui/kit";
+import { Card, EmptyState, ErrorState, PageHeader, Skeleton, Table, Td, Th } from "../../ui/kit";
 import { QuotaBar, StatusBadge, accountWindows, cycleLabel, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 
@@ -32,36 +32,39 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
       {rows.length === 0 ? (
         <EmptyState title={copy.common.empty} description={copy.common.notReported} />
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full border-collapse text-sm">
+        <Card flush>
+          <Table>
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
-                <th className="px-4 py-3">{copy.accounts.provider}</th>
-                <th className="px-4 py-3">{copy.accounts.plan}</th>
-                <th className="px-4 py-3">{copy.quota.window}</th>
-                <th className="px-4 py-3">{copy.quota.reset}</th>
-                <th className="px-4 py-3">{copy.accounts.status}</th>
+              <tr>
+                <Th>{copy.accounts.provider}</Th>
+                <Th>{copy.accounts.plan}</Th>
+                <Th>{copy.quota.window}</Th>
+                <Th>{copy.accounts.status}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.map(({ account, windows }) => (
-                <tr key={account.id} className="border-b border-gray-100 align-top last:border-0 transition-colors duration-150 ease-out hover:bg-gray-50">
-                  <td className="px-4 py-4">
-                    <span className="block font-medium text-gray-900">{account.display_name}</span>
-                    <span className="block text-xs text-gray-500">{account.provider.display_name}</span>
-                  </td>
-                  <td className="px-4 py-4 text-gray-700">
+                <tr key={account.id}>
+                  <Td className="max-w-[15rem]">
+                    <span className="v2-truncate font-medium text-gray-900" title={account.display_name}>
+                      {account.display_name}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-gray-500">{account.provider.display_name}</span>
+                  </Td>
+                  <Td className="whitespace-nowrap">
                     {account.plan.name || copy.common.unknown}
-                    <span className="block text-xs text-gray-500">
+                    <span className="mt-0.5 block text-xs text-gray-500">
                       {account.plan.cycle.kind === "none"
                         ? "—"
                         : account.plan.cycle.renews_at
                           ? `${cycleLabel(account.plan.cycle.kind, copy)} · ${formatDateTime(account.plan.cycle.renews_at)}`
                           : cycleLabel(account.plan.cycle.kind, copy)}
                     </span>
-                  </td>
-                  <td className="min-w-[18rem] px-4 py-4">
-                    <div className="v2-page">
+                  </Td>
+                  <Td className="min-w-[20rem]">
+                    {/* The reset time belongs to its own window, so it stays under
+                        the meter instead of being repeated in a separate column. */}
+                    <div className="space-y-2">
                       {windows.map((window) => (
                         <div key={window.id}>
                           <QuotaBar window={window} />
@@ -69,25 +72,14 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
                         </div>
                       ))}
                     </div>
-                  </td>
-                  <td className="px-4 py-4 text-xs text-gray-600">
-                    {windows
-                      .map((window) => (window.reset_at ? `${window.label}: ${formatDateTime(window.reset_at)}` : `${window.label}: -`))
-                      .join("\n")
-                      .split("\n")
-                      .map((line) => (
-                        <span key={line} className="block">
-                          {line}
-                        </span>
-                      ))}
-                  </td>
-                  <td className="px-4 py-4">
+                  </Td>
+                  <Td>
                     <StatusBadge status={account.status} />
-                  </td>
+                  </Td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </Card>
       )}
     </div>

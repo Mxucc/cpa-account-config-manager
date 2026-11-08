@@ -86,6 +86,15 @@ export interface ManagementCopy {
   loginFailed: string;
   communityTitle: string;
   communityNote: string;
+  metrics: {
+    ok: string;
+    failed: string;
+    skipped: string;
+    imported: string;
+    files: string;
+    type: string;
+    http: string;
+  };
 }
 
 const zh: ManagementCopy = {
@@ -170,6 +179,15 @@ const zh: ManagementCopy = {
   loginFailed: "登录未完成",
   communityTitle: "社区供应商",
   communityNote: "这些供应商要在 Magpie/OpenCode 里登录，CPA 没有它们的登录实现，所以这里不能直接添加；请到对应插件完成登录后，把凭据以 CPA 渠道方式接入。",
+  metrics: {
+    ok: "成功",
+    failed: "失败",
+    skipped: "跳过",
+    imported: "已导入",
+    files: "文件数",
+    type: "类型",
+    http: "HTTP 状态",
+  },
 };
 
 const en: ManagementCopy = {
@@ -254,6 +272,15 @@ const en: ManagementCopy = {
   loginFailed: "The sign-in did not finish",
   communityTitle: "Community providers",
   communityNote: "These providers sign in inside Magpie or OpenCode, and CPA has no login implementation for them; finish the sign-in there and add the credential as a CPA channel.",
+  metrics: {
+    ok: "Succeeded",
+    failed: "Failed",
+    skipped: "Skipped",
+    imported: "Imported",
+    files: "Files",
+    type: "Type",
+    http: "HTTP status",
+  },
 };
 
 const catalogs: Record<string, ManagementCopy> = { en, "zh-CN": zh };

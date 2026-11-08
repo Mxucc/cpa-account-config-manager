@@ -34,6 +34,14 @@ export interface Copy {
   kinds: { oauth: string; subscription: string; wallet: string; channel: string };
   // Capability keys are the same identifiers the API uses.
   capabilities: { login: string; quota: string; models: string; binding: string; billing: string; refresh: string; test: string; host_auth: string };
+  // The server sends English provider copy and English metric names; the shell
+  // owns its language, so both are looked up here by a stable key and fall back
+  // to whatever the server said.
+  providerDescriptions: Record<string, string>;
+  metricLabels: Record<string, string>;
+  // Quota window labels also come from the provider; known ones are translated
+  // and an unknown label is shown as the provider wrote it.
+  windowLabels: Record<string, string>;
   billing_allowance: string;
   billing_used: string;
   billing_remaining: string;
@@ -68,6 +76,31 @@ const zh: Copy = {
   statusNotes: { quotaLimited: "额度窗口已用尽，窗口重置后自动恢复", credentialRejected: "渠道拒绝了该凭据，正在自动修复" },
   kinds: { oauth: "登录授权", subscription: "订阅", wallet: "钱包", channel: "渠道" },
   capabilities: { login: "登录", quota: "额度", models: "模型", binding: "发布渠道", billing: "计费", refresh: "刷新", test: "测试", host_auth: "宿主鉴权" },
+  providerDescriptions: {
+    codex: "通过 CPA 管理的 OpenAI Codex 凭据，含 5 小时与 7 天额度窗口、计划信息与客户端身份策略。",
+    "opencode-go": "OpenCode Go 工作区：每月额度按滚动、每周与每月三个窗口拆分。",
+    "opencode-zen": "OpenCode Zen 凭据：按量计费并抵扣预付余额，模型目录按账号读取。",
+    "cline-pass": "Cline 账号：ClinePass 的 5 小时、每周与每月上限，加上钱包余额，并自动修复凭据。",
+    "ai-provider": "不归属于上述产品的 OpenAI 兼容 CPA 渠道：只统计模型、运行时用量与成本。",
+  },
+  metricLabels: {
+    active_reset_count: "可用重置次数",
+    balance: "余额",
+  },
+  windowLabels: {
+    "5 hours": "5 小时",
+    "5 hour": "5 小时",
+    "5-hour": "5 小时",
+    "7 days": "7 天",
+    "7 day": "7 天",
+    "7-day": "7 天",
+    weekly: "每周",
+    monthly: "按月",
+    month: "按月",
+    rolling: "滚动",
+    balance: "余额",
+    wallet: "钱包",
+  },
   billing_allowance: "额度上限",
   billing_used: "已用额度",
   billing_remaining: "剩余额度",
@@ -102,6 +135,18 @@ const en: Copy = {
   statusNotes: { quotaLimited: "The gateway limited this account; it recovers after the window ends", credentialRejected: "The gateway rejected this credential; automatic repair is running" },
   kinds: { oauth: "OAuth", subscription: "Subscription", wallet: "Wallet", channel: "Channel" },
   capabilities: { login: "Login", quota: "Quota", models: "Models", binding: "Channel binding", billing: "Billing", refresh: "Refresh", test: "Test", host_auth: "Host auth" },
+  providerDescriptions: {
+    codex: "OpenAI Codex credentials managed through CPA, with five-hour and seven-day quota windows, plan metadata and client identity policy.",
+    "opencode-go": "OpenCode Go workspaces: a monthly allowance split across rolling, weekly and monthly windows.",
+    "opencode-zen": "OpenCode Zen credentials: metered usage against a prepaid balance, with a per-account model catalog.",
+    "cline-pass": "Cline accounts: ClinePass's five-hour, weekly and monthly limits plus the wallet balance, with automatic credential repair.",
+    "ai-provider": "OpenAI-compatible CPA channels that are not one of the managed products: models, runtime usage and cost only.",
+  },
+  metricLabels: {
+    active_reset_count: "Active reset credits",
+    balance: "Balance",
+  },
+  windowLabels: {},
   billing_allowance: "Allowance",
   billing_used: "Used",
   billing_remaining: "Remaining",

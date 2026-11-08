@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { clsx } from "clsx";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import { Loader2, X } from "lucide-react";
+import { useI18n } from "../i18n";
 
 export const cn = (...values: Array<string | false | null | undefined>) => clsx(values);
 
@@ -210,6 +211,12 @@ export function Metric({ label, value, hint }: { label: ReactNode; value: ReactN
   );
 }
 
+export function useErrorMessage(message: string): string {
+  const { tx } = useI18n();
+  if (!message.startsWith("ui.")) return message;
+  return tx(message as Parameters<typeof tx>[0]);
+}
+
 export function Notice({ tone = "info", children }: { tone?: "info" | "ok" | "warn" | "error"; children: ReactNode }) {
   return (
     <p className="v2-notice" data-tone={tone} role={tone === "error" ? "alert" : undefined}>
@@ -255,9 +262,12 @@ export function EmptyState({ title, description, action }: { title: string; desc
 }
 
 export function ErrorState({ message, retry, retryLabel }: { message: string; retry?: () => void; retryLabel?: string }) {
+  // A client-side failure carries an i18n key ("ui.invalid_api_response"); the
+  // page must never show the key itself.
+  const text = useErrorMessage(message);
   return (
     <div className="v2-notice flex-col items-start gap-2" data-tone="error">
-      <p className="font-medium">{message}</p>
+      <p className="font-medium">{text}</p>
       {retry ? (
         <Button variant="secondary" size="sm" onClick={retry}>
           {retryLabel}

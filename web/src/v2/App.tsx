@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { readPanelAuth } from "../store/panelAuth";
 import { clearSession, getSession, setSession } from "../store/session";
-import { Button, Card, Field, Input, Notice, cn } from "../ui/kit";
+import { Button, Card, Field, Input, Notice, cn, useErrorMessage } from "../ui/kit";
 import { ProviderAPIError, hasSession, providerApi } from "./api";
 import { useCopy } from "./shared";
 import { OverviewPage } from "./pages/Overview";
@@ -67,6 +67,7 @@ export function V2App() {
   const [authed, setAuthed] = useState(() => hasSession());
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const errorText = useErrorMessage(error);
   const [refreshRevision, setRefreshRevision] = useState(0);
 
   const navigate = useCallback((hash: string) => {
@@ -189,7 +190,7 @@ export function V2App() {
 
         <main className="mx-auto w-full min-w-0 max-w-[1180px] flex-1 px-4 py-5 md:px-8 md:py-6">
           <div className="v2-page">
-          {error ? <Notice tone="error">{error}</Notice> : null}
+          {error ? <Notice tone="error">{errorText}</Notice> : null}
           {route.view === "overview" ? <OverviewPage onOpenAccount={(id) => navigate(`/accounts/selected/${encodeURIComponent(id)}`)} /> : null}
           {route.view === "accounts" ? (
             <AccountsPage

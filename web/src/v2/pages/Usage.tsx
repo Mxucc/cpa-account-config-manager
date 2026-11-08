@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { providerApi } from "../api";
-import { Badge, Card, CardTitle, EmptyState, ErrorState, PageHeader, Skeleton } from "../../ui/kit";
+import { Badge, Card, CardTitle, EmptyState, ErrorState, PageHeader, Skeleton, Table, Td, Th } from "../../ui/kit";
 import { billingLabel, formatMoney, useAsync, useCopy } from "../shared";
 
 // Billing modes are kept apart on purpose: a subscription's allowance, a
@@ -77,36 +77,36 @@ export function UsagePage() {
           </Card>
         ))}
       </div>
-      <Card className="overflow-x-auto p-0">
-        <table className="w-full border-collapse text-sm">
+      <Card flush>
+        <Table>
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
-              <th className="px-4 py-3">{copy.accounts.provider}</th>
-              <th className="px-4 py-3">{copy.usage.mode}</th>
-              <th className="px-4 py-3">{copy.usage.tokens}</th>
-              <th className="px-4 py-3">{copy.usage.cost}</th>
-              <th className="px-4 py-3">{copy.billing_remaining}</th>
-              <th className="px-4 py-3">{copy.usage.priceSource}</th>
+            <tr>
+              <Th>{copy.accounts.provider}</Th>
+              <Th>{copy.usage.mode}</Th>
+              <Th>{copy.usage.tokens}</Th>
+              <Th>{copy.usage.cost}</Th>
+              <Th>{copy.billing_remaining}</Th>
+              <Th>{copy.usage.priceSource}</Th>
             </tr>
           </thead>
           <tbody>
             {rows.map((account) => (
-              <tr key={account.id} className="border-b border-gray-100 last:border-0 transition-colors duration-150 ease-out hover:bg-gray-50">
-                <td className="px-4 py-3">
+              <tr key={account.id}>
+                <Td>
                   <span className="block font-medium text-gray-900">{account.display_name}</span>
                   <span className="block text-xs text-gray-500">{account.provider.display_name}</span>
-                </td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td>
                   <Badge tone={account.billing.mode === "unknown" ? "gray" : "blue"}>{billingLabel(account.billing.mode, copy)}</Badge>
-                </td>
-                <td className="px-4 py-3 text-gray-900">{account.usage.total_tokens}</td>
-                <td className="px-4 py-3 text-gray-900">{formatMoney(account.usage.cost_usd)}</td>
-                <td className="px-4 py-3 text-gray-900">{formatMoney(account.billing.remaining, account.billing.currency)}</td>
-                <td className="px-4 py-3 text-gray-600">{account.billing.rate_source ?? "-"}</td>
+                </Td>
+                <Td className="text-gray-900">{account.usage.total_tokens}</Td>
+                <Td className="text-gray-900">{formatMoney(account.usage.cost_usd)}</Td>
+                <Td className="text-gray-900">{formatMoney(account.billing.remaining, account.billing.currency)}</Td>
+                <Td className="text-gray-600">{account.billing.rate_source ?? "-"}</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </Card>
     </div>
   );

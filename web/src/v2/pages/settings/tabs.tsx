@@ -348,9 +348,9 @@ export function OperationsTab({ onError, onNotice }: { onError: (message: string
         <p className="v2-hint">{copy.retentionHint}</p>
         <div className="v2-metrics">
           <Metric label={copy.targets} value={list.total} />
-          <Metric label="retained" value={list.retained} />
-          <Metric label="segments" value={list.archived_segments} />
-          <Metric label="page" value={`${list.page} / ${list.pages}`} />
+          <Metric label={copy.metrics.retained} value={list.retained} />
+          <Metric label={copy.metrics.segments} value={list.archived_segments} />
+          <Metric label={copy.metrics.page} value={`${list.page} / ${list.pages}`} />
         </div>
         {list.storage_error ? <p className="text-xs text-amber-700">{list.storage_error}</p> : null}
         {list.operations.length === 0 ? (
@@ -544,8 +544,8 @@ export function RiskTab({ onError, onNotice }: { onError: (message: string) => v
         </div>
         <div className="v2-metrics">
           <Metric label={copy.events} value={snapshot.status.total_events} />
-          <Metric label="observed" value={snapshot.status.observed} />
-          <Metric label="blocked" value={snapshot.status.blocked} />
+          <Metric label={copy.metrics.observed} value={snapshot.status.observed} />
+          <Metric label={copy.metrics.blocked} value={snapshot.status.blocked} />
           <Metric label={copy.hashes} value={snapshot.status.remembered_hashes} />
         </div>
         <div className="flex flex-wrap gap-2">
@@ -786,7 +786,7 @@ export function PluginsTab({ onError, onNotice }: { onError: (message: string) =
         <p className="break-all text-xs text-gray-700">{catalog.plugins_dir ?? "-"}</p>
         <div className="grid grid-cols-2 gap-2">
           <Metric label={copy.imported} value={catalog.imported.length} />
-          <Metric label="Bun" value={catalog.bun_available ? "ok" : "missing"} />
+          <Metric label={copy.metrics.bun} value={catalog.bun_available ? copy.metrics.bunReady : copy.metrics.bunMissing} />
         </div>
         {catalog.imported.length > 0 ? (
           <ul className="space-y-1 text-xs text-gray-600">

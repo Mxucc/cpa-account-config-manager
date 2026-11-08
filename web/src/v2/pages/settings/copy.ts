@@ -12,6 +12,16 @@ export interface SettingsCopy {
   plugins: string;
   updates: string;
   save: string;
+  metrics: {
+    retained: string;
+    segments: string;
+    page: string;
+    observed: string;
+    blocked: string;
+    bun: string;
+    bunReady: string;
+    bunMissing: string;
+  };
   saved: string;
   dirty: string;
   enabled: string;
@@ -87,6 +97,16 @@ const zh: SettingsCopy = {
   plugins: "插件配置",
   updates: "更新",
   save: "保存",
+  metrics: {
+    retained: "保留条数",
+    segments: "归档分段",
+    page: "页码",
+    observed: "已观察",
+    blocked: "已拦截",
+    bun: "Bun 运行时",
+    bunReady: "已就绪",
+    bunMissing: "未安装",
+  },
   saved: "已保存",
   dirty: "有未保存的改动",
   enabled: "启用",
@@ -162,6 +182,16 @@ const en: SettingsCopy = {
   plugins: "Plugin configuration",
   updates: "Updates",
   save: "Save",
+  metrics: {
+    retained: "Retained",
+    segments: "Archived segments",
+    page: "Page",
+    observed: "Observed",
+    blocked: "Blocked",
+    bun: "Bun runtime",
+    bunReady: "ready",
+    bunMissing: "missing",
+  },
   saved: "Saved",
   dirty: "Unsaved changes",
   enabled: "Enabled",

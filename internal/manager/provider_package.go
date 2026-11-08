@@ -110,6 +110,7 @@ func (a *App) handleProviderRuntime(ctx context.Context, req cpaapi.ManagementRe
 			magpiecompat.SetManagedRuntime(magpiecompat.RuntimePath(dataDir))
 		}
 	}
+	// Registration happens above, so this reads the same resolution a sign-in uses.
 	snapshot := map[string]any{
 		"available": magpiecompat.BunAvailable(),
 		"managed":   false,
@@ -119,6 +120,7 @@ func (a *App) handleProviderRuntime(ctx context.Context, req cpaapi.ManagementRe
 		if info, errStat := os.Stat(managed); errStat == nil && !info.IsDir() {
 			snapshot["managed"] = true
 			snapshot["managed_path"] = managed
+			snapshot["available"] = true
 		}
 	}
 	if req.Method == http.MethodGet {

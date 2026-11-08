@@ -327,6 +327,7 @@ The old Codex / OpenCode / Cline Pass workspaces remain as a compatibility layer
 
 ### Account management
 
+- A community provider signs in here: `POST /providers/import` installs the plugin package into the plugin's private directory (`provider-packages/`) alongside recording its definition, and Add account runs that plugin's own `authorize()` (browser or device code); a finished sign-in creates the matching CPA channel. A host without Bun is told so plainly instead of being sent to another application.
 - The accounts page offers Add account: pick a provider and let CPA run its own sign-in (browser or device code); the plugin only relays `GET /accounts/login`, `POST /accounts/login/start` and `GET /accounts/login/status`. An imported community provider is labelled as needing a sign-in inside its own plugin.
 - The accounts page offers: edit configuration (through the preview/apply pair `POST .../batch/preview` + `.../batch/start`), model catalog (`.../accounts/models`), model test (`.../accounts/model-test`), token refresh (`.../accounts/token/refresh`), delete (`.../accounts/delete/preview` + `.../accounts/delete/start`), batch edit and batch delete, duplicate scan (`.../accounts/deduplicate/preview`, whose recommendations go through the batch delete preview), import (`.../import/preview` + `.../import/start`) and export (`.../export/accounts`, formats cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager/json/jsonl/csv).
 - Every change is previewed before it is applied; an expired preview must be regenerated.

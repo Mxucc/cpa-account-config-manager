@@ -61,14 +61,21 @@ type accountLoginProvider struct {
 // CPA itself logs into from one this plugin publishes, and from a community
 // plugin that can only be signed into inside its own runtime.
 type accountLoginProviderView struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Flow is how the sign-in runs: host (CPA's own flow), plugin (this plugin's
+	// OAuth), community (the community package's own sign-in, run by this plugin)
+	// or external (a package with no code installed, which cannot sign in here).
 	Flow   string `json:"flow"`
 	Source string `json:"source"`
 }
 
 type accountLoginStartRequest struct {
 	Provider string `json:"provider"`
+	// Method and Inputs select one of a community plugin's declared sign-in
+	// methods and answer the fields it asks for before it starts.
+	Method string            `json:"method,omitempty"`
+	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
 // accountLoginFlow is what the page needs to drive a login: the URL to open, the
@@ -81,6 +88,11 @@ type accountLoginFlow struct {
 	UserCode  string `json:"user_code,omitempty"`
 	ExpiresIn int    `json:"expires_in,omitempty"`
 	Status    string `json:"status,omitempty"`
+	// Instructions and Mode come from a community plugin's own sign-in: it may
+	// need the operator to paste a code back, or finish on its own.
+	Instructions string `json:"instructions,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 // accountLoginStatus is the polled state. Done is true only when CPA reports a
@@ -124,8 +136,15 @@ func (a *App) accountLoginProviderList() cpaapi.ManagementResponse {
 	community := make([]accountLoginProviderView, 0)
 	if store := a.providerImportStore(); store != nil {
 		for _, imported := range store.List() {
+			// A community provider signs in through its own package, which this
+			// plugin installs and runs, so it is offered like any other provider
+			// instead of being sent elsewhere.
+			flow := "community"
+			if imported.Directory == "" && imported.Package == "" {
+				flow = "external"
+			}
 			community = append(community, accountLoginProviderView{
-				ID: imported.ID, Name: imported.Name, Flow: "external", Source: "community",
+				ID: imported.ID, Name: imported.Name, Flow: flow, Source: "community",
 			})
 		}
 	}
@@ -147,6 +166,11 @@ func (a *App) accountLoginStart(ctx context.Context, req cpaapi.ManagementReques
 	managementKey := resolveManagementKey(req.Headers)
 	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	// An imported community provider is not one CPA knows: its sign-in lives in
+	// its own package, which this plugin installs and runs.
+	if a.isImportedProvider(provider) {
+		return a.startCommunityLogin(ctx, req, provider)
 	}
 	query := url.Values{}
 	query.Set("provider", provider)
@@ -190,6 +214,9 @@ func (a *App) accountLoginPoll(ctx context.Context, req cpaapi.ManagementRequest
 	managementKey := resolveManagementKey(req.Headers)
 	if managementKey == "" {
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	if a.communityLoginSession(state) != nil {
+		return a.pollCommunityLogin(state)
 	}
 	query := url.Values{}
 	query.Set("state", state)

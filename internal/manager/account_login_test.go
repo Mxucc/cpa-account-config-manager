@@ -91,8 +91,11 @@ func TestAccountLoginListsHostProvidersAndCommunityPlugins(t *testing.T) {
 	if found["cline-pass"]["source"] != "plugin" {
 		t.Fatalf("cline-pass entry = %#v", found["cline-pass"])
 	}
+	// An imported community provider now signs in through its own package, which
+	// this plugin installs and runs, so it is offered with the community flow
+	// instead of being sent to another app.
 	community, ok := decoded["community"].([]any)
-	if !ok || len(community) != 1 || community[0].(map[string]any)["flow"] != "external" {
+	if !ok || len(community) != 1 || community[0].(map[string]any)["flow"] != "community" {
 		t.Fatalf("community = %#v", decoded["community"])
 	}
 }

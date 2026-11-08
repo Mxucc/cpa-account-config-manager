@@ -398,11 +398,27 @@ func (a *App) handleProviderImport(ctx context.Context, req cpaapi.ManagementReq
 			}
 		}
 	}
-	entry, errImport := a.providerImportStore().Import(body, source, wrapper.Directory)
+	// A market import installs the package's code as well as its manifest: the
+	// sign-in and the model hooks live in that code, so recording the manifest
+	// alone is what left a community provider impossible to add an account for.
+	directory := strings.TrimSpace(wrapper.Directory)
+	installNote := ""
+	if directory == "" {
+		if installed, errInstall := a.installProviderPackage(ctx, firstNonEmptyText(wrapper.ID, wrapper.Package)); errInstall == nil && installed != "" {
+			directory = installed
+		} else if errInstall != nil {
+			installNote = errInstall.Error()
+		}
+	}
+	entry, errImport := a.providerImportStore().Import(body, source, directory)
 	if errImport != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errImport.Error()})
 	}
-	return jsonResponse(http.StatusOK, map[string]any{"provider": entry})
+	response := map[string]any{"provider": entry}
+	if installNote != "" {
+		response["install_note"] = installNote
+	}
+	return jsonResponse(http.StatusOK, response)
 }
 
 // firstNonEmptyText returns the first trimmed non-empty argument.

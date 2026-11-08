@@ -328,6 +328,7 @@ make package VERSION=X.Y.Z
 
 ### 账号管理
 
+- 社区供应商的登录由本插件执行：`POST /providers/import` 在登记定义的同时把该插件包下载到插件的私有目录（`provider-packages/`），「添加账号」里点它就跑插件自己的 `authorize()`（浏览器或设备码），登录成功后自动在 CPA 建好对应的渠道。宿主没装 Bun 时会明确说明，而不是把用户推去别的应用。
 - 账号页提供「添加账号」：选择供应商后由 CPA 完成登录（浏览器或设备码），插件只转发 `GET /accounts/login`、`POST /accounts/login/start` 与 `GET /accounts/login/status`；已导入的社区供应商在弹窗里如实标注需在原插件内登录。
 - 账号页提供：编辑配置（走 `POST .../batch/preview` + `.../batch/start` 的预览-执行两步）、模型目录（`.../accounts/models`）、模型测试（`.../accounts/model-test`）、刷新令牌（`.../accounts/token/refresh`）、删除（`.../accounts/delete/preview` + `.../accounts/delete/start`）、批量编辑/批量删除、重复账号扫描（`.../accounts/deduplicate/preview`，建议删除走批量删除预览）、导入（`.../import/preview` + `.../import/start`）与导出（`.../export/accounts`，格式 cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager/json/jsonl/csv）。
 - 所有改动都先给出预览再执行；预览过期需要重新生成。

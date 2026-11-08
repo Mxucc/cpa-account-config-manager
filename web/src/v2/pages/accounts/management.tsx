@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../../api/client";
-import { Badge, Button, Dialog, ErrorState, Input, KeyValue, Progress, Select, Skeleton } from "../../../ui/kit";
+import { Badge, Button, Dialog, ErrorState, Input, KeyValue, Notice, Progress, Select, Skeleton, useErrorMessage } from "../../../ui/kit";
 import { useAccountManagementCopy, type ManagementCopy } from "./managementCopy";
 
 // The page imports the hook from here; the strings themselves live in the catalog.
@@ -406,7 +406,7 @@ export function EditAccountsDialog({
             </Select>
           </label>
         </div>
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
         {preview ? <PreviewSummary preview={preview} copy={copy} /> : null}
         {job ? <JobProgress job={job} copy={copy} /> : null}
       </div>
@@ -554,7 +554,7 @@ export function TestModelDialog({
       <div className="space-y-3">
         <p className="v2-hint">{copy.testHint}</p>
         <LabeledInput label={copy.model} value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-5.6-sol" />
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
         {result ? (
           <div className="space-y-2">
             <div className="v2-metrics">
@@ -664,7 +664,7 @@ export function DeleteAccountDialog({
           </>
         ) : null}
         {deleted ? <p className="text-sm text-green-700">{copy.removed}</p> : null}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
       </div>
     </Dialog>
   );
@@ -764,7 +764,7 @@ export function BatchDeleteDialog({
           </>
         ) : null}
         {job ? <JobProgress job={job} copy={copy} /> : null}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
       </div>
     </Dialog>
   );
@@ -891,7 +891,7 @@ export function DedupeDialog({
               )}
             </>
           ) : null}
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
         </div>
       </Dialog>
       <BatchDeleteDialog
@@ -1029,7 +1029,7 @@ export function ImportAccountsDialog({ open, onClose, onError, onDone }: DialogP
             <Metric label={copy.metrics.failed} value={result.failed} />
           </div>
         ) : null}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
       </div>
     </Dialog>
   );
@@ -1100,7 +1100,7 @@ export function ExportAccountsDialog({
         <p className="v2-hint">
           {copy.targets}: {mode === "selected" ? (scope.ids?.length ?? 0) : "-"}
         </p>
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
       </div>
     </Dialog>
   );
@@ -1179,7 +1179,20 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 		setError("");
 		setStatus(null);
 		try {
-			setFlow(await api.startAccountLogin(provider.id));
+			const answer = await api.startAccountLogin(provider.id);
+			// A community provider answers with its own reason instead of an HTTP
+			// failure: show it where the dialog already shows sign-in state.
+			if (answer.error) {
+				setError(answer.reason ? `${answer.error}: ${answer.reason}` : answer.error);
+				setFlow(null);
+				return;
+			}
+			if (answer.status === "failed") {
+				setError(answer.message ?? copy.loginFailed);
+				setFlow(null);
+				return;
+			}
+			setFlow(answer);
 		} catch (caught) {
 			const message = caught instanceof Error ? caught.message : String(caught);
 			setError(message);
@@ -1195,6 +1208,8 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 				return copy.flowDevice;
 			case "plugin":
 				return copy.flowPlugin;
+			case "community":
+				return copy.flowCommunity;
 			case "external":
 				return copy.flowExternal;
 			default:
@@ -1249,6 +1264,7 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 								{copy.openLoginPage}
 							</a>
 						) : null}
+						{flow.instructions ? <p className="text-gray-700">{flow.instructions}</p> : null}
 						{flow.user_code ? (
 							<p className="text-gray-700">
 								{copy.userCode}: <span className="font-mono">{flow.user_code}</span>
@@ -1260,13 +1276,30 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 					</div>
 				) : null}
 				{community.length > 0 ? (
-					<div className="v2-notice flex-col items-start gap-1">
+					<div className="space-y-2">
 						<p className="text-xs font-medium text-gray-500">{copy.communityTitle}</p>
+						<ul className="grid gap-2 sm:grid-cols-2">
+							{community.map((provider) => (
+								<li key={provider.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2">
+									<div className="min-w-0 flex-1">
+										<p className="truncate text-sm font-medium text-gray-900">{provider.name}</p>
+										<p className="v2-hint">{flowLabel(provider.flow)}</p>
+									</div>
+									<Button
+										size="sm"
+										loading={busy === provider.id}
+										disabled={provider.flow === "external"}
+										onClick={() => void start(provider)}
+									>
+										{copy.addAccount}
+									</Button>
+								</li>
+							))}
+						</ul>
 						<p className="v2-hint">{copy.communityNote}</p>
-						<p className="text-xs text-gray-700">{community.map((entry) => entry.name).join(" · ")}</p>
 					</div>
 				) : null}
-				{error ? <p className="text-sm text-red-600">{error}</p> : null}
+				{error ? <Notice tone="error">{useErrorMessage(error)}</Notice> : null}
 			</div>
 		</Dialog>
 	);

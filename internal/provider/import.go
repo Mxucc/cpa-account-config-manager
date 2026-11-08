@@ -222,8 +222,11 @@ func (s *ImportStore) Import(manifest []byte, source, directory string) (Importe
 		if root == "" {
 			return ImportedProvider{}, fmt.Errorf("plugin data directory is unavailable; hooks cannot be enabled")
 		}
-		relative, errRel := filepath.Rel(root, absoluteDir)
-		if errRel != nil || strings.HasPrefix(relative, "..") {
+		// A directory is accepted when it sits under the plugin root or under the
+		// package root this plugin installs community packages into: both are
+		// private to the plugin, and the second is where a market import puts the
+		// package's own code.
+		if !pathWithin(root, absoluteDir) && !pathWithin(filepath.Join(filepath.Dir(root), "provider-packages"), absoluteDir) {
 			return ImportedProvider{}, fmt.Errorf("plugin directory must live under %s", root)
 		}
 		if info, errStat := os.Stat(absoluteDir); errStat != nil || !info.IsDir() {
@@ -334,4 +337,13 @@ func containsKeyword(keywords []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// pathWithin reports whether target sits under root.
+func pathWithin(root, target string) bool {
+	relative, errRelative := filepath.Rel(root, target)
+	if errRelative != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }

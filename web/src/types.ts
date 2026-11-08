@@ -1952,7 +1952,7 @@ export interface RiskControlSnapshot {
 
 // Adding an account. The plugin relays CPA's own provider login, so the page
 // never talks to a provider and never needs a second credential.
-export type AccountLoginFlowKind = "browser" | "device" | "plugin" | "external";
+export type AccountLoginFlowKind = "browser" | "device" | "plugin" | "community" | "external";
 
 export interface AccountLoginProvider {
   id: string;
@@ -1974,6 +1974,13 @@ export interface AccountLoginFlow {
   user_code?: string;
   expires_in?: number;
   status?: string;
+  // A community plugin's sign-in describes what to do next, and may report why it
+  // could not start.
+  instructions?: string;
+  mode?: string;
+  message?: string;
+  error?: string;
+  reason?: string;
 }
 
 export interface AccountLoginStatus {

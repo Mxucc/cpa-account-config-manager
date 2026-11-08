@@ -77,7 +77,10 @@ export interface ManagementCopy {
   flowBrowser: string;
   flowDevice: string;
   flowPlugin: string;
+  flowCommunity: string;
   flowExternal: string;
+  communityInstructions: string;
+  communityMissing: string;
   openLoginPage: string;
   userCode: string;
   loginWaiting: string;
@@ -170,7 +173,10 @@ const zh: ManagementCopy = {
   flowBrowser: "浏览器登录",
   flowDevice: "设备码登录",
   flowPlugin: "插件登录",
+  flowCommunity: "社区插件登录（由本插件执行）",
   flowExternal: "原插件内登录",
+  communityInstructions: "在浏览器里完成该供应商的登录，完成后这里会自动继续。",
+  communityMissing: "该社区供应商还没有安装代码，无法在这里登录。",
   openLoginPage: "打开登录页",
   userCode: "设备码",
   loginWaiting: "等待授权…",
@@ -178,7 +184,7 @@ const zh: ManagementCopy = {
   loginDone: "授权完成，账号已新增",
   loginFailed: "登录未完成",
   communityTitle: "社区供应商",
-  communityNote: "这些供应商要在 Magpie/OpenCode 里登录，CPA 没有它们的登录实现，所以这里不能直接添加；请到对应插件完成登录后，把凭据以 CPA 渠道方式接入。",
+  communityNote: "这些供应商的登录由本插件执行：导入时已下载它的插件包，登录成功后会自动在 CPA 里建好对应的渠道。",
   metrics: {
     ok: "成功",
     failed: "失败",
@@ -263,7 +269,10 @@ const en: ManagementCopy = {
   flowBrowser: "Browser sign-in",
   flowDevice: "Device code",
   flowPlugin: "Plugin sign-in",
+  flowCommunity: "Community plugin sign-in (run here)",
   flowExternal: "Signed in by the original plugin",
+  communityInstructions: "Finish the provider sign-in in the browser; this dialog continues on its own.",
+  communityMissing: "This community provider has no installed code, so it cannot sign in here.",
   openLoginPage: "Open sign-in page",
   userCode: "Device code",
   loginWaiting: "Waiting for approval…",
@@ -271,7 +280,7 @@ const en: ManagementCopy = {
   loginDone: "Signed in; the account was added",
   loginFailed: "The sign-in did not finish",
   communityTitle: "Community providers",
-  communityNote: "These providers sign in inside Magpie or OpenCode, and CPA has no login implementation for them; finish the sign-in there and add the credential as a CPA channel.",
+  communityNote: "These providers sign in through their own plugin package, which this plugin downloaded on import; a finished sign-in creates the matching CPA channel automatically.",
   metrics: {
     ok: "Succeeded",
     failed: "Failed",

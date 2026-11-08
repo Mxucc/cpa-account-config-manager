@@ -226,7 +226,11 @@ func (s *ImportStore) Import(manifest []byte, source, directory string) (Importe
 		// package root this plugin installs community packages into: both are
 		// private to the plugin, and the second is where a market import puts the
 		// package's own code.
-		if !pathWithin(root, absoluteDir) && !pathWithin(filepath.Join(filepath.Dir(root), "provider-packages"), absoluteDir) {
+		// A directory is accepted when it sits under the plugin's private home: the
+		// plugin directory the sidecar imports, or the packages this plugin
+		// installs. Both are inside the same home, and nothing else is.
+		home := filepath.Dir(root)
+		if !pathWithin(root, absoluteDir) && !pathWithin(home, absoluteDir) {
 			return ImportedProvider{}, fmt.Errorf("plugin directory must live under %s", root)
 		}
 		if info, errStat := os.Stat(absoluteDir); errStat != nil || !info.IsDir() {

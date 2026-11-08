@@ -31,8 +31,9 @@ func (f *fakeHookRunner) Probe(directory string) (provider.MagpiePluginInput, er
 // folder, which is the only place the importer accepts.
 func importFixturePlugin(t *testing.T, app *App) string {
 	t.Helper()
-	dataDir := app.configSnapshot().DataDir
-	pluginDir := filepath.Join(dataDir, "magpie-plugins", "fixture")
+	// The store reports where plugin code lives, which is the plugin's stable home
+	// rather than the per-run data directory.
+	pluginDir := filepath.Join(app.providerImportStore().PluginsDir(), "fixture")
 	if errMkdir := os.MkdirAll(pluginDir, 0o755); errMkdir != nil {
 		t.Fatalf("mkdir plugin: %v", errMkdir)
 	}
@@ -285,8 +286,7 @@ func TestHooksOnWithRealBunProduceAManagerAccount(t *testing.T) {
 		t.Skip("bun is not installed; the real sidecar path cannot run here")
 	}
 	app := newProviderTestApp(t)
-	dataDir := app.configSnapshot().DataDir
-	pluginDir := filepath.Join(dataDir, "magpie-plugins", "real-fixture")
+	pluginDir := filepath.Join(app.providerImportStore().PluginsDir(), "real-fixture")
 	if errMkdir := os.MkdirAll(pluginDir, 0o755); errMkdir != nil {
 		t.Fatalf("mkdir plugin: %v", errMkdir)
 	}

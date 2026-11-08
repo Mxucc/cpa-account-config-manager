@@ -280,10 +280,12 @@ func (a *App) providerImportStore() *provider.ImportStore {
 	if a == nil {
 		return provider.NewImportStore("")
 	}
-	dataDir := strings.TrimSpace(a.configSnapshot().DataDir)
+	// The import list is the operator's own registry of community providers. It is
+	// kept in the plugin's stable home rather than the per-run data directory: a
+	// reinstall of the plugin must not look like every import disappeared.
 	path := ""
-	if dataDir != "" {
-		path = filepath.Join(dataDir, "provider-imports.json")
+	if dataDir := strings.TrimSpace(a.configSnapshot().DataDir); dataDir != "" {
+		path = filepath.Join(providerHomeDir(dataDir), "provider-imports.json")
 	}
 	a.providerImportsMu.Lock()
 	defer a.providerImportsMu.Unlock()

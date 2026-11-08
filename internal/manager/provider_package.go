@@ -31,6 +31,21 @@ const providerRuntimeInstallTimeout = 6 * time.Minute
 // megabytes, and a stalled mirror must not hold the request open.
 const providerPackageInstallTimeout = 90 * time.Second
 
+// providerHomeDir is the plugin's stable home. The host's data directory can change
+// between installs, so state the operator created (imports, packages, runtime) is
+// kept beside the host's own plugin home instead of inside that changing path.
+func providerHomeDir(dataDir string) string {
+	trimmed := strings.TrimSpace(dataDir)
+	if trimmed == "" {
+		return ""
+	}
+	parent := filepath.Dir(trimmed)
+	if filepath.Base(trimmed) == ".cpa-account-config-manager" {
+		return trimmed
+	}
+	return filepath.Join(parent, ".cpa-account-config-manager")
+}
+
 // providerPackageRoot is where installed community packages live.
 func (a *App) providerPackageRoot() string {
 	if a == nil {
@@ -40,7 +55,7 @@ func (a *App) providerPackageRoot() string {
 	if dataDir == "" {
 		return ""
 	}
-	return filepath.Join(dataDir, "provider-packages")
+	return filepath.Join(providerHomeDir(dataDir), "provider-packages")
 }
 
 // providerInstaller builds the downloader for the configured data directory.

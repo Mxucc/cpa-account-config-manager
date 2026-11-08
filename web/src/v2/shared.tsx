@@ -65,6 +65,22 @@ export function statusTone(status: ProviderStatus | string): Tone {
 }
 
 
+// A provider kind is a wire enum, so the page supplies its label.
+export function kindLabel(kind: string, copy: ReturnType<typeof useCopy>): string {
+  switch (kind) {
+    case "oauth":
+      return copy.kinds.oauth;
+    case "subscription":
+      return copy.kinds.subscription;
+    case "wallet":
+      return copy.kinds.wallet;
+    case "channel":
+      return copy.kinds.channel;
+    default:
+      return copy.common.unknown;
+  }
+}
+
 // Status notes are fixed English sentences from the wire. The page owns the ones
 // it knows and shows any other note (an imported plugin warning) unchanged.
 export function statusNoteLabel(note: string, copy: ReturnType<typeof useCopy>): string {

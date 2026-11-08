@@ -8,7 +8,7 @@ export interface Copy {
   common: {
     loading: string; error: string; retry: string; empty: string; refresh: string; close: string;
     unknown: string; notReported: string; save: string; cancel: string; delete: string; details: string;
-    all: string; search: string; updated: string; viewAll: string;
+    all: string; search: string; updated: string; viewAll: string; source: string;
   };
   overview: { title: string; subtitle: string; accounts: string; ready: string; limited: string; invalid: string; spend: string; providers: string; hotspots: string; recent: string };
   accounts: { title: string; subtitle: string; provider: string; status: string; plan: string; quota: string; billing: string; models: string; actions: string; refresh: string; test: string; bind: string; empty: string; filterProvider: string; filterStatus: string };
@@ -22,6 +22,8 @@ export interface Copy {
   settings: { title: string; subtitle: string; general: string; operations: string; risk: string; update: string };
   status: { ready: string; quota_limited: string; credential_invalid: string; repairing: string; disabled: string; unknown: string };
   statusNotes: { quotaLimited: string; credentialRejected: string };
+  // A provider kind is a wire enum; the page owns its words.
+  kinds: { oauth: string; subscription: string; wallet: string; channel: string };
   billing_allowance: string;
   billing_used: string;
   billing_remaining: string;
@@ -33,7 +35,7 @@ const zh: Copy = {
   common: {
     loading: "加载中…", error: "加载失败", retry: "重试", empty: "暂无数据", refresh: "刷新", close: "关闭",
     unknown: "未知", notReported: "未上报", save: "保存", cancel: "取消", delete: "删除", details: "详情",
-    all: "全部", search: "搜索", updated: "更新于", viewAll: "查看全部",
+    all: "全部", search: "搜索", updated: "更新于", viewAll: "查看全部", source: "来源",
   },
   overview: { title: "总览", subtitle: "所有供应商的账号健康、订阅支出与额度热点", accounts: "账号总数", ready: "可用", limited: "额度受限", invalid: "凭据异常", spend: "月度订阅支出", providers: "供应商", hotspots: "额度热点", recent: "供应商分布" },
   accounts: { title: "账号", subtitle: "同一套字段与操作覆盖所有供应商", provider: "供应商", status: "状态", plan: "计划", quota: "额度", billing: "计费", models: "模型", actions: "操作", refresh: "刷新", test: "测试", bind: "发布渠道", empty: "没有符合条件的账号", filterProvider: "按供应商筛选", filterStatus: "按状态筛选" },
@@ -46,6 +48,7 @@ const zh: Copy = {
   settings: { title: "日志与设置", subtitle: "操作日志、风险控制、插件更新与实验性功能", general: "通用设置", operations: "操作日志", risk: "风险控制", update: "更新" },
   status: { ready: "可用", quota_limited: "额度受限", credential_invalid: "凭据异常", repairing: "自动修复中", disabled: "已停用", unknown: "未知" },
   statusNotes: { quotaLimited: "额度窗口已用尽，窗口重置后自动恢复", credentialRejected: "渠道拒绝了该凭据，正在自动修复" },
+  kinds: { oauth: "登录授权", subscription: "订阅", wallet: "钱包", channel: "渠道" },
   billing_allowance: "额度上限",
   billing_used: "已用额度",
   billing_remaining: "剩余额度",
@@ -57,7 +60,7 @@ const en: Copy = {
   common: {
     loading: "Loading…", error: "Failed to load", retry: "Retry", empty: "Nothing here", refresh: "Refresh", close: "Close",
     unknown: "Unknown", notReported: "Not reported", save: "Save", cancel: "Cancel", delete: "Delete", details: "Details",
-    all: "All", search: "Search", updated: "Updated", viewAll: "View all",
+    all: "All", search: "Search", updated: "Updated", viewAll: "View all", source: "Source",
   },
   overview: { title: "Overview", subtitle: "Account health, subscription spend and quota hotspots across every provider", accounts: "Accounts", ready: "Ready", limited: "Quota limited", invalid: "Credential issues", spend: "Monthly subscription spend", providers: "Providers", hotspots: "Quota hotspots", recent: "By provider" },
   accounts: { title: "Accounts", subtitle: "One set of fields and actions for every provider", provider: "Provider", status: "Status", plan: "Plan", quota: "Quota", billing: "Billing", models: "Models", actions: "Actions", refresh: "Refresh", test: "Test", bind: "Publish channel", empty: "No account matches these filters", filterProvider: "Filter by provider", filterStatus: "Filter by status" },
@@ -70,6 +73,7 @@ const en: Copy = {
   settings: { title: "Logs & settings", subtitle: "Operation journal, risk control, plugin updates and experiments", general: "General", operations: "Operation journal", risk: "Risk control", update: "Updates" },
   status: { ready: "Ready", quota_limited: "Quota limited", credential_invalid: "Credential invalid", repairing: "Repairing", disabled: "Disabled", unknown: "Unknown" },
   statusNotes: { quotaLimited: "The gateway limited this account; it recovers after the window ends", credentialRejected: "The gateway rejected this credential; automatic repair is running" },
+  kinds: { oauth: "OAuth", subscription: "Subscription", wallet: "Wallet", channel: "Channel" },
   billing_allowance: "Allowance",
   billing_used: "Used",
   billing_remaining: "Remaining",

@@ -1,6 +1,6 @@
 import { providerApi } from "../api";
 import { Card, CardTitle, ErrorState, PageHeader, Skeleton } from "../../ui/kit";
-import { AccountQuota, StatusBadge, accountWindows, formatMoney, quotaUsedPercent, useAsync, useCopy } from "../shared";
+import { AccountQuota, StatusBadge, accountWindows, formatMoney, kindLabel, quotaUsedPercent, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
 
@@ -88,7 +88,7 @@ export function OverviewPage({ onOpenAccount }: { onOpenAccount: (id: string) =>
               <div key={provider.id} className="flex items-center justify-between gap-4 border-b border-gray-100 pb-3 last:border-0 last:pb-0">
                 <div>
                   <p className="text-sm font-medium text-gray-900">{provider.display_name}</p>
-                  <p className="text-xs text-gray-500">{provider.kind}</p>
+                  <p className="text-xs text-gray-500">{kindLabel(provider.kind, copy)}</p>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-gray-600">
                   <span>{provider.accounts} {copy.providers.accounts}</span>

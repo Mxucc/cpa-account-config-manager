@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { providerApi } from "../api";
 import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
-import { StatusBadge, useAsync, useCopy } from "../shared";
+import { StatusBadge, kindLabel, useAsync, useCopy } from "../shared";
 import { AccountsPage } from "./Accounts";
 import { QuotaPage } from "./Quota";
 import { RoutingPage } from "./Routing";
@@ -58,7 +58,7 @@ export function ProvidersPage({
               <div>
                 <div className="flex items-start justify-between gap-3">
                   <CardTitle>{provider.display_name}</CardTitle>
-                  <Badge tone="gray">{provider.kind}</Badge>
+                  <Badge tone="gray">{kindLabel(provider.kind, copy)}</Badge>
                 </div>
                 <p className="mt-2 text-sm text-gray-500">{provider.description}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -104,7 +104,7 @@ export function ProvidersPage({
       />
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
-          <Badge tone="gray">{current.kind}</Badge>
+          <Badge tone="gray">{kindLabel(current.kind, copy)}</Badge>
           <span>{current.accounts} {copy.providers.accounts}</span>
           {Object.entries(summary).map(([status, count]) => (
             <StatusBadge key={status} status={status} />

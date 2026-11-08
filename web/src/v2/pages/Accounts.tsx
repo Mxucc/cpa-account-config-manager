@@ -278,7 +278,7 @@ export function AccountDrawer({ account, open, onClose }: { account: ProviderAcc
 
         <section>
           <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.provider}</h3>
-          <KeyValue label="Source">{account.source.kind}</KeyValue>
+          <KeyValue label={copy.common.source}>{account.source.kind}</KeyValue>
           <KeyValue label={copy.common.details}>{account.source.ref ?? "-"}</KeyValue>
         </section>
       </div>

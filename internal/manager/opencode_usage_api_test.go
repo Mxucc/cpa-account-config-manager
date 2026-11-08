@@ -63,8 +63,13 @@ func TestOpenCodeQuotaPrefersTheUsageAPIOverTheDashboardScrape(t *testing.T) {
 	if result.Monthly == nil || result.Monthly.UsagePercent != 50 {
 		t.Fatalf("monthly = %+v", result.Monthly)
 	}
-	if len(doer.seen) != 1 || !strings.Contains(doer.seen[0], openCodeGoUsagePath) {
-		t.Fatalf("requested %v, want the usage path", doer.seen)
+	// The default base already ends in /zen/go: the usage path must be appended
+	// once, not doubled.
+	if len(doer.seen) != 1 || !strings.HasSuffix(doer.seen[0], "/zen/go/v1/usage") {
+		t.Fatalf("requested %v, want one /zen/go/v1/usage call", doer.seen)
+	}
+	if strings.Contains(doer.seen[0], "/zen/go/zen/go") {
+		t.Fatalf("the gateway path was doubled: %s", doer.seen[0])
 	}
 }
 

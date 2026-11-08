@@ -164,16 +164,15 @@ func (a *App) handleOpenCodeRefresh(_ context.Context, req cpaapi.ManagementRequ
 	force := strings.EqualFold(firstQueryValue(req.Query, "force"), "true") || strings.EqualFold(firstQueryValue(req.Query, "force"), "1")
 	startedAt := time.Now().UTC()
 	results := a.opencode.RefreshAll(force)
-	status := http.StatusOK
 	failed := 0
 	for _, result := range results {
 		if result != nil && !result.Success {
 			failed++
 		}
 	}
-	if failed > 0 {
-		status = http.StatusBadGateway
-	}
+	// A refresh that could not read the upstream is still a successful call: the
+	// per-account result carries the reason. Returning 5xx here let the edge proxy
+	// replace the body with an opaque gateway error, which hid the reason.
 	if len(results) > 0 {
 		a.operations.Record(OperationEntry{
 			Category: OperationCategoryOpenCode, Action: OperationActionOpenCodeRefresh,
@@ -182,7 +181,7 @@ func (a *App) handleOpenCodeRefresh(_ context.Context, req cpaapi.ManagementRequ
 			StartedAt: startedAt, FinishedAt: time.Now().UTC(), ReasonCode: reasonCodeForOpenCode(failed, len(results)),
 		})
 	}
-	return jsonResponse(status, map[string]any{"results": results})
+	return jsonResponse(http.StatusOK, map[string]any{"results": results})
 }
 
 func (a *App) handleOpenCodeRefreshAccount(_ context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
@@ -194,12 +193,16 @@ func (a *App) handleOpenCodeRefreshAccount(_ context.Context, req cpaapi.Managem
 	}
 	accountID := strings.TrimSpace(firstQueryValue(req.Query, "account_id"))
 	result := a.opencode.RefreshAccount(accountID)
-	if result == nil || !result.Success {
-		status := http.StatusNotFound
-		if result != nil && result.AccountID != "" {
-			status = http.StatusBadGateway
-		}
-		return jsonResponse(status, map[string]any{"result": result})
+	// A failed refresh is data, not a transport failure: the caller needs the
+	// upstream reason (an expired cookie, an unparseable page) and a 5xx here is
+	// rewritten by the edge proxy into an opaque gateway error, which is exactly
+	// how "OpenCode Go is broken" looked from the page. Only an unknown account
+	// is a 404.
+	if result == nil {
+		return jsonResponse(http.StatusNotFound, map[string]any{"error": "OpenCode account was not found"})
+	}
+	if result.AccountID == "" {
+		return jsonResponse(http.StatusNotFound, map[string]any{"error": "OpenCode account was not found"})
 	}
 	return jsonResponse(http.StatusOK, map[string]any{"result": result})
 }
@@ -218,12 +221,11 @@ func (a *App) handleOpenCodeProbe(_ context.Context, req cpaapi.ManagementReques
 	if strings.TrimSpace(request.WorkspaceID) == "" || strings.TrimSpace(request.AuthCookie) == "" {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "workspace_id and auth_cookie are both required"})
 	}
+	// The probe's outcome is the payload; a failed probe is not a gateway failure.
+	// A 5xx here was rewritten by the edge proxy into "error code: 502", which is
+	// why a rejected cookie looked like a broken plugin.
 	result := a.opencode.Probe(request.WorkspaceID, request.AuthCookie, request.TimeoutSeconds)
-	status := http.StatusOK
-	if !result.Success {
-		status = http.StatusBadGateway
-	}
-	return jsonResponse(status, openCodeProbeResponse{Result: result})
+	return jsonResponse(http.StatusOK, openCodeProbeResponse{Result: result})
 }
 
 // handleOpenCodeStatusPage serves the standalone OpenCode Go status page.

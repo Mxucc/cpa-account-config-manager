@@ -813,9 +813,10 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoQuota(workspaceID, authCookie stri
 	}
 }
 
-// openCodeGoUsagePath is the credential-backed usage endpoint the Go gateway
-// serves. It returns the rolling, weekly and monthly windows the page shows.
-const openCodeGoUsagePath = "/zen/go/v1/usage"
+// openCodeGoUsagePath is the credential-backed usage endpoint, relative to the
+// gateway base URL. The default base already ends in /zen/go, so an absolute path
+// here produced /zen/go/zen/go/v1/usage and every request 404'd.
+const openCodeGoUsagePath = "/v1/usage"
 
 // queryOpenCodeGoUsageAPI reads one workspace's usage with its stored API key.
 // ok is false when the account carries no key or the endpoint is not served, so

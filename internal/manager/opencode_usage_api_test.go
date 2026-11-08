@@ -93,3 +93,17 @@ func TestOpenCodeQuotaUsageAPIDeclinesOnAnUnreadableAnswer(t *testing.T) {
 		t.Fatal("an unreadable answer was accepted")
 	}
 }
+
+// A skipped API read explains itself, so the operator is not sent looking at the
+// dashboard parser when the credential is the actual problem.
+func TestOpenCodeQuotaUsageAPIExplainsWhyItWasSkipped(t *testing.T) {
+	doer := &usageAPIDoer{status: http.StatusUnauthorized, body: `{"error":"Unauthorized"}`}
+	service := newUsageAPIService(t, doer, "test-key")
+	if _, ok, reason := service.queryOpenCodeGoUsageAPIWithStatus("wrk-1", time.Second); ok || reason == "" {
+		t.Fatalf("ok=%v reason=%q, want a reason", ok, reason)
+	}
+	keyless := newUsageAPIService(t, doer, "")
+	if _, ok, reason := keyless.queryOpenCodeGoUsageAPIWithStatus("wrk-1", time.Second); ok || !strings.Contains(reason, "API key") {
+		t.Fatalf("keyless reason = %q", reason)
+	}
+}

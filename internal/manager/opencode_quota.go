@@ -768,8 +768,9 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoQuota(workspaceID, authCookie stri
 	// workspace look broken. The credential-backed usage API is the source that
 	// actually answers, so it is tried first and the scrape stays as a fallback
 	// for an installation that only stored a session cookie.
-	if result, ok := s.queryOpenCodeGoUsageAPI(workspaceID, timeout); ok {
-		return result
+	usageResult, usedAPI, apiReason := s.queryOpenCodeGoUsageAPIWithStatus(workspaceID, timeout)
+	if usedAPI {
+		return usageResult
 	}
 	target := "https://opencode.ai/workspace/" + url.PathEscape(workspaceID) + "/go"
 	var doer HTTPDoer = &http.Client{Timeout: timeout}
@@ -800,7 +801,14 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoQuota(workspaceID, authCookie stri
 	}
 	rolling, weekly, monthly, source := parseOpenCodeDashboard(string(body), now)
 	if rolling == nil && weekly == nil && monthly == nil {
-		return OpenCodeQuotaResult{Success: false, Workspace: workspaceID, Error: "could not parse rollingUsage, weeklyUsage, or monthlyUsage from OpenCode Go dashboard", FetchedAt: now}
+		// The dashboard moved behind a login, so this fallback mostly cannot work
+		// any more. Say why the API path did not answer, otherwise the message
+		// sends the operator looking at the parser instead of the credential.
+		reason := "could not parse rollingUsage, weeklyUsage, or monthlyUsage from OpenCode Go dashboard"
+		if apiReason != "" {
+			reason += " (" + apiReason + ")"
+		}
+		return OpenCodeQuotaResult{Success: false, Workspace: workspaceID, Error: reason, FetchedAt: now}
 	}
 	return OpenCodeQuotaResult{
 		Success:   true,
@@ -822,12 +830,23 @@ const openCodeGoUsagePath = "/v1/usage"
 // ok is false when the account carries no key or the endpoint is not served, so
 // the caller can fall back to the dashboard scrape.
 func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPI(workspaceID string, timeout time.Duration) (OpenCodeQuotaResult, bool) {
+	result, ok, _ := s.queryOpenCodeGoUsageAPIWithStatus(workspaceID, timeout)
+	return result, ok
+}
+
+// queryOpenCodeGoUsageAPIWithStatus also reports the upstream HTTP status and the
+// reason a read did not produce a result, so the quota reader can explain why the
+// API path was skipped instead of only reporting the scrape failure.
+func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPIWithStatus(workspaceID string, timeout time.Duration) (OpenCodeQuotaResult, bool, string) {
 	if s == nil {
-		return OpenCodeQuotaResult{}, false
+		return OpenCodeQuotaResult{}, false, "service unavailable"
 	}
 	credential, errCredential := s.accountCredentialForWorkspace(workspaceID)
-	if errCredential != nil || credential.APIKey == "" {
-		return OpenCodeQuotaResult{}, false
+	if errCredential != nil {
+		return OpenCodeQuotaResult{}, false, "no stored credential for this workspace"
+	}
+	if credential.APIKey == "" {
+		return OpenCodeQuotaResult{}, false, "no stored API key"
 	}
 	now := time.Now().UTC()
 	var doer HTTPDoer = &http.Client{Timeout: timeout}
@@ -836,20 +855,26 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPI(workspaceID string, timeo
 	}
 	request, errNew := newOpenCodeRequest(context.Background(), http.MethodGet, openCodeAPIBase(credential.BaseURL)+openCodeGoUsagePath, credential.APIKey, nil)
 	if errNew != nil {
-		return OpenCodeQuotaResult{}, false
+		return OpenCodeQuotaResult{}, false, "usage request could not be built"
 	}
 	response, errDo := doer.Do(request)
-	if errDo != nil || response == nil || response.Body == nil {
-		return OpenCodeQuotaResult{}, false
+	if errDo != nil {
+		return OpenCodeQuotaResult{}, false, "usage request failed: " + sanitizeOpenCodeError(errDo.Error())
+	}
+	if response == nil || response.Body == nil {
+		return OpenCodeQuotaResult{}, false, "usage endpoint returned an empty response"
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, errRead := io.ReadAll(io.LimitReader(response.Body, openCodeQuotaDashboardMaxBytes))
-	if errRead != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-		return OpenCodeQuotaResult{}, false
+	if errRead != nil {
+		return OpenCodeQuotaResult{}, false, "usage response could not be read"
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return OpenCodeQuotaResult{}, false, fmt.Sprintf("usage endpoint HTTP %d", response.StatusCode)
 	}
 	rolling, weekly, monthly := parseOpenCodeUsageAPI(body, now)
 	if rolling == nil && weekly == nil && monthly == nil {
-		return OpenCodeQuotaResult{}, false
+		return OpenCodeQuotaResult{}, false, "usage endpoint answered without recognizable windows"
 	}
 	return OpenCodeQuotaResult{
 		Success:   true,
@@ -859,7 +884,7 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPI(workspaceID string, timeo
 		Monthly:   monthly,
 		Source:    "usage_api",
 		FetchedAt: now,
-	}, true
+	}, true, ""
 }
 
 // accountCredentialForWorkspace resolves the stored credential for a workspace

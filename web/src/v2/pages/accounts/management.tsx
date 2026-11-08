@@ -1293,7 +1293,10 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 								{copy.openLoginPage}
 							</a>
 						) : null}
-						{flow.instructions ? <p className="text-gray-700">{flow.instructions}</p> : null}
+						{/* The shell states what to do in its own language; the plugin's own
+						    sentence is kept as the detail under it. */}
+						{flow.flow === "community" ? <p className="text-gray-700">{copy.communityInstructions}</p> : null}
+						{flow.instructions ? <p className="v2-hint">{flow.instructions}</p> : null}
 						{flow.user_code ? (
 							<p className="text-gray-700">
 								{copy.userCode}: <span className="font-mono">{flow.user_code}</span>

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { clsx } from "clsx";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import { Loader2, X } from "lucide-react";
@@ -192,6 +193,16 @@ export function Tabs<T extends string>({
 }
 
 export function Dialog({ open, title, onClose, children, footer }: { open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+  // Escape closes the dialog. A modal that can only be dismissed by its buttons
+  // traps a keyboard user, and the key is the convention every form expects.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 p-4" role="dialog" aria-modal="true" aria-label={title}>
@@ -210,6 +221,15 @@ export function Dialog({ open, title, onClose, children, footer }: { open: boole
 }
 
 export function Drawer({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+  // The same Escape contract as the dialog, so both surfaces dismiss alike.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-gray-900/30" role="dialog" aria-modal="true" aria-label={title}>

@@ -307,6 +307,23 @@ The new interface (`web/src/v2`) no longer reimplements accounts, quota and bill
 The old Codex / OpenCode / Cline Pass workspaces remain as a compatibility layer under each provider's "Legacy console" tab; the new shell owns navigation plus the unified account and quota views. The old top-level menu entries are gone from the sidebar.
 
 
+### Community plugin market (one-click import)
+
+- "Providers -> Magpie community plugins" lists the community registry entries; `GET .../providers/market` answers with `{available, reason, source, registry, versioned, total, fetched_at, plugins[]}`.
+- The plugin reads the list server side (`registry.json` plus the published versions from npm), so **the browser never reaches the public internet**; the answer is cached for five minutes. An unreachable registry answers `available:false` with a reason code (`market_unreachable`, `market_unreachable_timeout`, `market_registry_unreadable`) instead of a 500.
+- One-click import calls `POST .../providers/import` with `{"id":"@magpie-community/xxx"}`: the server reads that package's `latest` manifest from npm and records the definition with `source` `magpie` and `hook_execution` always `false`. An invalid package name answers 400; a manifest that cannot be fetched answers 502 with `market_manifest_unavailable`.
+- An offline or in-house plugin can still be imported through "Advanced: paste a package.json" (`{"manifest":"...","source":"magpie"}`).
+
+### No sign-in inside the v8 Management Center
+
+- When the plugin page is opened inside the v8 Management Center it reuses that center's session (its `managementKey` / `apiBase` entries, decoding both the `enc::v2::` and `enc::v1::` shapes), so the management key is never typed twice. The old web UI's `cli-proxy-auth` entry remains as a fallback.
+- The session is adopted only when the center says it is logged in (`isLoggedIn === "true"`) and its key can be read from storage; otherwise the login page is still shown, so this is not an unauthenticated pass-through.
+
+### Account management
+
+- The accounts page offers: edit configuration (through the preview/apply pair `POST .../batch/preview` + `.../batch/start`), model catalog (`.../accounts/models`), model test (`.../accounts/model-test`), token refresh (`.../accounts/token/refresh`), delete (`.../accounts/delete/preview` + `.../accounts/delete/start`), batch edit and batch delete, duplicate scan (`.../accounts/deduplicate/preview`, whose recommendations go through the batch delete preview), import (`.../import/preview` + `.../import/start`) and export (`.../export/accounts`, formats cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager).
+- Every change is previewed before it is applied; an expired preview must be regenerated.
+
 ### Plugin hook execution (optional, off by default)
 
 - The switch `magpie_hook_execution` defaults to `false`; read and write it through `GET/PUT .../providers/settings`, persisted as `provider-settings.json` in the data directory.

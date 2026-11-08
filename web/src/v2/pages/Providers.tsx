@@ -1,14 +1,13 @@
 import { useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { providerApi } from "../api";
-import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
+import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
 import { StatusBadge, capabilityLabel, kindLabel, useAsync, useCopy } from "../shared";
+import { useI18n } from "../../i18n";
 import { AccountsPage } from "./Accounts";
 import { QuotaPage } from "./Quota";
 import { RoutingPage } from "./Routing";
-import { CodexWorkspace } from "../../components/CodexWorkspace";
-import { OpenCodeWorkspace } from "../../components/OpenCodeWorkspace";
-import { ClinePassWorkspace } from "../../components/ClinePassWorkspace";
+import { LegacyConsole } from "../legacy/LegacyConsole";
 
 export type ProviderTab = "accounts" | "quota" | "models" | "routing" | "advanced";
 
@@ -191,24 +190,18 @@ function AdvancedPanel({
   onNotice: (message: string) => void;
 }) {
   const copy = useCopy();
-  const workspace = useMemo(() => {
-    switch (providerID) {
-      case "codex":
-        return <CodexWorkspace refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} />;
-      case "opencode-go":
-      case "opencode-zen":
-        return <OpenCodeWorkspace refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} />;
-      case "cline-pass":
-        return <ClinePassWorkspace refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} />;
-      default:
-        return null;
-    }
-  }, [providerID, refreshRevision, onAPIError, onNotice]);
-  if (!workspace) return <EmptyState title={copy.common.empty} description={copy.providers.tabs.advanced} />;
-  // The legacy workspaces are embedded unchanged so the deep controls (Codex
-  // identity policy, OpenCode session routing, Cline Pass repair) keep their
-  // existing behavior while the new IA owns navigation and the shared account view.
-  return <div className="legacy-console rounded-xl border border-gray-200 bg-white p-4">{workspace}</div>;
+  const supported = providerID === "codex" || providerID === "opencode-go" || providerID === "opencode-zen" || providerID === "cline-pass";
+  if (!supported) return <EmptyState title={copy.common.empty} description={copy.providers.tabs.advanced} />;
+  // The compatibility tab renders the old workspaces through one named bridge
+  // module, so the new pages never reach into the legacy components themselves.
+  return (
+    <LegacyConsole
+      providerID={providerID}
+      refreshRevision={refreshRevision}
+      onAPIError={onAPIError}
+      onNotice={onNotice}
+    />
+  );
 }
 
 function summarize(accounts: Array<{ status: string }>): Record<string, number> {
@@ -218,27 +211,48 @@ function summarize(accounts: Array<{ status: string }>): Record<string, number> 
   }, {});
 }
 
-// ImportedProviders is the Magpie-compatible half of the provider page: one
-// manifest becomes a provider definition without executing any plugin code.
+// ProviderMarketSection is the community half of the provider page. It lists the
+// Magpie community plugins this host can import, and one click imports an entry:
+// the plugin fetches that entry's published manifest itself, so the operator
+// never handles a package.json. Pasting a manifest stays available for an
+// offline or in-house plugin.
 function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onNotice: (message: string) => void }) {
   const copy = useCopy();
-  const [open, setOpen] = useState(false);
+  const { locale } = useI18n();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [manifest, setManifest] = useState("");
   const [source, setSource] = useState("magpie");
+  const [pendingID, setPendingID] = useState("");
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const catalog = useAsync(() => providerApi.catalog(), []);
+  const market = useAsync(() => providerApi.market(locale), [locale]);
   const imported = catalog.data?.imported ?? [];
   const hooksOn = catalog.data?.hook_execution_enabled === true;
   const bunAvailable = catalog.data?.bun_available === true;
+  const marketPlugins = market.data?.plugins ?? [];
+
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (needle === "") return marketPlugins;
+    return marketPlugins.filter((plugin) =>
+      [plugin.name, plugin.id, plugin.kind ?? "", ...(plugin.providers ?? [])].join("\n").toLowerCase().includes(needle),
+    );
+  }, [marketPlugins, search]);
+
+  const reloadBoth = () => {
+    catalog.reload();
+    market.reload();
+    onChanged();
+  };
 
   const toggleHooks = async () => {
     setBusy(true);
     setError("");
     try {
       await providerApi.saveSettings({ magpie_hook_execution: !hooksOn });
-      catalog.reload();
-      onChanged();
+      reloadBoth();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -246,16 +260,31 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
     }
   };
 
-  const submit = async () => {
+  // One click: no dialog and no pasted JSON. The id is the npm package name, and
+  // the plugin fetches the manifest server side.
+  const importFromMarket = async (id: string, name: string) => {
+    setPendingID(id);
+    setError("");
+    try {
+      await providerApi.importMarketPlugin(id);
+      onNotice(`${copy.providers.importDone}: ${name}`);
+      reloadBoth();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setPendingID("");
+    }
+  };
+
+  const submitManifest = async () => {
     setBusy(true);
     setError("");
     try {
       await providerApi.importManifest(manifest, source);
-      setOpen(false);
+      setAdvancedOpen(false);
       setManifest("");
       onNotice(copy.providers.importDone);
-      catalog.reload();
-      onChanged();
+      reloadBoth();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -267,8 +296,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
     setBusy(true);
     try {
       await providerApi.removeImport(id);
-      catalog.reload();
-      onChanged();
+      reloadBoth();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -276,12 +304,27 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
     }
   };
 
+  // A registry the host cannot reach is a reason, not a failure: the page names
+  // the reason instead of showing an empty list as if nothing existed.
+  const marketReason = (): string => {
+    switch (market.data?.reason) {
+      case "market_unreachable":
+        return copy.market.reasons.unreachable;
+      case "market_unreachable_timeout":
+        return copy.market.reasons.timeout;
+      case "market_registry_unreadable":
+        return copy.market.reasons.unreadable;
+      default:
+        return copy.market.reasons.unavailable;
+    }
+  };
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold tracking-tight text-gray-900">{copy.providers.import}</h2>
-          <p className="text-xs text-gray-500">{copy.providers.importHint}</p>
+          <h2 className="font-semibold tracking-tight text-gray-900">{copy.market.title}</h2>
+          <p className="max-w-3xl text-xs text-gray-500">{copy.market.hint}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -293,8 +336,8 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
           >
             {copy.providers.hooks}: {hooksOn ? "on" : "off"}
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-            {copy.providers.import}
+          <Button size="sm" variant="ghost" onClick={() => setAdvancedOpen(true)}>
+            {copy.market.advanced}
           </Button>
         </div>
       </div>
@@ -302,9 +345,9 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
         {bunAvailable ? copy.providers.hooksHint : copy.providers.hooksNeedsBun}
         {hooksOn ? "" : ` ${copy.providers.hooksOff}`}
       </p>
-      {imported.length === 0 ? (
-        <p className="text-sm text-gray-500">{copy.common.empty}</p>
-      ) : (
+      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+      {imported.length > 0 ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {imported.map((entry) => {
             const id = String(entry.id ?? "");
@@ -315,7 +358,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
                   <CardTitle>{String(entry.name ?? id)}</CardTitle>
                   <Badge tone="amber">{String(entry.source ?? "manifest")}</Badge>
                 </div>
-                <p className="text-xs text-gray-500">
+                <p className="break-all text-xs text-gray-500">
                   {String(entry.package ?? "")} {entry.version ? `· ${String(entry.version)}` : ""}
                 </p>
                 <p className="text-xs text-gray-500">{notes[0]}</p>
@@ -327,23 +370,89 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
             );
           })}
         </div>
-      )}
+      ) : null}
+
+      <Card className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>{copy.market.title}</CardTitle>
+          <span className="text-xs text-gray-500">
+            {market.data?.available ? `${filtered.length} / ${market.data.total}` : copy.common.notReported}
+          </span>
+        </div>
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={copy.market.search}
+          aria-label={copy.market.search}
+        />
+        {market.loading && !market.data ? (
+          <div className="space-y-2">
+            {[0, 1, 2].map((index) => (
+              <Skeleton key={index} className="h-16" />
+            ))}
+          </div>
+        ) : market.error ? (
+          <ErrorState
+            message={`${copy.market.unreachable}: ${market.error}`}
+            retry={market.reload}
+            retryLabel={copy.common.retry}
+          />
+        ) : market.data && !market.data.available ? (
+          <ErrorState message={marketReason()} retry={market.reload} retryLabel={copy.common.retry} />
+        ) : filtered.length === 0 ? (
+          <EmptyState title={copy.market.empty} description={copy.market.hint} />
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {filtered.map((plugin) => (
+              <li key={plugin.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate font-medium text-gray-900">{plugin.name}</span>
+                    <Badge tone="gray">{plugin.version ? `v${plugin.version}` : copy.market.noVersion}</Badge>
+                    {plugin.kind ? <Badge tone="blue">{plugin.kind}</Badge> : null}
+                  </div>
+                  <p className="mt-1 break-all text-xs text-gray-500">{plugin.id}</p>
+                  {plugin.summary ? <p className="mt-1 text-xs text-gray-600">{plugin.summary}</p> : null}
+                </div>
+                <div className="shrink-0">
+                  {plugin.imported ? (
+                    <span className="text-xs text-gray-500">
+                      {copy.market.imported}
+                      {plugin.imported_version ? ` · v${plugin.imported_version}` : ""}
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => importFromMarket(plugin.id, plugin.name)}
+                      loading={pendingID === plugin.id}
+                    >
+                      {copy.market.import}
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       <Dialog
-        open={open}
-        title={copy.providers.import}
-        onClose={() => setOpen(false)}
+        open={advancedOpen}
+        title={copy.market.advanced}
+        onClose={() => setAdvancedOpen(false)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setAdvancedOpen(false)}>
               {copy.common.cancel}
             </Button>
-            <Button onClick={submit} loading={busy} disabled={!manifest.trim()}>
+            <Button onClick={submitManifest} loading={busy} disabled={!manifest.trim()}>
               {copy.providers.import}
             </Button>
           </>
         }
       >
         <div className="space-y-3">
+          <p className="text-xs text-gray-500">{copy.market.advancedHint}</p>
           <label className="block text-sm font-medium text-gray-700">
             Source
             <Select className="mt-1 w-full" value={source} onChange={(event) => setSource(event.target.value)}>
@@ -359,7 +468,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
               onChange={(event) => setManifest(event.target.value)}
               rows={10}
               spellCheck={false}
-              className="mt-1 w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:border-blue-500"
+              className="mt-1 w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               placeholder={'{"name":"@magpie-community/opencode-cline-auth","version":"0.1.14","main":"./opencode.mjs"}'}
             />
           </label>

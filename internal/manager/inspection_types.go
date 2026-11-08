@@ -44,6 +44,10 @@ const (
 	InspectionHealthDisabled           = "disabled"
 	InspectionHealthUnknown            = "unknown"
 
+	// InspectionReasonUnknown is published when a record carries no reason code.
+	// The field is not omitempty, so "unknown" is the honest value to send.
+	InspectionReasonUnknown = "unknown"
+
 	InspectionRecommendationKeep    = "keep"
 	InspectionRecommendationReauth  = "reauth"
 	InspectionRecommendationReview  = "review"

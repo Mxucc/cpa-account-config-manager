@@ -860,14 +860,22 @@ function optionalNonNegativeInteger(item: Record<string, unknown>, key: string):
   return !(key in item) || item[key] === undefined || item[key] === null || isFiniteNonNegativeInteger(item[key]);
 }
 
+// An inspection enum may be present but empty on a build that created a record
+// before classifying it. That is a value the page has no label for, not a broken
+// response, so an empty string is accepted here and the row is dropped by
+// inspectionResultRows rather than failing the whole page.
+function optionalInspectionEnum(item: Record<string, unknown>, key: string): boolean {
+  return !(key in item) || item[key] === "" || isNonEmptyString(item[key]);
+}
+
 function isValidInspectionResultRecord(item: Record<string, unknown>): boolean {
   // Older CPA builds omit fields introduced by newer inspection/remediation versions.
   // Validate every field that is present, but do not turn a compatible legacy row into an empty result set.
   return isNonEmptyString(item.id)
-    && (!("health" in item) || isNonEmptyString(item.health))
-    && (!("reason_code" in item) || isNonEmptyString(item.reason_code))
-    && (!("confidence" in item) || isNonEmptyString(item.confidence))
-    && (!("recommendation" in item) || isNonEmptyString(item.recommendation))
+    && optionalInspectionEnum(item, "health")
+    && optionalInspectionEnum(item, "reason_code")
+    && optionalInspectionEnum(item, "confidence")
+    && optionalInspectionEnum(item, "recommendation")
     && optionalBoolean(item, "disabled")
     && optionalBoolean(item, "editable")
     && optionalBoolean(item, "auto_disable_eligible")
@@ -930,6 +938,13 @@ export async function getInspection(signal?: AbortSignal): Promise<InspectionSna
   return requestRecord<InspectionSnapshot>("/inspection", { signal });
 }
 
+// A row whose classification is empty describes no state at all — an older build
+// created it before the account was checked. Rendering it would show a blank
+// health badge, so it is dropped while every inspected row is kept.
+export function inspectionResultRows(items: Record<string, unknown>[]): Record<string, unknown>[] {
+  return items.filter((item) => isNonEmptyString(item.health));
+}
+
 export async function getLiveInspection(signal?: AbortSignal): Promise<InspectionSnapshot> {
   const response = await requestRecord<unknown>("/inspection/live", { signal });
   const source = response as Record<string, unknown>;
@@ -940,7 +955,7 @@ export async function getLiveInspection(signal?: AbortSignal): Promise<Inspectio
   }
   return {
     ...(source as Partial<InspectionSnapshot>),
-    live_results: liveResults as unknown as InspectionSnapshot["live_results"],
+    live_results: inspectionResultRows(liveResults) as unknown as InspectionSnapshot["live_results"],
   } as unknown as InspectionSnapshot;
 }
 
@@ -1016,7 +1031,7 @@ export async function listInspectionResults(page: number, pageSize: number, heal
   }
   return {
     ...(source as Partial<InspectionResultList>),
-    results: results as unknown as InspectionResultList["results"],
+    results: inspectionResultRows(results) as unknown as InspectionResultList["results"],
     summary: {
       actionable: finiteNonNegativeInteger(summary.actionable, 0, 10_000_000),
       suggested_delete: finiteNonNegativeInteger(summary.suggested_delete, 0, 10_000_000),

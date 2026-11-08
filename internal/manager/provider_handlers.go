@@ -52,7 +52,8 @@ func providerManagementRoutes() []cpaapi.ManagementRoute {
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/test", Description: "Probe one model through an account credential."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/bind", Description: "Publish or update one account's CPA channel."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/catalog", Description: "List provider presets and imported Magpie/OpenCode provider plugins."},
-		{Method: http.MethodPost, Path: providerRouteRelative + "/import", Description: "Import one Magpie/OpenCode provider plugin manifest as a provider definition."},
+		{Method: http.MethodGet, Path: providerRouteRelative + "/market", Description: "List the Magpie community plugin catalog this plugin can import from."},
+		{Method: http.MethodPost, Path: providerRouteRelative + "/import", Description: "Import one Magpie/OpenCode provider plugin manifest, or one community plugin by id, as a provider definition."},
 		{Method: http.MethodDelete, Path: providerRouteRelative + "/import", Description: "Forget one imported provider definition."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/settings", Description: "Read the provider-domain switches, including whether plugin hooks may run."},
 		{Method: http.MethodPut, Path: providerRouteRelative + "/settings", Description: "Persist the provider-domain switches."},
@@ -168,8 +169,10 @@ func (a *App) handleProviderRoutes(ctx context.Context, req cpaapi.ManagementReq
 			return jsonResponse(http.StatusInternalServerError, map[string]any{"error": errSave.Error()}), true
 		}
 		return jsonResponse(http.StatusOK, a.providerSettingsService().Get()), true
+	case method == http.MethodGet && path == providerRoutePrefix+"/market":
+		return a.handleProviderMarket(ctx, req), true
 	case method == http.MethodPost && path == providerRoutePrefix+"/import":
-		return a.handleProviderImport(req), true
+		return a.handleProviderImport(ctx, req), true
 	case method == http.MethodDelete && path == providerRoutePrefix+"/import":
 		id := strings.TrimSpace(firstQueryValue(req.Query, "id"))
 		if errRemove := a.providerImportStore().Remove(id); errRemove != nil {
@@ -292,21 +295,107 @@ func (a *App) providerImportStore() *provider.ImportStore {
 	return a.providerImports
 }
 
-// handleProviderImport accepts either {"manifest": "<package.json>", "source":
-// "magpie"} or the package.json body itself. Nothing is executed: the import
-// records the definition and says that hooks are not run.
-func (a *App) handleProviderImport(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+// providerMarket returns the community plugin reader, creating it on first use.
+// A test replaces it to exercise both the reachable and unreachable paths.
+func (a *App) providerMarket() *provider.Market {
+	if a == nil {
+		return provider.NewMarket(nil)
+	}
+	a.marketMu.Lock()
+	defer a.marketMu.Unlock()
+	if a.market == nil {
+		a.market = provider.NewMarket(nil)
+	}
+	return a.market
+}
+
+// SetProviderMarket replaces the market reader. Tests use it so no listing
+// depends on GitHub or npm being reachable.
+func (a *App) SetProviderMarket(market *provider.Market) {
+	if a == nil {
+		return
+	}
+	a.marketMu.Lock()
+	a.market = market
+	a.marketMu.Unlock()
+}
+
+// handleProviderMarket lists the Magpie community plugins an operator can import
+// with one click. The answer is cached for a few minutes, and an unreachable
+// registry is reported as a reason instead of an error, so the page can explain
+// what happened rather than showing an empty list.
+func (a *App) handleProviderMarket(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	locale := strings.TrimSpace(firstQueryValue(req.Query, "locale"))
+	snapshot := a.providerMarket().Snapshot(ctx, locale)
+	// Mark what is already registered: the page then offers an import only where the
+	// import would change anything.
+	imported := map[string]string{}
+	for _, entry := range a.providerImportStore().List() {
+		if key := strings.TrimSpace(entry.Package); key != "" {
+			imported[key] = entry.Version
+		}
+	}
+	for index := range snapshot.Plugins {
+		version, found := imported[snapshot.Plugins[index].ID]
+		if !found {
+			continue
+		}
+		snapshot.Plugins[index].Imported = true
+		snapshot.Plugins[index].ImportedVersion = version
+	}
+	return jsonResponse(http.StatusOK, snapshot)
+}
+
+// handleProviderImport accepts one of three shapes:
+//
+//	{"manifest": "<package.json>", "source": "magpie"}  a pasted manifest
+//	{...package.json body...}                          the manifest itself
+//	{"id": "@magpie-community/xxx"}                    a market entry by id
+//
+// The id form is what the market page uses: the plugin fetches the published
+// manifest itself, so the operator never handles a package.json. Nothing is
+// executed in any shape: the import records the definition and says hooks are
+// not run.
+func (a *App) handleProviderImport(ctx context.Context, req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
 	source := strings.TrimSpace(firstQueryValue(req.Query, "source"))
 	body := req.Body
 	var wrapper struct {
 		Manifest  string `json:"manifest"`
 		Source    string `json:"source"`
 		Directory string `json:"directory"`
+		ID        string `json:"id"`
+		Package   string `json:"package"`
 	}
-	if errUnmarshal := json.Unmarshal(req.Body, &wrapper); errUnmarshal == nil && strings.TrimSpace(wrapper.Manifest) != "" {
+	decoded := json.Unmarshal(req.Body, &wrapper) == nil
+	if decoded && strings.TrimSpace(wrapper.Source) != "" {
+		source = wrapper.Source
+	}
+	if decoded && strings.TrimSpace(wrapper.Manifest) != "" {
 		body = []byte(wrapper.Manifest)
-		if wrapper.Source != "" {
-			source = wrapper.Source
+	} else if decoded {
+		id := firstNonEmptyText(wrapper.ID, wrapper.Package)
+		if id != "" && strings.TrimSpace(wrapper.Manifest) == "" {
+			manifest, errFetch := a.providerMarket().Manifest(ctx, id)
+			if errFetch != nil {
+				// A name that is not an npm package is the caller's mistake; a
+				// fetch that failed is the network's.
+				status := http.StatusBadGateway
+				if strings.Contains(errFetch.Error(), "npm package name") || strings.Contains(errFetch.Error(), "is empty") {
+					status = http.StatusBadRequest
+				}
+				return jsonResponse(status, map[string]any{
+					"error":  "market_manifest_unavailable",
+					"id":     id,
+					"reason": errFetch.Error(),
+				})
+			}
+			body = manifest
+			// A market entry is a Magpie plugin, so it records the same origin a
+			// pasted Magpie manifest does. The id itself stays out of the record:
+			// it is the package name, which the manifest already carries.
+			if source == "" {
+				source = "magpie"
+			}
 		}
 	}
 	entry, errImport := a.providerImportStore().Import(body, source, wrapper.Directory)
@@ -314,4 +403,14 @@ func (a *App) handleProviderImport(req cpaapi.ManagementRequest) cpaapi.Manageme
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": errImport.Error()})
 	}
 	return jsonResponse(http.StatusOK, map[string]any{"provider": entry})
+}
+
+// firstNonEmptyText returns the first trimmed non-empty argument.
+func firstNonEmptyText(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

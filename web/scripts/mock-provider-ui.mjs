@@ -117,8 +117,41 @@ const legacy = {
   account_concurrency: { supported: true, host_schema_version: 10, required_schema_version: 2 },
 };
 
-http
-  .createServer((req, res) => {
+// Fixtures for the automation and settings tabs.
+const inspectionPolicy = {
+  enabled: true, scan_interval_minutes: 30, model_probe_enabled: false, model_probe_full_sweep: false,
+  scan_manually_disabled: false, model_probe_interval_minutes: 60, model_probe_batch_size: 20,
+  model_probe_models: { codex: "gpt-5.6-sol", openai: "gpt-5.6-sol", claude: "claude", gemini: "gemini", xai: "grok" },
+  failure_threshold: 3, recovery_threshold: 2, auto_disable: false, auto_enable: false, auto_delete: false,
+  auto_delete_invalid_credentials: false, delete_grace_hours: 168, delete_batch_size: 10,
+  anomaly_trigger_enabled: false, anomaly_threshold_percent: 0, anomaly_minimum_accounts: 0, anomaly_cooldown_minutes: 0,
+  anomaly_notification_enabled: false, anomaly_notification_only: false, anomaly_notification_url: "",
+  notification_endpoints: [], notification_available_accounts_enabled: false, notification_available_accounts_threshold: 0,
+  notification_availability_percent_enabled: false, notification_availability_percent_threshold: 0, notification_cooldown_minutes: 0,
+};
+const inspectionSummary = { actionable: 1, suggested_delete: 0, suggested_disable: 1, suggested_enable: 0, reauth: 0,
+  deletable_reauth: 0, review: 1, keep: 1, handled: 0, editable_enabled: 2, editable_disabled: 0 };
+const inspectionResults = [
+  { id: "acct-1", name: "alice@example.com", provider: "codex", type: "codex", plan_type: "plus", health: "quota_limited",
+    reason_code: "quota_exhausted", confidence: "high", recommendation: "disable", disabled: false, editable: true,
+    auto_disable_eligible: true, owned_disable: false, failure_streak: 2, healthy_streak: 0,
+    last_checked_at: "2026-11-08T09:00:00Z", circuit_open: false, manual_delete_eligible: false },
+  { id: "acct-2", name: "bob@example.com", provider: "codex", type: "codex", plan_type: "plus", health: "review",
+    reason_code: "ambiguous", confidence: "low", recommendation: "review", disabled: false, editable: true,
+    auto_disable_eligible: false, owned_disable: false, failure_streak: 1, healthy_streak: 0,
+    last_checked_at: "2026-11-08T09:00:00Z", circuit_open: false, manual_delete_eligible: false },
+];
+const defaultPolicy = { enabled: false, new_account_model_probe_enabled: false, codex_quota_metadata_probe_enabled: false,
+  apply_mode: "missing", scan_interval_seconds: 300, priority: null, disabled: null, concurrency_limit: null,
+  concurrency_15s_limit: null, concurrency_window_seconds: null, note: null, prefix: null, proxy_url: null,
+  websockets: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null };
+const globalPolicy = { enabled: false, disabled: null, priority: null, concurrency_limit: null, note: null,
+  prefix: null, proxy_url: null, proxy_profile_id: null, ai_provider_proxy_profile_id: null, websockets: null };
+const riskConfig = { enabled: false, mode: "observe", blocked_keywords: [], model_filter: {}, pre_hash_check_enabled: false,
+  block_status: 403, block_message: "blocked", event_retention_days: 7, max_events: 500,
+  audit: { enabled: false }, system_prompts: [] };
+
+http  .createServer((req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/" || url.pathname === "/index.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -142,6 +175,87 @@ http
     if (url.pathname === `${base}/providers/catalog`) return json(res, 200, catalog);
     if (url.pathname === `${base}/providers/settings`) return json(res, 200, { magpie_hook_execution: false });
     if (url.pathname === `${base}/providers/pricing`) return json(res, 200, { provider: "opencode-go", available: true, snapshot: { source: "official" } });
+    if (url.pathname === `${base}/providers/market`) {
+      return json(res, 200, {
+        available: true,
+        source: "magpie-community",
+        registry: "https://raw.githubusercontent.com/magpie-community/plugins/main/registry.json",
+        versioned: 2,
+        total: 3,
+        fetched_at: "2026-11-08T10:15:00Z",
+        plugins: [
+          {
+            id: "@magpie-community/opencode-cline-auth", name: "Cline", version: "0.1.14",
+            summary: "通过 Cline Pass 登录并显示 5 小时与每周额度。", source: "magpie-community",
+            imported: false, package_url: "https://www.npmjs.com/package/@magpie-community/opencode-cline-auth",
+          },
+          {
+            id: "@magpie-community/gateway-respire-memory", name: "respire-memory", version: "0.3.0",
+            kind: "middleware", summary: "让 Agent 通过经验积累持续自进化。", source: "magpie-community",
+            imported: false,
+          },
+          {
+            id: "@magpie-community/opencode-zcode-auth", name: "ZCode", version: "",
+            summary: "ZCode 登录。", source: "magpie-community", imported: true, imported_version: "0.1.57",
+          },
+        ],
+      });
+    }
+    // Automation and settings fixtures. They only need the fields the rebuilt
+    // pages read, because those pages treat anything else as an error state.
+    if (url.pathname === `${base}/inspection` || url.pathname === `${base}/inspection/live`) {
+      return json(res, 200, {
+        policy: inspectionPolicy, running: false, pending: false, total: 21, action_count: 21,
+        probe_phase: "completed", anomaly_count: 0, recent_runs: [
+          { id: "run-1", mode: "full", source: "manual", status: "completed", started_at: "2026-11-08T09:00:00Z",
+            primary_total: 34, primary_completed: 34, retry_total: 0, retry_completed: 0,
+            summary: { scanned: 34, healthy: 4, quota_limited: 8, invalid_credentials: 21 } },
+        ],
+        live_results: [],
+      });
+    }
+    if (url.pathname === `${base}/inspection/results`) {
+      return json(res, 200, { results: inspectionResults, summary: inspectionSummary, total: 2, page: 1, page_size: 50, pages: 1 });
+    }
+    if (url.pathname === `${base}/inspection/actions`) return json(res, 200, { actions: [] });
+    if (url.pathname === `${base}/defaults`) return json(res, 200, { policy: defaultPolicy, scan: { applied: 0, created: 0, updated: 0 } });
+    if (url.pathname === `${base}/global-policy`) return json(res, 200, { policy: globalPolicy });
+    if (url.pathname === `${base}/proxy-profiles`) return json(res, 200, { profiles: [] });
+    if (url.pathname === `${base}/auto-retry`) {
+      return json(res, 200, { attempts: 2, default_attempts: 2, max_attempts: 5, enabled: true,
+        host: { request_retry: 2, max_retry_interval: 5, max_retry_credentials: 2, configured: true },
+        applied: { codex_accounts: 12 } });
+    }
+    if (url.pathname === `${base}/experiments`) {
+      return json(res, 200, { settings: { weekly_overdraft_enabled: false, agent_identity_enabled: true,
+        auto_model_whitelist_enabled: false, sub2api_credit_usage_enabled: false,
+        codex_identity: { outbound_convergence_enabled: false, ingress_gate_enabled: false, allow_app_server_clients: false } } });
+    }
+    if (url.pathname === `${base}/experiments/auto-model-whitelist`) {
+      return json(res, 200, { auto_model_whitelist: { enabled: false, accounts: 0, limited: 0, recent: [] } });
+    }
+    if (url.pathname === `${base}/risk-control`) {
+      return json(res, 200, { config: riskConfig, status: { active: false, mode: "observe", total_events: 0, observed: 0, blocked: 0,
+        keyword_hits: 0, hash_hits: 0, remembered_hashes: 0, audit: {} }, events: [] });
+    }
+    if (url.pathname === `${base}/operations`) {
+      return json(res, 200, { operations: [], summary: {}, total: 0, page: 1, page_size: 50, pages: 1,
+        extended_history: false, archived_segments: 0, retention_limit: 2000, retained: 0 });
+    }
+    if (url.pathname === `${base}/operations/settings`) {
+      return json(res, 200, { extended_history: false, page_size: 50, retained: 0, archived_segments: 0 });
+    }
+    if (url.pathname === `${base}/updates`) {
+      return json(res, 200, { policy: {}, current_version: "0.3.1475", latest_version: "0.3.1475",
+        update_available: false, checking: false, pending: false });
+    }
+    if (url.pathname === `${base}/self-update`) {
+      return json(res, 200, { current_version: "0.3.1475", latest_version: "0.3.1475", update_available: false,
+        checksum_ok: true, plugin_file: "/plugins/linux/amd64/plugin.so", plugin_file_source: "proc",
+        plugin_file_exists: true, restart_required: false, pending_restart: false, ui_updated: false,
+        interface_refresh_only: false, can_install: false });
+    }
+    if (url.pathname === `${base}/plugin-store`) return json(res, 200, { plugins_enabled: true, plugins: [] });
     if (url.pathname.startsWith(base)) return json(res, 200, { status: "ok" });
     if (url.pathname.startsWith("/v0/management")) return json(res, 200, legacy);
     json(res, 404, { error: "not found", path: url.pathname });

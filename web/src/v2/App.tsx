@@ -81,11 +81,23 @@ export function V2App() {
 
   useEffect(() => {
     if (getSession()) return;
-    const panel = readPanelAuth({ allowStandalone: true });
-    if (panel) {
+    // The Management Center writes its session on its own schedule: the frame can
+    // mount while the center is still restoring one, so the first read is retried
+    // for a moment instead of showing a login form the operator does not need.
+    const adopt = () => {
+      const panel = readPanelAuth({ allowStandalone: true });
+      if (!panel) return false;
       setSession(panel.apiBase, panel.managementKey);
       setAuthed(true);
-    }
+      return true;
+    };
+    if (adopt()) return;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      if (adopt() || attempts >= 6) window.clearInterval(timer);
+    }, 500);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {

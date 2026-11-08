@@ -15,9 +15,25 @@ import {
   Skeleton,
   Toolbar,
 } from "../../ui/kit";
-import { AccountQuota, StatusBadge, billingLabel, cycleLabel, formatMoney, useAsync, useCopy } from "../shared";
+import { AccountQuota, StatusBadge, accountWindows, billingLabel, cycleLabel, formatMoney, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
+import type { TargetScope } from "../../types";
+import {
+  BatchDeleteDialog,
+  DedupeDialog,
+  DeleteAccountDialog,
+  EditAccountsDialog,
+  ExportAccountsDialog,
+  ImportAccountsDialog,
+  ModelsDialog,
+  TestModelDialog,
+  useAccountManagementCopy,
+} from "./accounts/management";
+
+// Every account action opens one of these dialogs. The list is the page's whole
+// management surface, so the table and the drawer cannot drift apart.
+type DialogKind = "edit" | "models" | "test" | "delete" | "batchEdit" | "batchDelete" | "dedupe" | "import" | "export";
 
 const rawAccountID = (account: ProviderAccount) =>
   account.id.startsWith(`provider:${account.provider.id}:`) ? account.id.slice(`provider:${account.provider.id}:`.length) : account.id;
@@ -36,6 +52,7 @@ export function AccountsPage({
   onNotice: (message: string) => void;
 }) {
   const copy = useCopy();
+  const managementCopy = useAccountManagementCopy();
   const { formatDateTime } = useI18n();
   const providers = useAsync(() => providerApi.providers(), []);
   const accounts = useAsync(() => providerApi.accounts(), []);
@@ -44,6 +61,10 @@ export function AccountsPage({
   const [provider, setProvider] = useState(providerFilter ?? "");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
+  // Which management dialog is open, and for which account. One slot keeps the
+  // page from stacking unrelated dialogs on top of each other.
+  const [dialog, setDialog] = useState<DialogKind | null>(null);
+  const [dialogAccount, setDialogAccount] = useState<ProviderAccount | null>(null);
 
   const filtered = useMemo(() => {
     const list = accounts.data?.accounts ?? [];
@@ -57,6 +78,18 @@ export function AccountsPage({
   }, [accounts.data, provider, status, query]);
 
   const selected = filtered.find((account) => account.id === selectedID) ?? null;
+
+  // The scope every batch action works on: what the operator currently sees. A
+  // scope built from the visible rows cannot surprise anyone with accounts the
+  // filters hid.
+  const filteredIDs = useMemo(() => filtered.map((account) => rawAccountID(account)), [filtered]);
+  const filteredScope: TargetScope = useMemo(() => ({ mode: "selected", ids: filteredIDs }), [filteredIDs]);
+
+  const openDialog = (kind: DialogKind, account?: ProviderAccount) => {
+    setActionError("");
+    setDialogAccount(account ?? null);
+    setDialog(kind);
+  };
 
   const refresh = async (account: ProviderAccount) => {
     const key = `${account.id}:refresh`;
@@ -123,6 +156,30 @@ export function AccountsPage({
           </Button>
           <span className="text-xs text-gray-500">{filtered.length} / {accounts.data?.total ?? 0}</span>
         </Toolbar>
+        {/* Management lives in one row so every action is reachable without
+            scrolling a wide table sideways. */}
+        <Toolbar>
+          <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={filtered.length === 0}>
+            {managementCopy.batchEdit}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => openDialog("batchDelete")} disabled={filtered.length === 0}>
+            {managementCopy.batchDelete}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => openDialog("dedupe")}>
+            {managementCopy.dedupe}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => openDialog("import")}>
+            {managementCopy.importAccounts}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => openDialog("export")}
+            disabled={filtered.length === 0}
+          >
+            {managementCopy.exportAccounts}
+          </Button>
+        </Toolbar>
         {actionError ? <p className="mt-3 text-sm text-red-600">{actionError}</p> : null}
       </Card>
 
@@ -180,10 +237,13 @@ export function AccountsPage({
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-900">{account.models.count}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
                       <Button variant="secondary" size="sm" onClick={() => onSelect(account.id)}>
                         {copy.common.details}
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => openDialog("edit", account)}>
+                        {managementCopy.edit}
                       </Button>
                       <Button
                         variant="primary"
@@ -194,6 +254,9 @@ export function AccountsPage({
                       >
                         {copy.accounts.refresh}
                       </Button>
+                      <Button variant="ghost" size="sm" onClick={() => openDialog("delete", account)}>
+                        {managementCopy.delete}
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -203,14 +266,135 @@ export function AccountsPage({
         </Card>
       )}
 
-      <AccountDrawer account={selected} open={Boolean(selected)} onClose={() => onSelect(undefined)} />
+      <AccountDrawer
+        account={selected}
+        open={Boolean(selected)}
+        onClose={() => onSelect(undefined)}
+        onAction={(kind) => {
+          if (!selected) return;
+          const target = selected;
+          onSelect(undefined);
+          openDialog(kind, target);
+        }}
+      />
       <span className="sr-only">{formatDateTime(selected?.updated_at)}</span>
+
+      {/* One dialog at a time; each one previews before it applies. */}
+      {dialogAccount ? (
+        <>
+          <EditAccountsDialog
+            scope={{ mode: "selected", ids: [rawAccountID(dialogAccount)] }}
+            account={{ id: dialogAccount.id, display_name: dialogAccount.display_name }}
+            open={dialog === "edit"}
+            onClose={() => setDialog(null)}
+            onError={setActionError}
+            onDone={() => {
+              setDialog(null);
+              accounts.reload();
+              onRefreshNeeded();
+            }}
+          />
+          <ModelsDialog
+            account={{
+              id: dialogAccount.id,
+              display_name: dialogAccount.display_name,
+              provider_id: dialogAccount.provider.id,
+            }}
+            open={dialog === "models"}
+            onClose={() => setDialog(null)}
+            onError={setActionError}
+          />
+          <TestModelDialog
+            account={{
+              id: dialogAccount.id,
+              display_name: dialogAccount.display_name,
+              provider_id: dialogAccount.provider.id,
+            }}
+            open={dialog === "test"}
+            onClose={() => setDialog(null)}
+            onError={setActionError}
+          />
+          <DeleteAccountDialog
+            account={{
+              id: dialogAccount.id,
+              display_name: dialogAccount.display_name,
+              provider_id: dialogAccount.provider.id,
+            }}
+            open={dialog === "delete"}
+            onClose={() => setDialog(null)}
+            onError={setActionError}
+            onDone={() => {
+              setDialog(null);
+              accounts.reload();
+              onRefreshNeeded();
+            }}
+          />
+        </>
+      ) : null}
+      <EditAccountsDialog
+        scope={filteredScope}
+        open={dialog === "batchEdit"}
+        onClose={() => setDialog(null)}
+        onError={setActionError}
+        onDone={() => {
+          setDialog(null);
+          accounts.reload();
+          onRefreshNeeded();
+        }}
+      />
+      <BatchDeleteDialog
+        scope={filteredScope}
+        open={dialog === "batchDelete"}
+        onClose={() => setDialog(null)}
+        onError={setActionError}
+        onDone={() => {
+          setDialog(null);
+          accounts.reload();
+          onRefreshNeeded();
+        }}
+      />
+      <DedupeDialog
+        open={dialog === "dedupe"}
+        onClose={() => setDialog(null)}
+        onError={setActionError}
+        onDone={() => accounts.reload()}
+      />
+      <ImportAccountsDialog
+        open={dialog === "import"}
+        onClose={() => setDialog(null)}
+        onError={setActionError}
+        onDone={() => {
+          setDialog(null);
+          accounts.reload();
+          onRefreshNeeded();
+        }}
+      />
+      <ExportAccountsDialog
+        scope={filteredScope}
+        open={dialog === "export"}
+        onClose={() => setDialog(null)}
+        onError={setActionError}
+        onNotice={onNotice}
+      />
     </div>
   );
 }
 
-export function AccountDrawer({ account, open, onClose }: { account: ProviderAccount | null; open: boolean; onClose: () => void }) {
+export function AccountDrawer({
+  account,
+  open,
+  onClose,
+  onAction,
+}: {
+  account: ProviderAccount | null;
+  open: boolean;
+  onClose: () => void;
+  // The drawer offers the same management actions as the table row, so an
+  // operator who opened the detail view does not have to go back to find them.
+  onAction?: (kind: "edit" | "models" | "test" | "delete") => void;
+}) {
   const copy = useCopy();
+  const managementCopy = useAccountManagementCopy();
   const { formatDateTime } = useI18n();
   if (!account) return null;
   return (
@@ -281,6 +465,26 @@ export function AccountDrawer({ account, open, onClose }: { account: ProviderAcc
           <KeyValue label={copy.common.source}>{account.source.kind}</KeyValue>
           <KeyValue label={copy.common.details}>{account.source.ref ?? "-"}</KeyValue>
         </section>
+
+        {onAction ? (
+          <section>
+            <h3 className="mb-2 text-sm font-semibold text-gray-900">{managementCopy.title}</h3>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" onClick={() => onAction("edit")}>
+                {managementCopy.edit}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => onAction("models")}>
+                {managementCopy.models}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => onAction("test")}>
+                {managementCopy.test}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => onAction("delete")}>
+                {managementCopy.delete}
+              </Button>
+            </div>
+          </section>
+        ) : null}
       </div>
     </Drawer>
   );

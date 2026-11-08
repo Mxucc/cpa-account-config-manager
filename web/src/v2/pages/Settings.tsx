@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { PageHeader, Tabs } from "../../ui/kit";
-import { useCopy } from "../shared";
-import { OtherSettingsWorkspace } from "../../components/OtherSettingsWorkspace";
-import { OperationLogWorkspace } from "../../components/OperationLogWorkspace";
-import { RiskControlWorkspace } from "../../components/RiskControlWorkspace";
-import { SelfUpdatePanel } from "../../components/SelfUpdatePanel";
+import { ExperimentsTab, GeneralTab, OperationsTab, PluginsTab, RiskTab, UpdatesTab } from "./settings/tabs";
+import { useSettingsCopy } from "./settings/copy";
 
-type SettingsTab = "general" | "operations" | "risk" | "update";
+// The settings page is a navigation shell over six rebuilt tabs. Destructive
+// actions inside the tabs always confirm first, and a failed call is shown inline
+// instead of being swallowed by the shell.
+type SettingsTab = "general" | "operations" | "risk" | "experiments" | "plugins" | "updates";
 
 export function SettingsPage({
   onAPIError,
@@ -15,34 +15,31 @@ export function SettingsPage({
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
 }) {
-  const copy = useCopy();
+  const copy = useSettingsCopy();
   const [tab, setTab] = useState<SettingsTab>("general");
+  const onError = (message: string) => onAPIError(new Error(message));
+
   return (
     <div className="space-y-4">
-      <PageHeader title={copy.settings.title} subtitle={copy.settings.subtitle} />
+      <PageHeader title={copy.general} subtitle={copy.plugins} />
       <Tabs
         active={tab}
         onChange={setTab}
         tabs={[
-          { id: "general", label: copy.settings.general },
-          { id: "operations", label: copy.settings.operations },
-          { id: "risk", label: copy.settings.risk },
-          { id: "update", label: copy.settings.update },
+          { id: "general", label: copy.general },
+          { id: "operations", label: copy.operations },
+          { id: "risk", label: copy.risk },
+          { id: "experiments", label: copy.experiments },
+          { id: "plugins", label: copy.plugins },
+          { id: "updates", label: copy.updates },
         ]}
       />
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        {tab === "general" ? <OtherSettingsWorkspace onAPIError={onAPIError} onNotice={onNotice} /> : null}
-        {tab === "operations" ? (
-          <OperationLogWorkspace
-            activeJobIDs={[]}
-            onAPIError={onAPIError}
-            onNotice={onNotice}
-            onOpenRelatedJob={() => undefined}
-          />
-        ) : null}
-        {tab === "risk" ? <RiskControlWorkspace onAPIError={onAPIError} onNotice={onNotice} /> : null}
-        {tab === "update" ? <SelfUpdatePanel onAPIError={onAPIError} onNotice={onNotice} /> : null}
-      </div>
+      {tab === "general" ? <GeneralTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "operations" ? <OperationsTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "risk" ? <RiskTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "experiments" ? <ExperimentsTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "plugins" ? <PluginsTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "updates" ? <UpdatesTab onError={onError} onNotice={onNotice} /> : null}
     </div>
   );
 }

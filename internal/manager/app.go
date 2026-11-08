@@ -126,6 +126,10 @@ type App struct {
 	providerImportsMu   sync.Mutex
 	providerImports     *provider.ImportStore
 	providerImportsPath string
+	// providerMarket reads the Magpie community plugin registry. It is created on
+	// first use and caches its answer, so a listing page does not refetch it.
+	marketMu sync.Mutex
+	market   *provider.Market
 	// providerSettings holds the provider-domain switches; created on first use for
 	// the same reason as the import store.
 	providerSettings *ProviderSettingsService

@@ -1,5 +1,6 @@
 import { getSession } from "../store/session";
 import type {
+  MarketSnapshot,
   ProviderAccount,
   ProviderAccountsResponse,
   ProviderOverview,
@@ -70,6 +71,15 @@ export const providerApi = {
     request<{ provider: unknown }>("/providers/import", {
       method: "POST",
       body: JSON.stringify({ manifest, source }),
+    }),
+  // The market listing is what turns "paste a package.json" into one click: the
+  // plugin fetches the entry's published manifest itself.
+  market: (locale: string) =>
+    request<MarketSnapshot>(`/providers/market?locale=${encodeURIComponent(locale)}`),
+  importMarketPlugin: (id: string) =>
+    request<{ provider: Record<string, unknown> }>("/providers/import", {
+      method: "POST",
+      body: JSON.stringify({ id }),
     }),
   removeImport: (id: string) =>
     request<{ status: string; id: string }>(`/providers/import?id=${encodeURIComponent(id)}`, { method: "DELETE" }),

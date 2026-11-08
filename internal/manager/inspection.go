@@ -873,8 +873,13 @@ func (e *InspectionEngine) ListResults(query InspectionResultQuery) InspectionRe
 	e.mu.RLock()
 	results := make([]InspectionResult, 0, len(e.records))
 	for _, record := range e.records {
-		result := cloneInspectionResult(record.Result)
-		result.ManualDeleteEligible = inspectionManualDeleteAllowed(result)
+		// Passive usage observation creates a record before anything was inspected.
+		// Such a placeholder has no health and no check time, so it is not a result:
+		// publishing it would send empty enum fields the pages cannot render.
+		if strings.TrimSpace(record.Result.Health) == "" && record.Result.LastCheckedAt.IsZero() {
+			continue
+		}
+		result := publishInspectionResult(record.Result)
 		if query.Health != "" && result.Health != query.Health {
 			continue
 		}
@@ -2205,7 +2210,9 @@ func liveInspectionResults(records map[string]inspectionRecord, activeID string,
 		if record.Result.RunID != activeID || record.Result.RunObservedAt == nil {
 			continue
 		}
-		results = append(results, cloneInspectionResult(record.Result))
+		// The live view feeds the same client validators as the results list, so a
+		// record observed before its classification must be published the same way.
+		results = append(results, publishInspectionResult(record.Result))
 	}
 	sort.Slice(results, func(left, right int) bool {
 		leftAt := results[left].RunObservedAt

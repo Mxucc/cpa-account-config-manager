@@ -308,6 +308,23 @@ make package VERSION=X.Y.Z
 旧的 Codex / OpenCode / Cline Pass 工作区保留为兼容层，位于对应供应商详情的「兼容（旧界面）」页签；新壳层负责导航、统一账号与额度视图。旧顶层菜单不再出现在侧栏。
 
 
+### 社区插件市场（一键导入）
+
+- 界面「供应商 → Magpie 社区插件」直接列出社区插件仓库的条目，`GET .../providers/market` 返回 `{available, reason, source, registry, versioned, total, fetched_at, plugins[]}`。
+- 清单由插件服务端读取（`registry.json` + npm 的已发布版本），**浏览器不直连外网**；结果缓存 5 分钟。仓库不可达时返回 `available:false` 与原因码（`market_unreachable` / `market_unreachable_timeout` / `market_registry_unreadable`），不是 500。
+- 一键导入调用 `POST .../providers/import`（`{"id":"@magpie-community/xxx"}`）：服务端从 npm 取该包的 `latest` 清单并登记定义，`source` 记为 `magpie`，`hook_execution` 恒为 `false`；非法包名返回 400，取不到清单返回 502 与 `market_manifest_unavailable`。
+- 离线或自建插件仍可用「高级：粘贴 package.json」提交 `{"manifest":"...","source":"magpie"}`。
+
+### v8 管理中心的免登录
+
+- 插件页面在 v8 Management Center 内打开时，直接复用该中心的会话（其 `managementKey` / `apiBase` 存储项，兼容 `enc::v2::` 与 `enc::v1::` 两种编码），不再要求手输管理密钥；旧 Web UI 的 `cli-proxy-auth` 仍作为回退。
+- 只有管理中心声明已登录（`isLoggedIn === "true"`）且其密钥可从存储中读出时才复用；否则仍显示登录页，不会变成无鉴权直通。
+
+### 账号管理
+
+- 账号页提供：编辑配置（走 `POST .../batch/preview` + `.../batch/start` 的预览-执行两步）、模型目录（`.../accounts/models`）、模型测试（`.../accounts/model-test`）、刷新令牌（`.../accounts/token/refresh`）、删除（`.../accounts/delete/preview` + `.../accounts/delete/start`）、批量编辑/批量删除、重复账号扫描（`.../accounts/deduplicate/preview`，建议删除走批量删除预览）、导入（`.../import/preview` + `.../import/start`）与导出（`.../export/accounts`，格式 cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager）。
+- 所有改动都先给出预览再执行；预览过期需要重新生成。
+
 ### 插件钩子执行（可选，默认关闭）
 
 - 设置项 `magpie_hook_execution` 默认 `false`，通过 `GET/PUT .../providers/settings` 读写，持久化在数据目录的 `provider-settings.json`。

@@ -1,14 +1,11 @@
 import { useState } from "react";
 import { PageHeader, Tabs } from "../../ui/kit";
-import { useCopy } from "../shared";
-import { InspectionWorkspace } from "../../components/InspectionWorkspace";
-import { AutomationPolicySettings } from "../../components/AutomationPolicySettings";
-import { ExternalNotificationSettings } from "../../components/ExternalNotificationSettings";
-import { AutoRetryCard } from "../../components/AutoRetryCard";
-import { ProxyProfilesSettings } from "../../components/ProxyProfilesSettings";
+import { InspectionTab, NotificationsTab, PoliciesTab, ProxyTab, RetryTab } from "./automation/tabs";
+import { useAutomationCopy } from "./automation/copy";
 
-// The automation surfaces keep their tested implementations; the new shell owns
-// navigation so they stop being four top-level pages.
+// The automation page is a navigation shell over five rebuilt tabs. Each tab owns
+// its own data, its own loading and error states, and its own polling, so a slow
+// surface never blocks the others.
 type AutomationTab = "inspection" | "policies" | "notifications" | "retry" | "proxy";
 
 export function AutomationPage({
@@ -20,39 +17,33 @@ export function AutomationPage({
   onAPIError: (error: unknown) => void;
   onNotice: (message: string) => void;
 }) {
-  const copy = useCopy();
+  const copy = useAutomationCopy();
   const [tab, setTab] = useState<AutomationTab>("inspection");
+  // A 401 has to reach the shell so it can clear the session; every other failure
+  // is the tab's own business and is shown inline.
+  const onError = (message: string) => onAPIError(new Error(message));
+
   return (
     <div className="space-y-4">
-      <PageHeader title={copy.automation.title} subtitle={copy.automation.subtitle} />
+      <PageHeader title={copy.inspection} subtitle={copy.policies} />
       <Tabs
         active={tab}
         onChange={setTab}
         tabs={[
-          { id: "inspection", label: copy.automation.inspection },
-          { id: "policies", label: copy.automation.policies },
-          { id: "notifications", label: copy.automation.notifications },
-          { id: "retry", label: copy.automation.retry },
-          { id: "proxy", label: copy.automation.proxy },
+          { id: "inspection", label: copy.inspection },
+          { id: "policies", label: copy.policies },
+          { id: "notifications", label: copy.notifications },
+          { id: "retry", label: copy.retry },
+          { id: "proxy", label: copy.proxy },
         ]}
       />
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        {tab === "inspection" ? <InspectionWorkspace onAPIError={onAPIError} onNotice={onNotice} /> : null}
-        {tab === "policies" ? (
-          <AutomationPolicySettings
-            refreshRevision={refreshRevision}
-            forceLoading={false}
-            onAPIError={onAPIError}
-            onNotice={onNotice}
-            onForcePreview={() => onNotice(copy.automation.policies)}
-          />
-        ) : null}
-        {tab === "notifications" ? (
-          <ExternalNotificationSettings refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
-        ) : null}
-        {tab === "retry" ? <AutoRetryCard refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} /> : null}
-        {tab === "proxy" ? <ProxyProfilesSettings refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} /> : null}
-      </div>
+      {tab === "inspection" ? (
+        <InspectionTab refreshRevision={refreshRevision} onError={onError} onNotice={onNotice} />
+      ) : null}
+      {tab === "policies" ? <PoliciesTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "notifications" ? <NotificationsTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "retry" ? <RetryTab onError={onError} onNotice={onNotice} /> : null}
+      {tab === "proxy" ? <ProxyTab onError={onError} onNotice={onNotice} /> : null}
     </div>
   );
 }

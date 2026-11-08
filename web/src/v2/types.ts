@@ -155,3 +155,33 @@ export interface ProviderAccountsResponse {
   accounts: ProviderAccount[];
   total: number;
 }
+
+// MarketPlugin is one Magpie community plugin the provider page can import with
+// a single click. Version is empty when npm could not answer.
+export interface MarketPlugin {
+  id: string;
+  name: string;
+  version?: string;
+  kind?: string;
+  summary?: string;
+  icon?: string;
+  providers?: string[];
+  replaces?: string;
+  source: string;
+  imported: boolean;
+  imported_version?: string;
+  package_url?: string;
+}
+
+// MarketSnapshot mirrors the market route: an unreachable registry is reported as
+// a reason with an empty list, never as an error.
+export interface MarketSnapshot {
+  available: boolean;
+  reason?: string;
+  source: string;
+  registry?: string;
+  versioned: number;
+  total: number;
+  fetched_at?: string;
+  plugins: MarketPlugin[];
+}

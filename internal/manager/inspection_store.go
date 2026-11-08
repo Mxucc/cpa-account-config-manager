@@ -375,6 +375,23 @@ func cloneInspectionRecords(records map[string]inspectionRecord) map[string]insp
 	return cloned
 }
 
+// publishInspectionResult prepares one stored record for the API. The three
+// classification enums are non-omitempty, so an empty string would reach a page
+// that requires a value; each one is normalized here instead, and the delete
+// eligibility is derived from the same published copy.
+func publishInspectionResult(result InspectionResult) InspectionResult {
+	published := cloneInspectionResult(result)
+	published.Health = normalizeInspectionHealth(published.Health)
+	published.Confidence = normalizeInspectionConfidence(published.Confidence)
+	published.Recommendation = normalizeInspectionRecommendation(published.Recommendation)
+	if strings.TrimSpace(published.ReasonCode) == "" {
+		// No reason code was recorded. Saying so is truthful; an empty field is not.
+		published.ReasonCode = InspectionReasonUnknown
+	}
+	published.ManualDeleteEligible = inspectionManualDeleteAllowed(published)
+	return published
+}
+
 func cloneInspectionResult(result InspectionResult) InspectionResult {
 	clone := result
 	clone.FirstUnhealthyAt = cloneTimePointer(result.FirstUnhealthyAt)

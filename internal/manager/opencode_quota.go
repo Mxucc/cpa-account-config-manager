@@ -1019,8 +1019,10 @@ func normalizeOpenCodeWindowKey(key string) string {
 	return normalized
 }
 
-// openCodeWindowFromValue reads one window from either a percent/reset object or
-// a used/limit object.
+// openCodeWindowFromValue reads one window. The gateway sends
+// {"percent":0,"resetsAt":"2026-11-09T00:06:11.000Z","status":"ok"}, so the
+// absolute reset time is read as-is; a relative reset_in_sec is still accepted for
+// the dashboard scrape and for an older gateway.
 func openCodeWindowFromValue(value any, now time.Time) *OpenCodeWindowUsage {
 	record, ok := value.(map[string]any)
 	if !ok {
@@ -1028,24 +1030,52 @@ func openCodeWindowFromValue(value any, now time.Time) *OpenCodeWindowUsage {
 	}
 	number := func(keys ...string) (float64, bool) {
 		for _, key := range keys {
-			if raw, found := record[key]; found {
-				if parsed, okParse := raw.(float64); okParse {
+			raw, found := record[key]
+			if !found {
+				continue
+			}
+			switch typed := raw.(type) {
+			case float64:
+				return typed, true
+			case int64:
+				return float64(typed), true
+			case string:
+				if parsed, errParse := strconv.ParseFloat(strings.TrimSpace(typed), 64); errParse == nil {
 					return parsed, true
 				}
 			}
 		}
 		return 0, false
 	}
-	resetSeconds, _ := number("reset_in_sec", "resetInSec", "resets_in_seconds")
-	if percent, okPercent := number("usage_percent", "usagePercent", "percent"); okPercent {
-		return normalizeOpenCodeWindow(percent, resetSeconds, now)
-	}
-	if used, okUsed := number("used", "used_usd"); okUsed {
-		if limit, okLimit := number("limit", "limit_usd"); okLimit && limit > 0 {
-			return normalizeOpenCodeWindow(used/limit*100, resetSeconds, now)
+	percent, okPercent := number("percent", "usage_percent", "usagePercent")
+	if !okPercent {
+		if used, okUsed := number("used", "used_usd"); okUsed {
+			if limit, okLimit := number("limit", "limit_usd"); okLimit && limit > 0 {
+				percent, okPercent = used/limit*100, true
+			}
 		}
 	}
-	return nil
+	if !okPercent {
+		return nil
+	}
+	window := normalizeOpenCodeWindow(percent, 0, now)
+	// An absolute reset time is authoritative: it is what the page shows and it
+	// differs per window, unlike a single relative value.
+	if raw, found := record["resetsAt"]; found {
+		if text, okText := raw.(string); okText {
+			if resetAt, errParse := time.Parse(time.RFC3339Nano, strings.TrimSpace(text)); errParse == nil {
+				window.ResetAt = resetAt.UTC()
+				window.ResetInSec = int64(resetAt.Sub(now).Seconds())
+				if window.ResetInSec < 0 {
+					window.ResetInSec = 0
+				}
+			}
+		}
+	}
+	if resetSeconds, okReset := number("reset_in_sec", "resetInSec", "resets_in_seconds"); okReset && window.ResetAt.IsZero() {
+		window = normalizeOpenCodeWindow(percent, resetSeconds, now)
+	}
+	return window
 }
 
 var openCodeScrapedNumberPattern = `(-?\d+(?:\.\d+)?)`

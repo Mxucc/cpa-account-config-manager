@@ -132,3 +132,34 @@ func TestOpenCodeUsageAPIParsesListAndNestedShapes(t *testing.T) {
 		})
 	}
 }
+
+// The live answer is {"usage":{"rolling":{"percent":0,"resetsAt":"...","status":"ok"},
+// "weekly":{...},"monthly":{...}}}. Each window keeps its own absolute reset time;
+// an earlier mapping gave every window the same reset, which is visibly wrong.
+func TestOpenCodeUsageAPIParsesTheLiveShape(t *testing.T) {
+	now := time.Date(2026, time.November, 8, 20, 0, 0, 0, time.UTC)
+	body := `{"usage":{
+		"rolling":{"status":"ok","percent":0,"resetsAt":"2026-11-09T00:06:11.000Z"},
+		"weekly":{"status":"rate-limited","percent":100,"resetsAt":"2026-11-09T00:00:00.000Z"},
+		"monthly":{"status":"ok","percent":50,"resetsAt":"2026-12-07T03:41:37.000Z"}}}`
+
+	rolling, weekly, monthly := parseOpenCodeUsageAPI([]byte(body), now)
+	if rolling == nil || weekly == nil || monthly == nil {
+		t.Fatalf("rolling=%+v weekly=%+v monthly=%+v", rolling, weekly, monthly)
+	}
+	if rolling.UsagePercent != 0 || weekly.UsagePercent != 100 || monthly.UsagePercent != 50 {
+		t.Fatalf("percents = %v %v %v", rolling.UsagePercent, weekly.UsagePercent, monthly.UsagePercent)
+	}
+	// Each window carries its own reset time.
+	wantResets := []time.Time{
+		time.Date(2026, time.November, 9, 0, 6, 11, 0, time.UTC),
+		time.Date(2026, time.November, 9, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, time.December, 7, 3, 41, 37, 0, time.UTC),
+	}
+	got := []time.Time{rolling.ResetAt, weekly.ResetAt, monthly.ResetAt}
+	for index, want := range wantResets {
+		if !got[index].Equal(want) {
+			t.Fatalf("window %d reset = %s, want %s", index, got[index], want)
+		}
+	}
+}

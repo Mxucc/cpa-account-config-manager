@@ -153,6 +153,9 @@ var managedRuntimePath = struct {
 	path string
 }{}
 
+// ManagedRuntime reports the runtime path this plugin resolves, if any.
+func ManagedRuntime() string { return resolveBun() }
+
 // SetManagedRuntime records where the plugin-managed runtime lives.
 func SetManagedRuntime(path string) {
 	managedRuntimePath.mu.Lock()
@@ -179,7 +182,11 @@ func managedBunCandidates() []string {
 		candidates = append(candidates, filepath.Join(dir, ".cpa-account-config-manager", "runtime", name))
 	}
 	if home, errHome := os.UserHomeDir(); errHome == nil {
+		// Every data directory this plugin has used, newest state last: a reinstall
+		// changes the configured directory, and a runtime installed before it must
+		// still be found rather than downloaded again.
 		candidates = append(candidates,
+			filepath.Join(home, ".cli-proxy-api", ".cpa-account-config-manager", "runtime", name),
 			filepath.Join(home, ".cpa-account-config-manager", "runtime", name),
 			filepath.Join(home, ".bun", "bin", name),
 		)

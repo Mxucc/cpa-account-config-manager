@@ -89,6 +89,12 @@ func (a *App) importedProviderDirectory(ctx context.Context, id string) (string,
 		if errInstall != nil {
 			return "", entry.Name, errInstall
 		}
+		// Record the directory so the next sign-in does not download again.
+		if raw, errRead := os.ReadFile(directory + "/package.json"); errRead == nil {
+			if _, errReimport := store.Import(raw, entry.Source, directory); errReimport == nil {
+				return directory, entry.Name, nil
+			}
+		}
 		return directory, entry.Name, nil
 	}
 	return "", "", fmt.Errorf("provider %q is not imported", id)
@@ -110,18 +116,16 @@ func (a *App) handleProviderRuntime(ctx context.Context, req cpaapi.ManagementRe
 			magpiecompat.SetManagedRuntime(magpiecompat.RuntimePath(dataDir))
 		}
 	}
-	// Registration happens above, so this reads the same resolution a sign-in uses.
+	// The answer is what a sign-in would actually resolve, including a runtime an
+	// earlier install left behind in another data directory.
 	snapshot := map[string]any{
 		"available": magpiecompat.BunAvailable(),
 		"managed":   false,
 		"data_dir":  dataDir != "",
 	}
-	if managed := magpiecompat.RuntimePath(dataDir); dataDir != "" {
-		if info, errStat := os.Stat(managed); errStat == nil && !info.IsDir() {
-			snapshot["managed"] = true
-			snapshot["managed_path"] = managed
-			snapshot["available"] = true
-		}
+	if path := magpiecompat.ManagedRuntime(); path != "" {
+		snapshot["managed"] = true
+		snapshot["managed_path"] = path
 	}
 	if req.Method == http.MethodGet {
 		return jsonResponse(http.StatusOK, snapshot)

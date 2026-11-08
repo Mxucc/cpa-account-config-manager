@@ -107,3 +107,28 @@ func TestOpenCodeQuotaUsageAPIExplainsWhyItWasSkipped(t *testing.T) {
 		t.Fatalf("keyless reason = %q", reason)
 	}
 }
+
+// The endpoint has answered a list of windows with their own names as well as a
+// flat object; both must read, otherwise a working credential still looks empty.
+func TestOpenCodeUsageAPIParsesListAndNestedShapes(t *testing.T) {
+	now := time.Now().UTC()
+	cases := map[string]string{
+		"list with names": `{"windows":[
+			{"name":"rolling","usage_percent":12.5,"reset_in_sec":600},
+			{"name":"weekly","usage_percent":30,"reset_in_sec":1200},
+			{"name":"monthly","used":2,"limit":8}]}`,
+		"nested object": `{"usage":{"five_hour":{"percent":12.5},"week":{"percent":30},"month":{"used":2,"limit":8}}}`,
+		"snake keys":    `{"rolling_usage":{"usage_percent":12.5},"weekly_usage":{"usage_percent":30},"monthly_usage":{"used":2,"limit":8}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			rolling, weekly, monthly := parseOpenCodeUsageAPI([]byte(body), now)
+			if rolling == nil || weekly == nil || monthly == nil {
+				t.Fatalf("rolling=%+v weekly=%+v monthly=%+v", rolling, weekly, monthly)
+			}
+			if rolling.UsagePercent != 12.5 || weekly.UsagePercent != 30 || monthly.UsagePercent != 25 {
+				t.Fatalf("values = %v %v %v", rolling.UsagePercent, weekly.UsagePercent, monthly.UsagePercent)
+			}
+		})
+	}
+}

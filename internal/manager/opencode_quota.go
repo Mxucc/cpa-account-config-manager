@@ -914,25 +914,84 @@ func (s *OpenCodeQuotaService) accountCredentialForWorkspace(workspaceID string)
 // parseOpenCodeUsageAPI reads the usage document. Both a flat window object and a
 // nested windows list are accepted, because the gateway has served both shapes.
 func parseOpenCodeUsageAPI(body []byte, now time.Time) (*OpenCodeWindowUsage, *OpenCodeWindowUsage, *OpenCodeWindowUsage) {
-	var document map[string]any
+	var document any
 	if errUnmarshal := json.Unmarshal(body, &document); errUnmarshal != nil {
 		return nil, nil, nil
 	}
-	read := func(keys ...string) *OpenCodeWindowUsage {
-		for _, key := range keys {
-			value, found := document[key]
-			if !found {
-				continue
-			}
-			if window := openCodeWindowFromValue(value, now); window != nil {
+	// The endpoint has answered both a flat object and a list of windows; a
+	// window may also carry its own name. Everything is collected first, then
+	// matched by name, so neither shape is silently dropped.
+	windows := map[string]*OpenCodeWindowUsage{}
+	collectOpenCodeWindows(document, windows, now)
+	pick := func(names ...string) *OpenCodeWindowUsage {
+		for _, name := range names {
+			if window, found := windows[name]; found {
 				return window
 			}
 		}
 		return nil
 	}
-	return read("rolling", "rolling_usage", "fiveHour", "five_hour"),
-		read("weekly", "weekly_usage", "week"),
-		read("monthly", "monthly_usage", "month")
+	return pick("rolling", "rolling_usage", "fivehour", "five_hour"),
+		pick("weekly", "weekly_usage", "week"),
+		pick("monthly", "monthly_usage", "month")
+}
+
+// collectOpenCodeWindows walks the answer and records every window it can name.
+func collectOpenCodeWindows(value any, into map[string]*OpenCodeWindowUsage, now time.Time) {
+	switch typed := value.(type) {
+	case map[string]any:
+		// A window that names itself is recorded under its own name.
+		if name := openCodeWindowName(typed); name != "" {
+			if window := openCodeWindowFromValue(typed, now); window != nil {
+				if _, exists := into[name]; !exists {
+					into[name] = window
+				}
+			}
+		}
+		for key, child := range typed {
+			if window := openCodeWindowFromValue(child, now); window != nil {
+				normalized := normalizeOpenCodeWindowKey(key)
+				if _, exists := into[normalized]; !exists {
+					into[normalized] = window
+				}
+				continue
+			}
+			collectOpenCodeWindows(child, into, now)
+		}
+	case []any:
+		for _, child := range typed {
+			collectOpenCodeWindows(child, into, now)
+		}
+	}
+}
+
+// openCodeWindowName reads a window's own name, which a list-shaped answer uses
+// instead of a key.
+func openCodeWindowName(record map[string]any) string {
+	for _, key := range []string{"name", "window", "period", "kind", "id"} {
+		if raw, found := record[key]; found {
+			if text, okText := raw.(string); okText && strings.TrimSpace(text) != "" {
+				return normalizeOpenCodeWindowKey(text)
+			}
+		}
+	}
+	return ""
+}
+
+// normalizeOpenCodeWindowKey maps the spellings the gateway has used onto the
+// three window names the page shows.
+func normalizeOpenCodeWindowKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(normalized)
+	switch normalized {
+	case "rolling", "rolling_usage", "fivehour", "five_hour", "5h", "five_hours":
+		return "rolling"
+	case "weekly", "weekly_usage", "week", "7d", "seven_days":
+		return "weekly"
+	case "monthly", "monthly_usage", "month", "30d", "thirty_days":
+		return "monthly"
+	}
+	return normalized
 }
 
 // openCodeWindowFromValue reads one window from either a percent/reset object or

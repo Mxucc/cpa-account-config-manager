@@ -231,6 +231,13 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 	label := fmt.Sprintf("%s · %s", name, firstNonEmptyText(credential.AccountID, login.provider))
 	baseURL := strings.TrimSpace(login.baseURL)
 	if baseURL == "" {
+		// A provider that keeps its endpoint in a module constant publishes none of
+		// it through a hook. The plugin knows the hosts the community providers
+		// serve, so the channel can still be written instead of failing the sign-in
+		// after the credential was already obtained.
+		baseURL = communityProviderBaseURL(login.provider)
+	}
+	if baseURL == "" {
 		return "", fmt.Errorf("this provider published no base URL, so no channel can route it")
 	}
 	body := map[string]any{
@@ -331,4 +338,18 @@ func (a *App) communityManagementKey() string {
 	communityLogins.mu.Lock()
 	defer communityLogins.mu.Unlock()
 	return communityLogins.key
+}
+
+// communityProviderBaseURL maps a community provider onto the API base its plugin
+// serves, for the plugins that keep that base in a module constant no hook exposes.
+// An unknown provider returns "" so the caller reports the gap instead of guessing.
+func communityProviderBaseURL(providerID string) string {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "zen-free":
+		// OpenCode's free Zen access, as the zen-free plugin's own default.
+		return "https://opencode.ai/inference/v1"
+	case "zcode":
+		return "https://api.z.ai/api/anthropic"
+	}
+	return ""
 }

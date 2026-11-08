@@ -90,3 +90,18 @@ func TestProviderRuntimeRouteIsReachable(t *testing.T) {
 		t.Fatalf("body = %s", response.Body)
 	}
 }
+
+// A provider that keeps its endpoint in a module constant publishes none of it
+// through a hook. The channel write must still know where to route, and an unknown
+// provider must report the gap instead of guessing.
+func TestCommunityProviderBaseURL(t *testing.T) {
+	if got := communityProviderBaseURL("zen-free"); got != "https://opencode.ai/inference/v1" {
+		t.Fatalf("zen-free base = %q", got)
+	}
+	if got := communityProviderBaseURL("ZCode"); got != "https://api.z.ai/api/anthropic" {
+		t.Fatalf("zcode base = %q", got)
+	}
+	if got := communityProviderBaseURL("something-else"); got != "" {
+		t.Fatalf("an unknown provider produced %q", got)
+	}
+}

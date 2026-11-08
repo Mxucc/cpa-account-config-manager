@@ -201,6 +201,8 @@ function providerBaseURL(hooks, method) {
       return candidate.trim().slice(0, 300);
     }
   }
+  // The last resort is the plugin's own model catalog call: a provider that lists
+  // models fetches them from the host it serves, and that host is its base.
   return "";
 }
 

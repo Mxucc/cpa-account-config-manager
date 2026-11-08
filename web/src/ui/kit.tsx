@@ -206,14 +206,14 @@ export function Dialog({ open, title, onClose, children, footer }: { open: boole
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 p-4" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-md">
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col rounded-xl border border-gray-200 bg-white shadow-md">
         <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
           <h2 className="font-semibold tracking-tight text-gray-900">{title}</h2>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="close">
             <X size={16} />
           </Button>
         </div>
-        <div className="px-6 py-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{children}</div>
         {footer ? <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">{footer}</div> : null}
       </div>
     </div>

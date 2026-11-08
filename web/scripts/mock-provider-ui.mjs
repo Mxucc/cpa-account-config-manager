@@ -172,6 +172,31 @@ http  .createServer((req, res) => {
       const rows = filter ? accounts.filter((row) => row.provider.id === filter) : accounts;
       return json(res, 200, { accounts: rows, total: rows.length });
     }
+    // Adding an account: the picker and one device flow, so the dialog can be
+    // checked without a real CPA behind it.
+    if (url.pathname === `${base}/accounts/login`) {
+      return json(res, 200, {
+        providers: [
+          { id: "codex", name: "Codex", flow: "browser", source: "host" },
+          { id: "claude", name: "Claude", flow: "browser", source: "host" },
+          { id: "xai", name: "xAI", flow: "device", source: "host" },
+          { id: "cline-pass", name: "Cline Pass", flow: "plugin", source: "plugin" },
+        ],
+        community: [{ id: "zcode", name: "ZCode", flow: "external", source: "community" }],
+      });
+    }
+    if (url.pathname === `${base}/accounts/login/start`) {
+      return json(res, 200, {
+        provider: "xai",
+        state: "xai-1",
+        flow: "device",
+        url: "https://accounts.x.ai/oauth2/device?user_code=AB12-CD34",
+        user_code: "AB12-CD34",
+        expires_in: 1800,
+        status: "ok",
+      });
+    }
+    if (url.pathname === `${base}/accounts/login/status`) return json(res, 200, { state: "xai-1", status: "wait", done: false });
     if (url.pathname === `${base}/providers/catalog`) return json(res, 200, catalog);
     if (url.pathname === `${base}/providers/settings`) return json(res, 200, { magpie_hook_execution: false });
     if (url.pathname === `${base}/providers/pricing`) return json(res, 200, { provider: "opencode-go", available: true, snapshot: { source: "official" } });

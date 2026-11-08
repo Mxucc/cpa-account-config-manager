@@ -46,10 +46,26 @@ describe("Corporate Clean source contract", () => {
     expect(kit).toMatch(/duration-(150|200)/);
   });
 
+  // One surface definition, in the token layer; the kit names it and pages must
+  // not re-invent a card out of utilities.
   test("cards use the shared surface tokens", () => {
     const kit = readFileSync(resolve(__dirname, "kit.tsx"), "utf8");
-    expect(kit).toContain("bg-white rounded-xl shadow-sm border border-gray-200");
+    const css = readFileSync(resolve(__dirname, "../styles/v2.css"), "utf8");
+    expect(css).toContain(".v2-card {");
+    expect(css).toContain("--v2-pad-card");
+    expect(kit).toContain("v2-card");
+    // A lift is offered only to an interactive card, never to every surface.
     expect(kit).toContain("hover:-translate-y-0.5 hover:shadow-md");
+  });
+
+  test("pages compose the shared primitives instead of inline card and field styles", () => {
+    // The legacy bridge embeds the old workspaces on purpose; its classes belong
+    // to the old stylesheet, not to this system.
+    const pages = sources.filter((source) => source.path.includes("/v2/") && !source.path.includes("legacy/"));
+    const offenders = pages
+      .filter((source) => /bg-white rounded-xl|rounded-xl border border-gray-200|border-dashed border-gray-300/.test(source.text))
+      .map((source) => source.path);
+    expect(offenders).toEqual([]);
   });
 
   test("inputs keep the blue focus ring with an offset", () => {
@@ -64,7 +80,9 @@ describe("Corporate Clean source contract", () => {
 
   test("a table row and every meter are present in the account view", () => {
     const accounts = readFileSync(resolve(__dirname, "../v2/pages/Accounts.tsx"), "utf8");
-    expect(accounts).toContain("hover:bg-gray-50");
+    // Rows and their hover state come from the shared table tokens.
+    expect(accounts).toContain("Table");
+    expect(accounts).toContain("v2-truncate");
     expect(accounts).toContain("AccountQuota");
   });
 });

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { readPanelAuth } from "../store/panelAuth";
 import { clearSession, getSession, setSession } from "../store/session";
-import { Button, Card, Input, cn } from "../ui/kit";
+import { Button, Card, Field, Input, Notice, cn } from "../ui/kit";
 import { ProviderAPIError, hasSession, providerApi } from "./api";
 import { useCopy } from "./shared";
 import { OverviewPage } from "./pages/Overview";
@@ -140,8 +140,8 @@ export function V2App() {
   return (
     <div className="v2-shell min-h-screen bg-slate-50 text-gray-900">
       <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col lg:flex-row">
-        <aside className="border-b border-gray-200 bg-white lg:w-64 lg:shrink-0 lg:border-b-0 lg:border-r">
-          <div className="flex items-center gap-3 px-4 py-4">
+        <aside className="border-b border-gray-200 bg-white lg:w-56 lg:shrink-0 lg:border-b-0 lg:border-r">
+          <div className="flex items-center gap-2.5 px-3 py-3.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
               <Activity size={18} aria-hidden="true" />
             </span>
@@ -150,7 +150,7 @@ export function V2App() {
               <p className="truncate text-xs text-gray-500">providers · quota · billing</p>
             </div>
           </div>
-          <nav className="flex gap-1 overflow-x-auto px-2 pb-3 lg:flex-col lg:overflow-visible lg:pb-4" aria-label={copy.nav.overview}>
+          <nav className="flex gap-0.5 overflow-x-auto px-2 pb-3 lg:flex-col lg:overflow-visible lg:pb-4" aria-label={copy.nav.overview}>
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = route.view === item.id;
@@ -161,14 +161,12 @@ export function V2App() {
                   aria-current={active ? "page" : undefined}
                   onClick={() => navigate(`/${item.id}`)}
                   className={cn(
-                    "group flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 ease-out",
+                    "v2-nav-item shrink-0",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
-                    "active:scale-[0.98] active:translate-y-0",
-                    active ? "bg-blue-50 text-blue-700 shadow-sm" : "text-gray-600 hover:bg-gray-100",
                   )}
                 >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-150 ease-out group-hover:bg-blue-500 group-hover:text-white">
-                    <Icon size={16} aria-hidden="true" />
+                  <span className="v2-nav-icon">
+                    <Icon size={15} aria-hidden="true" />
                   </span>
                   <span className="whitespace-nowrap">{item.label}</span>
                 </button>
@@ -189,12 +187,9 @@ export function V2App() {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 py-6 md:px-8">
-          {error ? (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
-              {error}
-            </div>
-          ) : null}
+        <main className="mx-auto w-full min-w-0 max-w-[1180px] flex-1 px-4 py-5 md:px-8 md:py-6">
+          <div className="v2-page">
+          {error ? <Notice tone="error">{error}</Notice> : null}
           {route.view === "overview" ? <OverviewPage onOpenAccount={(id) => navigate(`/accounts/selected/${encodeURIComponent(id)}`)} /> : null}
           {route.view === "accounts" ? (
             <AccountsPage
@@ -221,10 +216,11 @@ export function V2App() {
             <AutomationPage refreshRevision={refreshRevision} onAPIError={handleAPIError} onNotice={setNotice} />
           ) : null}
           {route.view === "settings" ? <SettingsPage onAPIError={handleAPIError} onNotice={setNotice} /> : null}
+          </div>
         </main>
       </div>
       {notice ? (
-        <div className="fixed bottom-6 right-6 z-50 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-md" role="status">
+        <div className="v2-notice fixed bottom-5 right-5 z-50 max-w-sm bg-white shadow-md" role="status">
           {notice}
         </div>
       ) : null}

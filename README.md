@@ -17,6 +17,10 @@
 - 支持 CPA 原生 Token 刷新；CPA 未提供刷新接口时，可对持有有效 Refresh Token 的兼容账号执行完整刷新流程。
 - 展示账号初始时间、禁用时间、Priority、WebSockets、备注、路由前缀、Header、代理、模型、并发和额度策略。
 
+### 界面与样式口径
+
+新界面只有一套样式来源：`web/src/styles/v2.css` 定义间距、字号、边框、圆角与颜色 token，并给出 `.v2-card`、`.v2-table`、`.v2-field`、`.v2-metric`、`.v2-tabs` 等组件类；`web/src/ui/kit.tsx` 只负责把 token 命名成 `Card`、`Section`、`Field`、`Metric`、`Table`、`Notice` 等组件，页面不再自写一套卡片/表单/表格样式。Tailwind preflight 仍关闭（旧工作区需要自己的表单控件样式），因此新界面自带一份**作用域内的 reset**：只清掉 `.v2-shell` 内（且不在 `.legacy-console` 内）原生 `p`/`h*`/`ul`/`li` 的默认外边距与列表符号，避免浏览器默认的 16px 外边距把每个卡片的内边距撑得各不相同。`web/src/ui/styleContract.test.ts` 会拦住重新在内联工具类里拼卡片的写法。
+
 ### 导入、导出与格式转换
 
 导入入口支持粘贴 JSON，以及混合上传 JSON、JSON Lines、TXT 和 ZIP；单次最多处理 10,000 个账号，并提供预览、重复检查、后台进度和取消任务。ZIP 会检查路径穿越和异常解压膨胀，导入不会覆盖已有 Auth 文件。

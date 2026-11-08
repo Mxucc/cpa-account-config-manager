@@ -9,7 +9,7 @@ export function RoutingPage({ providerFilter }: { providerFilter?: string }) {
   const accounts = useAsync(() => providerApi.accounts(providerFilter), [providerFilter]);
   if (accounts.loading && !accounts.data) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.routing.title} subtitle={copy.routing.subtitle} />
         <Skeleton className="h-64" />
       </div>
@@ -20,7 +20,7 @@ export function RoutingPage({ providerFilter }: { providerFilter?: string }) {
   }
   const rows = (accounts.data?.accounts ?? []).filter((account) => account.binding);
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       <PageHeader title={copy.routing.title} subtitle={copy.routing.subtitle} />
       {rows.length === 0 ? (
         <EmptyState title={copy.common.empty} description={copy.routing.subtitle} />

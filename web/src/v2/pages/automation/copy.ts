@@ -55,6 +55,9 @@ export interface AutomationCopy {
   globalPolicyHint: string;
   applyMode: string;
   scanNow: string;
+  anomaly: string;
+  phase: { idle: string; running: string; completed: string; failed: string };
+  summaryLabels: { actionable: string; disable: string; delete: string; review: string; keep: string; reauth: string };
   scanning: string;
   priority: string;
   concurrency: string;
@@ -138,6 +141,9 @@ const zh: AutomationCopy = {
   globalPolicyHint: "对所有账号强制生效的值；留空表示不修改。",
   applyMode: "应用方式",
   scanNow: "立即扫描",
+  anomaly: "异常",
+  phase: { idle: "空闲", running: "进行中", completed: "已完成", failed: "失败" },
+  summaryLabels: { actionable: "可处理", disable: "建议停用", delete: "建议删除", review: "待复核", keep: "保留", reauth: "需重新授权" },
   scanning: "扫描中…",
   priority: "优先级",
   concurrency: "并发上限",
@@ -221,6 +227,9 @@ const en: AutomationCopy = {
   globalPolicyHint: "Values forced onto every account; empty means unchanged.",
   applyMode: "Apply mode",
   scanNow: "Scan now",
+  anomaly: "Anomalies",
+  phase: { idle: "Idle", running: "Running", completed: "Completed", failed: "Failed" },
+  summaryLabels: { actionable: "Actionable", disable: "Suggested disable", delete: "Suggested delete", review: "Review", keep: "Keep", reauth: "Reauth" },
   scanning: "Scanning…",
   priority: "Priority",
   concurrency: "Concurrency limit",

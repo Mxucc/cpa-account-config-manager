@@ -31,7 +31,7 @@ export function UsagePage() {
 
   if (accounts.loading && !accounts.data) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.usage.title} subtitle={copy.usage.subtitle} />
         <Skeleton className="h-64" />
       </div>
@@ -42,7 +42,7 @@ export function UsagePage() {
   }
   if (rows.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.usage.title} subtitle={copy.usage.subtitle} />
         <EmptyState title={copy.common.empty} />
       </div>
@@ -50,7 +50,7 @@ export function UsagePage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       <PageHeader title={copy.usage.title} subtitle={copy.usage.subtitle} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {byProvider.map((provider) => (

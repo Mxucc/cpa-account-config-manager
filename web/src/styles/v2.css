@@ -4,12 +4,30 @@
 
 :root {
   color-scheme: light;
+  /* One spacing and type scale for the whole shell. Pages compose these tokens
+     instead of inventing their own paddings, which is what made every screen
+     look slightly different. */
+  --v2-gap-page: 1rem;
+  --v2-gap-section: 0.75rem;
+  --v2-pad-card: 1.25rem;
+  --v2-pad-cell: 0.625rem;
+  --v2-radius-card: 0.75rem;
+  --v2-radius-control: 0.5rem;
+  --v2-border: #e5e7eb;
+  --v2-border-soft: #f1f5f9;
+  --v2-surface: #ffffff;
+  --v2-surface-muted: #f8fafc;
+  --v2-text: #0f172a;
+  --v2-text-soft: #475569;
+  --v2-text-muted: #64748b;
+  --v2-accent: #2563eb;
+  --v2-accent-soft: #eff6ff;
 }
 
 body {
   margin: 0;
-  background-color: #f8fafc;
-  color: #111827;
+  background-color: var(--v2-surface-muted);
+  color: var(--v2-text);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -31,6 +49,32 @@ body {
   padding: 0;
 }
 
+/* Scoped preflight.
+   Tailwind preflight stays off so the legacy console keeps its own form controls,
+   but the new shell still needs the resets preflight would provide. Without them
+   a raw <p> or <h2> kept the browser's 16px margins, which is what made every
+   card's internal rhythm differ from the next. The reset is limited to the new
+   shell and never reaches the legacy console. */
+:where(.v2-shell) :where(*, *::before, *::after):not(:where(.legacy-console, .legacy-console *)) {
+  box-sizing: border-box;
+}
+
+:where(.v2-shell)
+  :where(p, h1, h2, h3, h4, h5, h6, ul, ol, li, dl, dd, figure, blockquote, hr, pre)
+  :not(:where(.legacy-console, .legacy-console *)) {
+  margin: 0;
+  padding: 0;
+}
+
+:where(.v2-shell) :where(ul, ol):not(:where(.legacy-console, .legacy-console *)) {
+  list-style: none;
+}
+
+:where(.v2-shell) :where(img, svg, video, canvas):not(:where(.legacy-console, .legacy-console *)) {
+  display: block;
+  max-width: 100%;
+}
+
 /* Corporate Clean caps motion at 200ms and offers a reduced-motion path. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -45,5 +89,310 @@ body {
   .hover\:-translate-y-0\.5:hover,
   .hover\:scale-110:hover {
     transform: none !important;
+  }
+}
+
+/* The component layer.
+   Every page composes these classes, so a card is the same card on every screen
+   and a table row is the same row. Utilities stay for layout one-offs; anything
+   that repeats twice belongs here. */
+@layer components {
+  /* The page rhythm only. Width is capped on the shell's main column: an auto
+     margin inside a flex column shrinks the child to its content, which is what
+     once squeezed a whole page into a narrow centre strip. */
+  .v2-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--v2-gap-page);
+    width: 100%;
+    min-width: 0;
+  }
+
+  .v2-card {
+    background: var(--v2-surface);
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    padding: var(--v2-pad-card);
+  }
+
+  /* A card that holds a table or a list keeps its own padding off, so rows can
+     reach the edge and the header can sit flush. */
+  .v2-card-flush {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .v2-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--v2-gap-section);
+  }
+
+  .v2-section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2rem;
+  }
+
+  .v2-section-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--v2-text);
+  }
+
+  .v2-section-sub {
+    margin-top: 0.125rem;
+    font-size: 0.75rem;
+    color: var(--v2-text-muted);
+  }
+
+  .v2-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--v2-text-soft);
+  }
+
+  .v2-hint {
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--v2-text-muted);
+  }
+
+  .v2-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .v2-grid-fields {
+    display: grid;
+    gap: 0.75rem 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    align-items: start;
+  }
+
+  .v2-metrics {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  }
+
+  .v2-metric {
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-surface-muted);
+    padding: 0.75rem 0.875rem;
+    min-width: 0;
+  }
+
+  .v2-metric-label {
+    font-size: 0.75rem;
+    color: var(--v2-text-muted);
+  }
+
+  .v2-metric-value {
+    margin-top: 0.25rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--v2-text);
+    overflow-wrap: anywhere;
+  }
+
+  .v2-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.8125rem;
+  }
+
+  .v2-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--v2-surface-muted);
+    border-bottom: 1px solid var(--v2-border);
+    padding: var(--v2-pad-cell) 0.875rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--v2-text-muted);
+    white-space: nowrap;
+  }
+
+  .v2-table tbody td {
+    border-bottom: 1px solid var(--v2-border-soft);
+    padding: var(--v2-pad-cell) 0.875rem;
+    vertical-align: top;
+  }
+
+  .v2-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .v2-table tbody tr {
+    transition: background-color 150ms ease-out;
+  }
+
+  .v2-table tbody tr:hover {
+    background: var(--v2-surface-muted);
+  }
+
+  .v2-cell-actions {
+    white-space: nowrap;
+    text-align: right;
+  }
+
+  .v2-cell-actions > * {
+    margin-left: 0.375rem;
+  }
+
+  .v2-truncate {
+    display: block;
+    max-width: 15rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A non-interactive capability chip must not look like a button. */
+  .v2-chip {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--v2-border);
+    border-radius: 0.375rem;
+    background: var(--v2-surface-muted);
+    padding: 0.0625rem 0.375rem;
+    font-size: 0.6875rem;
+    color: var(--v2-text-soft);
+    white-space: nowrap;
+  }
+
+  .v2-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--v2-border);
+  }
+
+  .v2-tab {
+    position: relative;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--v2-text-muted);
+    border-bottom: 2px solid transparent;
+    transition: color 150ms ease-out, border-color 150ms ease-out;
+  }
+
+  .v2-tab:hover {
+    color: var(--v2-text);
+  }
+
+  .v2-tab[aria-selected="true"] {
+    color: var(--v2-accent);
+    border-bottom-color: var(--v2-accent);
+  }
+
+  .v2-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+    border-radius: var(--v2-radius-control);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--v2-text-soft);
+    transition: background-color 150ms ease-out, color 150ms ease-out;
+  }
+
+  .v2-nav-item:hover {
+    background: var(--v2-surface-muted);
+    color: var(--v2-text);
+  }
+
+  .v2-nav-item[aria-current="page"] {
+    background: var(--v2-accent-soft);
+    color: var(--v2-accent);
+  }
+
+  .v2-nav-icon {
+    display: flex;
+    height: 1.25rem;
+    width: 1.25rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .v2-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-surface-muted);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: var(--v2-text-soft);
+  }
+
+  .v2-notice[data-tone="error"] {
+    border-color: #fecaca;
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+
+  .v2-notice[data-tone="warn"] {
+    border-color: #fde68a;
+    background: #fffbeb;
+    color: #b45309;
+  }
+
+  .v2-notice[data-tone="ok"] {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #15803d;
+  }
+
+  .v2-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 1px dashed var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-surface);
+    padding: 2rem 1.25rem;
+    text-align: center;
+  }
+
+  .v2-empty-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--v2-text);
+  }
+
+  .v2-page-title {
+    font-size: 1.375rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--v2-text);
+  }
+
+  .v2-page-sub {
+    margin-top: 0.125rem;
+    font-size: 0.8125rem;
+    color: var(--v2-text-muted);
   }
 }

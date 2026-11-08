@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { providerApi } from "../api";
-import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
+import { Badge, Button, Card, CardTitle, Chip, Dialog, EmptyState, ErrorState, Input, Notice, PageHeader, Select, Skeleton, Tabs } from "../../ui/kit";
 import { StatusBadge, capabilityLabel, kindLabel, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import { AccountsPage } from "./Accounts";
@@ -33,7 +33,7 @@ export function ProvidersPage({
 
   if (providers.loading && !providers.data) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.providers.title} subtitle={copy.providers.subtitle} />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((index) => (
@@ -49,24 +49,22 @@ export function ProvidersPage({
 
   if (!current) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.providers.title} subtitle={copy.providers.subtitle} />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {(providers.data?.providers ?? []).map((provider) => (
-            <Card key={provider.id} className="flex flex-col justify-between gap-4">
+            <Card key={provider.id} className="flex h-full flex-col justify-between gap-3">
               <div>
                 <div className="flex items-start justify-between gap-3">
                   <CardTitle>{provider.display_name}</CardTitle>
-                  <Badge tone="gray">{kindLabel(provider.kind, copy)}</Badge>
+                  <Chip>{kindLabel(provider.kind, copy)}</Chip>
                 </div>
-                <p className="mt-2 text-sm text-gray-500">{provider.description}</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-gray-500">{provider.description}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {Object.entries(provider.capabilities)
                     .filter(([, enabled]) => enabled)
                     .map(([capability]) => (
-                      <Badge key={capability} tone="blue">
-                        {capabilityLabel(capability, copy)}
-                      </Badge>
+                      <Chip key={capability}>{capabilityLabel(capability, copy)}</Chip>
                     ))}
                 </div>
               </div>
@@ -91,7 +89,7 @@ export function ProvidersPage({
   const summary = summarize(providerAccounts);
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       <PageHeader
         title={current.display_name}
         subtitle={current.description}
@@ -145,7 +143,7 @@ function ModelsPanel({ providerID }: { providerID: string }) {
   if (accounts.loading && !accounts.data) return <Skeleton className="h-64" />;
   if (rows.length === 0) return <EmptyState title={copy.common.empty} description={copy.accounts.empty} />;
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       <Card className="p-0">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -320,11 +318,11 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
   };
 
   return (
-    <section className="space-y-3">
+    <section className="v2-section">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold tracking-tight text-gray-900">{copy.market.title}</h2>
-          <p className="max-w-3xl text-xs text-gray-500">{copy.market.hint}</p>
+          <h2 className="v2-section-title">{copy.market.title}</h2>
+          <p className="v2-hint max-w-3xl">{copy.market.hint}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -345,7 +343,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
         {bunAvailable ? copy.providers.hooksHint : copy.providers.hooksNeedsBun}
         {hooksOn ? "" : ` ${copy.providers.hooksOff}`}
       </p>
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <Notice tone="error">{error}</Notice> : null}
 
       {imported.length > 0 ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -353,7 +351,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
             const id = String(entry.id ?? "");
             const notes = (entry.notes as string[] | undefined) ?? [];
             return (
-              <Card key={id} className="space-y-2">
+              <Card key={id} className="flex h-full flex-col gap-2">
                 <div className="flex items-start justify-between gap-2">
                   <CardTitle>{String(entry.name ?? id)}</CardTitle>
                   <Badge tone="amber">{String(entry.source ?? "manifest")}</Badge>
@@ -455,7 +453,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
           </>
         }
       >
-        <div className="space-y-3">
+        <div className="v2-section">
           <p className="text-xs text-gray-500">{copy.market.advancedHint}</p>
           <label className="block text-sm font-medium text-gray-700">
             Source
@@ -476,7 +474,7 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
               placeholder={'{"name":"@magpie-community/opencode-cline-auth","version":"0.1.14","main":"./opencode.mjs"}'}
             />
           </label>
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {error ? <Notice tone="error">{error}</Notice> : null}
         </div>
       </Dialog>
     </section>

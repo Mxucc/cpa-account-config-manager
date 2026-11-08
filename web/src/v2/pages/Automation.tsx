@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PageHeader, Tabs } from "../../ui/kit";
 import { InspectionTab, NotificationsTab, PoliciesTab, ProxyTab, RetryTab } from "./automation/tabs";
 import { useAutomationCopy } from "./automation/copy";
+import { useCopy } from "../shared";
 
 // The automation page is a navigation shell over five rebuilt tabs. Each tab owns
 // its own data, its own loading and error states, and its own polling, so a slow
@@ -18,14 +19,17 @@ export function AutomationPage({
   onNotice: (message: string) => void;
 }) {
   const copy = useAutomationCopy();
+  // The page title belongs to the page; the tab catalog only names the tabs, so
+  // the subtitle no longer sticks on whichever tab happened to be hard-coded.
+  const pageCopy = useCopy();
   const [tab, setTab] = useState<AutomationTab>("inspection");
   // A 401 has to reach the shell so it can clear the session; every other failure
   // is the tab's own business and is shown inline.
   const onError = (message: string) => onAPIError(new Error(message));
 
   return (
-    <div className="space-y-4">
-      <PageHeader title={copy.inspection} subtitle={copy.policies} />
+    <div className="v2-page">
+      <PageHeader title={pageCopy.automation.title} subtitle={pageCopy.automation.subtitle} />
       <Tabs
         active={tab}
         onChange={setTab}

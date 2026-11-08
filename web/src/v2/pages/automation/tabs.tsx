@@ -18,6 +18,7 @@ import {
   usePolling,
 } from "../management/kit";
 import { hasFields } from "../management/kit";
+import { FieldGrid } from "../../../ui/kit";
 import type {
   AutoRetrySnapshot,
   DefaultPolicy,
@@ -57,6 +58,23 @@ const healthTone = (health: string) => {
       return "gray" as const;
   }
 };
+
+// probe_phase is a wire enum; the metric shows a word, and an unknown value is
+// printed as-is instead of being hidden.
+function phaseLabel(phase: string | undefined, copy: ReturnType<typeof useAutomationCopy>): string {
+  switch (phase) {
+    case "idle":
+      return copy.phase.idle;
+    case "running":
+      return copy.phase.running;
+    case "completed":
+      return copy.phase.completed;
+    case "failed":
+      return copy.phase.failed;
+    default:
+      return phase && phase !== "" ? phase : "-";
+  }
+}
 
 const HEALTH_VALUES = [
   "healthy",
@@ -252,7 +270,7 @@ export function InspectionTab({
 
   if (loading && !snapshot) {
     return (
-      <div className="space-y-3">
+      <div className="v2-section">
         <Skeleton className="h-24" />
         <Skeleton className="h-72" />
       </div>
@@ -262,7 +280,7 @@ export function InspectionTab({
   const summary = list?.summary;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} retry={() => void load()} /> : null}
 
       <Card className="space-y-3">
@@ -283,11 +301,11 @@ export function InspectionTab({
             </Button>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="v2-metrics">
           <Metric label={copy.results} value={snapshot?.total ?? 0} />
           <Metric label={copy.actions} value={snapshot?.action_count ?? 0} />
-          <Metric label={copy.scanNow} value={snapshot?.probe_phase ?? "-"} />
-          <Metric label="anomaly" value={snapshot?.anomaly_count ?? 0} />
+          <Metric label={copy.scanNow} value={phaseLabel(snapshot?.probe_phase, copy)} />
+          <Metric label={copy.anomaly} value={snapshot?.anomaly_count ?? 0} />
         </div>
       </Card>
 
@@ -302,11 +320,13 @@ export function InspectionTab({
               </Button>
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
             <Toggle label={copy.enabled} checked={policy.enabled} onChange={(value) => patchPolicy({ enabled: value })} />
             <Toggle label={copy.autoDisable} checked={policy.auto_disable} onChange={(value) => patchPolicy({ auto_disable: value })} />
             <Toggle label={copy.autoEnable} checked={policy.auto_enable} onChange={(value) => patchPolicy({ auto_enable: value })} />
             <Toggle label={copy.autoDelete} checked={policy.auto_delete} onChange={(value) => patchPolicy({ auto_delete: value })} />
+          </div>
+          <FieldGrid>
             <LabeledField label={copy.interval}>
               <Input
                 type="number"
@@ -342,7 +362,7 @@ export function InspectionTab({
                 onChange={(event) => patchPolicy({ delete_batch_size: Number(event.target.value) })}
               />
             </LabeledField>
-          </div>
+          </FieldGrid>
         </Card>
       ) : null}
 
@@ -358,12 +378,14 @@ export function InspectionTab({
                 </option>
               ))}
             </Select>
-            <Input
-              value={search}
-              onChange={(event) => { setPage(1); setSearch(event.target.value); }}
-              placeholder={copy.search}
-              aria-label={copy.search}
-            />
+            <div className="w-48">
+              <Input
+                value={search}
+                onChange={(event) => { setPage(1); setSearch(event.target.value); }}
+                placeholder={copy.search}
+                aria-label={copy.search}
+              />
+            </div>
             <Button size="sm" variant="secondary" onClick={() => exportResults("csv")}>
               {copy.export} csv
             </Button>
@@ -378,23 +400,23 @@ export function InspectionTab({
           </div>
         </div>
         {summary ? (
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-            <Metric label="actionable" value={summary.actionable} />
-            <Metric label="disable" value={summary.suggested_disable} />
-            <Metric label="delete" value={summary.suggested_delete} />
-            <Metric label="review" value={summary.review} />
-            <Metric label="keep" value={summary.keep} />
-            <Metric label="reauth" value={summary.reauth} />
+          <div className="v2-metrics">
+            <Metric label={copy.summaryLabels.actionable} value={summary.actionable} />
+            <Metric label={copy.summaryLabels.disable} value={summary.suggested_disable} />
+            <Metric label={copy.summaryLabels.delete} value={summary.suggested_delete} />
+            <Metric label={copy.summaryLabels.review} value={summary.review} />
+            <Metric label={copy.summaryLabels.keep} value={summary.keep} />
+            <Metric label={copy.summaryLabels.reauth} value={summary.reauth} />
           </div>
         ) : null}
         {!list || list.results.length === 0 ? (
           <EmptyState title={copy.none} description={copy.inspection} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="v2-table">
               <thead>
-                <tr className="whitespace-nowrap border-b border-gray-200 text-left text-xs font-medium text-gray-500">
-                  <th className="px-3 py-2">
+                <tr>
+                  <th>
                     <input
                       type="checkbox"
                       aria-label={copy.actions}
@@ -402,18 +424,18 @@ export function InspectionTab({
                       onChange={(event) => setSelected(event.target.checked ? list.results.map((row) => row.id) : [])}
                     />
                   </th>
-                  <th className="px-3 py-2">{copy.account}</th>
-                  <th className="px-3 py-2">{copy.provider}</th>
-                  <th className="px-3 py-2">{copy.health}</th>
-                  <th className="px-3 py-2">{copy.reason}</th>
-                  <th className="px-3 py-2">{copy.recommendation}</th>
-                  <th className="px-3 py-2 text-right">{copy.actions}</th>
+                  <th>{copy.account}</th>
+                  <th>{copy.provider}</th>
+                  <th>{copy.health}</th>
+                  <th>{copy.reason}</th>
+                  <th>{copy.recommendation}</th>
+                  <th className="text-right">{copy.actions}</th>
                 </tr>
               </thead>
               <tbody>
                 {list.results.map((row: InspectionResult) => (
-                  <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                    <td className="px-3 py-2">
+                  <tr key={row.id}>
+                    <td>
                       <input
                         type="checkbox"
                         aria-label={row.name ?? row.id}
@@ -425,14 +447,14 @@ export function InspectionTab({
                         }
                       />
                     </td>
-                    <td className="max-w-[16rem] truncate px-3 py-2 text-gray-900">{row.name ?? row.id}</td>
-                    <td className="px-3 py-2 text-gray-600">{row.provider ?? "-"}</td>
-                    <td className="px-3 py-2">
+                    <td className="max-w-[16rem] truncate text-gray-900">{row.name ?? row.id}</td>
+                    <td className="text-gray-600">{row.provider ?? "-"}</td>
+                    <td>
                       <Badge tone={healthTone(row.health)}>{row.health}</Badge>
                     </td>
-                    <td className="px-3 py-2 text-gray-600">{row.reason_code || "-"}</td>
-                    <td className="px-3 py-2 text-gray-600">{row.recommendation}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                    <td className="text-gray-600">{row.reason_code || "-"}</td>
+                    <td className="text-gray-600">{row.recommendation}</td>
+                    <td className="whitespace-nowrap text-right">
                       <div className="flex justify-end gap-1">
                         <Button size="sm" variant="ghost" onClick={() => review(row.id, "resolve")} disabled={busy}>
                           {copy.resolve}
@@ -597,7 +619,7 @@ export function PoliciesTab({ onError, onNotice }: { onError: (message: string) 
 
   if (!def || !global) {
     return (
-      <div className="space-y-3">
+      <div className="v2-section">
         <Skeleton className="h-56" />
         <Skeleton className="h-56" />
       </div>
@@ -614,13 +636,13 @@ export function PoliciesTab({ onError, onNotice }: { onError: (message: string) 
   };
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>{copy.defaults}</CardTitle>
-            <p className="text-xs text-gray-500">{copy.defaultsHint}</p>
+            <p className="v2-hint">{copy.defaultsHint}</p>
           </div>
           <div className="flex items-center gap-2">
             {defDirty ? <Badge tone="amber">{copy.dirty}</Badge> : null}
@@ -685,7 +707,7 @@ export function PoliciesTab({ onError, onNotice }: { onError: (message: string) 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>{copy.globalPolicy}</CardTitle>
-            <p className="text-xs text-gray-500">{copy.globalPolicyHint}</p>
+            <p className="v2-hint">{copy.globalPolicyHint}</p>
           </div>
           <div className="flex items-center gap-2">
             {globalDirty ? <Badge tone="amber">{copy.dirty}</Badge> : null}
@@ -829,7 +851,7 @@ export function NotificationsTab({ onError, onNotice }: { onError: (message: str
   if (!policy) return <Skeleton className="h-56" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -924,7 +946,7 @@ export function NotificationsTab({ onError, onNotice }: { onError: (message: str
         }
       >
         {draft ? (
-          <div className="space-y-3">
+          <div className="v2-section">
             <LabeledField label={copy.endpointName}>
               <Input value={draft.name ?? ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </LabeledField>
@@ -992,11 +1014,11 @@ export function RetryTab({ onError, onNotice }: { onError: (message: string) => 
   if (!snapshot) return <Skeleton className="h-40" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <CardTitle>{copy.retry}</CardTitle>
-        <p className="text-xs text-gray-500">{copy.retryHint}</p>
+        <p className="v2-hint">{copy.retryHint}</p>
         <div className="grid gap-3 sm:grid-cols-3">
           <LabeledField label={`${copy.retryAttempts} (max ${snapshot.max_attempts ?? "-"})`}>
             <Input
@@ -1088,7 +1110,7 @@ export function ProxyTab({ onError, onNotice }: { onError: (message: string) => 
   if (!profiles) return <Skeleton className="h-40" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1101,26 +1123,26 @@ export function ProxyTab({ onError, onNotice }: { onError: (message: string) => 
           <EmptyState title={copy.none} description={copy.proxy} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="v2-table">
               <thead>
-                <tr className="whitespace-nowrap border-b border-gray-200 text-left text-xs font-medium text-gray-500">
-                  <th className="px-3 py-2">{copy.profileName}</th>
-                  <th className="px-3 py-2">URL</th>
-                  <th className="px-3 py-2">{copy.accounts}</th>
-                  <th className="px-3 py-2">{copy.enabledProfiles}</th>
-                  <th className="px-3 py-2 text-right">{copy.actions}</th>
+                <tr>
+                  <th>{copy.profileName}</th>
+                  <th>URL</th>
+                  <th>{copy.accounts}</th>
+                  <th>{copy.enabledProfiles}</th>
+                  <th className="text-right">{copy.actions}</th>
                 </tr>
               </thead>
               <tbody>
                 {profiles.map((profile) => (
-                  <tr key={profile.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                    <td className="px-3 py-2 text-gray-900">{profile.name}</td>
-                    <td className="max-w-[18rem] truncate px-3 py-2 text-gray-600">{profile.proxy_url_masked}</td>
-                    <td className="px-3 py-2 text-gray-600">{profile.account_count}</td>
-                    <td className="px-3 py-2">
+                  <tr key={profile.id}>
+                    <td className="text-gray-900">{profile.name}</td>
+                    <td className="max-w-[18rem] truncate text-gray-600">{profile.proxy_url_masked}</td>
+                    <td className="text-gray-600">{profile.account_count}</td>
+                    <td>
                       <Badge tone={profile.enabled ? "green" : "gray"}>{profile.enabled ? "on" : "off"}</Badge>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                    <td className="whitespace-nowrap text-right">
                       <div className="flex justify-end gap-1">
                         <Button
                           size="sm"
@@ -1166,7 +1188,7 @@ export function ProxyTab({ onError, onNotice }: { onError: (message: string) => 
         }
       >
         {draft ? (
-          <div className="space-y-3">
+          <div className="v2-section">
             <LabeledField label={copy.profileName}>
               <Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </LabeledField>

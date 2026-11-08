@@ -11,9 +11,13 @@ import {
   ErrorState,
   Input,
   KeyValue,
+  Notice,
   PageHeader,
   Select,
   Skeleton,
+  Table,
+  Td,
+  Th,
   Toolbar,
 } from "../../ui/kit";
 import { AccountQuota, StatusBadge, accountWindows, billingLabel, cycleLabel, formatMoney, useAsync, useCopy } from "../shared";
@@ -170,7 +174,7 @@ export function AccountsPage({
 
   if (accounts.loading && !accounts.data) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.accounts.title} subtitle={copy.accounts.subtitle} />
         <Skeleton className="h-12" />
         <Skeleton className="h-96" />
@@ -182,18 +186,20 @@ export function AccountsPage({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       <PageHeader title={copy.accounts.title} subtitle={copy.accounts.subtitle} />
-      <Card className="p-4">
+      <Card className="space-y-3 p-4">
+        {/* Filters and the actions they scope live in one card, separated by a
+            hairline: the page has one control area, not two stacked ones. */}
         <Toolbar>
           <div className="relative">
-            <Search size={16} className="pointer-events-none absolute left-3 top-3 text-gray-400" aria-hidden="true" />
+            <Search size={15} className="pointer-events-none absolute left-2.5 top-2.5 text-gray-400" aria-hidden="true" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={copy.common.search}
               aria-label={copy.common.search}
-              className="w-56 pl-9"
+              className="w-52 pl-8"
             />
           </div>
           <Select value={provider} onChange={(event) => setProvider(event.target.value)} aria-label={copy.accounts.filterProvider}>
@@ -212,17 +218,21 @@ export function AccountsPage({
               </option>
             ))}
           </Select>
-          <Button variant="secondary" size="sm" onClick={accounts.reload} loading={accounts.loading}>
-            <RefreshCw size={14} /> {copy.common.refresh}
-          </Button>
-          <span className="text-xs text-gray-500">{filtered.length} / {accounts.data?.total ?? 0}</span>
+          <span className="ml-auto text-xs text-gray-500">
+            {filtered.length} / {accounts.data?.total ?? 0}
+          </span>
         </Toolbar>
-        {/* Management lives in one row so every action is reachable without
-            scrolling a wide table sideways. */}
+
+        <div className="border-t border-gray-100" />
+
         <Toolbar>
           <Button size="sm" onClick={() => openDialog("addAccount")}>
             {managementCopy.addAccount}
           </Button>
+          <Button variant="secondary" size="sm" onClick={() => accounts.reload()} loading={accounts.loading}>
+            <RefreshCw size={13} /> {copy.common.refresh}
+          </Button>
+          <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
           <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={managedIDs.length === 0}>
             {managementCopy.batchEdit} ({managedIDs.length})
           </Button>
@@ -232,66 +242,60 @@ export function AccountsPage({
           <Button variant="secondary" size="sm" onClick={() => openDialog("dedupe")}>
             {managementCopy.dedupe}
           </Button>
+          <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
           <Button variant="secondary" size="sm" onClick={() => openDialog("import")}>
             {managementCopy.importAccounts}
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => openDialog("export")}
-            disabled={filtered.length === 0}
-          >
+          <Button variant="secondary" size="sm" onClick={() => openDialog("export")} disabled={filtered.length === 0}>
             {managementCopy.exportAccounts}
           </Button>
         </Toolbar>
-        {actionError ? <p className="mt-3 text-sm text-red-600">{actionError}</p> : null}
+        {actionError ? <Notice tone="error">{actionError}</Notice> : null}
       </Card>
 
       {filtered.length === 0 ? (
         <EmptyState title={copy.accounts.empty} description={copy.accounts.subtitle} />
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full border-collapse text-sm">
+        <Card flush>
+          <Table>
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
-                <th className="px-4 py-3">{copy.accounts.provider}</th>
-                <th className="px-4 py-3">{copy.accounts.status}</th>
-                <th className="px-4 py-3">{copy.accounts.plan}</th>
-                <th className="px-4 py-3">{copy.accounts.quota}</th>
-                <th className="px-4 py-3">{copy.accounts.billing}</th>
-                <th className="px-4 py-3">{copy.accounts.models}</th>
-                <th className="px-4 py-3 text-right">{copy.accounts.actions}</th>
+              <tr>
+                <Th>{copy.accounts.provider}</Th>
+                <Th>{copy.accounts.status}</Th>
+                <Th>{copy.accounts.plan}</Th>
+                <Th>{copy.accounts.quota}</Th>
+                <Th>{copy.accounts.billing}</Th>
+                <Th>{copy.accounts.models}</Th>
+                <Th align="right">{copy.accounts.actions}</Th>
               </tr>
             </thead>
             <tbody>
               {managed.map((account) => (
-                <tr
-                  key={account.id}
-                  className="border-b border-gray-100 last:border-0 transition-colors duration-150 ease-out hover:bg-gray-50"
-                >
-                  <td className="max-w-[16rem] px-4 py-3">
+                <tr key={account.id}>
+                  <Td className="max-w-[16rem]">
                     <button
                       type="button"
                       onClick={() => onSelect(account.id)}
-                      className="rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 active:scale-[0.99]"
+                      title={account.display_name}
+                      className="block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                     >
-                      <span className="block truncate font-medium text-gray-900">{account.display_name}</span>
-                      <span className="block text-xs text-gray-500">{account.provider.display_name}</span>
+                      <span className="v2-truncate font-medium text-gray-900">{account.display_name}</span>
+                      <span className="mt-0.5 block text-xs text-gray-500">{account.provider.display_name}</span>
                     </button>
-                  </td>
-                  <td className="px-4 py-3">
+                  </Td>
+                  <Td>
                     <StatusBadge status={account.status} note={account.status_note} />
-                  </td>
-                  <td className="px-4 py-3">
+                  </Td>
+                  <Td>
                     <span className="text-gray-900">{account.plan.name || copy.common.unknown}</span>
-                    <span className="block text-xs text-gray-500">
+                    <span className="mt-0.5 block text-xs text-gray-500">
                       {account.plan.cycle.kind === "none" ? "—" : cycleLabel(account.plan.cycle.kind, copy)}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
+                  </Td>
+                  <Td className="min-w-[13rem]">
                     <AccountQuota account={account} compact />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
+                  </Td>
+                  <Td>
                     <Badge tone={account.billing.mode === "unknown" ? "gray" : "blue"}>{billingLabel(account.billing.mode, copy)}</Badge>
                     {/* A mode with no remaining amount renders the badge alone rather than a stray dash. */}
                     {account.billing.remaining == null ? null : (
@@ -299,38 +303,36 @@ export function AccountsPage({
                         {formatMoney(account.billing.remaining, account.billing.currency)}
                       </span>
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-900">{account.models.count}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => onSelect(account.id)}>
-                        {copy.common.details}
+                  </Td>
+                  <Td>{account.models.count}</Td>
+                  <Td className="v2-cell-actions">
+                    <Button variant="ghost" size="sm" onClick={() => onSelect(account.id)}>
+                      {copy.common.details}
+                    </Button>
+                    {account.cpaID ? (
+                      <Button variant="secondary" size="sm" onClick={() => openDialog("edit", account)}>
+                        {managementCopy.edit}
                       </Button>
-                      {account.cpaID ? (
-                        <Button variant="secondary" size="sm" onClick={() => openDialog("edit", account)}>
-                          {managementCopy.edit}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        loading={busy === `${account.id}:refresh`}
-                        onClick={() => refresh(account)}
-                        disabled={account.provider.id === "codex" && !account.credential.refreshable}
-                      >
-                        {copy.accounts.refresh}
+                    ) : null}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={busy === `${account.id}:refresh`}
+                      onClick={() => refresh(account)}
+                      disabled={account.provider.id === "codex" && !account.credential.refreshable}
+                    >
+                      {copy.accounts.refresh}
+                    </Button>
+                    {account.cpaID ? (
+                      <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => openDialog("delete", account)}>
+                        {managementCopy.delete}
                       </Button>
-                      {account.cpaID ? (
-                        <Button variant="ghost" size="sm" onClick={() => openDialog("delete", account)}>
-                          {managementCopy.delete}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </td>
+                    ) : null}
+                  </Td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </Card>
       )}
 
@@ -471,7 +473,7 @@ export function AccountDrawer({
     <Drawer open={open} title={account.display_name} onClose={onClose}>
       <div className="space-y-6">
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.status}</h3>
+          <h3 className="v2-section-title mb-2">{copy.accounts.status}</h3>
           <KeyValue label={copy.accounts.provider}>{account.provider.display_name ?? account.provider.id}</KeyValue>
           <KeyValue label={copy.accounts.status}>
             <StatusBadge status={account.status} />
@@ -488,7 +490,7 @@ export function AccountDrawer({
         </section>
 
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.quota}</h3>
+          <h3 className="v2-section-title mb-2">{copy.accounts.quota}</h3>
           <AccountQuota account={account} />
           {account.metrics?.length ? (
             <div className="mt-3 space-y-1">
@@ -502,7 +504,7 @@ export function AccountDrawer({
         </section>
 
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.billing}</h3>
+          <h3 className="v2-section-title mb-2">{copy.accounts.billing}</h3>
           <KeyValue label={copy.usage.mode}>{billingLabel(account.billing.mode, copy)}</KeyValue>
           <KeyValue label={copy.billing_allowance}>{formatMoney(account.billing.allowance, account.billing.currency)}</KeyValue>
           <KeyValue label={copy.billing_used}>{formatMoney(account.billing.used, account.billing.currency)}</KeyValue>
@@ -512,14 +514,14 @@ export function AccountDrawer({
         </section>
 
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.models}</h3>
+          <h3 className="v2-section-title mb-2">{copy.accounts.models}</h3>
           <KeyValue label={copy.accounts.models}>{account.models.count}</KeyValue>
           {account.models.error ? <p className="text-xs text-red-600">{account.models.error}</p> : null}
         </section>
 
         {account.binding ? (
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.routing.title}</h3>
+            <h3 className="v2-section-title mb-2">{copy.routing.title}</h3>
             <KeyValue label={copy.routing.channel}>{account.binding.kind ?? "-"}</KeyValue>
             <KeyValue label={copy.routing.published}>
               {account.binding.published ? copy.routing.published : copy.routing.unpublished}
@@ -531,14 +533,14 @@ export function AccountDrawer({
         ) : null}
 
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900">{copy.accounts.provider}</h3>
+          <h3 className="v2-section-title mb-2">{copy.accounts.provider}</h3>
           <KeyValue label={copy.common.source}>{account.source.kind}</KeyValue>
           <KeyValue label={copy.common.details}>{account.source.ref ?? "-"}</KeyValue>
         </section>
 
         {onAction ? (
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-gray-900">{managementCopy.title}</h3>
+            <h3 className="v2-section-title mb-2">{managementCopy.title}</h3>
             {cpaID ? (
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" size="sm" onClick={() => onAction("edit")}>

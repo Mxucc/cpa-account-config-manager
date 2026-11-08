@@ -17,6 +17,10 @@
 - Refresh tokens through CPA's native endpoint, or use the compatible full refresh flow when an account has a valid Refresh Token but the current CPA does not expose a refresh endpoint.
 - Display creation and disable times, Priority, WebSockets, notes, routing prefixes, headers, proxies, model policy, concurrency, and quota policy.
 
+### One Style Source
+
+The new interface has exactly one style source: `web/src/styles/v2.css` defines the spacing, type, border, radius and colour tokens plus component classes such as `.v2-card`, `.v2-table`, `.v2-field`, `.v2-metric` and `.v2-tabs`; `web/src/ui/kit.tsx` only names them as `Card`, `Section`, `Field`, `Metric`, `Table` and `Notice`, so no page re-invents a card, a form or a table. Tailwind preflight stays off because the legacy workspaces need their own form-control styling, so the new shell carries a **scoped reset** that drops the browser's default margins and list markers for `p`/`h*`/`ul`/`li` inside `.v2-shell` and outside `.legacy-console` — those 16px defaults were what made every card's inner rhythm differ. `web/src/ui/styleContract.test.ts` rejects a page that goes back to composing a card out of inline utilities.
+
 ### Import, Export, And Format Conversion
 
 Imports accept pasted JSON and mixed JSON, JSON Lines, TXT, or ZIP uploads. A job can process up to 10,000 accounts and provides a preview, duplicate checks, background progress, and cancellation. ZIP input is guarded against path traversal and abnormal expansion, and existing Auth files are not overwritten.

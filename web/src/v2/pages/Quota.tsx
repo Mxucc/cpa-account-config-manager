@@ -12,7 +12,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
   const accounts = useAsync(() => providerApi.accounts(providerFilter), [providerFilter]);
   if (accounts.loading && !accounts.data) {
     return (
-      <div className="space-y-4">
+      <div className="v2-page">
         <PageHeader title={copy.quota.title} subtitle={copy.quota.subtitle} />
         <Skeleton className="h-80" />
       </div>
@@ -27,7 +27,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
     .map((account) => ({ account, windows: accountWindows(account) }))
     .filter((row) => row.windows.length > 0);
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       <PageHeader title={copy.quota.title} subtitle={copy.quota.subtitle} />
       {rows.length === 0 ? (
         <EmptyState title={copy.common.empty} description={copy.common.notReported} />
@@ -61,7 +61,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
                     </span>
                   </td>
                   <td className="min-w-[18rem] px-4 py-4">
-                    <div className="space-y-4">
+                    <div className="v2-page">
                       {windows.map((window) => (
                         <div key={window.id}>
                           <QuotaBar window={window} />

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, Input, Progress, Select, Skeleton } from "../../../ui/kit";
+import { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, Field, Input, Progress, Select, Skeleton } from "../../../ui/kit";
 import type { ReactNode } from "react";
 import type { Tone } from "../../../ui/kit";
 
@@ -7,23 +7,13 @@ import type { Tone } from "../../../ui/kit";
 // deliberately small: the design system already owns colour and spacing, so a tab
 // only composes these and never restates a class.
 
-export function Metric({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className="mt-0.5 font-semibold text-gray-900">{value}</p>
-    </div>
-  );
-}
+// The metric tile is the shared one: same border, padding and type scale on
+// every tab, so a number never sits in a box that looks like another page's.
+export { Metric } from "../../../ui/kit";
 
+// One labelled field shape for every form on the automation and settings pages.
 export function LabeledField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label className="block text-sm font-medium text-gray-700">
-      {label}
-      <div className="mt-1">{children}</div>
-      {hint ? <span className="mt-1 block text-xs text-gray-400">{hint}</span> : null}
-    </label>
-  );
+  return <Field label={label} hint={hint}>{children}</Field>;
 }
 
 export function Toggle({
@@ -44,7 +34,7 @@ export function Toggle({
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
       />
       {label}
     </label>
@@ -80,5 +70,5 @@ export function hasFields(value: unknown, fields: string[]): boolean {
   return fields.every((field) => record[field] !== undefined && record[field] !== null);
 }
 
-export { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, Input, Progress, Select, Skeleton };
+export { Badge, Button, Card, CardTitle, Dialog, EmptyState, ErrorState, Field, Input, Metric as MetricTile, Notice, Progress, Select, Skeleton } from "../../../ui/kit";
 export type { Tone };

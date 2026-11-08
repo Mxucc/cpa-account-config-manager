@@ -68,11 +68,13 @@ function useJobPolling<T extends { running: boolean }>(
   }, [active, intervalMs]);
 }
 
+// The dialogs use the shared metric tile; `tone` only tints the value, so a
+// destructive count can read as such without inventing a second box.
 function Metric({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className={`mt-0.5 font-semibold text-gray-900 ${tone ?? ""}`}>{value}</p>
+    <div className="v2-metric">
+      <p className="v2-metric-label">{label}</p>
+      <p className={`v2-metric-value ${tone ?? ""}`}>{value}</p>
     </div>
   );
 }
@@ -80,7 +82,7 @@ function Metric({ label, value, tone }: { label: string; value: number | string;
 function PreviewSummary({ preview, copy }: { preview: BatchPreview; copy: ManagementCopy }) {
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="v2-metrics">
         <Metric label={copy.targets} value={preview.total} />
         <Metric label={copy.eligible} value={preview.eligible} />
         <Metric label={copy.readOnly} value={preview.read_only} />
@@ -127,7 +129,7 @@ function JobProgress({ job, copy }: { job: JobSnapshot | null; copy: ManagementC
         </span>
       </div>
       <Progress value={Math.round((job.done / total) * 100)} tone={job.failed > 0 ? "amber" : "blue"} />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="v2-metrics">
         <Metric label={copy.eligible} value={job.eligible} />
         <Metric label="ok" value={job.succeeded} />
         <Metric label="failed" value={job.failed} />
@@ -151,7 +153,7 @@ function LabeledInput({
   ...rest
 }: { label: string; hint?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
-    <label className="block text-sm font-medium text-gray-700">
+    <label className="v2-label">
       {label}
       <Input className="mt-1 w-full" {...rest} />
       {hint ? <span className="mt-1 block text-xs text-gray-400">{hint}</span> : null}
@@ -323,7 +325,7 @@ export function EditAccountsDialog({
       }
     >
       <div className="space-y-4">
-        <p className="text-xs text-gray-500">{copy.editHint}</p>
+        <p className="v2-hint">{copy.editHint}</p>
         {loaded ? (
           <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
             <KeyValue label={copy.disabled}>{loaded.disabled ? "true" : "false"}</KeyValue>
@@ -379,7 +381,7 @@ export function EditAccountsDialog({
             placeholder={copy.leaveEmpty}
             onChange={(event) => setForm({ ...form, windowSeconds: event.target.value })}
           />
-          <label className="block text-sm font-medium text-gray-700">
+          <label className="v2-label">
             {copy.disabled}
             <Select
               className="mt-1 w-full"
@@ -391,7 +393,7 @@ export function EditAccountsDialog({
               <option value="disabled">true</option>
             </Select>
           </label>
-          <label className="block text-sm font-medium text-gray-700">
+          <label className="v2-label">
             {copy.websockets}
             <Select
               className="mt-1 w-full"
@@ -459,12 +461,12 @@ export function ModelsDialog({
       }
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-500">{copy.modelsHint}</p>
+        <p className="v2-hint">{copy.modelsHint}</p>
         {loading ? <Skeleton className="h-40" /> : null}
         {error ? <ErrorState message={error} /> : null}
         {catalog ? (
           <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="v2-metrics">
               <Metric label={copy.targets} value={catalog.total} />
               <Metric label={copy.eligible} value={catalog.eligible} />
               <Metric label={copy.readOnly} value={catalog.read_only} />
@@ -479,20 +481,20 @@ export function ModelsDialog({
               <p className="text-sm text-gray-500">{copy.none}</p>
             ) : (
               <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-200">
-                <table className="w-full text-sm">
+                <table className="v2-table">
                   <thead>
-                    <tr className="whitespace-nowrap border-b border-gray-200 text-left text-xs text-gray-500">
-                      <th className="px-3 py-2">{copy.model}</th>
-                      <th className="px-3 py-2">type</th>
-                      <th className="px-3 py-2">owned_by</th>
+                    <tr>
+                      <th>{copy.model}</th>
+                      <th>type</th>
+                      <th>owned_by</th>
                     </tr>
                   </thead>
                   <tbody>
                     {catalog.models.map((model) => (
                       <tr key={model.id} className="border-b border-gray-100 last:border-0">
-                        <td className="break-all px-3 py-2 text-gray-900">{model.id}</td>
-                        <td className="px-3 py-2 text-gray-600">{model.type ?? "-"}</td>
-                        <td className="px-3 py-2 text-gray-600">{model.owned_by ?? "-"}</td>
+                        <td className="break-all text-gray-900">{model.id}</td>
+                        <td className="text-gray-600">{model.type ?? "-"}</td>
+                        <td className="text-gray-600">{model.owned_by ?? "-"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -550,12 +552,12 @@ export function TestModelDialog({
       }
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-500">{copy.testHint}</p>
+        <p className="v2-hint">{copy.testHint}</p>
         <LabeledInput label={copy.model} value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-5.6-sol" />
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {result ? (
           <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="v2-metrics">
               <Metric label={copy.status} value={result.status} />
               <Metric label={copy.latency} value={`${result.latency_ms} ms`} />
               <Metric label="HTTP" value={result.status_code ?? "-"} />
@@ -647,7 +649,7 @@ export function DeleteAccountDialog({
       }
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-500">{copy.deleteHint}</p>
+        <p className="v2-hint">{copy.deleteHint}</p>
         {preview ? (
           <>
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
@@ -751,7 +753,7 @@ export function BatchDeleteDialog({
       }
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-500">{copy.deleteHint}</p>
+        <p className="v2-hint">{copy.deleteHint}</p>
         {preview ? (
           <>
             <PreviewSummary preview={preview} copy={copy} />
@@ -856,7 +858,7 @@ export function DedupeDialog({
           </div>
           {preview ? (
             <>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="v2-metrics">
                 <Metric label={copy.duplicateGroups} value={preview.duplicate_groups} />
                 <Metric label={copy.proposedDeletions} value={preview.proposed_deletions} />
                 <Metric label={copy.readOnly} value={preview.read_only_skipped} />
@@ -871,7 +873,7 @@ export function DedupeDialog({
                       <div className="flex flex-wrap items-center gap-2 text-sm">
                         <span className="font-medium text-gray-900">{group.identity_label}</span>
                         <Badge tone="gray">{group.provider}</Badge>
-                        <span className="text-xs text-gray-500">{group.matched_by}</span>
+                        <span className="v2-hint">{group.matched_by}</span>
                       </div>
                       <ul className="mt-2 space-y-1">
                         {group.members.map((member) => (
@@ -984,7 +986,7 @@ export function ImportAccountsDialog({ open, onClose, onError, onDone }: DialogP
       }
     >
       <div className="space-y-3">
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="v2-label">
           {copy.pickFile}
           <input
             type="file"
@@ -994,12 +996,12 @@ export function ImportAccountsDialog({ open, onClose, onError, onDone }: DialogP
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           />
         </label>
-        <p className="text-xs text-gray-500">
+        <p className="v2-hint">
           {copy.pickedFiles}: {files.length}
         </p>
         {preview ? (
           <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="v2-metrics">
               <Metric label={copy.targets} value={preview.total} />
               <Metric label="skipped" value={preview.skipped} />
               <Metric label="files" value={preview.source_files} />
@@ -1020,7 +1022,7 @@ export function ImportAccountsDialog({ open, onClose, onError, onDone }: DialogP
           </>
         ) : null}
         {result ? (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="v2-metrics">
             <Metric label={copy.status} value={result.state} />
             <Metric label="imported" value={result.imported} />
             <Metric label="skipped" value={result.skipped} />
@@ -1078,7 +1080,7 @@ export function ExportAccountsDialog({
       }
     >
       <div className="space-y-3">
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="v2-label">
           {copy.format}
           <Select className="mt-1 w-full" value={format} onChange={(event) => setFormat(event.target.value as AccountExportFormat)}>
             {(["cpa", "sub2api", "cockpit", "9router", "codex", "axonhub", "codexmanager", "json", "jsonl", "csv"] as AccountExportFormat[]).map((value) => (
@@ -1088,14 +1090,14 @@ export function ExportAccountsDialog({
             ))}
           </Select>
         </label>
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="v2-label">
           {copy.scope}
           <Select className="mt-1 w-full" value={mode} onChange={(event) => setMode(event.target.value as "selected" | "filtered")}>
             <option value="filtered">{copy.scopeFiltered}</option>
             <option value="selected">{copy.scopeSelected}</option>
           </Select>
         </label>
-        <p className="text-xs text-gray-500">
+        <p className="v2-hint">
           {copy.targets}: {mode === "selected" ? (scope.ids?.length ?? 0) : "-"}
         </p>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -1227,9 +1229,9 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 						<ul className="grid gap-2 sm:grid-cols-2">
 							{providers.map((provider) => (
 								<li key={provider.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2">
-									<div className="min-w-0">
+									<div className="min-w-0 flex-1">
 										<p className="truncate text-sm font-medium text-gray-900">{provider.name}</p>
-										<p className="text-xs text-gray-500">{flowLabel(provider.flow)}</p>
+										<p className="v2-hint">{flowLabel(provider.flow)}</p>
 									</div>
 									<Button size="sm" loading={busy === provider.id} onClick={() => void start(provider)}>
 										{copy.addAccount}
@@ -1252,15 +1254,15 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 								{copy.userCode}: <span className="font-mono">{flow.user_code}</span>
 							</p>
 						) : null}
-						<p className="text-xs text-gray-500">
+						<p className="v2-hint">
 							{status?.done ? copy.loginDone : status && (status.status === "error" || status.status === "expired") ? `${copy.loginFailed}: ${status.message ?? status.status}` : copy.loginWaiting}
 						</p>
 					</div>
 				) : null}
 				{community.length > 0 ? (
-					<div className="space-y-1 rounded-lg border border-dashed border-gray-300 p-3">
+					<div className="v2-notice flex-col items-start gap-1">
 						<p className="text-xs font-medium text-gray-500">{copy.communityTitle}</p>
-						<p className="text-xs text-gray-500">{copy.communityNote}</p>
+						<p className="v2-hint">{copy.communityNote}</p>
 						<p className="text-xs text-gray-700">{community.map((entry) => entry.name).join(" · ")}</p>
 					</div>
 				) : null}

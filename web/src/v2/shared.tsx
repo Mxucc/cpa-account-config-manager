@@ -105,7 +105,11 @@ export function StatusBadge({ status, note }: { status: ProviderStatus | string;
   return (
     <span className="inline-flex items-center gap-2">
       <Badge tone={statusTone(status)}>{label}</Badge>
-      {note ? <span className="text-xs text-gray-500">{statusNoteLabel(note, copy)}</span> : null}
+      {note ? (
+        <span className="line-clamp-2 max-w-[13rem] text-xs leading-4 text-gray-500" title={statusNoteLabel(note, copy)}>
+          {statusNoteLabel(note, copy)}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -166,11 +170,13 @@ export function QuotaBar({ window }: { window: QuotaWindow }) {
       </div>
       {/* An unreported share draws no meter at all: an empty bar would read as 0%. */}
       {used === null ? null : <Progress value={used} tone={quotaTone(window)} />}
-      <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
-        <span>
+      <div className="flex items-center justify-between gap-2 text-[11px] leading-4 text-gray-500">
+        <span className="truncate">
           {typeof window.limit === "number" ? `${copy.quota.limit} ${formatAmount(window.limit, window.unit)}` : ""}
         </span>
-        <span>{window.reset_at ? `${copy.quota.reset} ${formatDateTime(window.reset_at)}` : ""}</span>
+        <span className="shrink-0 whitespace-nowrap">
+          {window.reset_at ? `${copy.quota.reset} ${formatDateTime(window.reset_at)}` : ""}
+        </span>
       </div>
       {window.note ? <p className="text-xs text-gray-400">{noteLabel(window.note, copy)}</p> : null}
     </div>
@@ -192,7 +198,7 @@ export function AccountQuota({ account, compact = false }: { account: ProviderAc
   }
   const windows = compact ? all.slice(0, 2) : all;
   return (
-    <div className={compact ? "w-44 space-y-2" : "space-y-4"}>
+    <div className={compact ? "w-48 space-y-1.5" : "space-y-3"}>
       {windows.map((window) => (
         <QuotaBar key={window.id} window={window} />
       ))}

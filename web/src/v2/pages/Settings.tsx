@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PageHeader, Tabs } from "../../ui/kit";
 import { ExperimentsTab, GeneralTab, OperationsTab, PluginsTab, RiskTab, UpdatesTab } from "./settings/tabs";
 import { useSettingsCopy } from "./settings/copy";
+import { useCopy } from "../shared";
 
 // The settings page is a navigation shell over six rebuilt tabs. Destructive
 // actions inside the tabs always confirm first, and a failed call is shown inline
@@ -16,12 +17,14 @@ export function SettingsPage({
   onNotice: (message: string) => void;
 }) {
   const copy = useSettingsCopy();
+  // The page title belongs to the page, not to whichever tab was hard-coded.
+  const pageCopy = useCopy();
   const [tab, setTab] = useState<SettingsTab>("general");
   const onError = (message: string) => onAPIError(new Error(message));
 
   return (
-    <div className="space-y-4">
-      <PageHeader title={copy.general} subtitle={copy.plugins} />
+    <div className="v2-page">
+      <PageHeader title={pageCopy.settings.title} subtitle={pageCopy.settings.subtitle} />
       <Tabs
         active={tab}
         onChange={setTab}

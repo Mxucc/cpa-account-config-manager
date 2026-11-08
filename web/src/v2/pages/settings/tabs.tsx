@@ -17,6 +17,7 @@ import {
   Skeleton,
   Toggle,
 } from "../management/kit";
+import { FieldGrid } from "../../../ui/kit";
 import { hasFields } from "../management/kit";
 import type {
   ExperimentalSettingsSnapshot,
@@ -100,7 +101,7 @@ export function GeneralTab({ onError, onNotice }: { onError: (message: string) =
 
   if (!def || !global || !names) {
     return (
-      <div className="space-y-3">
+      <div className="v2-section">
         <Skeleton className="h-56" />
         <Skeleton className="h-40" />
       </div>
@@ -117,7 +118,7 @@ export function GeneralTab({ onError, onNotice }: { onError: (message: string) =
   };
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -129,8 +130,15 @@ export function GeneralTab({ onError, onNotice }: { onError: (message: string) =
             </Button>
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
           <Toggle label={copy.enabled} checked={def.policy.enabled} onChange={(value) => patchDefault({ enabled: value })} />
+          <Toggle
+            label={copy.websockets}
+            checked={global.policy.websockets === true}
+            onChange={(value) => patchGlobal({ websockets: value })}
+          />
+        </div>
+        <FieldGrid>
           <LabeledField label={copy.scanInterval}>
             <Input
               type="number"
@@ -165,18 +173,13 @@ export function GeneralTab({ onError, onNotice }: { onError: (message: string) =
           <LabeledField label={copy.proxyURL} hint={copy.pluginFileHint}>
             <Input value={global.policy.proxy_url ?? ""} onChange={(event) => patchGlobal({ proxy_url: event.target.value })} />
           </LabeledField>
-          <Toggle
-            label={copy.websockets}
-            checked={global.policy.websockets === true}
-            onChange={(value) => patchGlobal({ websockets: value })}
-          />
-        </div>
+        </FieldGrid>
       </Card>
 
       <Card className="space-y-3">
         <CardTitle>{copy.providerNames}</CardTitle>
         {names.names.length === 0 ? (
-          <EmptyState title={copy.none} description={copy.providerNames} />
+          <EmptyState title={copy.none} />
         ) : (
           <ul className="divide-y divide-gray-100">
             {names.names.map((entry) => (
@@ -195,7 +198,7 @@ export function GeneralTab({ onError, onNotice }: { onError: (message: string) =
                       void renameChannel(entry.kind, entry.index, entry.base_url, event.target.value.trim());
                     }
                   }}
-                  className="w-56"
+                  className="w-full"
                 />
               </li>
             ))}
@@ -281,7 +284,7 @@ export function OperationsTab({ onError, onNotice }: { onError: (message: string
   if (!list) return <Skeleton className="h-72" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} retry={() => void load()} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -342,8 +345,8 @@ export function OperationsTab({ onError, onNotice }: { onError: (message: string
           </LabeledField>
           <Toggle label={copy.retention} checked={list.extended_history} onChange={(value) => void setRetention(value)} />
         </div>
-        <p className="text-xs text-gray-500">{copy.retentionHint}</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <p className="v2-hint">{copy.retentionHint}</p>
+        <div className="v2-metrics">
           <Metric label={copy.targets} value={list.total} />
           <Metric label="retained" value={list.retained} />
           <Metric label="segments" value={list.archived_segments} />
@@ -351,25 +354,25 @@ export function OperationsTab({ onError, onNotice }: { onError: (message: string
         </div>
         {list.storage_error ? <p className="text-xs text-amber-700">{list.storage_error}</p> : null}
         {list.operations.length === 0 ? (
-          <EmptyState title={copy.none} description={copy.operations} />
+          <EmptyState title={copy.none} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="v2-table">
               <thead>
-                <tr className="whitespace-nowrap border-b border-gray-200 text-left text-xs font-medium text-gray-500">
-                  <th className="px-3 py-2">{copy.category}</th>
-                  <th className="px-3 py-2">{copy.action}</th>
-                  <th className="px-3 py-2">{copy.status}</th>
-                  <th className="px-3 py-2">{copy.targets}</th>
-                  <th className="px-3 py-2">{copy.startedAt}</th>
+                <tr>
+                  <th>{copy.category}</th>
+                  <th>{copy.action}</th>
+                  <th>{copy.status}</th>
+                  <th>{copy.targets}</th>
+                  <th>{copy.startedAt}</th>
                 </tr>
               </thead>
               <tbody>
                 {list.operations.map((entry) => (
-                  <tr key={entry.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                    <td className="px-3 py-2 text-gray-900">{entry.category}</td>
-                    <td className="px-3 py-2 text-gray-600">{entry.action}</td>
-                    <td className="px-3 py-2">
+                  <tr key={entry.id}>
+                    <td className="text-gray-900">{entry.category}</td>
+                    <td className="text-gray-600">{entry.action}</td>
+                    <td>
                       <Badge
                         tone={
                           entry.status === "succeeded" ? "green" : entry.status === "failed" ? "red" : entry.status === "running" ? "blue" : "amber"
@@ -378,11 +381,11 @@ export function OperationsTab({ onError, onNotice }: { onError: (message: string
                         {entry.status}
                       </Badge>
                     </td>
-                    <td className="px-3 py-2 text-gray-600">
+                    <td className="text-gray-600">
                       {entry.succeeded}/{entry.target_count}
                       {entry.failed > 0 ? ` · ${entry.failed} failed` : ""}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-gray-500">{entry.started_at}</td>
+                    <td className="whitespace-nowrap text-gray-500">{entry.started_at}</td>
                   </tr>
                 ))}
               </tbody>
@@ -493,7 +496,7 @@ export function RiskTab({ onError, onNotice }: { onError: (message: string) => v
     setSnapshot({ ...snapshot, config: { ...snapshot.config, ...next } });
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -539,7 +542,7 @@ export function RiskTab({ onError, onNotice }: { onError: (message: string) => v
             />
           </LabeledField>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="v2-metrics">
           <Metric label={copy.events} value={snapshot.status.total_events} />
           <Metric label="observed" value={snapshot.status.observed} />
           <Metric label="blocked" value={snapshot.status.blocked} />
@@ -632,7 +635,7 @@ export function ExperimentsTab({ onError, onNotice }: { onError: (message: strin
   if (!snapshot) return <Skeleton className="h-56" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <CardTitle>{copy.experiments}</CardTitle>
@@ -664,7 +667,7 @@ export function ExperimentsTab({ onError, onNotice }: { onError: (message: strin
       <Card className="space-y-3">
         <CardTitle>{copy.whitelist}</CardTitle>
         {!whitelist || whitelist.auto_model_whitelist.recent.length === 0 ? (
-          <EmptyState title={copy.none} description={copy.whitelist} />
+          <EmptyState title={copy.none} />
         ) : (
           <>
             <div className="grid grid-cols-3 gap-2">
@@ -753,7 +756,7 @@ export function PluginsTab({ onError, onNotice }: { onError: (message: string) =
   if (!catalog || !selfUpdate) return <Skeleton className="h-56" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <CardTitle>{copy.plugins}</CardTitle>
@@ -763,7 +766,7 @@ export function PluginsTab({ onError, onNotice }: { onError: (message: string) =
           disabled={busy || (!catalog.bun_available && !catalog.hook_execution_enabled)}
           onChange={(value) => void toggleHooks(value)}
         />
-        <p className="text-xs text-gray-500">{copy.hookExecutionHint}</p>
+        <p className="v2-hint">{copy.hookExecutionHint}</p>
         <LabeledField label={copy.pluginFile} hint={copy.pluginFileHint}>
           <Input value={pluginFile} onChange={(event) => setPluginFile(event.target.value)} />
         </LabeledField>
@@ -771,7 +774,7 @@ export function PluginsTab({ onError, onNotice }: { onError: (message: string) =
           <Button size="sm" onClick={savePluginFile} loading={busy} disabled={pluginFile === (selfUpdate.plugin_file ?? "")}>
             {copy.save}
           </Button>
-          <span className="text-xs text-gray-500">
+          <span className="v2-hint">
             {selfUpdate.plugin_file_source ?? "-"} · {String(selfUpdate.plugin_file_exists)}
           </span>
         </div>
@@ -779,7 +782,7 @@ export function PluginsTab({ onError, onNotice }: { onError: (message: string) =
 
       <Card className="space-y-2">
         <CardTitle>{copy.registry}</CardTitle>
-        <p className="text-xs text-gray-500">{copy.registryHint}</p>
+        <p className="v2-hint">{copy.registryHint}</p>
         <p className="break-all text-xs text-gray-700">{catalog.plugins_dir ?? "-"}</p>
         <div className="grid grid-cols-2 gap-2">
           <Metric label={copy.imported} value={catalog.imported.length} />
@@ -891,7 +894,7 @@ export function UpdatesTab({ onError, onNotice }: { onError: (message: string) =
   if (!status || !selfUpdate) return <Skeleton className="h-56" />;
 
   return (
-    <div className="space-y-4">
+    <div className="v2-page">
       {error ? <ErrorState message={error} /> : null}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -908,8 +911,8 @@ export function UpdatesTab({ onError, onNotice }: { onError: (message: string) =
             </Button>
           </div>
         </div>
-        <p className="text-xs text-gray-500">{copy.upgradeHint}</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <p className="v2-hint">{copy.upgradeHint}</p>
+        <div className="v2-metrics">
           <Metric label={copy.currentVersion} value={selfUpdate.current_version || "-"} />
           <Metric label={copy.appliedVersion} value={selfUpdate.applied_version ?? "-"} />
           <Metric label={copy.latestVersion} value={status.latest_version ?? "-"} />

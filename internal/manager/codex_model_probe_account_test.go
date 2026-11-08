@@ -38,3 +38,18 @@ func TestCodexModelTestStillRequiresAModel(t *testing.T) {
 		t.Fatalf("response = %d %s", response.StatusCode, response.Body)
 	}
 }
+
+// The account model-test request rejects unknown fields, so the Codex branch must
+// forward only the two it declares. Forwarding timeout_seconds made the probe
+// answer "json: unknown field" instead of running.
+func TestCodexModelTestForwardsOnlyDeclaredFields(t *testing.T) {
+	app := newAccountLoginTestApp(t, &stubLoginDoer{})
+	response := app.HandleManagement(t.Context(), accountLoginRequest(
+		http.MethodPost, providerRoutePrefix+"/account/test",
+		`{"account_id":"acct-1","model":"gpt-5.3-codex-spark","timeout_seconds":30}`,
+		map[string][]string{"provider": {"codex"}},
+	))
+	if strings.Contains(string(response.Body), "unknown field") {
+		t.Fatalf("the forward carried an undeclared field: %s", response.Body)
+	}
+}

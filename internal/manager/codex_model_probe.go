@@ -98,11 +98,13 @@ func (a *App) handleCodexModelTest(ctx context.Context, req cpaapi.ManagementReq
 	if accountID := strings.TrimSpace(request.AccountID); accountID != "" && request.ChannelIndex == nil {
 		// One Codex account lives in CPA, so its probe belongs to CPA's own
 		// account model-test path, which already resolves the credential.
+		// Only the fields the account model-test request declares: it rejects an
+		// unknown field, so forwarding timeout_seconds made the probe fail with
+		// "json: unknown field" instead of running.
 		forward := req
 		forward.Body = mustJSON(map[string]any{
-			"account_id":      accountID,
-			"model":           model,
-			"timeout_seconds": request.Timeout,
+			"account_id": accountID,
+			"model":      model,
 		})
 		return a.handleAccountModelTest(ctx, forward)
 	}

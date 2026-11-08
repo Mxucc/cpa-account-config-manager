@@ -240,7 +240,7 @@ export function EditAccountsDialog({
     if (!open || !account) return;
     let cancelled = false;
     api
-      .loadAccountConfig(rawAccountID(account.id.split(":")[1] ?? "", account.id))
+      .loadAccountConfig(account.id)
       .then((config) => {
         if (!cancelled) setLoaded(config);
       })
@@ -413,7 +413,7 @@ export function ModelsDialog({
   open,
   onClose,
   onError,
-}: Omit<DialogProps, "onDone"> & { account: { id: string; display_name: string; provider_id: string } }) {
+}: Omit<DialogProps, "onDone"> & { account: { id: string; display_name: string } }) {
   const copy = useManagementCopy();
   const [catalog, setCatalog] = useState<AccountModelCatalogResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -425,7 +425,7 @@ export function ModelsDialog({
     setLoading(true);
     setError("");
     api
-      .loadAccountModels({ mode: "selected", ids: [rawAccountID(account.provider_id, account.id)] })
+      .loadAccountModels({ mode: "selected", ids: [account.id] })
       .then((next) => {
         if (!cancelled) setCatalog(next);
       })
@@ -507,7 +507,7 @@ export function TestModelDialog({
   open,
   onClose,
   onError,
-}: Omit<DialogProps, "onDone"> & { account: { id: string; display_name: string; provider_id: string } }) {
+}: Omit<DialogProps, "onDone"> & { account: { id: string; display_name: string } }) {
   const copy = useManagementCopy();
   const [model, setModel] = useState("");
   const [result, setResult] = useState<ModelTestResult | null>(null);
@@ -519,7 +519,7 @@ export function TestModelDialog({
     setBusy(true);
     setError("");
     try {
-      setResult(await api.testAccountModel(rawAccountID(account.provider_id, account.id), model.trim()));
+      setResult(await api.testAccountModel(account.id, model.trim()));
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(message);
@@ -572,7 +572,7 @@ export function DeleteAccountDialog({
   onClose,
   onError,
   onDone,
-}: DialogProps & { account: { id: string; display_name: string; provider_id: string } }) {
+}: DialogProps & { account: { id: string; display_name: string } }) {
   const copy = useManagementCopy();
   const [preview, setPreview] = useState<AccountDeletePreview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -593,7 +593,7 @@ export function DeleteAccountDialog({
     setBusy(true);
     setError("");
     try {
-      setPreview(await api.createAccountDeletePreview(rawAccountID(account.provider_id, account.id)));
+      setPreview(await api.createAccountDeletePreview(account.id));
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(message);

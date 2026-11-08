@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { providerApi } from "../api";
+import { listAccounts } from "../../api/client";
 import {
   Badge,
   Button,
@@ -18,7 +19,7 @@ import {
 import { AccountQuota, StatusBadge, accountWindows, billingLabel, cycleLabel, formatMoney, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
-import type { TargetScope } from "../../types";
+import type { AccountEditableConfig, AccountListResponse, TargetScope } from "../../types";
 import {
   BatchDeleteDialog,
   DedupeDialog,
@@ -37,6 +38,51 @@ type DialogKind = "edit" | "models" | "test" | "delete" | "batchEdit" | "batchDe
 
 const rawAccountID = (account: ProviderAccount) =>
   account.id.startsWith(`provider:${account.provider.id}:`) ? account.id.slice(`provider:${account.provider.id}:`.length) : account.id;
+
+
+// ManagedAccount is a normalized account plus the CPA-side id it maps to. CPA only
+// edits, deletes and exports its own auth files, so an account without that id
+// offers the provider-level actions alone.
+type ManagedAccount = ProviderAccount & { cpaID: string | null };
+
+interface EditableIndex {
+  byAuthID: Map<string, string>;
+  byName: Map<string, string>;
+  byLabel: Map<string, string>;
+}
+
+// buildEditableIndex maps every join key CPA publishes to the account id its own
+// endpoints take: `id` is that id, while `auth_id` / `name` / `label` are what a
+// normalized account can be matched on.
+function buildEditableIndex(list: AccountListResponse | null): EditableIndex {
+  const index: EditableIndex = { byAuthID: new Map(), byName: new Map(), byLabel: new Map() };
+  for (const account of list?.accounts ?? []) {
+    const id = account.id?.trim();
+    if (!id) continue;
+    for (const [map, key] of [
+      [index.byAuthID, account.auth_id],
+      [index.byName, account.name],
+      [index.byLabel, account.label],
+    ] as const) {
+      const value = typeof key === "string" ? key.trim() : "";
+      // First writer wins: an earlier account is the one CPA listed first, which
+      // keeps a duplicate label from stealing another account's id.
+      if (value && !map.has(value)) map.set(value, id);
+    }
+  }
+  return index;
+}
+
+function resolveCPAAccountID(account: ProviderAccount, index: EditableIndex): string | null {
+  const candidates = [account.source?.ref, account.display_name, account.plan?.name].filter(
+    (value): value is string => typeof value === "string" && value.trim() !== "",
+  );
+  for (const candidate of candidates) {
+    const direct = index.byAuthID.get(candidate) ?? index.byName.get(candidate) ?? index.byLabel.get(candidate);
+    if (direct) return direct;
+  }
+  return null;
+}
 
 export function AccountsPage({
   providerFilter,
@@ -64,7 +110,12 @@ export function AccountsPage({
   // Which management dialog is open, and for which account. One slot keeps the
   // page from stacking unrelated dialogs on top of each other.
   const [dialog, setDialog] = useState<DialogKind | null>(null);
-  const [dialogAccount, setDialogAccount] = useState<ProviderAccount | null>(null);
+  const [dialogAccount, setDialogAccount] = useState<ManagedAccount | null>(null);
+  // CPA manages its own auth files. Only those accounts can be edited, deleted,
+  // model-tested or exported through CPA's endpoints, so the page resolves each
+  // normalized account to the CPA-side id first and offers the rest of the
+  // actions only where that id exists.
+  const cpaAccounts = useAsync(() => listAccounts(1, 200, { editability: "editable" }), []);
 
   const filtered = useMemo(() => {
     const list = accounts.data?.accounts ?? [];
@@ -82,10 +133,19 @@ export function AccountsPage({
   // The scope every batch action works on: what the operator currently sees. A
   // scope built from the visible rows cannot surprise anyone with accounts the
   // filters hid.
-  const filteredIDs = useMemo(() => filtered.map((account) => rawAccountID(account)), [filtered]);
-  const filteredScope: TargetScope = useMemo(() => ({ mode: "selected", ids: filteredIDs }), [filteredIDs]);
+  const editableIndex = useMemo(() => buildEditableIndex(cpaAccounts.data), [cpaAccounts.data]);
+  const managed = useMemo(
+    () => filtered.map((account) => ({ ...account, cpaID: resolveCPAAccountID(account, editableIndex) })),
+    [filtered, editableIndex],
+  );
+  const selectedCPAID = selected ? resolveCPAAccountID(selected, editableIndex) : null;
+  const managedIDs = useMemo(
+    () => managed.map((account) => account.cpaID).filter((id): id is string => Boolean(id)),
+    [managed],
+  );
+  const filteredScope: TargetScope = useMemo(() => ({ mode: "selected", ids: managedIDs }), [managedIDs]);
 
-  const openDialog = (kind: DialogKind, account?: ProviderAccount) => {
+  const openDialog = (kind: DialogKind, account?: ManagedAccount) => {
     setActionError("");
     setDialogAccount(account ?? null);
     setDialog(kind);
@@ -159,11 +219,11 @@ export function AccountsPage({
         {/* Management lives in one row so every action is reachable without
             scrolling a wide table sideways. */}
         <Toolbar>
-          <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={filtered.length === 0}>
-            {managementCopy.batchEdit}
+          <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={managedIDs.length === 0}>
+            {managementCopy.batchEdit} ({managedIDs.length})
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => openDialog("batchDelete")} disabled={filtered.length === 0}>
-            {managementCopy.batchDelete}
+          <Button variant="secondary" size="sm" onClick={() => openDialog("batchDelete")} disabled={managedIDs.length === 0}>
+            {managementCopy.batchDelete} ({managedIDs.length})
           </Button>
           <Button variant="secondary" size="sm" onClick={() => openDialog("dedupe")}>
             {managementCopy.dedupe}
@@ -200,7 +260,7 @@ export function AccountsPage({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((account) => (
+              {managed.map((account) => (
                 <tr
                   key={account.id}
                   className="border-b border-gray-100 last:border-0 transition-colors duration-150 ease-out hover:bg-gray-50"
@@ -242,9 +302,11 @@ export function AccountsPage({
                       <Button variant="secondary" size="sm" onClick={() => onSelect(account.id)}>
                         {copy.common.details}
                       </Button>
-                      <Button variant="secondary" size="sm" onClick={() => openDialog("edit", account)}>
-                        {managementCopy.edit}
-                      </Button>
+                      {account.cpaID ? (
+                        <Button variant="secondary" size="sm" onClick={() => openDialog("edit", account)}>
+                          {managementCopy.edit}
+                        </Button>
+                      ) : null}
                       <Button
                         variant="primary"
                         size="sm"
@@ -254,9 +316,11 @@ export function AccountsPage({
                       >
                         {copy.accounts.refresh}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => openDialog("delete", account)}>
-                        {managementCopy.delete}
-                      </Button>
+                      {account.cpaID ? (
+                        <Button variant="ghost" size="sm" onClick={() => openDialog("delete", account)}>
+                          {managementCopy.delete}
+                        </Button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -268,11 +332,12 @@ export function AccountsPage({
 
       <AccountDrawer
         account={selected}
+        cpaID={selectedCPAID}
         open={Boolean(selected)}
         onClose={() => onSelect(undefined)}
         onAction={(kind) => {
           if (!selected) return;
-          const target = selected;
+          const target = { ...selected, cpaID: selectedCPAID };
           onSelect(undefined);
           openDialog(kind, target);
         }}
@@ -283,8 +348,8 @@ export function AccountsPage({
       {dialogAccount ? (
         <>
           <EditAccountsDialog
-            scope={{ mode: "selected", ids: [rawAccountID(dialogAccount)] }}
-            account={{ id: dialogAccount.id, display_name: dialogAccount.display_name }}
+            scope={{ mode: "selected", ids: [dialogAccount.cpaID ?? ""] }}
+            account={{ id: dialogAccount.cpaID ?? "", display_name: dialogAccount.display_name }}
             open={dialog === "edit"}
             onClose={() => setDialog(null)}
             onError={setActionError}
@@ -295,31 +360,19 @@ export function AccountsPage({
             }}
           />
           <ModelsDialog
-            account={{
-              id: dialogAccount.id,
-              display_name: dialogAccount.display_name,
-              provider_id: dialogAccount.provider.id,
-            }}
+            account={{ id: dialogAccount.cpaID ?? "", display_name: dialogAccount.display_name }}
             open={dialog === "models"}
             onClose={() => setDialog(null)}
             onError={setActionError}
           />
           <TestModelDialog
-            account={{
-              id: dialogAccount.id,
-              display_name: dialogAccount.display_name,
-              provider_id: dialogAccount.provider.id,
-            }}
+            account={{ id: dialogAccount.cpaID ?? "", display_name: dialogAccount.display_name }}
             open={dialog === "test"}
             onClose={() => setDialog(null)}
             onError={setActionError}
           />
           <DeleteAccountDialog
-            account={{
-              id: dialogAccount.id,
-              display_name: dialogAccount.display_name,
-              provider_id: dialogAccount.provider.id,
-            }}
+            account={{ id: dialogAccount.cpaID ?? "", display_name: dialogAccount.display_name }}
             open={dialog === "delete"}
             onClose={() => setDialog(null)}
             onError={setActionError}
@@ -382,11 +435,13 @@ export function AccountsPage({
 
 export function AccountDrawer({
   account,
+  cpaID,
   open,
   onClose,
   onAction,
 }: {
   account: ProviderAccount | null;
+  cpaID: string | null;
   open: boolean;
   onClose: () => void;
   // The drawer offers the same management actions as the table row, so an
@@ -469,20 +524,24 @@ export function AccountDrawer({
         {onAction ? (
           <section>
             <h3 className="mb-2 text-sm font-semibold text-gray-900">{managementCopy.title}</h3>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={() => onAction("edit")}>
-                {managementCopy.edit}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => onAction("models")}>
-                {managementCopy.models}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => onAction("test")}>
-                {managementCopy.test}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => onAction("delete")}>
-                {managementCopy.delete}
-              </Button>
-            </div>
+            {cpaID ? (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" size="sm" onClick={() => onAction("edit")}>
+                  {managementCopy.edit}
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => onAction("models")}>
+                  {managementCopy.models}
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => onAction("test")}>
+                  {managementCopy.test}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onAction("delete")}>
+                  {managementCopy.delete}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">{managementCopy.unmanaged}</p>
+            )}
           </section>
         ) : null}
       </div>

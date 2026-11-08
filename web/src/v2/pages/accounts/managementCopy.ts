@@ -70,6 +70,7 @@ export interface ManagementCopy {
   none: string;
   hookNote: string;
   close: string;
+  unmanaged: string;
 }
 
 const zh: ManagementCopy = {
@@ -138,6 +139,7 @@ const zh: ManagementCopy = {
   none: "暂无",
   hookNote: "全部改动都先预览再执行，预览过期需要重新生成。",
   close: "关闭",
+  unmanaged: "该账号不由 CPA 管理（插件自建工作区），只能用刷新、测试与渠道绑定操作。",
 };
 
 const en: ManagementCopy = {
@@ -206,6 +208,7 @@ const en: ManagementCopy = {
   none: "Nothing here",
   hookNote: "Every change is previewed before it is applied; an expired preview must be regenerated.",
   close: "Close",
+  unmanaged: "CPA does not manage this account (a plugin-owned workspace), so only refresh, test and channel binding apply.",
 };
 
 const catalogs: Record<string, ManagementCopy> = { en, "zh-CN": zh };

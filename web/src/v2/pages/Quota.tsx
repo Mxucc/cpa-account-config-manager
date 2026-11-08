@@ -1,6 +1,6 @@
 import { providerApi } from "../api";
 import { Card, EmptyState, ErrorState, PageHeader, Skeleton } from "../../ui/kit";
-import { QuotaBar, StatusBadge, useAsync, useCopy } from "../shared";
+import { QuotaBar, StatusBadge, accountWindows, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 
 // Every provider's windows are already normalized, so this page is a flat
@@ -21,7 +21,11 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
   if (accounts.error && !accounts.data) {
     return <ErrorState message={`${copy.common.error}: ${accounts.error}`} retry={accounts.reload} retryLabel={copy.common.retry} />;
   }
-  const rows = (accounts.data?.accounts ?? []).filter((account) => account.quota.length > 0);
+  // An account that reported no window is left out: the page is about windows,
+  // and a null list is "not reported" rather than an empty row.
+  const rows = (accounts.data?.accounts ?? [])
+    .map((account) => ({ account, windows: accountWindows(account) }))
+    .filter((row) => row.windows.length > 0);
   return (
     <div className="space-y-4">
       <PageHeader title={copy.quota.title} subtitle={copy.quota.subtitle} />
@@ -40,7 +44,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((account) => (
+              {rows.map(({ account, windows }) => (
                 <tr key={account.id} className="border-b border-gray-100 align-top last:border-0 transition-colors duration-150 ease-out hover:bg-gray-50">
                   <td className="px-4 py-4">
                     <span className="block font-medium text-gray-900">{account.display_name}</span>
@@ -58,7 +62,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
                   </td>
                   <td className="min-w-[18rem] px-4 py-4">
                     <div className="space-y-4">
-                      {account.quota.map((window) => (
+                      {windows.map((window) => (
                         <div key={window.id}>
                           <QuotaBar window={window} />
                           {window.aside ? <span className="text-xs text-gray-400">{copy.quota.aside}</span> : null}
@@ -67,7 +71,7 @@ export function QuotaPage({ providerFilter }: { providerFilter?: string }) {
                     </div>
                   </td>
                   <td className="px-4 py-4 text-xs text-gray-600">
-                    {account.quota
+                    {windows
                       .map((window) => (window.reset_at ? `${window.label}: ${formatDateTime(window.reset_at)}` : `${window.label}: -`))
                       .join("\n")
                       .split("\n")

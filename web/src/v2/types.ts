@@ -131,7 +131,9 @@ export interface ProviderAccount {
   status_note?: string;
   credential: CredentialState;
   plan: PlanState;
-  quota: QuotaWindow[];
+  // null means the provider reported no window at all. The API sends [], but a
+  // null from an older build or a cached answer must not crash a page.
+  quota: QuotaWindow[] | null;
   metrics?: ProviderMetric[];
   billing: BillingState;
   usage: UsageState;

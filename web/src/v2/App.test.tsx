@@ -85,4 +85,30 @@ describe("v2 shell", () => {
     // loaded state replaced the skeleton.
     expect(screen.getAllByRole("button").length).toBeGreaterThan(5);
   });
+
+  // A provider that reported no quota window answers with null on a live host.
+  // The overview must still mount and must not rank that account as a hotspot.
+  test("an account with a null quota list does not crash the overview", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/providers/overview")) return new Response(JSON.stringify(overview), { status: 200 });
+        if (url.endsWith("/providers")) return new Response(JSON.stringify(providers), { status: 200 });
+        if (url.includes("/providers/accounts")) {
+          const quiet = { ...accounts.accounts[0], status: "ready", quota: null };
+          return new Response(JSON.stringify({ total: 1, accounts: [quiet] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ error: "unexpected" }), { status: 404 });
+      }),
+    );
+    render(
+      <I18nProvider>
+        <V2App />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByRole("button").length).toBeGreaterThan(5), { timeout: 4000 });
+    // Nothing was reported, so the account is unknown rather than a 0% hotspot.
+    expect(screen.queryByText("a@example.com")).toBeNull();
+  });
 });

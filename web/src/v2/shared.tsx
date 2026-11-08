@@ -126,12 +126,20 @@ export function QuotaBar({ window }: { window: QuotaWindow }) {
   );
 }
 
+// accountWindows is the single read of the quota list. The API answers [] when a
+// provider reported nothing, and a null from an older or third-party source must
+// not crash the page.
+export function accountWindows(account: ProviderAccount): QuotaWindow[] {
+  return account.quota ?? [];
+}
+
 export function AccountQuota({ account, compact = false }: { account: ProviderAccount; compact?: boolean }) {
   const copy = useCopy();
-  if (account.quota.length === 0) {
+  const all = accountWindows(account);
+  if (all.length === 0) {
     return <span className="text-xs text-gray-400">{copy.common.notReported}</span>;
   }
-  const windows = compact ? account.quota.slice(0, 2) : account.quota;
+  const windows = compact ? all.slice(0, 2) : all;
   return (
     <div className={compact ? "w-44 space-y-2" : "space-y-4"}>
       {windows.map((window) => (

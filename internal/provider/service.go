@@ -163,6 +163,11 @@ func (s *Service) accounts(ctx context.Context) []Account {
 		if account.ID == "" {
 			continue
 		}
+		// Every page iterates the quota list, so a provider that reported nothing
+		// still marshals an empty list instead of null.
+		if account.Quota == nil {
+			account.Quota = []Window{}
+		}
 		out = append(out, account)
 	}
 	return out

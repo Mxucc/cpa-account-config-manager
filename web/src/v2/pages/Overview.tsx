@@ -1,6 +1,6 @@
 import { providerApi } from "../api";
 import { Card, CardTitle, ErrorState, PageHeader, Skeleton } from "../../ui/kit";
-import { AccountQuota, StatusBadge, formatMoney, useAsync, useCopy } from "../shared";
+import { AccountQuota, StatusBadge, accountWindows, formatMoney, quotaUsedPercent, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
 
@@ -15,13 +15,26 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 
 // The hotspot list answers "which accounts are closest to their limit" with the
 // same normalized percentage every provider reports, never with a raw vendor field.
+// An account that reported no share is not a hotspot: it is unknown, not 0%.
+function worstReportedPercent(account: ProviderAccount): number | null {
+  let worst: number | null = null;
+  for (const window of accountWindows(account)) {
+    const used = quotaUsedPercent(window);
+    if (used === null) continue;
+    worst = worst === null ? used : Math.max(worst, used);
+  }
+  return worst;
+}
+
 function hotspots(accounts: ProviderAccount[], limit = 5): ProviderAccount[] {
-  const score = (account: ProviderAccount) =>
-    account.quota.reduce((worst, window) => {
-      const used = typeof window.used_percent === "number" ? window.used_percent : 0;
-      return Math.max(worst, used);
-    }, 0);
-  return [...accounts].sort((left, right) => score(right) - score(left)).slice(0, limit);
+  const scored: Array<{ account: ProviderAccount; used: number }> = [];
+  for (const account of accounts) {
+    const used = worstReportedPercent(account);
+    if (used === null) continue;
+    scored.push({ account, used });
+  }
+  scored.sort((left, right) => right.used - left.used);
+  return scored.slice(0, limit).map((entry) => entry.account);
 }
 
 export function OverviewPage({ onOpenAccount }: { onOpenAccount: (id: string) => void }) {

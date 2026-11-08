@@ -1574,6 +1574,11 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		if strings.TrimSpace(managementKey) != "" {
 			a.startClinePassMaintenance()
 		}
+		// The runtime route sits under /providers, which the provider router owns:
+		// answer it first, or the router reports it as an unknown provider route.
+		if (method == http.MethodGet || method == http.MethodPost) && path == "/v0/management"+managementRoutePrefix+"/providers/runtime" {
+			return a.handleProviderRuntime(ctx, req)
+		}
 		if response, handled := a.handleProviderRoutes(ctx, req, method, path); handled {
 			return response
 		}
@@ -1737,8 +1742,6 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleOpenCodeQuota(ctx, req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/usage-document":
 		return a.handleOpenCodeUsageDocument(req)
-	case (method == http.MethodGet || method == http.MethodPost) && path == "/v0/management"+managementRoutePrefix+"/providers/runtime":
-		return a.handleProviderRuntime(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/refresh":
 		return a.handleOpenCodeRefresh(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/refresh-account":

@@ -68,3 +68,25 @@ func TestCommunityLoginRequiresAnImportedProvider(t *testing.T) {
 		t.Fatalf("body = %s", response.Body)
 	}
 }
+
+// The runtime route lives under /providers, which the provider router owns. It must
+// be answered before that router, or it reports an unknown provider route.
+func TestProviderRuntimeRouteIsReachable(t *testing.T) {
+	app := newAccountLoginTestApp(t, &stubLoginDoer{})
+	response := app.HandleManagement(context.Background(), accountLoginRequest(
+		http.MethodGet, "/v0/management"+managementRoutePrefix+"/providers/runtime", "", nil,
+	))
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.StatusCode, response.Body)
+	}
+	if strings.Contains(string(response.Body), "unknown provider route") {
+		t.Fatalf("the provider router claimed the runtime route: %s", response.Body)
+	}
+	var decoded map[string]any
+	if errDecode := json.Unmarshal(response.Body, &decoded); errDecode != nil {
+		t.Fatalf("decode: %v", errDecode)
+	}
+	if _, found := decoded["available"]; !found {
+		t.Fatalf("body = %s", response.Body)
+	}
+}

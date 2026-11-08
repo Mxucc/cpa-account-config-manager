@@ -278,3 +278,24 @@ func reasonCodeForOpenCode(failed, total int) string {
 	}
 	return "refresh_failed"
 }
+
+// handleOpenCodeUsageDocument returns the raw usage answer so an operator can see
+// what the gateway sends when the parsed numbers look wrong. It is read-only and
+// requires the caller's own management key.
+func (a *App) handleOpenCodeUsageDocument(req cpaapi.ManagementRequest) cpaapi.ManagementResponse {
+	if a == nil || a.opencode == nil {
+		return jsonResponse(http.StatusServiceUnavailable, map[string]any{"error": "OpenCode quota service is unavailable"})
+	}
+	if resolveManagementKey(req.Headers) == "" {
+		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
+	}
+	workspaceID := strings.TrimSpace(firstQueryValue(req.Query, "workspace_id"))
+	if workspaceID == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "workspace_id is required"})
+	}
+	document, status, errDocument := a.opencode.DebugUsageDocument(workspaceID, 20*time.Second)
+	if errDocument != nil {
+		return jsonResponse(http.StatusOK, map[string]any{"error": errDocument.Error()})
+	}
+	return jsonResponse(http.StatusOK, map[string]any{"status_code": status, "document": document})
+}

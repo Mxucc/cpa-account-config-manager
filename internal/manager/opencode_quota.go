@@ -874,7 +874,7 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPIWithStatus(workspaceID str
 	}
 	rolling, weekly, monthly := parseOpenCodeUsageAPI(body, now)
 	if rolling == nil && weekly == nil && monthly == nil {
-		return OpenCodeQuotaResult{}, false, "usage endpoint answered without recognizable windows"
+		return OpenCodeQuotaResult{}, false, "usage endpoint answered without recognizable windows: " + sanitizeOpenCodeError(string(body))
 	}
 	return OpenCodeQuotaResult{
 		Success:   true,
@@ -885,6 +885,31 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPIWithStatus(workspaceID str
 		Source:    "usage_api",
 		FetchedAt: now,
 	}, true, ""
+}
+
+// DebugUsageDocument returns the raw usage answer for one workspace. It exists so
+// the shape can be read from a live host instead of guessed; the caller is a
+// management route that requires the operator's own key.
+func (s *OpenCodeQuotaService) DebugUsageDocument(workspaceID string, timeout time.Duration) (string, int, error) {
+	credential, errCredential := s.accountCredentialForWorkspace(workspaceID)
+	if errCredential != nil {
+		return "", 0, errCredential
+	}
+	if credential.APIKey == "" {
+		return "", 0, fmt.Errorf("no stored API key for this workspace")
+	}
+	request, errNew := newOpenCodeRequest(context.Background(), http.MethodGet, openCodeAPIBase(credential.BaseURL)+openCodeGoUsagePath, credential.APIKey, nil)
+	if errNew != nil {
+		return "", 0, errNew
+	}
+	client := &http.Client{Timeout: timeout}
+	response, errDo := client.Do(request)
+	if errDo != nil {
+		return "", 0, errDo
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, openCodeQuotaDashboardMaxBytes))
+	return string(body), response.StatusCode, nil
 }
 
 // accountCredentialForWorkspace resolves the stored credential for a workspace

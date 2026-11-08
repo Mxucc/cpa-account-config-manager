@@ -154,6 +154,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodDelete + " /plugins/cpa-account-config-manager/operations":                             {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/operations/record":                        {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/opencode/quota":                            {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/opencode/usage-document":                   {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/refresh":                         {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/opencode/refresh-account":                 {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/opencode/accounts":                         {},

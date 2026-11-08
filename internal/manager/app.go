@@ -1458,6 +1458,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodDelete, Path: managementRoutePrefix + "/operations", Description: "Clear the operation journal while retaining a clear audit event."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/operations/record", Description: "Record a strict browser-owned plugin-store update outcome."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/quota", Description: "Read cached OpenCode Go quota results for every bound workspace."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/usage-document", Description: "Read the raw OpenCode Go usage answer for one workspace, for diagnosing a changed upstream shape."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/refresh", Description: "Force refresh OpenCode Go quota results for every bound workspace."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/opencode/refresh-account", Description: "Refresh one OpenCode Go workspace quota result by account ID."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/opencode/accounts", Description: "List redacted bound OpenCode Go workspaces."},
@@ -1732,6 +1733,8 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		return a.handleRecordOperation(req)
 	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/quota":
 		return a.handleOpenCodeQuota(ctx, req)
+	case method == http.MethodGet && path == "/v0/management"+managementRoutePrefix+"/opencode/usage-document":
+		return a.handleOpenCodeUsageDocument(req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/refresh":
 		return a.handleOpenCodeRefresh(ctx, req)
 	case method == http.MethodPost && path == "/v0/management"+managementRoutePrefix+"/opencode/refresh-account":

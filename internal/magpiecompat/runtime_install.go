@@ -81,6 +81,7 @@ func InstallRuntime(ctx context.Context, doer RuntimeDoer, dataDir string) (Runt
 	}
 	target := RuntimePath(dir)
 	if info, errStat := os.Stat(target); errStat == nil && !info.IsDir() {
+		SetManagedRuntime(target)
 		return RuntimeInstallResult{Installed: false, Path: target, Reason: "a managed runtime is already installed"}, nil
 	}
 	asset, supported := runtimeArchiveName()
@@ -153,6 +154,7 @@ func InstallRuntime(ctx context.Context, doer RuntimeDoer, dataDir string) (Runt
 		if errChmod := os.Chmod(target, 0o755); errChmod != nil && runtime.GOOS != "windows" {
 			return RuntimeInstallResult{}, fmt.Errorf("make the runtime executable: %w", errChmod)
 		}
+		SetManagedRuntime(target)
 		return RuntimeInstallResult{Installed: true, Path: target}, nil
 	}
 	return RuntimeInstallResult{}, fmt.Errorf("the runtime archive does not contain %s", wanted)

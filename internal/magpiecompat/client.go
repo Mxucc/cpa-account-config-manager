@@ -145,12 +145,33 @@ func resolveBun() string {
 
 // managedBunCandidates lists where a plugin-managed runtime may live: the data
 // directory the host configured, then the user's home.
+// managedRuntimePath is the copy this plugin installed, registered by the installer
+// and by the host when it configures the data directory. Resolution prefers it over
+// guessing an environment variable the host may never set.
+var managedRuntimePath = struct {
+	mu   sync.RWMutex
+	path string
+}{}
+
+// SetManagedRuntime records where the plugin-managed runtime lives.
+func SetManagedRuntime(path string) {
+	managedRuntimePath.mu.Lock()
+	managedRuntimePath.path = strings.TrimSpace(path)
+	managedRuntimePath.mu.Unlock()
+}
+
 func managedBunCandidates() []string {
 	name := "bun"
 	if runtime.GOOS == "windows" {
 		name = "bun.exe"
 	}
-	candidates := make([]string, 0, 4)
+	candidates := make([]string, 0, 5)
+	managedRuntimePath.mu.RLock()
+	registered := managedRuntimePath.path
+	managedRuntimePath.mu.RUnlock()
+	if registered != "" {
+		candidates = append(candidates, registered)
+	}
 	if dir := strings.TrimSpace(os.Getenv("CPA_ACCOUNT_MANAGER_DATA_DIR")); dir != "" {
 		candidates = append(candidates, filepath.Join(dir, "runtime", name))
 	}

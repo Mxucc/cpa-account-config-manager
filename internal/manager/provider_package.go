@@ -103,6 +103,13 @@ func (a *App) handleProviderRuntime(ctx context.Context, req cpaapi.ManagementRe
 		return jsonResponse(http.StatusUnauthorized, map[string]any{"error": "management key is unavailable"})
 	}
 	dataDir := strings.TrimSpace(a.configSnapshot().DataDir)
+	if dataDir != "" {
+		// Register the managed copy (if any) before reporting, so the answer matches
+		// what a sign-in would actually resolve.
+		if info, errStat := os.Stat(magpiecompat.RuntimePath(dataDir)); errStat == nil && !info.IsDir() {
+			magpiecompat.SetManagedRuntime(magpiecompat.RuntimePath(dataDir))
+		}
+	}
 	snapshot := map[string]any{
 		"available": magpiecompat.BunAvailable(),
 		"managed":   false,

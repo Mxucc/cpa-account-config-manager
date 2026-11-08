@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -80,12 +81,31 @@ func (a *App) handleCodexModelTest(ctx context.Context, req cpaapi.ManagementReq
 	var request struct {
 		Model        string `json:"model"`
 		ChannelIndex *int   `json:"channel_index"`
-		Timeout      int    `json:"timeout_seconds"`
+		// AccountID is what the unified account page sends. A Codex credential
+		// that CPA itself manages is probed through CPA's own model-test route,
+		// so the unified endpoint accepts both shapes instead of rejecting the
+		// one the page actually uses.
+		AccountID string `json:"account_id"`
+		Timeout   int    `json:"timeout_seconds"`
 	}
 	if errDecode := decodeJSONRequest(req.Body, &request); errDecode != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid Codex model test request"})
 	}
 	model := strings.TrimSpace(request.Model)
+	if model == "" {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "model is required"})
+	}
+	if accountID := strings.TrimSpace(request.AccountID); accountID != "" && request.ChannelIndex == nil {
+		// One Codex account lives in CPA, so its probe belongs to CPA's own
+		// account model-test path, which already resolves the credential.
+		forward := req
+		forward.Body = mustJSON(map[string]any{
+			"account_id":      accountID,
+			"model":           model,
+			"timeout_seconds": request.Timeout,
+		})
+		return a.handleAccountModelTest(ctx, forward)
+	}
 	if request.ChannelIndex == nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "channel_index is required"})
 	}
@@ -112,6 +132,16 @@ func (a *App) handleCodexModelTest(ctx context.Context, req cpaapi.ManagementReq
 	}
 	probe := a.probeAIProviderModelWithKey(ctx, "codex-api-key", baseURL, apiKey, "", "", model, aiProviderChannelHeaders(entry), timeout)
 	return jsonResponse(http.StatusOK, map[string]any{"result": codexModelProbeResult(probe)})
+}
+
+// mustJSON encodes a request body this file builds itself; a failure here would
+// mean the payload is not encodable, which cannot happen for plain strings.
+func mustJSON(payload map[string]any) []byte {
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		return []byte("{}")
+	}
+	return raw
 }
 
 // codexModelProbeResult projects the shared provider probe result into the shape the model page

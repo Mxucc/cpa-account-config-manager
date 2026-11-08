@@ -145,6 +145,17 @@ type OpenCodeQuotaService struct {
 	now  func() time.Time
 }
 
+// SetDoer replaces the HTTP client used for dashboard and usage requests. Tests
+// use it so a scrape can be pointed at a fake gateway; production leaves it nil.
+func (s *OpenCodeQuotaService) SetDoer(doer HTTPDoer) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.doer = doer
+	s.mu.Unlock()
+}
+
 func NewOpenCodeQuotaService() *OpenCodeQuotaService {
 	return &OpenCodeQuotaService{
 		timeoutSeconds: openCodeQuotaDefaultTimeout,
@@ -752,6 +763,14 @@ func (s *OpenCodeQuotaService) Probe(workspaceID, authCookie string, timeoutSeco
 // doer replaces it so the scrape can be pointed at a fake gateway.
 func (s *OpenCodeQuotaService) queryOpenCodeGoQuota(workspaceID, authCookie string, timeout time.Duration) OpenCodeQuotaResult {
 	now := time.Now().UTC()
+	// The Go dashboard became a login-gated console: an unauthenticated scrape is
+	// redirected to /console/login, which parses as "no usage" and made every
+	// workspace look broken. The credential-backed usage API is the source that
+	// actually answers, so it is tried first and the scrape stays as a fallback
+	// for an installation that only stored a session cookie.
+	if result, ok := s.queryOpenCodeGoUsageAPI(workspaceID, timeout); ok {
+		return result
+	}
 	target := "https://opencode.ai/workspace/" + url.PathEscape(workspaceID) + "/go"
 	var doer HTTPDoer = &http.Client{Timeout: timeout}
 	if s != nil && s.doer != nil {
@@ -792,6 +811,131 @@ func (s *OpenCodeQuotaService) queryOpenCodeGoQuota(workspaceID, authCookie stri
 		Source:    source,
 		FetchedAt: now,
 	}
+}
+
+// openCodeGoUsagePath is the credential-backed usage endpoint the Go gateway
+// serves. It returns the rolling, weekly and monthly windows the page shows.
+const openCodeGoUsagePath = "/zen/go/v1/usage"
+
+// queryOpenCodeGoUsageAPI reads one workspace's usage with its stored API key.
+// ok is false when the account carries no key or the endpoint is not served, so
+// the caller can fall back to the dashboard scrape.
+func (s *OpenCodeQuotaService) queryOpenCodeGoUsageAPI(workspaceID string, timeout time.Duration) (OpenCodeQuotaResult, bool) {
+	if s == nil {
+		return OpenCodeQuotaResult{}, false
+	}
+	credential, errCredential := s.accountCredentialForWorkspace(workspaceID)
+	if errCredential != nil || credential.APIKey == "" {
+		return OpenCodeQuotaResult{}, false
+	}
+	now := time.Now().UTC()
+	var doer HTTPDoer = &http.Client{Timeout: timeout}
+	if s.doer != nil {
+		doer = s.doer
+	}
+	request, errNew := newOpenCodeRequest(context.Background(), http.MethodGet, openCodeAPIBase(credential.BaseURL)+openCodeGoUsagePath, credential.APIKey, nil)
+	if errNew != nil {
+		return OpenCodeQuotaResult{}, false
+	}
+	response, errDo := doer.Do(request)
+	if errDo != nil || response == nil || response.Body == nil {
+		return OpenCodeQuotaResult{}, false
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, errRead := io.ReadAll(io.LimitReader(response.Body, openCodeQuotaDashboardMaxBytes))
+	if errRead != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+		return OpenCodeQuotaResult{}, false
+	}
+	rolling, weekly, monthly := parseOpenCodeUsageAPI(body, now)
+	if rolling == nil && weekly == nil && monthly == nil {
+		return OpenCodeQuotaResult{}, false
+	}
+	return OpenCodeQuotaResult{
+		Success:   true,
+		Workspace: workspaceID,
+		Rolling:   rolling,
+		Weekly:    weekly,
+		Monthly:   monthly,
+		Source:    "usage_api",
+		FetchedAt: now,
+	}, true
+}
+
+// accountCredentialForWorkspace resolves the stored credential for a workspace
+// id, which is what the quota reader is handed (the account id carries a suffix).
+func (s *OpenCodeQuotaService) accountCredentialForWorkspace(workspaceID string) (OpenCodeGoCredential, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, account := range s.accounts {
+		if account.WorkspaceID != workspaceID && account.ID != workspaceID {
+			continue
+		}
+		baseURL := strings.TrimSpace(account.BaseURL)
+		if baseURL == "" {
+			baseURL = openCodeGoDefaultBaseURL
+		}
+		return OpenCodeGoCredential{
+			ID:          account.ID,
+			WorkspaceID: account.WorkspaceID,
+			BaseURL:     baseURL,
+			APIKey:      strings.TrimSpace(account.APIKey),
+		}, nil
+	}
+	return OpenCodeGoCredential{}, fmt.Errorf("OpenCode account was not found")
+}
+
+// parseOpenCodeUsageAPI reads the usage document. Both a flat window object and a
+// nested windows list are accepted, because the gateway has served both shapes.
+func parseOpenCodeUsageAPI(body []byte, now time.Time) (*OpenCodeWindowUsage, *OpenCodeWindowUsage, *OpenCodeWindowUsage) {
+	var document map[string]any
+	if errUnmarshal := json.Unmarshal(body, &document); errUnmarshal != nil {
+		return nil, nil, nil
+	}
+	read := func(keys ...string) *OpenCodeWindowUsage {
+		for _, key := range keys {
+			value, found := document[key]
+			if !found {
+				continue
+			}
+			if window := openCodeWindowFromValue(value, now); window != nil {
+				return window
+			}
+		}
+		return nil
+	}
+	return read("rolling", "rolling_usage", "fiveHour", "five_hour"),
+		read("weekly", "weekly_usage", "week"),
+		read("monthly", "monthly_usage", "month")
+}
+
+// openCodeWindowFromValue reads one window from either a percent/reset object or
+// a used/limit object.
+func openCodeWindowFromValue(value any, now time.Time) *OpenCodeWindowUsage {
+	record, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	number := func(keys ...string) (float64, bool) {
+		for _, key := range keys {
+			if raw, found := record[key]; found {
+				if parsed, okParse := raw.(float64); okParse {
+					return parsed, true
+				}
+			}
+		}
+		return 0, false
+	}
+	resetSeconds, _ := number("reset_in_sec", "resetInSec", "resets_in_seconds")
+	if percent, okPercent := number("usage_percent", "usagePercent", "percent"); okPercent {
+		return normalizeOpenCodeWindow(percent, resetSeconds, now)
+	}
+	if used, okUsed := number("used", "used_usd"); okUsed {
+		if limit, okLimit := number("limit", "limit_usd"); okLimit && limit > 0 {
+			return normalizeOpenCodeWindow(used/limit*100, resetSeconds, now)
+		}
+	}
+	return nil
 }
 
 var openCodeScrapedNumberPattern = `(-?\d+(?:\.\d+)?)`

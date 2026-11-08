@@ -1,0 +1,90 @@
+package manager
+
+import (
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+)
+
+// The Go dashboard is login-gated, so the credential-backed usage endpoint is the
+// source the quota reader must prefer; a scrape-only reader reported every
+// workspace as unparseable once the console moved behind a login.
+type usageAPIDoer struct {
+	status int
+	body   string
+	seen   []string
+}
+
+func (d *usageAPIDoer) Do(req *http.Request) (*http.Response, error) {
+	d.seen = append(d.seen, req.URL.String())
+	return &http.Response{
+		StatusCode: d.status,
+		Body:       io.NopCloser(strings.NewReader(d.body)),
+		Header:     http.Header{},
+		Request:    req,
+	}, nil
+}
+
+func newUsageAPIService(t *testing.T, doer HTTPDoer, apiKey string) *OpenCodeQuotaService {
+	t.Helper()
+	service := NewOpenCodeQuotaService()
+	service.SetDoer(doer)
+	service.mu.Lock()
+	service.accounts = []OpenCodeAccount{{ID: "acct-1", WorkspaceID: "wrk-1", APIKey: apiKey}}
+	service.loaded = true
+	service.mu.Unlock()
+	return service
+}
+
+func TestOpenCodeQuotaPrefersTheUsageAPIOverTheDashboardScrape(t *testing.T) {
+	doer := &usageAPIDoer{status: http.StatusOK, body: `{
+      "rolling": {"usage_percent": 25.5, "reset_in_sec": 3600},
+      "weekly":  {"usage_percent": 40, "reset_in_sec": 7200},
+      "monthly": {"used": 5, "limit": 10}
+    }`}
+	service := newUsageAPIService(t, doer, "test-key")
+
+	result, ok := service.queryOpenCodeGoUsageAPI("wrk-1", 5*time.Second)
+	if !ok || !result.Success {
+		t.Fatalf("usage API was not used: ok=%v result=%+v", ok, result)
+	}
+	if result.Source != "usage_api" {
+		t.Fatalf("source = %q, want usage_api", result.Source)
+	}
+	if result.Rolling == nil || result.Rolling.UsagePercent != 25.5 {
+		t.Fatalf("rolling = %+v", result.Rolling)
+	}
+	if result.Weekly == nil || result.Weekly.UsagePercent != 40 {
+		t.Fatalf("weekly = %+v", result.Weekly)
+	}
+	// A used/limit window becomes a percentage, never a raw amount.
+	if result.Monthly == nil || result.Monthly.UsagePercent != 50 {
+		t.Fatalf("monthly = %+v", result.Monthly)
+	}
+	if len(doer.seen) != 1 || !strings.Contains(doer.seen[0], openCodeGoUsagePath) {
+		t.Fatalf("requested %v, want the usage path", doer.seen)
+	}
+}
+
+// Without a stored key the API cannot answer, so the reader declines and the
+// caller keeps its dashboard fallback instead of reporting a false zero.
+func TestOpenCodeQuotaUsageAPIDeclinesWithoutAKey(t *testing.T) {
+	doer := &usageAPIDoer{status: http.StatusOK, body: `{"rolling":{"usage_percent":10}}`}
+	service := newUsageAPIService(t, doer, "")
+	if _, ok := service.queryOpenCodeGoUsageAPI("wrk-1", time.Second); ok {
+		t.Fatal("the usage API reported a result without a credential")
+	}
+	if len(doer.seen) != 0 {
+		t.Fatalf("a keyless account still made a request: %v", doer.seen)
+	}
+}
+
+func TestOpenCodeQuotaUsageAPIDeclinesOnAnUnreadableAnswer(t *testing.T) {
+	doer := &usageAPIDoer{status: http.StatusOK, body: `<html>login</html>`}
+	service := newUsageAPIService(t, doer, "test-key")
+	if _, ok := service.queryOpenCodeGoUsageAPI("wrk-1", time.Second); ok {
+		t.Fatal("an unreadable answer was accepted")
+	}
+}

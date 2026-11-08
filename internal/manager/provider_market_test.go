@@ -47,7 +47,7 @@ func (s stubMarketDoer) Do(req *http.Request) (*http.Response, error) {
 }
 
 const marketRegistryFixture = `{"version":1,"plugins":[
-  {"package":"@magpie-community/opencode-cline-auth","name":"Cline","community":true,
+  {"package":"@magpie-community/opencode-cline-auth","name":"Cline","providers":["cline"],"community":true,
    "summary":{"en":"Cline sign-in","zh":"Cline 登录"}},
   {"package":"@magpie-community/gateway-respire-memory","name":"respire-memory","kind":"middleware","community":true,
    "summary":{"en":"Memory","zh":"记忆"}}
@@ -89,8 +89,13 @@ func TestProviderMarketRouteListsCommunityPlugins(t *testing.T) {
 		t.Fatalf("market = %#v", decoded)
 	}
 	plugins, ok := decoded["plugins"].([]any)
-	if !ok || len(plugins) != 2 {
+	// The market lists provider plugins only: the middleware entry in the same
+	// fixture is counted as hidden instead of being offered as a provider.
+	if !ok || len(plugins) != 1 {
 		t.Fatalf("plugins = %#v", decoded["plugins"])
+	}
+	if decoded["hidden"] != float64(1) {
+		t.Fatalf("hidden = %#v, want the middleware entry", decoded["hidden"])
 	}
 	first := plugins[0].(map[string]any)
 	if first["id"] != "@magpie-community/opencode-cline-auth" || first["name"] != "Cline" {

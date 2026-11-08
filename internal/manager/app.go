@@ -1408,6 +1408,9 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/delete/start", Description: "Start an explicitly confirmed batch Auth-file deletion."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/batch/status", Description: "Read current or last batch progress."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/batch/retry", Description: "Retry the failed subset of the last in-memory batch."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts/login", Description: "List the providers an operator can add an account for, plus imported community plugins."},
+			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/login/start", Description: "Start one provider login through CPA and return its URL, state and device code."},
+			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts/login/status", Description: "Poll one pending provider login started through CPA."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/accounts", Description: "Export filtered account credentials for an explicitly selected target format."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/export/accounts", Description: "Export selected account credentials for an explicitly selected target format."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/export/results", Description: "Export sanitized batch results as JSON, CSV, or JSON Lines."},
@@ -1576,6 +1579,10 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 			a.newAccountProbe.SetManagementKey(managementKey, req.HostCallbackID)
 		}
 		managementKey = ""
+	}
+
+	if response, handled := a.handleAccountLogin(ctx, req, method, path); handled {
+		return response
 	}
 
 	switch {

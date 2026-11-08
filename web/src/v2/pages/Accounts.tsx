@@ -21,6 +21,7 @@ import { useI18n } from "../../i18n";
 import type { ProviderAccount } from "../types";
 import type { AccountEditableConfig, AccountListResponse, TargetScope } from "../../types";
 import {
+  AddAccountDialog,
   BatchDeleteDialog,
   DedupeDialog,
   DeleteAccountDialog,
@@ -34,7 +35,7 @@ import {
 
 // Every account action opens one of these dialogs. The list is the page's whole
 // management surface, so the table and the drawer cannot drift apart.
-type DialogKind = "edit" | "models" | "test" | "delete" | "batchEdit" | "batchDelete" | "dedupe" | "import" | "export";
+type DialogKind = "edit" | "models" | "test" | "delete" | "batchEdit" | "batchDelete" | "dedupe" | "import" | "export" | "addAccount";
 
 const rawAccountID = (account: ProviderAccount) =>
   account.id.startsWith(`provider:${account.provider.id}:`) ? account.id.slice(`provider:${account.provider.id}:`.length) : account.id;
@@ -219,6 +220,9 @@ export function AccountsPage({
         {/* Management lives in one row so every action is reachable without
             scrolling a wide table sideways. */}
         <Toolbar>
+          <Button size="sm" onClick={() => openDialog("addAccount")}>
+            {managementCopy.addAccount}
+          </Button>
           <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={managedIDs.length === 0}>
             {managementCopy.batchEdit} ({managedIDs.length})
           </Button>
@@ -411,6 +415,17 @@ export function AccountsPage({
         onClose={() => setDialog(null)}
         onError={setActionError}
         onDone={() => accounts.reload()}
+      />
+      <AddAccountDialog
+        open={dialog === "addAccount"}
+        onClose={() => setDialog(null)}
+        onError={setActionError}
+        onDone={() => {
+          accounts.reload();
+          cpaAccounts.reload();
+          onRefreshNeeded();
+          onNotice(managementCopy.loginDone);
+        }}
       />
       <ImportAccountsDialog
         open={dialog === "import"}

@@ -182,6 +182,9 @@ export interface MarketSnapshot {
   registry?: string;
   versioned: number;
   total: number;
+  // hidden counts the registry entries that are not provider plugins; the market
+  // only lists provider plugins and says how many others were left out.
+  hidden: number;
   fetched_at?: string;
   plugins: MarketPlugin[];
 }

@@ -8,6 +8,9 @@ import type {
   AccountDeduplicationPreview,
   AccountDeduplicationOptions,
 	AccountEditableConfig,
+	AccountLoginFlow,
+	AccountLoginProviders,
+	AccountLoginStatus,
 	CodexIdentityOverride,
 	CodexIdentityOverrideSnapshot,
 	AccountConcurrencyAvailability,
@@ -2929,4 +2932,26 @@ export async function saveCodexModels(disabled: string[]): Promise<import("../ty
 
 export async function getCodexOverview(signal?: AbortSignal): Promise<{ overview: import("../types").CodexOverview }> {
   return requestRecord<{ overview: import("../types").CodexOverview }>("/codex/overview", { signal });
+}
+
+// Adding an account. CPA owns the provider login; the plugin page relays it so
+// the operator never types a second credential and never leaves the page.
+export async function listAccountLoginProviders(): Promise<AccountLoginProviders> {
+	const response = await requestRecord<Partial<AccountLoginProviders>>("/accounts/login");
+	return {
+		providers: Array.isArray(response.providers) ? response.providers : [],
+		community: Array.isArray(response.community) ? response.community : [],
+	};
+}
+
+export async function startAccountLogin(provider: string): Promise<AccountLoginFlow> {
+	return requestRecord<AccountLoginFlow>("/accounts/login/start", {
+		method: "POST",
+		body: JSON.stringify({ provider }),
+	});
+}
+
+export async function getAccountLoginStatus(state: string): Promise<AccountLoginStatus> {
+	const query = new URLSearchParams({ state });
+	return requestRecord<AccountLoginStatus>("/accounts/login/status", {}, query);
 }

@@ -18,6 +18,7 @@ export interface Copy {
   market: {
     title: string; hint: string; search: string; import: string; importing: string; imported: string;
     empty: string; unreachable: string; noVersion: string; advanced: string; advancedHint: string;
+    providersOnly: string; hidden: string;
     reasons: { unreachable: string; timeout: string; unreadable: string; unavailable: string };
   };
   quota: { title: string; subtitle: string; window: string; used: string; remaining: string; reset: string; limit: string; wallet: string; aside: string; notes: { referencePricedUsage: string } };
@@ -54,6 +55,7 @@ const zh: Copy = {
     search: "搜索插件", import: "导入", importing: "导入中…", imported: "已导入",
     empty: "没有匹配的插件", unreachable: "无法读取社区插件列表", noVersion: "版本未读取",
     advanced: "高级：粘贴 package.json", advancedHint: "离线或自建插件才需要手填清单。",
+    providersOnly: "仅列出供应商插件", hidden: "已隐藏非供应商条目",
     reasons: { unreachable: "无法连接社区插件仓库，请检查服务器出网。", timeout: "读取社区插件仓库超时。", unreadable: "社区插件仓库返回的内容无法解析。", unavailable: "社区插件列表当前不可用。" },
   },
   quota: { title: "额度与计划", subtitle: "统一窗口、重置时间与订阅周期", window: "窗口", used: "已用", remaining: "剩余", reset: "重置", limit: "上限", wallet: "钱包余额", aside: "不参与路由", notes: { referencePricedUsage: "参考价折算用量" } },
@@ -87,6 +89,7 @@ const en: Copy = {
     search: "Search plugins", import: "Import", importing: "Importing…", imported: "Imported",
     empty: "No plugin matches", unreachable: "The community plugin list is unavailable", noVersion: "version not read",
     advanced: "Advanced: paste a package.json", advancedHint: "Only an offline or in-house plugin needs a pasted manifest.",
+    providersOnly: "Provider plugins only", hidden: "other registry entries hidden",
     reasons: { unreachable: "The community plugin registry is unreachable; check the server's outbound network.", timeout: "Reading the community plugin registry timed out.", unreadable: "The community plugin registry returned something unreadable.", unavailable: "The community plugin list is currently unavailable." },
   },
   quota: { title: "Quota & plans", subtitle: "Unified windows, reset times and subscription cycles", window: "Window", used: "Used", remaining: "Remaining", reset: "Resets", limit: "Limit", wallet: "Wallet balance", aside: "Excluded from routing", notes: { referencePricedUsage: "Reference-priced usage" } },

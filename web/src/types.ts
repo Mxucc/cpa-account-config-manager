@@ -1949,3 +1949,36 @@ export interface RiskControlSnapshot {
   events: RiskControlEvent[];
   storage_error?: string;
 }
+
+// Adding an account. The plugin relays CPA's own provider login, so the page
+// never talks to a provider and never needs a second credential.
+export type AccountLoginFlowKind = "browser" | "device" | "plugin" | "external";
+
+export interface AccountLoginProvider {
+  id: string;
+  name: string;
+  flow: AccountLoginFlowKind;
+  source: "host" | "plugin" | "community";
+}
+
+export interface AccountLoginProviders {
+  providers: AccountLoginProvider[];
+  community: AccountLoginProvider[];
+}
+
+export interface AccountLoginFlow {
+  provider: string;
+  state: string;
+  url?: string;
+  flow?: AccountLoginFlowKind;
+  user_code?: string;
+  expires_in?: number;
+  status?: string;
+}
+
+export interface AccountLoginStatus {
+  state: string;
+  status: string;
+  done: boolean;
+  message?: string;
+}

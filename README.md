@@ -27,6 +27,8 @@
 - Claude/Anthropic、Kimi、Qwen、xAI/Grok、Gemini、Gemini CLI、Vertex 服务账号。
 - Cockpit、9Router、AxonHub、Codex Manager，以及其他可归一化为 CPA Auth 的常见 JSON 结构。
 
+社区插件市场只列供应商插件：registry 里标记为 middleware / agent / tools / page 的条目会被过滤，并在列表头标明隐藏了多少条，避免把无法提供模型的插件当成供应商导入。
+
 可导出为 CPA、Sub2API、Cockpit、9Router、Codex、AxonHub 和 Codex Manager，也可导出为与 CPA 相同的凭据对象装在一个文件里的 JSON、JSON Lines 或 CSV。目标格式无法用一个文件表达多账号时会自动生成 ZIP；批量任务和操作结果还可导出为 JSON、CSV 或 JSON Lines，公开结果不包含凭据。
 
 ### 用量、成本、并发与额度
@@ -322,6 +324,7 @@ make package VERSION=X.Y.Z
 
 ### 账号管理
 
+- 账号页提供「添加账号」：选择供应商后由 CPA 完成登录（浏览器或设备码），插件只转发 `GET /accounts/login`、`POST /accounts/login/start` 与 `GET /accounts/login/status`；已导入的社区供应商在弹窗里如实标注需在原插件内登录。
 - 账号页提供：编辑配置（走 `POST .../batch/preview` + `.../batch/start` 的预览-执行两步）、模型目录（`.../accounts/models`）、模型测试（`.../accounts/model-test`）、刷新令牌（`.../accounts/token/refresh`）、删除（`.../accounts/delete/preview` + `.../accounts/delete/start`）、批量编辑/批量删除、重复账号扫描（`.../accounts/deduplicate/preview`，建议删除走批量删除预览）、导入（`.../import/preview` + `.../import/start`）与导出（`.../export/accounts`，格式 cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager/json/jsonl/csv）。
 - 所有改动都先给出预览再执行；预览过期需要重新生成。
 

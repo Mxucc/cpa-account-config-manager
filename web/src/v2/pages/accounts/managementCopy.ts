@@ -71,6 +71,21 @@ export interface ManagementCopy {
   hookNote: string;
   close: string;
   unmanaged: string;
+  addAccount: string;
+  addAccountHint: string;
+  chooseProvider: string;
+  flowBrowser: string;
+  flowDevice: string;
+  flowPlugin: string;
+  flowExternal: string;
+  openLoginPage: string;
+  userCode: string;
+  loginWaiting: string;
+  loginCheck: string;
+  loginDone: string;
+  loginFailed: string;
+  communityTitle: string;
+  communityNote: string;
 }
 
 const zh: ManagementCopy = {
@@ -140,6 +155,21 @@ const zh: ManagementCopy = {
   hookNote: "全部改动都先预览再执行，预览过期需要重新生成。",
   close: "关闭",
   unmanaged: "该账号不由 CPA 管理（插件自建工作区），只能用刷新、测试与渠道绑定操作。",
+  addAccount: "添加账号",
+  addAccountHint: "选择一个供应商，用 CPA 的登录流程新增账号；登录在 CPA 侧完成，插件只转发。",
+  chooseProvider: "供应商",
+  flowBrowser: "浏览器登录",
+  flowDevice: "设备码登录",
+  flowPlugin: "插件登录",
+  flowExternal: "原插件内登录",
+  openLoginPage: "打开登录页",
+  userCode: "设备码",
+  loginWaiting: "等待授权…",
+  loginCheck: "刷新状态",
+  loginDone: "授权完成，账号已新增",
+  loginFailed: "登录未完成",
+  communityTitle: "社区供应商",
+  communityNote: "这些供应商要在 Magpie/OpenCode 里登录，CPA 没有它们的登录实现，所以这里不能直接添加；请到对应插件完成登录后，把凭据以 CPA 渠道方式接入。",
 };
 
 const en: ManagementCopy = {
@@ -209,6 +239,21 @@ const en: ManagementCopy = {
   hookNote: "Every change is previewed before it is applied; an expired preview must be regenerated.",
   close: "Close",
   unmanaged: "CPA does not manage this account (a plugin-owned workspace), so only refresh, test and channel binding apply.",
+  addAccount: "Add account",
+  addAccountHint: "Pick a provider and let CPA run its own sign-in; the plugin only relays it.",
+  chooseProvider: "Provider",
+  flowBrowser: "Browser sign-in",
+  flowDevice: "Device code",
+  flowPlugin: "Plugin sign-in",
+  flowExternal: "Signed in by the original plugin",
+  openLoginPage: "Open sign-in page",
+  userCode: "Device code",
+  loginWaiting: "Waiting for approval…",
+  loginCheck: "Refresh status",
+  loginDone: "Signed in; the account was added",
+  loginFailed: "The sign-in did not finish",
+  communityTitle: "Community providers",
+  communityNote: "These providers sign in inside Magpie or OpenCode, and CPA has no login implementation for them; finish the sign-in there and add the credential as a CPA channel.",
 };
 
 const catalogs: Record<string, ManagementCopy> = { en, "zh-CN": zh };

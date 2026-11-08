@@ -65,12 +65,17 @@ type MarketPlugin struct {
 // reason when the host could not reach the registry; the page then explains why
 // instead of showing an empty list.
 type MarketSnapshot struct {
-	Available bool           `json:"available"`
-	Reason    string         `json:"reason,omitempty"`
-	Source    string         `json:"source"`
-	Registry  string         `json:"registry,omitempty"`
-	Versioned int            `json:"versioned"`
-	Total     int            `json:"total"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	Source    string `json:"source"`
+	Registry  string `json:"registry,omitempty"`
+	Versioned int    `json:"versioned"`
+	Total     int    `json:"total"`
+	// Hidden counts registry entries that are not provider plugins. The market
+	// only offers provider plugins, so the page can say how many other kinds
+	// (middleware, agents, tools, pages) were left out instead of implying the
+	// registry is smaller than it is.
+	Hidden    int            `json:"hidden"`
 	FetchedAt time.Time      `json:"fetched_at,omitempty"`
 	Plugins   []MarketPlugin `json:"plugins"`
 }
@@ -162,6 +167,20 @@ func (m *Market) Snapshot(ctx context.Context, locale string) MarketSnapshot {
 		}
 	}
 
+	// Only provider plugins belong here. The registry also lists middleware,
+	// agents, tools and pages; offering those as importable providers would put
+	// rows on the provider page that can never serve a model.
+	kept := make([]MarketPlugin, 0, len(entries))
+	hidden := 0
+	for _, entry := range entries {
+		if isProviderPlugin(entry) {
+			kept = append(kept, entry)
+			continue
+		}
+		hidden++
+	}
+	entries = kept
+
 	// The registry names no version, so the published versions come from npm. A
 	// missing npm answer still leaves a usable list: the entries simply report no
 	// version instead of disappearing.
@@ -180,6 +199,7 @@ func (m *Market) Snapshot(ctx context.Context, locale string) MarketSnapshot {
 		Registry:  marketRegistryURL,
 		Versioned: versioned,
 		Total:     len(entries),
+		Hidden:    hidden,
 		FetchedAt: now.UTC(),
 		Plugins:   entries,
 	}
@@ -399,4 +419,12 @@ func (m *Market) clock() time.Time {
 		return time.Now()
 	}
 	return m.now()
+}
+
+// isProviderPlugin reports whether a registry entry is a provider plugin, which
+// is the only kind this market imports. The registry tags middleware, agents,
+// tools and pages with a kind but leaves provider plugins untagged; what every
+// provider plugin does publish is the provider list it serves.
+func isProviderPlugin(entry MarketPlugin) bool {
+	return len(entry.Providers) > 0
 }

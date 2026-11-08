@@ -376,7 +376,11 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>{copy.market.title}</CardTitle>
           <span className="text-xs text-gray-500">
-            {market.data?.available ? `${filtered.length} / ${market.data.total}` : copy.common.notReported}
+            {market.data?.available
+              ? `${filtered.length} / ${market.data.total} · ${copy.market.providersOnly}${
+                  market.data.hidden > 0 ? ` · ${copy.market.hidden} ${market.data.hidden}` : ""
+                }`
+              : copy.common.notReported}
           </span>
         </div>
         <Input

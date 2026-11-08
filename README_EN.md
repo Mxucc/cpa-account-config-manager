@@ -27,6 +27,8 @@ Commonly recognized sources include:
 - Claude/Anthropic, Kimi, Qwen, xAI/Grok, Gemini, Gemini CLI, and Vertex service accounts.
 - Cockpit, 9Router, AxonHub, Codex Manager, and other common JSON shapes that can be normalized into CPA Auth files.
 
+The community market lists provider plugins only: registry entries tagged middleware, agent, tools or page are filtered out and the header states how many were hidden, so a plugin that cannot serve a model is never offered as a provider.
+
 Exports support CPA, Sub2API, Cockpit, 9Router, Codex, AxonHub, Codex Manager, and the plain JSON, JSON Lines, and CSV containers that carry the same auth objects as the CPA export in a single file. A ZIP is produced automatically when a target cannot represent multiple accounts in one file. Batch and operation reports are also available as JSON, CSV, or JSON Lines without exposing credentials.
 
 ### Usage, Cost, Concurrency, And Quotas
@@ -321,6 +323,7 @@ The old Codex / OpenCode / Cline Pass workspaces remain as a compatibility layer
 
 ### Account management
 
+- The accounts page offers Add account: pick a provider and let CPA run its own sign-in (browser or device code); the plugin only relays `GET /accounts/login`, `POST /accounts/login/start` and `GET /accounts/login/status`. An imported community provider is labelled as needing a sign-in inside its own plugin.
 - The accounts page offers: edit configuration (through the preview/apply pair `POST .../batch/preview` + `.../batch/start`), model catalog (`.../accounts/models`), model test (`.../accounts/model-test`), token refresh (`.../accounts/token/refresh`), delete (`.../accounts/delete/preview` + `.../accounts/delete/start`), batch edit and batch delete, duplicate scan (`.../accounts/deduplicate/preview`, whose recommendations go through the batch delete preview), import (`.../import/preview` + `.../import/start`) and export (`.../export/accounts`, formats cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager/json/jsonl/csv).
 - Every change is previewed before it is applied; an expired preview must be regenerated.
 

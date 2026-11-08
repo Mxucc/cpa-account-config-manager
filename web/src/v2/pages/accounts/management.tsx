@@ -18,7 +18,11 @@ import type {
   ImportPreview,
   ImportResult,
   JobSnapshot,
+	AccountLoginFlow,
   ModelTestResult,
+	AccountLoginFlowKind,
+	AccountLoginProvider,
+	AccountLoginStatus,
   TargetScope,
 } from "../../../types";
 
@@ -1098,4 +1102,170 @@ export function ExportAccountsDialog({
       </div>
     </Dialog>
   );
+}
+
+// Adding an account. CPA owns every provider login, so this dialog is a provider
+// picker plus a relay: it asks CPA to start a flow, shows the URL or device code
+// CPA returned, and polls until CPA reports that it saved the credential. No
+// provider endpoint is called from the browser and no second key is stored.
+export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps) {
+	const copy = useManagementCopy();
+	const [providers, setProviders] = useState<AccountLoginProvider[]>([]);
+	const [community, setCommunity] = useState<AccountLoginProvider[]>([]);
+	const [loading, setLoading] = useState(false);
+	const [busy, setBusy] = useState("");
+	const [flow, setFlow] = useState<AccountLoginFlow | null>(null);
+	const [status, setStatus] = useState<AccountLoginStatus | null>(null);
+	const [error, setError] = useState("");
+
+	useEffect(() => {
+		if (!open) {
+			setFlow(null);
+			setStatus(null);
+			setError("");
+			return;
+		}
+		let cancelled = false;
+		setLoading(true);
+		api
+			.listAccountLoginProviders()
+			.then((answer) => {
+				if (cancelled) return;
+				setProviders(answer.providers);
+				setCommunity(answer.community);
+				setError("");
+			})
+			.catch((caught: unknown) => {
+				if (cancelled) return;
+				const message = caught instanceof Error ? caught.message : String(caught);
+				setError(message);
+				onError(message);
+			})
+			.finally(() => {
+				if (!cancelled) setLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [open, onError]);
+
+	const poll = async (state: string) => {
+		try {
+			const next = await api.getAccountLoginStatus(state);
+			setStatus(next);
+			if (next.done) {
+				onDone();
+			}
+		} catch (caught) {
+			const message = caught instanceof Error ? caught.message : String(caught);
+			setError(message);
+		}
+	};
+
+	// While a flow is pending the dialog keeps asking CPA; the timer stops as soon
+	// as CPA reports a terminal state or the dialog closes.
+	useEffect(() => {
+		if (!open || !flow || status?.done) return undefined;
+		const timer = setInterval(() => {
+			void poll(flow.state);
+		}, 3000);
+		return () => clearInterval(timer);
+	}, [open, flow, status?.done]);
+
+	const start = async (provider: AccountLoginProvider) => {
+		setBusy(provider.id);
+		setError("");
+		setStatus(null);
+		try {
+			setFlow(await api.startAccountLogin(provider.id));
+		} catch (caught) {
+			const message = caught instanceof Error ? caught.message : String(caught);
+			setError(message);
+			onError(message);
+		} finally {
+			setBusy("");
+		}
+	};
+
+	const flowLabel = (kind: AccountLoginFlowKind) => {
+		switch (kind) {
+			case "device":
+				return copy.flowDevice;
+			case "plugin":
+				return copy.flowPlugin;
+			case "external":
+				return copy.flowExternal;
+			default:
+				return copy.flowBrowser;
+		}
+	};
+
+	return (
+		<Dialog
+			open={open}
+			title={copy.addAccount}
+			onClose={onClose}
+			footer={
+				<>
+					{flow && !status?.done ? (
+						<Button variant="secondary" onClick={() => void poll(flow.state)}>
+							{copy.loginCheck}
+						</Button>
+					) : null}
+					<Button variant="ghost" onClick={onClose}>
+						{copy.close}
+					</Button>
+				</>
+			}
+		>
+			<div className="space-y-4">
+				<p className="text-sm text-gray-600">{copy.addAccountHint}</p>
+				{loading ? <Skeleton className="h-20" /> : null}
+				{!loading ? (
+					<div className="space-y-2">
+						<p className="text-xs font-medium text-gray-500">{copy.chooseProvider}</p>
+						<ul className="grid gap-2 sm:grid-cols-2">
+							{providers.map((provider) => (
+								<li key={provider.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2">
+									<div className="min-w-0">
+										<p className="truncate text-sm font-medium text-gray-900">{provider.name}</p>
+										<p className="text-xs text-gray-500">{flowLabel(provider.flow)}</p>
+									</div>
+									<Button size="sm" loading={busy === provider.id} onClick={() => void start(provider)}>
+										{copy.addAccount}
+									</Button>
+								</li>
+							))}
+						</ul>
+					</div>
+				) : null}
+				{flow ? (
+					<div className="space-y-2 rounded-lg bg-gray-50 p-3 text-sm">
+						<p className="font-medium text-gray-900">{flow.provider}</p>
+						{flow.url ? (
+							<a className="break-all text-blue-600 underline" href={flow.url} target="_blank" rel="noreferrer">
+								{copy.openLoginPage}
+							</a>
+						) : null}
+						{flow.user_code ? (
+							<p className="text-gray-700">
+								{copy.userCode}: <span className="font-mono">{flow.user_code}</span>
+							</p>
+						) : null}
+						<p className="text-xs text-gray-500">
+							{status?.done ? copy.loginDone : status && (status.status === "error" || status.status === "expired") ? `${copy.loginFailed}: ${status.message ?? status.status}` : copy.loginWaiting}
+						</p>
+					</div>
+				) : null}
+				{community.length > 0 ? (
+					<div className="space-y-1 rounded-lg border border-dashed border-gray-300 p-3">
+						<p className="text-xs font-medium text-gray-500">{copy.communityTitle}</p>
+						<p className="text-xs text-gray-500">{copy.communityNote}</p>
+						<p className="text-xs text-gray-700">{community.map((entry) => entry.name).join(" · ")}</p>
+					</div>
+				) : null}
+				{error ? <p className="text-sm text-red-600">{error}</p> : null}
+			</div>
+		</Dialog>
+	);
 }

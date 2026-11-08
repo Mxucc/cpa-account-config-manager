@@ -235,6 +235,9 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodDelete + " /plugins/cpa-account-config-manager/providers/import":                       {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/providers/settings":                        {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/providers/settings":                        {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/accounts/login":                            {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/accounts/login/start":                     {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/accounts/login/status":                     {},
 	}
 	if len(registration.Routes) != len(expected) {
 		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))

@@ -117,10 +117,14 @@ func TestMarketSnapshotJoinsTheRegistryWithPublishedVersions(t *testing.T) {
 	if snapshot.Source != marketSourceLabel {
 		t.Fatalf("source = %q, want %q", snapshot.Source, marketSourceLabel)
 	}
-	// The two malformed entries (a bad package name, a missing name) are skipped
-	// so one bad row cannot hide the rest.
-	if snapshot.Total != 2 || len(snapshot.Plugins) != 2 {
-		t.Fatalf("plugins = %+v, want the two well-formed entries", snapshot.Plugins)
+	// The two malformed entries (a bad package name, a missing name) are skipped,
+	// and the middleware entry is not a provider plugin, so only the provider
+	// plugin is listed; the count of everything left out is reported instead.
+	if snapshot.Total != 1 || len(snapshot.Plugins) != 1 {
+		t.Fatalf("plugins = %+v, want the one provider plugin", snapshot.Plugins)
+	}
+	if snapshot.Hidden != 1 {
+		t.Fatalf("hidden = %d, want the middleware entry", snapshot.Hidden)
 	}
 	first := snapshot.Plugins[0]
 	if first.ID != "@magpie-community/opencode-zcode-auth" || first.Name != "ZCode" {
@@ -132,8 +136,8 @@ func TestMarketSnapshotJoinsTheRegistryWithPublishedVersions(t *testing.T) {
 	if first.Summary != "ZCode 登录" {
 		t.Fatalf("summary = %q, want the Chinese summary", first.Summary)
 	}
-	if snapshot.Versioned != 2 {
-		t.Fatalf("versioned = %d, want 2", snapshot.Versioned)
+	if snapshot.Versioned != 1 {
+		t.Fatalf("versioned = %d, want 1", snapshot.Versioned)
 	}
 	if snapshot.FetchedAt.IsZero() {
 		t.Fatal("fetched_at is zero")
@@ -214,7 +218,7 @@ func TestMarketSnapshotKeepsEntriesWhenVersionsCannotBeRead(t *testing.T) {
 	}
 	market := newTestMarket(doer, time.Now())
 	snapshot := market.Snapshot(context.Background(), "zh-CN")
-	if !snapshot.Available || snapshot.Total != 2 || snapshot.Versioned != 0 {
+	if !snapshot.Available || snapshot.Total != 1 || snapshot.Versioned != 0 {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 	if snapshot.Plugins[0].Version != "" {

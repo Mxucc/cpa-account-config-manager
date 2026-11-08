@@ -473,6 +473,17 @@ func (s *ClinePassService) SetRouteAuthIndexes(accountID string, indexes []strin
 	}
 }
 
+// RouteAccountForAuthIndex resolves the stored account id one CPA auth index
+// belongs to, for callers outside the service (the unified provider quota path).
+func (s *ClinePassService) RouteAccountForAuthIndex(authIndex string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.routeAccountForAuthIndexLocked(authIndex)
+}
+
 // routeAccountForAuthIndexLocked resolves the stored account id one CPA auth
 // index belongs to. The caller must hold the service mutex, so the matcher can
 // read the index without taking it again.

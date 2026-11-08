@@ -85,8 +85,37 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		pluginApp.HandleUsage(record)
 		return okEnvelope(struct{}{})
+	case cpaapi.MethodQuotaIdentifier:
+		// The quota provider belongs to this plugin; the identifier is its plugin id.
+		return okEnvelope(cpaapi.IdentifierResponse{Identifier: "cpa-account-config-manager"})
+	case cpaapi.MethodQuotaDescribe:
+		return okEnvelope(pluginApp.HandleQuotaDescribe(context.Background(), cpaapi.QuotaDescribeRequest{}))
+	case cpaapi.MethodQuotaFetch:
+		var quotaRequest cpaapi.QuotaFetchRequest
+		if len(request) > 0 {
+			if errUnmarshal := json.Unmarshal(request, &quotaRequest); errUnmarshal != nil {
+				return nil, fmt.Errorf("decode quota fetch input: %w", errUnmarshal)
+			}
+		}
+		response, errFetch := pluginApp.HandleQuotaFetch(context.Background(), quotaRequest)
+		if errFetch != nil {
+			return nil, errFetch
+		}
+		return okEnvelope(response)
+	case cpaapi.MethodQuotaReset:
+		var resetRequest cpaapi.QuotaResetRequest
+		if len(request) > 0 {
+			if errUnmarshal := json.Unmarshal(request, &resetRequest); errUnmarshal != nil {
+				return nil, fmt.Errorf("decode quota reset input: %w", errUnmarshal)
+			}
+		}
+		response, errReset := pluginApp.HandleQuotaReset(context.Background(), resetRequest)
+		if errReset != nil {
+			return nil, errReset
+		}
+		return okEnvelope(response)
 	case cpaapi.MethodAuthIdentifier, cpaapi.MethodExecutorIdentifier:
-		return okEnvelope(cpaapi.IdentifierResponse{Identifier: "codex-agent-identity"})
+		return okEnvelope(pluginApp.AuthIdentifierResponse())
 	case cpaapi.MethodAuthParse:
 		var authRequest cpaapi.AuthParseRequest
 		if errUnmarshal := json.Unmarshal(request, &authRequest); errUnmarshal != nil {

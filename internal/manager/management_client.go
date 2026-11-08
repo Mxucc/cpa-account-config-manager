@@ -42,6 +42,10 @@ type managementClient struct {
 	key              string
 	doer             HTTPDoer
 	fingerprintStore fingerprintSeedStore
+	// probeV8 enables the v8 configuration path. It is set only for clients built
+	// on a host that reports a schema new enough to serve /v8/management, so a
+	// v0-era host (and every existing test fixture) never pays a probe request.
+	probeV8 bool
 }
 
 type managementHTTPStatusError struct {
@@ -135,7 +139,21 @@ func (c *managementClient) APICall(ctx context.Context, request managementAPICal
 		return modelProbeHTTPResponse{}, fmt.Errorf("encode management API-call request: %w", errMarshal)
 	}
 	var response managementAPICallResponse
-	if errRequest := c.requestJSON(ctx, http.MethodPost, "/v0/management/api-call", bytes.NewReader(raw), "application/json", &response); errRequest != nil {
+	path := managementV0APICall
+	if c.managementAPIVersionFor(ctx) == managementAPIV8 {
+		path = managementV8APICall
+	}
+	if errRequest := c.requestJSON(ctx, http.MethodPost, path, bytes.NewReader(raw), "application/json", &response); errRequest != nil {
+		// A host that answered the v8 probe but refuses api-call still serves v0.
+		if path == managementV8APICall {
+			if errFallback := c.requestJSON(ctx, http.MethodPost, managementV0APICall, bytes.NewReader(raw), "application/json", &response); errFallback == nil {
+				return modelProbeHTTPResponse{
+					StatusCode: response.StatusCode,
+					Header:     response.Header,
+					Body:       []byte(string(response.Body)),
+				}, nil
+			}
+		}
 		return modelProbeHTTPResponse{}, errRequest
 	}
 	return modelProbeHTTPResponse{

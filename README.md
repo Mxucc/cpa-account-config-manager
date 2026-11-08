@@ -272,3 +272,56 @@ make package VERSION=X.Y.Z
 - 社区链接：[LINUX DO](https://linux.do/)
 
 这些项目提供了产品行为参考；除非仓库许可历史另有说明，本插件没有直接复制其代码。
+
+## 统一供应商域（v2，兼容层）
+
+新版界面（`web/src/v2`）不再为每个供应商各写一套账号、额度和计费逻辑，而是读取同一个供应商读模型：
+
+- 供应商注册表：`GET /v0/management/plugins/cpa-account-config-manager/providers`，含能力矩阵与账号计数。
+- 统一账号：`GET .../providers/accounts`（可按 `provider` 过滤）、`GET .../providers/account?id=...`。
+  字段固定为 `status / credential / plan / quota / metrics / billing / usage / models / binding`，
+  未知一律 `null`，界面显示“未上报”，不会把未上报当成 0。
+- 统一动作：`POST .../providers/account/refresh|test|bind`，按 `provider` 路由到该供应商已有的处理逻辑；不支持时返回明确的 `501` 与原因。
+- 供应商目录：`GET .../providers/catalog` 返回内置预设（Codex、OpenCode Go/Zen、Cline Pass、OpenRouter、DeepSeek、Moonshot、Zhipu、DashScope、Groq、Mistral、xAI、Ollama、LM Studio、vLLM 与自定义 OpenAI 兼容端点）。
+
+### 额度与计费口径
+
+- 百分比与金额是两种事实：只有上游真的给出百分比时才输出 `used_percent`；只有金额已知时才输出 `allowance/used/remaining`。
+- 窗口统一为 `rolling / weekly / monthly`，同时保留原始窗口名（`source_window`）。
+- 订阅周期只在上游明确给出时才输出（`cycle.kind`），不根据价格或重置时间推断。
+- 状态优先级：`credential_invalid` > `quota_limited` > `repairing` > `disabled` > `ready`。
+
+### CPA v8 兼容
+
+- 插件契约声明到 schema 10：`quota_provider`、多供应商模型注册（v9）与多 auth 入口（v10）均已声明；宿主版本更低时只声明它支持的版本。
+- 实现 `quota.identifier/describe/fetch/reset`，按 `auth_index` 归属账号；未托管的凭据返回空响应而不是错误，宿主的原生额度卡不受影响。
+- 渠道写入优先走 `/v8/management/config/api-keys/<kind>`（`PATCH` + `If-Match`，412 时重读重试一次），不可用时回退到 v0。自更新、账户文件等仍走 v0（v8 宿主继续支持）。
+
+### Magpie / OpenCode 供应商插件导入
+
+- 界面「供应商 → 导入插件」粘贴插件的 `package.json`，或调用 `POST .../providers/import`（`{"manifest":"...","source":"magpie"}`）。
+- 导入只登记供应商定义（id、名称、版本、入口、能力提示），**不执行任何插件代码**，返回的 `hook_execution` 恒为 `false`；`DELETE .../providers/import?id=` 可移除。
+- 要路由该供应商的模型，仍需把它作为 CPA 渠道配置（Base URL + Key）。钩子执行（Bun sidecar）未在本版本启用，界面会如实说明。
+
+### 旧界面
+
+旧的 Codex / OpenCode / Cline Pass 工作区保留为兼容层，位于对应供应商详情的「兼容（旧界面）」页签；新壳层负责导航、统一账号与额度视图。旧顶层菜单不再出现在侧栏。
+
+
+### 插件钩子执行（可选，默认关闭）
+
+- 设置项 `magpie_hook_execution` 默认 `false`，通过 `GET/PUT .../providers/settings` 读写，持久化在数据目录的 `provider-settings.json`。
+- 关闭时：导入项只登记定义，`/providers/accounts` 不含插件账号，`hook_execution` 恒为 `false`。
+- 开启且本机有 Bun 时：对每个已导入且带 `directory` 的插件运行一次 sidecar（`internal/magpiecompat`），只调用登录声明、模型目录、额度三个钩子，**从不调用 `fetch`**，因此不接管请求路由；结果按同一套 `Account/QuotaWindow` 规则并入 `/providers/accounts`。
+- 隔离：一次探测一个进程、20 秒超时并杀进程、stdout 上限 4 MB、并发上限 2、可执行文件白名单仅 `bun`、插件目录必须位于数据目录的 `magpie-plugins/` 下。
+- 失败不会影响原生供应商：Bun 缺失、超时、崩溃或输出超限只在 `GET .../providers/catalog` 的对应条目上给出 `hook_error` 原因。
+
+### 浏览器取证脚本
+
+```bash
+cd web && npm run build
+node scripts/mock-provider-ui.mjs &          # 同源 mock 供应商 API + 构建产物
+python3 scripts/capture-evidence.py          # 登录、逐视图截图、断言无横向溢出与 console 错误
+```
+
+产物写入 `.web-builder/evidence/sprint-5/`（1440×900 与 390×844 各 7 个视图 + 账号抽屉，以及 `visual-report.json`）。

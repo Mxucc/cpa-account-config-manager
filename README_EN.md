@@ -272,3 +272,55 @@ make package VERSION=X.Y.Z
 - Community link: [LINUX DO](https://linux.do/)
 
 These projects informed product behavior. Their code is not copied into this plugin unless separately identified by the repository license history.
+
+## Unified provider domain (v2, compatibility layer)
+
+The new interface (`web/src/v2`) no longer reimplements accounts, quota and billing per vendor; it reads one provider read model:
+
+- Provider registry: `GET /v0/management/plugins/cpa-account-config-manager/providers`, with a capability matrix and account counts.
+- Unified accounts: `GET .../providers/accounts` (optionally `?provider=`) and `GET .../providers/account?id=...`.
+  The shape is fixed at `status / credential / plan / quota / metrics / billing / usage / models / binding`; unknown values are `null` and render as "not reported", never as 0.
+- Unified actions: `POST .../providers/account/refresh|test|bind`, routed to the provider's existing handler; an unsupported action returns an explicit `501` with a reason.
+- Provider catalog: `GET .../providers/catalog` lists built-in presets (Codex, OpenCode Go/Zen, Cline Pass, OpenRouter, DeepSeek, Moonshot, Zhipu, DashScope, Groq, Mistral, xAI, Ollama, LM Studio, vLLM and custom OpenAI-compatible endpoints).
+
+### Quota and billing semantics
+
+- A percentage and an amount are different facts: `used_percent` only exists when the upstream reported a share; `allowance/used/remaining` only when an amount is known.
+- Windows normalize to `rolling / weekly / monthly` while keeping the provider's own name in `source_window`.
+- A subscription cycle is emitted only when the provider states one; it is never inferred from a price or a reset time.
+- Status precedence: `credential_invalid` > `quota_limited` > `repairing` > `disabled` > `ready`.
+
+### CPA v8 compatibility
+
+- The plugin contract declares schema 10: `quota_provider`, multi-provider model registration (v9) and multi auth entries (v10); a lower host only receives the version it supports.
+- `quota.identifier/describe/fetch/reset` are implemented and attributed by `auth_index`; a credential this plugin does not manage answers empty rather than an error, so the host's built-in quota card is unaffected.
+- Channel writes prefer `/v8/management/config/api-keys/<kind>` (`PATCH` with `If-Match`, re-read and retry once on 412) and fall back to v0. Self-update and auth-file routes stay on v0, which v8 hosts still serve.
+
+### Magpie / OpenCode provider plugin import
+
+- Use "Providers → Import plugin" with a plugin's `package.json`, or `POST .../providers/import` (`{"manifest":"...","source":"magpie"}`).
+- Import only records a provider definition (id, name, version, entry, capability hints). **No plugin code is executed** and `hook_execution` is always `false`; `DELETE .../providers/import?id=` removes it.
+- Routing that vendor's models still requires a CPA channel (base URL + key). Hook execution through a Bun sidecar is not enabled in this release and the UI says so.
+
+### Legacy interface
+
+The old Codex / OpenCode / Cline Pass workspaces remain as a compatibility layer under each provider's "Legacy console" tab; the new shell owns navigation plus the unified account and quota views. The old top-level menu entries are gone from the sidebar.
+
+
+### Plugin hook execution (optional, off by default)
+
+- The switch `magpie_hook_execution` defaults to `false`; read and write it through `GET/PUT .../providers/settings`, persisted as `provider-settings.json` in the data directory.
+- Off: an import only records a definition, `/providers/accounts` has no plugin account, and `hook_execution` is always `false`.
+- On, with Bun installed: each imported plugin that has a `directory` gets one sidecar probe (`internal/magpiecompat`) that calls only the login declaration, the model catalog and the allowance hook — **`fetch` is never called**, so request routing is never taken over. The result is merged into `/providers/accounts` through the same `Account/QuotaWindow` rules.
+- Isolation: one process per probe, a 20s timeout that kills it, a 4 MB stdout cap, a concurrency cap of 2, an executable allow-list of `bun` only, and the plugin directory must live under `magpie-plugins/` in the data directory.
+- A failure never affects the built-in providers: a missing Bun, a timeout, a crash or oversized output only adds a `hook_error` reason to that entry in `GET .../providers/catalog`.
+
+### Browser evidence scripts
+
+```bash
+cd web && npm run build
+node scripts/mock-provider-ui.mjs &          # same-origin mock provider API + built assets
+python3 scripts/capture-evidence.py          # login, per-view screenshots, overflow and console assertions
+```
+
+Artifacts land in `.web-builder/evidence/sprint-5/` (7 views at 1440×900 and 390×844 plus the account drawer, and `visual-report.json`).

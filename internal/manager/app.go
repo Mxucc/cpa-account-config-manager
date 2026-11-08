@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"cpa-account-config-manager/internal/cpaapi"
+	"cpa-account-config-manager/internal/provider"
 )
 
 const (
@@ -42,17 +43,24 @@ type Registration struct {
 }
 
 type RegistrationCapabilities struct {
-	ManagementAPI          bool     `json:"management_api"`
-	UsagePlugin            bool     `json:"usage_plugin"`
-	Scheduler              bool     `json:"scheduler"`
-	RequestInterceptor     bool     `json:"request_interceptor"`
-	RequestLifecyclePlugin bool     `json:"request_lifecycle_plugin"`
-	AuthProvider           bool     `json:"auth_provider"`
-	ModelProvider          bool     `json:"model_provider"`
-	Executor               bool     `json:"executor"`
-	ExecutorModelScope     string   `json:"executor_model_scope,omitempty"`
-	ExecutorInputFormats   []string `json:"executor_input_formats,omitempty"`
-	ExecutorOutputFormats  []string `json:"executor_output_formats,omitempty"`
+	ManagementAPI          bool `json:"management_api"`
+	UsagePlugin            bool `json:"usage_plugin"`
+	Scheduler              bool `json:"scheduler"`
+	RequestInterceptor     bool `json:"request_interceptor"`
+	RequestLifecyclePlugin bool `json:"request_lifecycle_plugin"`
+	AuthProvider           bool `json:"auth_provider"`
+	ModelProvider          bool `json:"model_provider"`
+	Executor               bool `json:"executor"`
+	// QuotaProvider exposes normalized subscription quotas to the host (schema 10
+	// hosts call quota.describe/fetch/reset and render them in the quota page).
+	QuotaProvider bool `json:"quota_provider"`
+	// MultiProviderModels lets one registration publish a catalog per provider.
+	MultiProviderModels bool `json:"multi_provider_models,omitempty"`
+	// MultiAuthProviders lets auth.identifier return identifiers/entries.
+	MultiAuthProviders    bool     `json:"multi_auth_providers,omitempty"`
+	ExecutorModelScope    string   `json:"executor_model_scope,omitempty"`
+	ExecutorInputFormats  []string `json:"executor_input_formats,omitempty"`
+	ExecutorOutputFormats []string `json:"executor_output_formats,omitempty"`
 }
 
 type App struct {
@@ -109,9 +117,32 @@ type App struct {
 	codexIdentityOverrides   *CodexIdentityOverrideService
 	globalPolicy             *GlobalPolicyService
 	riskControl              *RiskControlService
-	indexHTML                []byte
-	quiesceOnce              sync.Once
-	quotaResetLocks          [64]sync.Mutex
+	// providers is the unified provider read model; every new provider route and
+	// the CPA quota capability read it.
+	providers *provider.Service
+	// providerImports holds Magpie/OpenCode provider definitions imported as
+	// manifests. It is created on first use because the data directory is only
+	// known after the host config is applied.
+	providerImportsMu   sync.Mutex
+	providerImports     *provider.ImportStore
+	providerImportsPath string
+	// providerSettings holds the provider-domain switches; created on first use for
+	// the same reason as the import store.
+	providerSettings *ProviderSettingsService
+	// hookRunner executes imported plugin hooks; tests replace it so no probe
+	// depends on Bun being installed.
+	hookRunnerMu sync.Mutex
+	hookRunner   pluginHookRunner
+	// hookRuntimeAvailable reports whether a sidecar runtime exists; tests replace
+	// it to exercise the "Bun is missing" degradation on a machine that has Bun.
+	hookRuntimeAvailable func() bool
+	// hookErrors keeps the last sanitized probe failure per imported provider so
+	// the catalog can say why a plugin showed nothing.
+	hookErrorsMu    sync.Mutex
+	hookErrors      map[string]string
+	indexHTML       []byte
+	quiesceOnce     sync.Once
+	quotaResetLocks [64]sync.Mutex
 	// State-directory reconfigure coalescing. DiscoverAuthStorage can run on a stack that already
 	// holds a service lock (the inspection scan holds scanMu while it reads accounts), so the
 	// service reconfiguration is applied by one background worker instead of inline.
@@ -289,6 +320,10 @@ func NewApp(host AuthHost, indexHTML []byte) *App {
 		riskControl:              riskControl,
 		indexHTML:                append([]byte(nil), indexHTML...),
 	}
+	app.providers = provider.NewService(newProviderSource(app))
+	app.providers.SetExtraDefinitions(func() []provider.Definition {
+		return app.providerImportStore().Definitions()
+	})
 	// OpenCode traffic is valued with OpenCode's own published prices, and the
 	// periodic catalog sync only runs for installations that use OpenCode.
 	creditUsage.SetOpenCodePricing(opencodePricing, aiProviderNames.BaseURLForRuntimeIdentity)
@@ -1044,16 +1079,25 @@ func (a *App) quiesceRetiredInstance() {
 	})
 }
 
+// registrationSchemaFor reports the highest contract both sides implement. A host
+// rejects a plugin that claims a newer schema than its own, so the plugin never
+// claims more than the version reported in plugin.register.
+func registrationSchemaFor(hostSchema uint32) uint32 {
+	if hostSchema >= cpaapi.MaxSchemaVersion {
+		return cpaapi.MaxSchemaVersion
+	}
+	if hostSchema >= cpaapi.SchemaVersion {
+		return hostSchema
+	}
+	return cpaapi.LegacySchemaVersion
+}
+
 func (a *App) Registration() Registration {
 	a.mu.RLock()
 	hostSchema := normalizeHostSchemaVersion(a.hostSchema)
 	a.mu.RUnlock()
-	registrationSchema := cpaapi.LegacySchemaVersion
-	requestLifecycle := false
-	if hostSchema >= cpaapi.SchemaVersion {
-		registrationSchema = cpaapi.SchemaVersion
-		requestLifecycle = true
-	}
+	registrationSchema := registrationSchemaFor(hostSchema)
+	requestLifecycle := registrationSchema >= cpaapi.SchemaVersion
 	return Registration{
 		SchemaVersion: registrationSchema,
 		Metadata: cpaapi.Metadata{
@@ -1069,13 +1113,41 @@ func (a *App) Registration() Registration {
 			},
 		},
 		Capabilities: RegistrationCapabilities{
-			ManagementAPI: true, UsagePlugin: true, Scheduler: hostSchema >= cpaapi.SchemaVersion, RequestInterceptor: true, RequestLifecyclePlugin: requestLifecycle,
+			ManagementAPI: true, UsagePlugin: true, Scheduler: registrationSchema >= cpaapi.SchemaVersion, RequestInterceptor: true, RequestLifecyclePlugin: requestLifecycle,
 			AuthProvider: true, ModelProvider: true, Executor: true,
+			// QuotaProvider is advertised on every schema that negotiates capabilities:
+			// the host only calls quota.* when it knows the capability, so an older host
+			// simply ignores it, while a v8 host shows the plugin quota card.
+			QuotaProvider:         true,
+			MultiProviderModels:   registrationSchema >= cpaapi.SchemaVersionMultiProviderModels,
+			MultiAuthProviders:    registrationSchema >= cpaapi.SchemaVersionMultiAuthProviders,
 			ExecutorModelScope:    "oauth",
 			ExecutorInputFormats:  []string{"codex"},
 			ExecutorOutputFormats: []string{"codex"},
 		},
 	}
+}
+
+// AuthIdentifierResponse declares the auth providers the plugin can actually
+// complete a host login for. Only providers CPA can route through this plugin's
+// executor are listed: advertising another one would put a card in the new
+// Management Center that can never finish, and the host would create auth files
+// no executor serves.
+func (a *App) AuthIdentifierResponse() cpaapi.IdentifierResponse {
+	a.mu.RLock()
+	hostSchema := normalizeHostSchemaVersion(a.hostSchema)
+	a.mu.RUnlock()
+	identifier := agentIdentityProvider
+	response := cpaapi.IdentifierResponse{Identifier: identifier}
+	if registrationSchemaFor(hostSchema) >= cpaapi.SchemaVersionMultiAuthProviders {
+		response.Identifiers = []string{identifier}
+		response.Entries = []cpaapi.AuthProviderEntry{{
+			Identifier: identifier,
+			Name:       "Codex Agent Identity",
+			Logo:       pluginLogoDataURI,
+		}}
+	}
+	return response
 }
 
 func (a *App) HandleSchedulerPick(request cpaapi.SchedulerPickRequest) cpaapi.SchedulerPickResponse {
@@ -1307,7 +1379,7 @@ func (a *App) HandleAgentIdentityHTTPRequest(ctx context.Context, request cpaapi
 
 func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 	return cpaapi.ManagementRegistrationResponse{
-		Routes: []cpaapi.ManagementRoute{
+		Routes: append([]cpaapi.ManagementRoute{
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/accounts", Description: "List redacted CLIProxyAPI accounts."},
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/accounts/config", Description: "Read one editable account's current allow-listed configuration."},
 			{Method: http.MethodGet, Path: managementRoutePrefix + "/quota-policies", Description: "Read persisted account and AI provider quota/concurrency policies."},
@@ -1437,7 +1509,7 @@ func (a *App) ManagementRegistration() cpaapi.ManagementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementRoutePrefix + "/proxy-profiles", Description: "Create a reusable proxy profile."},
 			{Method: http.MethodPut, Path: managementRoutePrefix + "/proxy-profiles", Description: "Update a reusable proxy profile."},
 			{Method: http.MethodDelete, Path: managementRoutePrefix + "/proxy-profiles", Description: "Delete a reusable proxy profile."},
-		},
+		}, providerManagementRoutes()...),
 		Resources: []cpaapi.ResourceRoute{
 			{
 				Path:        "/index.html",
@@ -1491,6 +1563,9 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		a.rememberClinePassManagementKey(managementKey)
 		if strings.TrimSpace(managementKey) != "" {
 			a.startClinePassMaintenance()
+		}
+		if response, handled := a.handleProviderRoutes(ctx, req, method, path); handled {
+			return response
 		}
 		a.policies.Arm(managementKey)
 		if a.policies.Snapshot().Policy.ManagesNewAccountProbe() {

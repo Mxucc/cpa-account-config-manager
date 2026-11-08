@@ -220,6 +220,20 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodGet + " /plugins/cpa-account-config-manager/auto-retry":                                {},
 		http.MethodPut + " /plugins/cpa-account-config-manager/auto-retry":                                {},
 		http.MethodDelete + " /plugins/cpa-account-config-manager/proxy-profiles":                         {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers":                                 {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/overview":                        {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/accounts":                        {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/account":                         {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/plans":                           {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/pricing":                         {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/providers/account/refresh":                {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/providers/account/test":                   {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/providers/account/bind":                   {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/catalog":                         {},
+		http.MethodPost + " /plugins/cpa-account-config-manager/providers/import":                         {},
+		http.MethodDelete + " /plugins/cpa-account-config-manager/providers/import":                       {},
+		http.MethodGet + " /plugins/cpa-account-config-manager/providers/settings":                        {},
+		http.MethodPut + " /plugins/cpa-account-config-manager/providers/settings":                        {},
 	}
 	if len(registration.Routes) != len(expected) {
 		t.Fatalf("routes len = %d, want %d", len(registration.Routes), len(expected))

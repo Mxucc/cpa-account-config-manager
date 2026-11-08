@@ -12,9 +12,24 @@ import (
 )
 
 const (
-	ABIVersion          uint32 = 1
+	ABIVersion uint32 = 1
+	// LegacySchemaVersion is the contract CPA shipped before request lifecycle
+	// callbacks: a plugin that reports it receives no completion event.
 	LegacySchemaVersion uint32 = 1
-	SchemaVersion       uint32 = 2
+	// SchemaVersion introduced request lifecycle completion and credential
+	// concurrency. It stays the minimum gate for those features even though newer
+	// hosts report a higher number.
+	SchemaVersion uint32 = 2
+	// SchemaVersionMultiProviderModels lets model registration publish catalogs for
+	// several providers in one response (upstream pluginabi v9).
+	SchemaVersionMultiProviderModels uint32 = 9
+	// SchemaVersionMultiAuthProviders lets one plugin expose several OAuth/auth
+	// identifiers with per-entry display metadata (upstream pluginabi v10).
+	SchemaVersionMultiAuthProviders uint32 = 10
+	// MaxSchemaVersion is the highest contract this plugin implements. Registration
+	// never reports more than the host offered, because a host rejects a plugin
+	// whose schema is newer than its own.
+	MaxSchemaVersion uint32 = 10
 )
 
 const (
@@ -54,6 +69,13 @@ const (
 	MethodHostModelExecuteStream = "host.model.execute_stream"
 	MethodHostModelStreamRead    = "host.model.stream_read"
 	MethodHostModelStreamClose   = "host.model.stream_close"
+)
+
+const (
+	MethodQuotaIdentifier = "quota.identifier"
+	MethodQuotaDescribe   = "quota.describe"
+	MethodQuotaFetch      = "quota.fetch"
+	MethodQuotaReset      = "quota.reset"
 )
 
 type Metadata struct {
@@ -179,8 +201,18 @@ type RequestCompletion struct {
 	Metadata       map[string]any `json:"Metadata"`
 }
 
-type IdentifierResponse struct {
+type AuthProviderEntry struct {
 	Identifier string `json:"identifier"`
+	Name       string `json:"name,omitempty"`
+	Logo       string `json:"logo,omitempty"`
+}
+
+type IdentifierResponse struct {
+	Identifier string
+	// Identifiers and Entries are read only by schema v10+ hosts. An older host
+	// reads Identifier alone, so the primary provider key stays populated.
+	Identifiers []string            `json:"identifiers,omitempty"`
+	Entries     []AuthProviderEntry `json:"entries,omitempty"`
 }
 
 type AuthParseRequest struct {
@@ -291,10 +323,17 @@ type AuthModelRequest struct {
 	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
+type ProviderModels struct {
+	Provider string      `json:"provider,omitempty"`
+	Models   []ModelInfo `json:"models,omitempty"`
+}
+
 type ModelResponse struct {
-	Provider   string
-	Models     []ModelInfo
-	AuthUpdate AuthData
+	Provider string
+	Models   []ModelInfo
+	// Registrations publishes one catalog per provider for schema v9+ hosts.
+	Registrations []ProviderModels `json:"registrations,omitempty"`
+	AuthUpdate    AuthData
 }
 
 type ExecutorRequest struct {
@@ -600,4 +639,77 @@ type HostAuthRefreshResponse struct {
 	RefreshedAt         time.Time  `json:"refreshed_at"`
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 	RefreshTokenRotated bool       `json:"refresh_token_rotated"`
+}
+
+// QuotaProvider wire types. Field names and JSON tags mirror the host's
+// sdk/pluginapi definitions exactly; a mismatch would silently drop a window
+// from the Management Center quota card.
+
+type QuotaDescribeRequest struct {
+	Plugin Metadata `json:"plugin,omitempty"`
+}
+
+type QuotaDescribeResponse struct {
+	SupportedProviders []string `json:"supported_providers,omitempty"`
+	DisplayName        string   `json:"display_name,omitempty"`
+	SupportsReset      bool     `json:"supports_reset,omitempty"`
+}
+
+type QuotaFetchRequest struct {
+	AuthIndex      string            `json:"auth_index"`
+	AuthID         string            `json:"auth_id"`
+	Provider       string            `json:"provider"`
+	StorageJSON    []byte            `json:"storage_json,omitempty"`
+	Metadata       map[string]any    `json:"metadata,omitempty"`
+	Attributes     map[string]string `json:"attributes,omitempty"`
+	HostCallbackID string            `json:"host_callback_id,omitempty"`
+}
+
+type QuotaResetRequest struct {
+	AuthIndex      string            `json:"auth_index"`
+	AuthID         string            `json:"auth_id"`
+	Provider       string            `json:"provider"`
+	StorageJSON    []byte            `json:"storage_json,omitempty"`
+	Metadata       map[string]any    `json:"metadata,omitempty"`
+	Attributes     map[string]string `json:"attributes,omitempty"`
+	HostCallbackID string            `json:"host_callback_id,omitempty"`
+}
+
+type QuotaSubscription struct {
+	Plan     string `json:"plan,omitempty"`
+	TierName string `json:"tierName,omitempty"`
+	TierID   string `json:"tierId,omitempty"`
+}
+
+type QuotaBucket struct {
+	Window            string  `json:"window,omitempty"`
+	RemainingFraction float64 `json:"remainingFraction"`
+	ResetTime         string  `json:"resetTime,omitempty"`
+	Description       string  `json:"description,omitempty"`
+}
+
+type QuotaGroup struct {
+	DisplayName string        `json:"displayName,omitempty"`
+	Buckets     []QuotaBucket `json:"buckets,omitempty"`
+}
+
+type QuotaMetric struct {
+	Key      string  `json:"key"`
+	Label    string  `json:"label"`
+	Value    float64 `json:"value"`
+	Unit     string  `json:"unit,omitempty"`
+	Format   string  `json:"format,omitempty"`
+	Currency string  `json:"currency,omitempty"`
+}
+
+type QuotaFetchResponse struct {
+	Subscription       *QuotaSubscription `json:"subscription,omitempty"`
+	Summary            []QuotaMetric      `json:"summary,omitempty"`
+	ServerTimeOffsetMs int64              `json:"serverTimeOffsetMs,omitempty"`
+	Groups             []QuotaGroup       `json:"groups,omitempty"`
+}
+
+type QuotaResetResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
 }

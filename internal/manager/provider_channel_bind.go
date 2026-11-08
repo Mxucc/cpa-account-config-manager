@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"cpa-account-config-manager/internal/cpaapi"
 )
 
 // Shared AI-provider channel binding: OpenCode and Cline Pass are two product
@@ -611,6 +613,12 @@ func (a *App) newWriteManagementClient(managementKey string) (*managementClient,
 	if errClient != nil {
 		return nil, fmt.Errorf("management client is unavailable")
 	}
+	// Only a host new enough for the v8 tree is probed; an older host keeps the
+	// v0 list write it has always had, without an extra round trip.
+	a.mu.RLock()
+	hostSchema := normalizeHostSchemaVersion(a.hostSchema)
+	a.mu.RUnlock()
+	client.probeV8 = hostSchema >= cpaapi.SchemaVersionMultiAuthProviders
 	return client, nil
 }
 
@@ -618,6 +626,11 @@ func (a *App) newWriteManagementClient(managementKey string) (*managementClient,
 func (c *managementClient) putAIProviderChannel(ctx context.Context, kind string, items []map[string]any) error {
 	if !supportedAIProviderProxyKind(kind) {
 		return fmt.Errorf("AI provider channel %s is not supported", kind)
+	}
+	// v8 replaces the group under If-Match, so a concurrent writer's change is
+	// never lost; v0 keeps hosts that predate the v8 tree working.
+	if c.managementAPIVersionFor(ctx) == managementAPIV8 {
+		return c.writeAPIKeyGroupV8(ctx, kind, items)
 	}
 	encoded, errEncode := json.Marshal(items)
 	if errEncode != nil {

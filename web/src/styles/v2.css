@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background-color: #f8fafc;
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+}
+
+*:focus-visible {
+  outline: none;
+}
+
+/* Corporate Clean caps motion at 200ms and offers a reduced-motion path. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .motion-safe\:hover\:-translate-y-0\.5:hover,
+  .hover\:-translate-y-0\.5:hover,
+  .hover\:scale-110:hover {
+    transform: none !important;
+  }
+}

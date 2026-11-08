@@ -13,6 +13,7 @@ const localizedSourceFiles = new Set([
   "src/i18n/uiCatalogZhCN.ts",
   "src/i18n/uiCatalogZhTW.ts",
   "src/constants/riskAuditPrompt.ts",
+  "src/v2/copy.ts",
 ]);
 
 const ignoredSourceDirectories = new Set(["node_modules", ".git", ".codex-tasks"]);

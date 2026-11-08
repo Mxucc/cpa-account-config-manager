@@ -1,10 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import { V2App } from "./v2/App";
 import { I18nProvider } from "./i18n";
 import { initFontSize } from "./store/fontSize";
 import { initThemeSync } from "./store/theme";
 import { initPluginTheme } from "./store/pluginTheme";
+import "./styles/v2.css";
 import "./styles.css";
 
 initThemeSync();
@@ -13,6 +14,6 @@ initPluginTheme();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <I18nProvider><App /></I18nProvider>
+    <I18nProvider><V2App /></I18nProvider>
   </React.StrictMode>,
 );

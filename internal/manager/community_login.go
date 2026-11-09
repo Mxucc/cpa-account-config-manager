@@ -412,18 +412,55 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 // for itself. That is the authoritative answer for a provider that keeps its
 // endpoint out of every hook, and it is what a channel for it already points at.
 func (a *App) communityProviderDeclaredBase(providerID string) string {
+	return strings.TrimSpace(a.communityProbe(providerID).baseURL)
+}
+
+// communityProbeCache bounds how long one probe answer is reused. Reading the
+// provider list asks for the same provider's catalog and channel base on every
+// request, and a probe spawns a process: without this, one page load ran the same
+// plugin several times and the account list took fifteen seconds to answer.
+var communityProbeCache = struct {
+	mu      sync.Mutex
+	entries map[string]communityProbeEntry
+}{entries: map[string]communityProbeEntry{}}
+
+const communityProbeCacheTTL = 60 * time.Second
+
+type communityProbeEntry struct {
+	models   []string
+	baseURL  string
+	probedAt time.Time
+}
+
+// communityProbe returns one imported provider's catalog and base URL, reusing a
+// recent answer for the same directory.
+func (a *App) communityProbe(providerID string) communityProbeEntry {
 	if a == nil || strings.TrimSpace(providerID) == "" || !a.pluginRuntimeAvailable() {
-		return ""
+		return communityProbeEntry{}
 	}
 	directory, _, errDirectory := a.importedProviderDirectory(context.Background(), providerID)
 	if errDirectory != nil || strings.TrimSpace(directory) == "" {
-		return ""
+		return communityProbeEntry{}
 	}
+	key := strings.ToLower(strings.TrimSpace(directory))
+	communityProbeCache.mu.Lock()
+	if cached, found := communityProbeCache.entries[key]; found && time.Since(cached.probedAt) < communityProbeCacheTTL {
+		communityProbeCache.mu.Unlock()
+		return cached
+	}
+	communityProbeCache.mu.Unlock()
 	input, errProbe := a.pluginHooks().Probe(directory)
+	answer := communityProbeEntry{models: input.Models, baseURL: input.BaseURL, probedAt: time.Now()}
 	if errProbe != nil {
-		return ""
+		answer = communityProbeEntry{probedAt: time.Now()}
 	}
-	return strings.TrimSpace(input.BaseURL)
+	communityProbeCache.mu.Lock()
+	if communityProbeCache.entries == nil {
+		communityProbeCache.entries = map[string]communityProbeEntry{}
+	}
+	communityProbeCache.entries[key] = answer
+	communityProbeCache.mu.Unlock()
+	return answer
 }
 
 // communityChannelModels reads the model catalog an imported provider publishes,
@@ -433,19 +470,9 @@ func (a *App) communityChannelModels(providerID string) []map[string]any {
 	if a == nil || strings.TrimSpace(providerID) == "" {
 		return nil
 	}
-	if !a.pluginRuntimeAvailable() {
-		return nil
-	}
-	directory, _, errDirectory := a.importedProviderDirectory(context.Background(), providerID)
-	if errDirectory != nil || strings.TrimSpace(directory) == "" {
-		return nil
-	}
-	input, errProbe := a.pluginHooks().Probe(directory)
-	if errProbe != nil {
-		return nil
-	}
-	out := make([]map[string]any, 0, len(input.Models))
-	for _, model := range input.Models {
+	probe := a.communityProbe(providerID)
+	out := make([]map[string]any, 0, len(probe.models))
+	for _, model := range probe.models {
 		id := strings.TrimSpace(model)
 		if id == "" {
 			continue

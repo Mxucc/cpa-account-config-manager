@@ -103,6 +103,9 @@ func (a *App) importedPluginAccounts(ctx context.Context) []provider.Account {
 	if len(imported) == 0 {
 		return nil
 	}
+	// The channel list is read once for every provider, so an account can say
+	// whether the channel this plugin publishes for it is routable at all.
+	states := a.communityChannelStates(ctx)
 	out := make([]provider.Account, 0, len(imported))
 	for _, entry := range imported {
 		if strings.TrimSpace(entry.Directory) == "" {
@@ -123,7 +126,56 @@ func (a *App) importedPluginAccounts(ctx context.Context) []provider.Account {
 		if strings.TrimSpace(input.DisplayName) == "" {
 			input.DisplayName = entry.Name
 		}
-		out = append(out, provider.FromMagpiePlugin(input))
+		account := provider.FromMagpiePlugin(input)
+		// A provider whose channel CPA does not route has to say so on the account
+		// itself: the routing page reads this field, so an account without one is an
+		// account that page cannot describe.
+		if state, found := states[strings.ToLower(strings.TrimSpace(entry.ID))]; found {
+			bound := state
+			account.Binding = &bound
+		}
+		out = append(out, account)
+	}
+	return out
+}
+
+// communityChannelStates maps a community provider id onto the state of the CPA
+// channel this plugin published for it. A provider with no channel is absent from
+// the map, which differs from a channel that exists but cannot route.
+func (a *App) communityChannelStates(ctx context.Context) map[string]provider.Binding {
+	out := map[string]provider.Binding{}
+	if a == nil {
+		return out
+	}
+	managementKey := strings.TrimSpace(a.communityManagementKey())
+	if managementKey == "" {
+		return out
+	}
+	entries, errList := a.aiProviderChannelEntries(ctx, managementKey, "openai-compatibility")
+	if errList != nil {
+		return out
+	}
+	const kind = "openai-compatibility"
+	imported := a.providerImportStore().List()
+	for _, entry := range entries {
+		baseURL := strings.TrimRight(strings.TrimSpace(aiProviderChannelBaseURL(entry)), "/")
+		if baseURL == "" {
+			continue
+		}
+		models := aiProviderChannelModelCount(entry)
+		for _, candidate := range imported {
+			id := strings.ToLower(strings.TrimSpace(candidate.ID))
+			if id == "" || strings.TrimRight(strings.TrimSpace(a.communityChannelBase(id)), "/") != baseURL {
+				continue
+			}
+			out[id] = provider.Binding{
+				Kind:      kind,
+				Channel:   baseURL,
+				Published: true,
+				Models:    models,
+				Readable:  true,
+			}
+		}
 	}
 	return out
 }

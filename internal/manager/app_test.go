@@ -232,6 +232,7 @@ func TestManagementRegistrationUsesExactFixedRoutes(t *testing.T) {
 		http.MethodPost + " /plugins/cpa-account-config-manager/providers/account/refresh":                {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/providers/account/test":                   {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/providers/account/bind":                   {},
+		http.MethodDelete + " /plugins/cpa-account-config-manager/providers/account/channel":              {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/providers/catalog":                         {},
 		http.MethodGet + " /plugins/cpa-account-config-manager/providers/market":                          {},
 		http.MethodPost + " /plugins/cpa-account-config-manager/providers/import":                         {},

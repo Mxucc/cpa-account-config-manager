@@ -51,6 +51,7 @@ func providerManagementRoutes() []cpaapi.ManagementRoute {
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/refresh", Description: "Refresh one account's quota, plan and models."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/test", Description: "Probe one model through an account credential."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/bind", Description: "Publish or update one account's CPA channel."},
+		{Method: http.MethodDelete, Path: providerRouteRelative + "/account/channel", Description: "Remove the CPA channel this plugin published for a community provider."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/catalog", Description: "List provider presets and imported Magpie/OpenCode provider plugins."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/market", Description: "List the Magpie community plugin catalog this plugin can import from."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/import", Description: "Import one Magpie/OpenCode provider plugin manifest, or one community plugin by id, as a provider definition."},

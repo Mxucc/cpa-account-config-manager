@@ -302,18 +302,115 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 	if baseURL == "" {
 		return "", fmt.Errorf("this provider published no base URL, so no channel can route it")
 	}
+	// CPA routes a channel's models from the models list on that row. A channel
+	// without one registers no model at all — CPA unregisters the models of a
+	// compat auth whose list is empty — so the account would stay unroutable
+	// however healthy its credential is. The catalog is the one this provider
+	// publishes, read the same way the account row reads it.
+	models := a.communityChannelModels(login.provider)
+	if len(models) == 0 {
+		return "", fmt.Errorf(
+			"this provider published no model list, so its channel could not serve any model; the sign-in itself succeeded",
+		)
+	}
 	body := map[string]any{
 		"name":     label,
 		"base-url": baseURL,
 		"api-key-entries": []map[string]any{
 			{"api-key": credential.Access},
 		},
+		"models":   models,
 		"disabled": false,
 	}
 	if errSave := a.writeCommunityChannel(label, body); errSave != nil {
 		return "", errSave
 	}
 	return label, nil
+}
+
+// communityChannelModels reads the model catalog an imported provider publishes,
+// in the shape a CPA channel row takes. An empty answer means the plugin
+// published none, which the caller reports instead of writing an unroutable row.
+func (a *App) communityChannelModels(providerID string) []map[string]any {
+	if a == nil || strings.TrimSpace(providerID) == "" {
+		return nil
+	}
+	if !a.pluginRuntimeAvailable() {
+		return nil
+	}
+	directory, _, errDirectory := a.importedProviderDirectory(context.Background(), providerID)
+	if errDirectory != nil || strings.TrimSpace(directory) == "" {
+		return nil
+	}
+	input, errProbe := a.pluginHooks().Probe(directory)
+	if errProbe != nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(input.Models))
+	for _, model := range input.Models {
+		id := strings.TrimSpace(model)
+		if id == "" {
+			continue
+		}
+		// A CPA compat model names the upstream model and the name a client asks
+		// for; publishing the id as both is what makes the model routable.
+		out = append(out, map[string]any{"name": id, "alias": id})
+	}
+	return out
+}
+
+// publishCommunityChannelModelRefresh republishes the model list of the channels
+// this plugin created for a provider. CPA registers a compat channel's models from
+// that field, so a channel written without one — or written before the catalog was
+// published — routes nothing until it is filled in.
+func (a *App) publishCommunityChannelModelRefresh(providerID string) (int, error) {
+	if a == nil {
+		return 0, fmt.Errorf("the plugin is unavailable")
+	}
+	models := a.communityChannelModels(providerID)
+	if len(models) == 0 {
+		return 0, fmt.Errorf("this provider published no model list")
+	}
+	baseURL := communityProviderBaseURL(providerID)
+	if baseURL == "" {
+		return 0, fmt.Errorf("this provider published no base URL, so its channel cannot be found")
+	}
+	managementKey := strings.TrimSpace(a.communityManagementKey())
+	if managementKey == "" {
+		return 0, fmt.Errorf("a management key is required to update the channel")
+	}
+	client, errClient := a.newWriteManagementClient(managementKey)
+	if errClient != nil {
+		return 0, errClient
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const kind = "openai-compatibility"
+	existing, supported, errRead := client.getAIProviderChannel(ctx, kind)
+	if errRead != nil {
+		return 0, fmt.Errorf("read the channel list: %w", errRead)
+	}
+	if !supported {
+		return 0, fmt.Errorf("this host does not accept OpenAI-compatible channels")
+	}
+	wanted := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	items := make([]map[string]any, 0, len(existing))
+	updated := 0
+	for _, entry := range existing {
+		live, _ := entry["base-url"].(string)
+		if strings.TrimRight(strings.TrimSpace(live), "/") == wanted {
+			entry["models"] = models
+			updated++
+		}
+		items = append(items, entry)
+	}
+	if updated == 0 {
+		return 0, fmt.Errorf("no channel of this provider was found")
+	}
+	if errWrite := client.putAIProviderChannel(ctx, kind, items); errWrite != nil {
+		return 0, errWrite
+	}
+	return updated, nil
 }
 
 // writeCommunityChannel appends one channel row through CPA's own AI-provider

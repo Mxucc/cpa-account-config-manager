@@ -25,7 +25,7 @@ export interface Copy {
   usage: { title: string; subtitle: string; tokens: string; cost: string; mode: string; priceSource: string; metered: string; subscription: string; wallet: string };
   // A subscription cycle is a wire enum; the page owns its words.
   cycle: { monthly: string; weekly: string; rolling: string; none: string };
-  routing: { title: string; subtitle: string; published: string; unpublished: string; gaps: string; models: string; channel: string; advanced: string };
+  routing: { title: string; subtitle: string; published: string; unpublished: string; gaps: string; models: string; channel: string; advanced: string; publishModels: string; publishModelsHint: string; noBinding: string };
   automation: { title: string; subtitle: string; inspection: string; policies: string; notifications: string; retry: string; proxy: string };
   settings: { title: string; subtitle: string; general: string; operations: string; risk: string; update: string };
   status: { ready: string; quota_limited: string; credential_invalid: string; repairing: string; disabled: string; unknown: string };
@@ -71,7 +71,7 @@ const zh: Copy = {
   quota: { title: "额度与计划", subtitle: "统一窗口、重置时间与订阅周期", window: "窗口", used: "已用", remaining: "剩余", reset: "重置", limit: "上限", wallet: "钱包余额", aside: "不参与路由", notes: { referencePricedUsage: "参考价折算用量" } },
   usage: { title: "用量与计费", subtitle: "订阅、按量与钱包三种计费口径分开呈现", tokens: "Token", cost: "成本", mode: "计费模式", priceSource: "价格来源", metered: "按量", subscription: "订阅", wallet: "钱包" },
   cycle: { monthly: "按月", weekly: "按周", rolling: "滚动", none: "无周期" },
-  routing: { title: "路由与模型", subtitle: "账号发布到 CPA 渠道的状态与模型缺口", published: "已发布", unpublished: "未发布", gaps: "模型缺口", models: "模型数", channel: "渠道", advanced: "路由高级设置" },
+  routing: { title: "路由与模型", subtitle: "账号发布到 CPA 渠道的状态与模型缺口", published: "已发布", unpublished: "未发布", gaps: "模型缺口", models: "模型数", channel: "渠道", advanced: "路由高级设置", publishModels: "补发布模型", publishModelsHint: "该渠道在 CPA 里还没有模型列表，客户端无法路由到它；点这里按插件发布的目录补上。", noBinding: "这个账号还没有对应的 CPA 渠道。完成一次登录后会自动建好。" },
   automation: { title: "自动化", subtitle: "巡检、策略、通知、重试与代理", inspection: "巡检", policies: "策略", notifications: "通知", retry: "自动重试", proxy: "代理档案" },
   settings: { title: "日志与设置", subtitle: "操作日志、风险控制、插件更新与实验性功能", general: "通用设置", operations: "操作日志", risk: "风险控制", update: "更新" },
   status: { ready: "可用", quota_limited: "额度受限", credential_invalid: "凭据异常", repairing: "自动修复中", disabled: "已停用", unknown: "未知" },
@@ -132,7 +132,7 @@ const en: Copy = {
   quota: { title: "Quota & plans", subtitle: "Unified windows, reset times and subscription cycles", window: "Window", used: "Used", remaining: "Remaining", reset: "Resets", limit: "Limit", wallet: "Wallet balance", aside: "Excluded from routing", notes: { referencePricedUsage: "Reference-priced usage" } },
   usage: { title: "Usage & billing", subtitle: "Subscription, metered and wallet billing kept apart", tokens: "Tokens", cost: "Cost", mode: "Billing", priceSource: "Price source", metered: "Metered", subscription: "Subscription", wallet: "Wallet" },
   cycle: { monthly: "Monthly", weekly: "Weekly", rolling: "Rolling", none: "No cycle" },
-  routing: { title: "Routing & models", subtitle: "Channel publication state and model gaps", published: "Published", unpublished: "Not published", gaps: "Model gaps", models: "Models", channel: "Channel", advanced: "Routing advanced settings" },
+  routing: { title: "Routing & models", subtitle: "Channel publication state and model gaps", published: "Published", unpublished: "Not published", gaps: "Model gaps", models: "Models", channel: "Channel", advanced: "Routing advanced settings", publishModels: "Publish models", publishModelsHint: "This channel has no model list in CPA yet, so clients cannot route to it. Publish the provider's own catalog here.", noBinding: "This account has no CPA channel yet; finishing a sign-in creates it." },
   automation: { title: "Automation", subtitle: "Inspection, policies, notifications, retries and proxies", inspection: "Inspection", policies: "Policies", notifications: "Notifications", retry: "Auto retry", proxy: "Proxy profiles" },
   settings: { title: "Logs & settings", subtitle: "Operation journal, risk control, plugin updates and experiments", general: "General", operations: "Operation journal", risk: "Risk control", update: "Updates" },
   status: { ready: "Ready", quota_limited: "Quota limited", credential_invalid: "Credential invalid", repairing: "Repairing", disabled: "Disabled", unknown: "Unknown" },

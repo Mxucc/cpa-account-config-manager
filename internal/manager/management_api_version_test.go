@@ -308,3 +308,84 @@ func TestQuotaWireTypesMatchHostContract(t *testing.T) {
 		t.Fatalf("summary = %#v", metric)
 	}
 }
+
+// A channel with no model list routes nothing: CPA registers a compat group's
+// models from this field and unregisters them when it is empty. The v8 write must
+// therefore carry the models the bind publishes, in the {name, alias} shape the v8
+// tree stores, or a written channel serves no model at all.
+func TestV8ChannelWriteCarriesTheModelList(t *testing.T) {
+	items := []map[string]any{{
+		"base-url":        "https://www.workbuddy.ai/v2",
+		"api-key-entries": []map[string]any{{"api-key": "wb-key"}},
+		"models": []map[string]any{
+			{"name": "glm-5.3", "alias": "glm-5.3"},
+			{"name": "hy3", "alias": "hy3", "max-context-length": float64(192000)},
+		},
+	}}
+	server := &recordingManagementServer{handler: func(call recordedManagementCall) (int, http.Header, string) {
+		switch {
+		case call.Method == http.MethodGet && call.Path == "/v8/management/config":
+			return http.StatusOK, nil, `{}`
+		case call.Method == http.MethodGet && call.Path == "/v8/management/config/api-keys/openai-compatibility":
+			return http.StatusOK, http.Header{"Etag": []string{`"etag-1"`}}, `[]`
+		case call.Method == http.MethodPatch && call.Path == "/v8/management/config/api-keys/openai-compatibility":
+			return http.StatusOK, nil, `{}`
+		default:
+			t.Errorf("unexpected call %s %s", call.Method, call.Path)
+			return http.StatusNotFound, nil, `{"error":"not_found"}`
+		}
+	}}
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	client := newV8TestClient(t, httpServer)
+	if errWrite := client.putAIProviderChannel(context.Background(), "openai-compatibility", items); errWrite != nil {
+		t.Fatalf("putAIProviderChannel() error = %v", errWrite)
+	}
+	var patchBody string
+	for _, call := range server.recorded() {
+		if call.Method == http.MethodPatch {
+			patchBody = call.Body
+		}
+	}
+	if patchBody == "" {
+		t.Fatal("no PATCH was sent")
+	}
+	var decoded []map[string]any
+	if errDecode := json.Unmarshal([]byte(patchBody), &decoded); errDecode != nil {
+		t.Fatalf("decode PATCH body: %v", errDecode)
+	}
+	if len(decoded) != 1 {
+		t.Fatalf("PATCH body = %s", patchBody)
+	}
+	models, ok := decoded[0]["models"].([]any)
+	if !ok || len(models) != 2 {
+		t.Fatalf("the model list was dropped: %s", patchBody)
+	}
+	first := models[0].(map[string]any)
+	if first["name"] != "glm-5.3" || first["alias"] != "glm-5.3" {
+		t.Fatalf("model = %#v", first)
+	}
+	second := models[1].(map[string]any)
+	if second["max-context-length"] != float64(192000) {
+		t.Fatalf("a per-model setting was dropped: %#v", second)
+	}
+}
+
+// A bare list of ids is what a provider's own catalog looks like; it must become
+// the {name, alias} pair the v8 tree stores, not disappear.
+func TestV8ChannelModelsNormalisesBareIDs(t *testing.T) {
+	models, found := v8ChannelModels([]string{"glm-5.3", " hy3 ", ""})
+	if !found || len(models) != 2 {
+		t.Fatalf("v8ChannelModels() = %#v found=%v", models, found)
+	}
+	if models[0]["name"] != "glm-5.3" || models[0]["alias"] != "glm-5.3" {
+		t.Fatalf("first = %#v", models[0])
+	}
+	if models[1]["name"] != "hy3" {
+		t.Fatalf("second = %#v", models[1])
+	}
+	if _, found := v8ChannelModels(nil); found {
+		t.Fatal("an empty list was reported as a model list")
+	}
+}

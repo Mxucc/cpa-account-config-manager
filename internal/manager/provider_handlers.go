@@ -247,9 +247,28 @@ func (a *App) handleProviderAction(ctx context.Context, req cpaapi.ManagementReq
 			return a.handleOpenCodeBind(ctx, req)
 		case "cline-pass":
 			return a.handleClinePassBind(ctx, req)
-		default:
-			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "provider has no channel binding"})
 		}
+		// A community provider's channel is written by its own sign-in, and the
+		// binding action republishes that channel's model list: CPA registers a
+		// channel's models from that field, so a channel without one routes
+		// nothing however healthy the credential is.
+		if a.isImportedProvider(providerID) {
+			a.rememberCommunityManagementKey(resolveManagementKey(req.Headers))
+			updated, errRefresh := a.publishCommunityChannelModelRefresh(providerID)
+			if errRefresh != nil {
+				return jsonResponse(http.StatusOK, map[string]any{
+					"error":    "community_channel_unroutable",
+					"provider": providerID,
+					"reason":   errRefresh.Error(),
+				})
+			}
+			return jsonResponse(http.StatusOK, map[string]any{
+				"provider": providerID,
+				"channels": updated,
+				"status":   "published",
+			})
+		}
+		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "provider has no channel binding"})
 	}
 	return jsonResponse(http.StatusBadRequest, map[string]any{"error": "unknown action"})
 }

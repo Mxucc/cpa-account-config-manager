@@ -173,6 +173,15 @@ func v8APIKeyGroups(items []map[string]any) []map[string]any {
 		if headers, found := item["headers"]; found {
 			group["headers"] = headers
 		}
+		// The model list is what makes a channel routable: CPA registers a compat
+		// group's models from this field and unregisters them when it is empty, so
+		// dropping it here would leave a written channel serving nothing.
+		if models, found := v8ChannelModels(item["models"]); found {
+			group["models"] = models
+		}
+		if prefix, ok := item["prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
+			group["prefix"] = prefix
+		}
 		keys := make([]map[string]any, 0, 1)
 		switch entries := item["api-key-entries"].(type) {
 		case []map[string]any:
@@ -200,6 +209,63 @@ func v8APIKeyGroups(items []map[string]any) []map[string]any {
 		groups = append(groups, group)
 	}
 	return groups
+}
+
+// v8ChannelModels converts a channel row's model list into what the v8 tree
+// stores. A v0 row carries {name, alias} already; a bare list of ids becomes the
+// same pair, so each id is both what CPA calls upstream and what a client asks
+// for.
+func v8ChannelModels(raw any) ([]map[string]any, bool) {
+	rows := make([]any, 0)
+	switch list := raw.(type) {
+	case []map[string]any:
+		for _, entry := range list {
+			rows = append(rows, entry)
+		}
+	case []any:
+		rows = list
+	case []string:
+		for _, entry := range list {
+			rows = append(rows, entry)
+		}
+	default:
+		return nil, false
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, entry := range rows {
+		switch value := entry.(type) {
+		case string:
+			if id := strings.TrimSpace(value); id != "" {
+				out = append(out, map[string]any{"name": id, "alias": id})
+			}
+		case map[string]any:
+			name, _ := value["name"].(string)
+			alias, _ := value["alias"].(string)
+			name = strings.TrimSpace(name)
+			alias = strings.TrimSpace(alias)
+			if name == "" && alias == "" {
+				continue
+			}
+			if name == "" {
+				name = alias
+			}
+			if alias == "" {
+				alias = name
+			}
+			model := map[string]any{"name": name, "alias": alias}
+			// Carry the optional per-model settings a bind may have written.
+			for _, key := range []string{"display-name", "max-context-length", "force-mapping", "image", "is-compat"} {
+				if field, found := value[key]; found {
+					model[key] = field
+				}
+			}
+			out = append(out, model)
+		}
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return out, true
 }
 
 func decodeAPIKeyGroup(raw []byte) ([]map[string]any, error) {

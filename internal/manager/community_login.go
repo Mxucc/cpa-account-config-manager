@@ -488,6 +488,90 @@ func (a *App) communityChannelModels(providerID string) []map[string]any {
 // this plugin created for a provider. CPA registers a compat channel's models from
 // that field, so a channel written without one — or written before the catalog was
 // published — routes nothing until it is filled in.
+// removeCommunityChannel deletes the CPA channels this plugin published for one
+// provider. A community account owns no CPA auth file, so this is what "remove this
+// account" means for it; only rows that carry this provider's published credential
+// or its declared base are touched, so an operator's own channel survives.
+func (a *App) removeCommunityChannel(providerID string) (int, error) {
+	if a == nil {
+		return 0, fmt.Errorf("the plugin is unavailable")
+	}
+	managementKey := strings.TrimSpace(a.communityManagementKey())
+	if managementKey == "" {
+		return 0, fmt.Errorf("a management key is required to remove the channel")
+	}
+	client, errClient := a.newWriteManagementClient(managementKey)
+	if errClient != nil {
+		return 0, errClient
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const kind = "openai-compatibility"
+	existing, supported, errRead := client.getAIProviderChannel(ctx, kind)
+	if errRead != nil {
+		return 0, fmt.Errorf("read the channel list: %w", errRead)
+	}
+	if !supported {
+		return 0, fmt.Errorf("this host does not accept OpenAI-compatible channels")
+	}
+	if len(existing) == 0 {
+		return 0, fmt.Errorf("no channel of this provider was found")
+	}
+	known := map[string]bool{}
+	for _, digest := range a.communityChannelCredentialsFor(providerID) {
+		known[digest] = true
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.communityChannelBase(providerID)), "/")
+	if baseURL == "" {
+		declared := strings.TrimRight(strings.TrimSpace(a.communityProviderDeclaredBase(providerID)), "/")
+		if declared == "" {
+			declared = strings.TrimRight(strings.TrimSpace(communityProviderBaseURL(providerID)), "/")
+		}
+		baseURL = declared
+	}
+	items := make([]map[string]any, 0, len(existing))
+	removed := 0
+	for _, entry := range existing {
+		live := strings.TrimRight(strings.TrimSpace(aiProviderChannelBaseURL(entry)), "/")
+		own := false
+		if credential := aiProviderChannelCredential(entry); credential != "" && len(known) > 0 {
+			_, own = known[communityCredentialDigest(credential)]
+		}
+		if !own && baseURL != "" {
+			own = live == baseURL
+		}
+		if own {
+			removed++
+			continue
+		}
+		items = append(items, entry)
+	}
+	if removed == 0 {
+		return 0, fmt.Errorf("no channel of this provider was found")
+	}
+	if errWrite := client.putAIProviderChannel(ctx, kind, items); errWrite != nil {
+		return 0, fmt.Errorf("the channel list could not be saved: %w", errWrite)
+	}
+	a.forgetCommunityChannel(providerID)
+	return removed, nil
+}
+
+// forgetCommunityChannel drops what this plugin recorded about a provider's
+// channel, so a later state read does not describe a row that no longer exists.
+func (a *App) forgetCommunityChannel(providerID string) {
+	provider := strings.ToLower(strings.TrimSpace(providerID))
+	if provider == "" {
+		return
+	}
+	communityChannelCredentialsByProvider.mu.Lock()
+	delete(communityChannelCredentialsByProvider.entries, provider)
+	delete(communityChannelCredentialsByProvider.bases, provider)
+	communityChannelCredentialsByProvider.mu.Unlock()
+	communityProbeCache.mu.Lock()
+	communityProbeCache.entries = map[string]communityProbeEntry{}
+	communityProbeCache.mu.Unlock()
+}
+
 func (a *App) publishCommunityChannelModelRefresh(providerID string) (int, error) {
 	if a == nil {
 		return 0, fmt.Errorf("the plugin is unavailable")

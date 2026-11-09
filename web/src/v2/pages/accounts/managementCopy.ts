@@ -71,6 +71,9 @@ export interface ManagementCopy {
   hookNote: string;
   close: string;
   unmanaged: string;
+  removeChannel: string;
+  removeChannelHint: string;
+  removedChannel: string;
   addAccount: string;
   addAccountHint: string;
   chooseProvider: string;
@@ -172,7 +175,10 @@ const zh: ManagementCopy = {
   none: "暂无",
   hookNote: "全部改动都先预览再执行，预览过期需要重新生成。",
   close: "关闭",
-  unmanaged: "该账号不由 CPA 管理（插件自建工作区），只能用刷新、测试与渠道绑定操作。",
+  unmanaged: "该账号没有 CPA auth 文件（插件自建的社区账号），所以编辑、模型目录与测试不适用；可以移除本插件为它发布的渠道。",
+  removeChannel: "移除渠道",
+  removeChannelHint: "只删除本插件为这个供应商建立的 CPA 渠道，不会动你自己的账号。",
+  removedChannel: "渠道已移除",
   addAccount: "添加账号",
   addAccountHint: "内置供应商的登录由 CPA 执行；社区供应商的登录由本插件执行，登录成功后会自动在 CPA 里建好渠道。",
   chooseProvider: "供应商",
@@ -274,7 +280,10 @@ const en: ManagementCopy = {
   none: "Nothing here",
   hookNote: "Every change is previewed before it is applied; an expired preview must be regenerated.",
   close: "Close",
-  unmanaged: "CPA does not manage this account (a plugin-owned workspace), so only refresh, test and channel binding apply.",
+  unmanaged: "This account has no CPA auth file (a community account this plugin created), so edit, models and test do not apply. The channel this plugin published for it can be removed.",
+  removeChannel: "Remove channel",
+  removeChannelHint: "Removes only the CPA channel this plugin created for the provider; your own account is untouched.",
+  removedChannel: "Channel removed",
   addAccount: "Add account",
   addAccountHint: "CPA runs its own providers' sign-ins; a community provider's sign-in is run by this plugin, which then creates the CPA channel.",
   chooseProvider: "Provider",

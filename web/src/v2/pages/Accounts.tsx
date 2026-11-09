@@ -178,6 +178,27 @@ export function AccountsPage({
     setDialog(kind);
   };
 
+
+  // removeChannel deletes the CPA channel this plugin published for a community
+  // provider. It is the only removable object such an account has.
+  const removeChannel = async (providerID: string) => {
+    setBusy(`channel:${providerID}`);
+    setActionError("");
+    try {
+      const answer = (await providerApi.removeChannel(providerID)) as { error?: string; reason?: string };
+      if (answer?.error) {
+        setActionError(answer.reason ? `${answer.error}: ${answer.reason}` : answer.error);
+        return;
+      }
+      onNotice(managementCopy.removedChannel);
+      accounts.reload();
+      onRefreshNeeded();
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy("");
+    }
+  };
   const refresh = async (account: ProviderAccount) => {
     const key = `${account.id}:refresh`;
     setBusy(key);
@@ -363,6 +384,14 @@ export function AccountsPage({
         onAction={(kind) => {
           if (!selected) return;
           const target = { ...selected, cpaID: selectedCPAID };
+          // A community account's only removable object is the channel this plugin
+          // published, and removing it needs no dialog: there is no CPA auth file to
+          // verify, so the action goes straight to the route that owns the channel.
+          if (kind === "removeChannel") {
+            onSelect(undefined);
+            void removeChannel(target.provider.id);
+            return;
+          }
           onSelect(undefined);
           openDialog(kind, target);
         }}
@@ -482,7 +511,7 @@ export function AccountDrawer({
   onClose: () => void;
   // The drawer offers the same management actions as the table row, so an
   // operator who opened the detail view does not have to go back to find them.
-  onAction?: (kind: "edit" | "models" | "test" | "delete") => void;
+  onAction?: (kind: "edit" | "models" | "test" | "delete" | "removeChannel") => void;
 }) {
   const copy = useCopy();
   const managementCopy = useAccountManagementCopy();
@@ -576,7 +605,17 @@ export function AccountDrawer({
                 </Button>
               </div>
             ) : (
-              <p className="text-xs text-gray-500">{managementCopy.unmanaged}</p>
+              <div className="space-y-2">
+                {/* A community account has no CPA auth file: what can be removed is
+                    the channel this plugin published for it. Offering nothing left an
+                    account an operator could not get rid of. */}
+                {account.provider.kind === "plugin" && account.binding ? (
+                  <Button variant="ghost" size="sm" onClick={() => onAction("removeChannel")}>
+                    {managementCopy.removeChannel}
+                  </Button>
+                ) : null}
+                <p className="text-xs text-gray-500">{managementCopy.unmanaged}</p>
+              </div>
             )}
           </section>
         ) : null}

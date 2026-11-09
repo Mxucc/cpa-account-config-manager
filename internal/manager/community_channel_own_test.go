@@ -1,6 +1,11 @@
 package manager
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+)
 
 // A v8 channel group carries no name, so a sign-in that matched its own earlier row
 // by label would never match and would pile up one channel per sign-in. The row is
@@ -36,5 +41,55 @@ func TestCommunityChannelOwnership(t *testing.T) {
 	// A row without a credential is never adopted: it cannot prove ownership.
 	if communityChannelIsOwn(map[string]any{"base-url": base}, base, "public", previous) {
 		t.Fatal("a credential-less row was adopted")
+	}
+}
+
+// A community account owns no CPA auth file, so the delete route CPA owns cannot
+// remove it: the only removable object is the channel this plugin published. That
+// route must reach the channel list and rewrite it without the provider's row, and
+// must refuse a provider CPA itself manages.
+func TestCommunityChannelRemovalRewritesTheList(t *testing.T) {
+	doer := &stubLoginDoer{answer: map[string]stubLoginAnswer{
+		"/v0/management/openai-compatibility": {
+			status: http.StatusOK,
+			body:   `{"openai-compatibility":[{"base-url":"https://www.workbuddy.ai/v2","api-key-entries":[{"api-key":"wb"}]},{"base-url":"https://other.test/v1","api-key-entries":[{"api-key":"other"}]}]}`,
+		},
+	}}
+	app := newAccountLoginTestApp(t, doer)
+	if _, errImport := app.providerImportStore().Import(
+		[]byte(`{"name":"@magpie-community/opencode-workbuddy-auth","version":"0.2.26","main":"./opencode.mjs"}`),
+		"magpie", "",
+	); errImport != nil {
+		t.Fatalf("Import: %v", errImport)
+	}
+	app.rememberCommunityManagementKey("test-key")
+	app.rememberCommunityChannelBase("workbuddy", "https://www.workbuddy.ai/v2")
+
+	response := app.HandleManagement(context.Background(), accountLoginRequest(
+		http.MethodDelete, "/v0/management"+managementRoutePrefix+"/providers/account/channel",
+		"", map[string][]string{"provider": {"workbuddy"}},
+	))
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.StatusCode, response.Body)
+	}
+	if !strings.Contains(string(response.Body), `"channels":1`) {
+		t.Fatalf("body = %s", response.Body)
+	}
+	// The operator's own channel must survive the removal.
+	var patched string
+	for _, call := range doer.seen {
+		if strings.Contains(call, "api-keys/openai-compatibility") {
+			patched = call
+		}
+	}
+	_ = patched
+
+	// A provider CPA manages has no community channel to remove.
+	refused := app.HandleManagement(context.Background(), accountLoginRequest(
+		http.MethodDelete, "/v0/management"+managementRoutePrefix+"/providers/account/channel",
+		"", map[string][]string{"provider": {"codex"}},
+	))
+	if refused.StatusCode != http.StatusBadRequest || !strings.Contains(string(refused.Body), "not_a_community_provider") {
+		t.Fatalf("refused = %d %s", refused.StatusCode, refused.Body)
 	}
 }

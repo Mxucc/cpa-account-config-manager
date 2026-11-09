@@ -62,6 +62,14 @@ export const providerApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // removeChannel deletes the CPA channel this plugin published for a community
+  // provider. It is the only removable object such an account has, because it owns
+  // no CPA auth file.
+  removeChannel: (provider: string) =>
+    request<{ status?: string; error?: string; reason?: string }>(
+      `/providers/account/channel?provider=${encodeURIComponent(provider)}`,
+      { method: "DELETE" },
+    ),
   bind: (provider: string, body: unknown) =>
     request<unknown>(`/providers/account/bind?provider=${encodeURIComponent(provider)}`, {
       method: "POST",

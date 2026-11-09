@@ -128,6 +128,34 @@ func (a *App) handleProviderRoutes(ctx context.Context, req cpaapi.ManagementReq
 		return a.handleProviderAction(ctx, req, "test"), true
 	case method == http.MethodPost && path == providerRoutePrefix+"/account/bind":
 		return a.handleProviderAction(ctx, req, "bind"), true
+	case method == http.MethodDelete && path == providerRoutePrefix+"/account/channel":
+		providerID := strings.TrimSpace(firstQueryValue(req.Query, "provider"))
+		if providerID == "" {
+			return jsonResponse(http.StatusBadRequest, map[string]any{"error": "provider is required"}), true
+		}
+		// A community account owns no CPA auth file, so the only object that can be
+		// removed is the channel this plugin published for it. Refusing here is what
+		// left an account an operator could not get rid of.
+		if !a.isImportedProvider(providerID) {
+			return jsonResponse(http.StatusBadRequest, map[string]any{
+				"error":  "not_a_community_provider",
+				"reason": "this account is managed by CPA; delete it through the account deletion route",
+			}), true
+		}
+		a.rememberCommunityManagementKey(resolveManagementKey(req.Headers))
+		removed, errRemove := a.removeCommunityChannel(providerID)
+		if errRemove != nil {
+			return jsonResponse(http.StatusOK, map[string]any{
+				"error":    "community_channel_not_removed",
+				"provider": providerID,
+				"reason":   errRemove.Error(),
+			}), true
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"status":   "removed",
+			"provider": providerID,
+			"channels": removed,
+		}), true
 	case method == http.MethodGet && path == providerRoutePrefix+"/catalog":
 		imported := a.providerImportStore().List()
 		entries := make([]map[string]any, 0, len(imported))

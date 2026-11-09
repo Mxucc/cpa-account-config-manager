@@ -165,7 +165,20 @@ func (a *App) communityChannelStates(ctx context.Context) map[string]provider.Bi
 		models := aiProviderChannelModelCount(entry)
 		for _, candidate := range imported {
 			id := strings.ToLower(strings.TrimSpace(candidate.ID))
-			if id == "" || strings.TrimRight(strings.TrimSpace(a.communityChannelBase(id)), "/") != baseURL {
+			if id == "" {
+				continue
+			}
+			// Where this provider's channel points is learned from its own package,
+			// with the base a previous sign-in recorded as the fallback; the static
+			// table only covers providers that publish neither.
+			known := a.communityChannelBase(id)
+			if known == "" {
+				known = a.communityProviderDeclaredBase(id)
+			}
+			if known == "" {
+				known = communityProviderBaseURL(id)
+			}
+			if strings.TrimRight(strings.TrimSpace(known), "/") != baseURL {
 				continue
 			}
 			out[id] = provider.Binding{

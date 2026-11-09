@@ -111,12 +111,21 @@ func aiProviderChannelCredential(entry map[string]any) string {
 		return ""
 	}
 	if raw, ok := entry["api-key-entries"]; ok {
-		if list, isList := raw.([]any); isList {
+		// A row decoded from the API carries []any; a row this process built
+		// carries []map[string]any. Both are the same list.
+		switch list := raw.(type) {
+		case []any:
 			for _, item := range list {
 				record, isRecord := item.(map[string]any)
 				if !isRecord {
 					continue
 				}
+				if key, ok := record["api-key"].(string); ok && strings.TrimSpace(key) != "" {
+					return strings.TrimSpace(key)
+				}
+			}
+		case []map[string]any:
+			for _, record := range list {
 				if key, ok := record["api-key"].(string); ok && strings.TrimSpace(key) != "" {
 					return strings.TrimSpace(key)
 				}

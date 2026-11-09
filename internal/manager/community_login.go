@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -56,6 +58,66 @@ var communityLogins = struct {
 	// poll that writes the channel. Memory only, never logged.
 	key string
 }{entries: map[string]*communityLogin{}}
+
+// communityChannelCredentials remembers, per channel label, the credentials this
+// plugin published. A v8 channel group keeps no name, so a row is matched by its
+// base URL and credential; this record is what lets a re-sign-in recognise the row
+// it wrote last time even though the provider rotated the credential. Only
+// digests are kept, never the credential itself.
+var communityChannelCredentials = struct {
+	mu      sync.Mutex
+	entries map[string][]string
+}{entries: map[string][]string{}}
+
+// communityChannelCredentialLimit bounds how many past credentials one label
+// keeps, so a provider that rotates on every sign-in cannot grow the record.
+const communityChannelCredentialLimit = 8
+
+// communityChannelCredentials returns the digests this label published before.
+func (a *App) communityChannelCredentials(label string) []string {
+	trimmed := strings.TrimSpace(label)
+	if trimmed == "" {
+		return nil
+	}
+	communityChannelCredentials.mu.Lock()
+	defer communityChannelCredentials.mu.Unlock()
+	stored := communityChannelCredentials.entries[trimmed]
+	out := make([]string, len(stored))
+	copy(out, stored)
+	return out
+}
+
+// rememberCommunityChannelCredential records one credential digest for a label.
+func (a *App) rememberCommunityChannelCredential(label, credential string) {
+	trimmed := strings.TrimSpace(label)
+	digest := communityCredentialDigest(credential)
+	if trimmed == "" || digest == "" {
+		return
+	}
+	communityChannelCredentials.mu.Lock()
+	defer communityChannelCredentials.mu.Unlock()
+	stored := communityChannelCredentials.entries[trimmed]
+	for _, existing := range stored {
+		if existing == digest {
+			return
+		}
+	}
+	stored = append(stored, digest)
+	if len(stored) > communityChannelCredentialLimit {
+		stored = stored[len(stored)-communityChannelCredentialLimit:]
+	}
+	communityChannelCredentials.entries[trimmed] = stored
+}
+
+// communityCredentialDigest hashes one credential so the record never holds it.
+func communityCredentialDigest(credential string) string {
+	trimmed := strings.TrimSpace(credential)
+	if trimmed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(trimmed))
+	return hex.EncodeToString(sum[:])
+}
 
 // isImportedProvider reports whether id belongs to an imported community plugin.
 func (a *App) isImportedProvider(id string) bool {
@@ -256,6 +318,13 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 
 // writeCommunityChannel appends one channel row through CPA's own AI-provider
 // route, which is where every other channel this plugin creates lives.
+//
+// The row is matched by what the v8 tree actually keeps, which is the base URL and
+// the credential: a v8 channel group carries no name, so a name comparison would
+// never match its own earlier row and every sign-in would pile up another one. A
+// row is this provider's when it publishes this provider's base URL and either the
+// credential this sign-in just obtained or the one this provider published last
+// time (the provider rotated it, which is the same account).
 func (a *App) writeCommunityChannel(label string, body map[string]any) error {
 	managementKey := strings.TrimSpace(a.communityManagementKey())
 	if managementKey == "" {
@@ -275,12 +344,16 @@ func (a *App) writeCommunityChannel(label string, body map[string]any) error {
 	if !supported {
 		return fmt.Errorf("this host does not accept OpenAI-compatible channels")
 	}
-	// Replace a row this provider already created, so signing in twice updates the
-	// account instead of piling up channels.
+	baseURL, _ := body["base-url"].(string)
+	credential := aiProviderChannelCredential(body)
+	// A row this provider wrote before this session carries an older credential.
+	// Only the provider itself knows that mapping, so it is recorded beside the
+	// sign-in state instead of being guessed from the list.
+	previous := a.communityChannelCredentials(label)
 	items := make([]map[string]any, 0, len(existing)+1)
 	replaced := false
 	for _, entry := range existing {
-		if name, _ := entry["name"].(string); name == label {
+		if !replaced && communityChannelIsOwn(entry, baseURL, credential, previous) {
 			items = append(items, body)
 			replaced = true
 			continue
@@ -290,7 +363,38 @@ func (a *App) writeCommunityChannel(label string, body map[string]any) error {
 	if !replaced {
 		items = append(items, body)
 	}
-	return client.putAIProviderChannel(ctx, kind, items)
+	if errWrite := client.putAIProviderChannel(ctx, kind, items); errWrite != nil {
+		return errWrite
+	}
+	a.rememberCommunityChannelCredential(label, credential)
+	return nil
+}
+
+// communityChannelIsOwn reports whether one live row belongs to this provider.
+func communityChannelIsOwn(entry map[string]any, baseURL, credential string, previous []string) bool {
+	if entry == nil || strings.TrimSpace(baseURL) == "" {
+		return false
+	}
+	live, _ := entry["base-url"].(string)
+	if strings.TrimRight(strings.TrimSpace(live), "/") != strings.TrimRight(strings.TrimSpace(baseURL), "/") {
+		return false
+	}
+	liveCredential := aiProviderChannelCredential(entry)
+	if liveCredential == "" {
+		return false
+	}
+	if liveCredential == credential {
+		return true
+	}
+	// previous holds digests, so the live credential is hashed before comparing:
+	// the record never keeps a credential, not even a rotated one.
+	liveDigest := communityCredentialDigest(liveCredential)
+	for _, candidate := range previous {
+		if candidate != "" && candidate == liveDigest {
+			return true
+		}
+	}
+	return false
 }
 
 // pruneCommunityLoginsLocked drops expired entries. Callers hold the mutex.

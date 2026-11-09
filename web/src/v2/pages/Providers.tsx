@@ -93,7 +93,7 @@ export function ProvidersPage({
             setSignInProvider("");
             providers.reload();
             accounts.reload();
-            onNotice(copy.providers.importDone);
+            onNotice(copy.market.signInDone);
           }}
         />
       </div>
@@ -167,7 +167,7 @@ export function ProvidersPage({
           setSignInProvider("");
           providers.reload();
           accounts.reload();
-          onNotice(copy.providers.importDone);
+          onNotice(copy.market.signInDone);
         }}
       />
     </div>

@@ -12,7 +12,10 @@ type MagpiePluginInput struct {
 	Methods     []string
 	Windows     []MagpieWindow
 	Warnings    []string
-	UpdatedAt   time.Time
+	// BaseURL is the API base the plugin declares, when it declares one. It is
+	// what a CPA channel for this provider points at.
+	BaseURL   string
+	UpdatedAt time.Time
 }
 
 // MagpieWindow mirrors the sidecar's window shape.

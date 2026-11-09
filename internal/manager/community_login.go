@@ -408,6 +408,24 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 	return label, nil
 }
 
+// communityProviderDeclaredBase returns the API base the imported package declares
+// for itself. That is the authoritative answer for a provider that keeps its
+// endpoint out of every hook, and it is what a channel for it already points at.
+func (a *App) communityProviderDeclaredBase(providerID string) string {
+	if a == nil || strings.TrimSpace(providerID) == "" || !a.pluginRuntimeAvailable() {
+		return ""
+	}
+	directory, _, errDirectory := a.importedProviderDirectory(context.Background(), providerID)
+	if errDirectory != nil || strings.TrimSpace(directory) == "" {
+		return ""
+	}
+	input, errProbe := a.pluginHooks().Probe(directory)
+	if errProbe != nil {
+		return ""
+	}
+	return strings.TrimSpace(input.BaseURL)
+}
+
 // communityChannelModels reads the model catalog an imported provider publishes,
 // in the shape a CPA channel row takes. An empty answer means the plugin
 // published none, which the caller reports instead of writing an unroutable row.
@@ -451,7 +469,15 @@ func (a *App) publishCommunityChannelModelRefresh(providerID string) (int, error
 	if len(models) == 0 {
 		return 0, fmt.Errorf("this provider published no model list")
 	}
-	baseURL := strings.TrimSpace(communityProviderBaseURL(providerID))
+	// The base a provider's channel uses is the one its own package declares, so the
+	// probe reports it; the static table only covers providers that publish none.
+	baseURL := strings.TrimSpace(a.communityChannelBase(providerID))
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(a.communityProviderDeclaredBase(providerID))
+	}
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(communityProviderBaseURL(providerID))
+	}
 	managementKey := strings.TrimSpace(a.communityManagementKey())
 	if managementKey == "" {
 		return 0, fmt.Errorf("a management key is required to update the channel")

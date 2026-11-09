@@ -220,7 +220,7 @@ function normaliseWindows(usage) {
 // so a probe that only called provider.models reported zero models for an
 // installed, healthy plugin.
 async function configSurface(hooks) {
-  if (typeof hooks?.config !== "function") return { ids: [], models: [] };
+  if (typeof hooks?.config !== "function") return { ids: [], models: [], baseURL: "" };
   let scratch;
   try {
     scratch = {};
@@ -228,20 +228,27 @@ async function configSurface(hooks) {
     // A config hook may fill the object it is given or return one instead.
     if (produced && typeof produced === "object" && produced.provider) scratch = produced;
   } catch {
-    return { ids: [], models: [] };
+    return { ids: [], models: [], baseURL: "" };
   }
   const provider = scratch?.provider;
-  if (!provider || typeof provider !== "object") return { ids: [], models: [] };
+  if (!provider || typeof provider !== "object") return { ids: [], models: [], baseURL: "" };
   const models = [];
+  let baseURL = "";
   for (const value of Object.values(provider)) {
+    // The endpoint the provider serves is declared beside the models. A CPA
+    // channel needs it, and a package keeps it in its own module otherwise, so a
+    // probe that skipped it left the channel a repair pass could not find.
+    if (!baseURL && typeof value?.api === "string" && /^https?:\/\//i.test(value.api.trim())) {
+      baseURL = value.api.trim().slice(0, 300);
+    }
     const table = value?.models;
     if (!table || typeof table !== "object") continue;
     for (const id of Object.keys(table)) {
       if (id && !models.includes(id)) models.push(id);
-      if (models.length >= 500) return { ids: Object.keys(provider), models };
+      if (models.length >= 500) return { ids: Object.keys(provider), models, baseURL };
     }
   }
-  return { ids: Object.keys(provider), models };
+  return { ids: Object.keys(provider), models, baseURL };
 }
 
 async function collectWindows(provider) {
@@ -304,6 +311,7 @@ try {
       id: String(providerId).slice(0, 80),
       methods: methodNames(hooks.auth),
       models: models.slice(0, 500),
+      base_url: config.baseURL || "",
       windows,
       warnings,
     },

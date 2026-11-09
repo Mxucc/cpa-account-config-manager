@@ -45,9 +45,13 @@ var (
 
 // ProbeResult is what the sidecar reports for one plugin.
 type ProbeResult struct {
-	ID       string   `json:"id"`
-	Methods  []string `json:"methods,omitempty"`
-	Models   []string `json:"models,omitempty"`
+	ID      string   `json:"id"`
+	Methods []string `json:"methods,omitempty"`
+	Models  []string `json:"models,omitempty"`
+	// BaseURL is the API base the plugin declares in its config hook, when it
+	// declares one. A CPA channel needs it, and a package keeps it in its own
+	// module otherwise.
+	BaseURL  string   `json:"base_url,omitempty"`
 	Windows  []Window `json:"windows,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }

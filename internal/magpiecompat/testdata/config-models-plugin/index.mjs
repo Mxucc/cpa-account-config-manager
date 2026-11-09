@@ -12,7 +12,9 @@ export const ConfigModelsPlugin = async () => ({
   config: async (config) => {
     config.provider ??= {};
     config.provider["cfg-one"] = {
+      name: "Config One",
       npm: "@ai-sdk/openai-compatible",
+      api: "https://cfg.example.test/v2",
       models: {
         "cfg-alpha": { name: "Alpha", limit: { context: 1000000 } },
         "cfg-beta": { name: "Beta", limit: { context: 256000 } },

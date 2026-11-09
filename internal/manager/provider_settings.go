@@ -151,6 +151,7 @@ func (defaultPluginHookRunner) Probe(directory string) (provider.MagpiePluginInp
 		Methods:    result.Methods,
 		Windows:    windows,
 		Warnings:   result.Warnings,
+		BaseURL:    result.BaseURL,
 		UpdatedAt:  time.Now().UTC(),
 	}, nil
 }

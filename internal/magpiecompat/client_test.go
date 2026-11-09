@@ -92,6 +92,11 @@ func TestProbeReadsModelsPublishedThroughConfig(t *testing.T) {
 	if strings.Join(result.Models, ",") != strings.Join(want, ",") {
 		t.Fatalf("models = %v, want %v", result.Models, want)
 	}
+	// The endpoint is declared beside the models; a channel needs it, and a package
+	// keeps it in its own module otherwise.
+	if result.BaseURL != "https://cfg.example.test/v2" {
+		t.Fatalf("base url = %q", result.BaseURL)
+	}
 }
 
 func TestProbeTimeoutKillsTheSidecar(t *testing.T) {

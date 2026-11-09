@@ -18,7 +18,12 @@ import (
 
 const (
 	defaultManagementBaseURL = "http://127.0.0.1:8317"
-	maxManagementResponse    = 64 << 10
+	// maxManagementResponse bounds one management answer. It is generous on
+	// purpose: the channel list grows with the operator's own configuration, and a
+	// cap that fits a small host silently truncates a large one, which reads as
+	// "the channel list could not be loaded" on an otherwise healthy gateway. One
+	// live host already carries 58 channels in 64 KiB of JSON.
+	maxManagementResponse = 8 << 20
 )
 
 var ErrManagementBaseURLInvalid = errors.New("management_base_url is invalid; configure an HTTP(S) loopback URL")

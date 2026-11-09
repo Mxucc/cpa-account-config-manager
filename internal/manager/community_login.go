@@ -119,6 +119,55 @@ func communityCredentialDigest(credential string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// communityChannelCredentialsByProvider remembers, per provider id, the digests of
+// the credentials this plugin published for it. A repair pass finds a provider's
+// channel by that record: the package keeps its endpoint in its own module, so the
+// plugin must not have to hardcode a base URL to find a row it already wrote.
+// the credentials this plugin published for it. A repair pass finds a provider's
+// channel by that record: the package keeps its endpoint in its own module, so the
+// plugin must not have to hardcode a base URL to find a row it already wrote.
+var communityChannelCredentialsByProvider = struct {
+	mu      sync.Mutex
+	entries map[string][]string
+}{entries: map[string][]string{}}
+
+// rememberCommunityChannelCredentialForProvider records one published credential
+// digest against a provider id. Only digests are kept.
+func (a *App) rememberCommunityChannelCredentialForProvider(providerID, credential string) {
+	provider := strings.ToLower(strings.TrimSpace(providerID))
+	digest := communityCredentialDigest(credential)
+	if provider == "" || digest == "" {
+		return
+	}
+	communityChannelCredentialsByProvider.mu.Lock()
+	defer communityChannelCredentialsByProvider.mu.Unlock()
+	stored := communityChannelCredentialsByProvider.entries[provider]
+	for _, existing := range stored {
+		if existing == digest {
+			return
+		}
+	}
+	stored = append(stored, digest)
+	if len(stored) > communityChannelCredentialLimit {
+		stored = stored[len(stored)-communityChannelCredentialLimit:]
+	}
+	communityChannelCredentialsByProvider.entries[provider] = stored
+}
+
+// communityChannelCredentialsFor returns the digests published for a provider.
+func (a *App) communityChannelCredentialsFor(providerID string) []string {
+	provider := strings.ToLower(strings.TrimSpace(providerID))
+	if provider == "" {
+		return nil
+	}
+	communityChannelCredentialsByProvider.mu.Lock()
+	defer communityChannelCredentialsByProvider.mu.Unlock()
+	stored := communityChannelCredentialsByProvider.entries[provider]
+	out := make([]string, len(stored))
+	copy(out, stored)
+	return out
+}
+
 // isImportedProvider reports whether id belongs to an imported community plugin.
 func (a *App) isImportedProvider(id string) bool {
 	if a == nil {
@@ -325,6 +374,9 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 	if errSave := a.writeCommunityChannel(label, body); errSave != nil {
 		return "", errSave
 	}
+	// Record what this provider published, so a later repair can find its channel
+	// without the plugin having to know the endpoint the package keeps to itself.
+	a.rememberCommunityChannelCredentialForProvider(login.provider, credential.Access)
 	return label, nil
 }
 
@@ -371,14 +423,12 @@ func (a *App) publishCommunityChannelModelRefresh(providerID string) (int, error
 	if len(models) == 0 {
 		return 0, fmt.Errorf("this provider published no model list")
 	}
-	baseURL := communityProviderBaseURL(providerID)
-	if baseURL == "" {
-		return 0, fmt.Errorf("this provider published no base URL, so its channel cannot be found")
-	}
+	baseURL := strings.TrimSpace(communityProviderBaseURL(providerID))
 	managementKey := strings.TrimSpace(a.communityManagementKey())
 	if managementKey == "" {
 		return 0, fmt.Errorf("a management key is required to update the channel")
 	}
+
 	client, errClient := a.newWriteManagementClient(managementKey)
 	if errClient != nil {
 		return 0, errClient
@@ -393,12 +443,27 @@ func (a *App) publishCommunityChannelModelRefresh(providerID string) (int, error
 	if !supported {
 		return 0, fmt.Errorf("this host does not accept OpenAI-compatible channels")
 	}
+	// A channel is found by the credential this plugin published for the provider,
+	// not by a base URL the plugin would have to hardcode: a community package
+	// keeps its endpoint in its own module, so only the row it already wrote knows
+	// where it points.
+	known := map[string]bool{}
+	for _, credential := range a.communityChannelCredentialsFor(providerID) {
+		known[credential] = true
+	}
 	wanted := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	items := make([]map[string]any, 0, len(existing))
 	updated := 0
 	for _, entry := range existing {
-		live, _ := entry["base-url"].(string)
-		if strings.TrimRight(strings.TrimSpace(live), "/") == wanted {
+		matched := false
+		if live := aiProviderChannelCredential(entry); live != "" && len(known) > 0 {
+			_, matched = known[communityCredentialDigest(live)]
+		}
+		if !matched && wanted != "" {
+			live, _ := entry["base-url"].(string)
+			matched = strings.TrimRight(strings.TrimSpace(live), "/") == wanted
+		}
+		if matched {
 			entry["models"] = models
 			updated++
 		}

@@ -129,7 +129,34 @@ func communityCredentialDigest(credential string) string {
 var communityChannelCredentialsByProvider = struct {
 	mu      sync.Mutex
 	entries map[string][]string
-}{entries: map[string][]string{}}
+	// bases is where each provider's channel points, learned from the sign-in that
+	// wrote it. A package keeps its endpoint in its own module, so this is the only
+	// way to find that provider's channel again without a hardcoded table.
+	bases map[string]string
+}{entries: map[string][]string{}, bases: map[string]string{}}
+
+// rememberCommunityChannelBase records the API base a provider's channel uses.
+func (a *App) rememberCommunityChannelBase(providerID, baseURL string) {
+	provider := strings.ToLower(strings.TrimSpace(providerID))
+	trimmed := strings.TrimSpace(baseURL)
+	if provider == "" || trimmed == "" {
+		return
+	}
+	communityChannelCredentialsByProvider.mu.Lock()
+	communityChannelCredentialsByProvider.bases[provider] = trimmed
+	communityChannelCredentialsByProvider.mu.Unlock()
+}
+
+// communityChannelBase returns the API base recorded for a provider, if any.
+func (a *App) communityChannelBase(providerID string) string {
+	provider := strings.ToLower(strings.TrimSpace(providerID))
+	if provider == "" {
+		return ""
+	}
+	communityChannelCredentialsByProvider.mu.Lock()
+	defer communityChannelCredentialsByProvider.mu.Unlock()
+	return communityChannelCredentialsByProvider.bases[provider]
+}
 
 // rememberCommunityChannelCredentialForProvider records one published credential
 // digest against a provider id. Only digests are kept.
@@ -377,6 +404,7 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 	// Record what this provider published, so a later repair can find its channel
 	// without the plugin having to know the endpoint the package keeps to itself.
 	a.rememberCommunityChannelCredentialForProvider(login.provider, credential.Access)
+	a.rememberCommunityChannelBase(login.provider, baseURL)
 	return label, nil
 }
 

@@ -15,23 +15,13 @@ export function RoutingPage({ providerFilter }: { providerFilter?: string }) {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
-  if (accounts.loading && !accounts.data) {
-    return (
-      <div className="v2-page">
-        <PageHeader title={copy.routing.title} subtitle={copy.routing.subtitle} />
-        <Skeleton className="h-64" />
-      </div>
-    );
-  }
-  if (accounts.error && !accounts.data) {
-    return <ErrorState message={`${copy.common.error}: ${accounts.error}`} retry={accounts.reload} retryLabel={copy.common.retry} />;
-  }
-
-  const rows = accounts.data?.accounts ?? [];
-
   // Publishing the provider's own catalog is the repair for a channel that was
   // written before its models were known, so the page offers it where the gap is
   // visible instead of making the operator re-sign-in.
+  //
+  // Every hook runs before these returns on purpose: a component that called a
+  // hook only on the loaded path unmounts itself on the loading path, which is
+  // how this page rendered as an empty shell.
   const publish = async (providerID: string) => {
     setPublishing(providerID);
     setError("");
@@ -50,6 +40,20 @@ export function RoutingPage({ providerFilter }: { providerFilter?: string }) {
       setPublishing("");
     }
   };
+
+  if (accounts.loading && !accounts.data) {
+    return (
+      <div className="v2-page">
+        <PageHeader title={copy.routing.title} subtitle={copy.routing.subtitle} />
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
+  if (accounts.error && !accounts.data) {
+    return <ErrorState message={`${copy.common.error}: ${accounts.error}`} retry={accounts.reload} retryLabel={copy.common.retry} />;
+  }
+
+  const rows = accounts.data?.accounts ?? [];
 
   return (
     <div className="v2-page">

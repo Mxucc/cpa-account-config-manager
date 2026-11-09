@@ -111,4 +111,36 @@ describe("v2 shell", () => {
     // Nothing was reported, so the account is unknown rather than a 0% hotspot.
     expect(screen.queryByText("a@example.com")).toBeNull();
   });
+
+  // A page that calls a hook after its loading early-return unmounts itself on the
+  // first render, which showed the routing page as an empty shell. Opening it on a
+  // host that returns accounts must render a row, not nothing.
+  test("the routing page renders a published channel instead of an empty shell", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/providers/overview")) return new Response(JSON.stringify(overview), { status: 200 });
+        if (url.endsWith("/providers")) return new Response(JSON.stringify(providers), { status: 200 });
+        if (url.includes("/providers/accounts")) {
+          const published = {
+            ...accounts.accounts[0],
+            binding: { kind: "openai-compatibility", channel: "https://example.test/v2", published: true, models: 16, readable: true },
+          };
+          return new Response(JSON.stringify({ total: 1, accounts: [published] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ error: "unexpected" }), { status: 404 });
+      }),
+    );
+    window.location.hash = "#/routing";
+    render(
+      <I18nProvider>
+        <V2App />
+      </I18nProvider>,
+    );
+    // The channel kind and the model count are the proof the table rendered.
+    await waitFor(() => expect(screen.getAllByText("openai-compatibility").length).toBeGreaterThan(0), { timeout: 4000 });
+    expect(screen.getByText("16")).toBeDefined();
+    window.location.hash = "";
+  });
 });

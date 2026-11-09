@@ -140,6 +140,12 @@ func (a *App) handleProviderRoutes(ctx context.Context, req cpaapi.ManagementReq
 			if errUnmarshal := json.Unmarshal(raw, &view); errUnmarshal != nil {
 				continue
 			}
+			// The stored notes describe the import that first recorded this
+			// entry. An entry imported before community sign-in existed would
+			// otherwise keep telling the operator to finish the login in another
+			// application, so the page is given the current state instead.
+			view["notes"] = provider.LiveNotes(entry)
+			view["sign_in_available"] = strings.TrimSpace(entry.Directory) != ""
 			if errHook := a.hookError(entry.ID); errHook != "" {
 				view["hook_error"] = errHook
 			}

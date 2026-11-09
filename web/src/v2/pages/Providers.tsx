@@ -8,6 +8,7 @@ import { AccountsPage } from "./Accounts";
 import { QuotaPage } from "./Quota";
 import { RoutingPage } from "./Routing";
 import { LegacyConsole } from "../legacy/LegacyConsole";
+import { AddAccountDialog } from "./accounts/management";
 
 export type ProviderTab = "accounts" | "quota" | "models" | "routing" | "advanced";
 
@@ -30,6 +31,9 @@ export function ProvidersPage({
   const providers = useAsync(() => providerApi.providers(), []);
   const accounts = useAsync(() => providerApi.accounts(), []);
   const current = providers.data?.providers.find((provider) => provider.id === providerID);
+  // The provider whose sign-in dialog is open. The dialog is the same one the
+  // accounts page uses; it is only preselected here.
+  const [signInProvider, setSignInProvider] = useState("");
 
   if (providers.loading && !providers.data) {
     return (
@@ -79,7 +83,19 @@ export function ProvidersPage({
             </Card>
           ))}
         </div>
-        <ImportedProviders onChanged={providers.reload} onNotice={onNotice} />
+        <ImportedProviders onChanged={providers.reload} onNotice={onNotice} onSignIn={setSignInProvider} />
+        <AddAccountDialog
+          open={signInProvider !== ""}
+          preselect={signInProvider}
+          onClose={() => setSignInProvider("")}
+          onError={onAPIError}
+          onDone={() => {
+            setSignInProvider("");
+            providers.reload();
+            accounts.reload();
+            onNotice(copy.providers.importDone);
+          }}
+        />
       </div>
     );
   }
@@ -94,9 +110,18 @@ export function ProvidersPage({
         title={current.display_name}
         subtitle={describeProvider(current.id, current.description ?? "", copy)}
         actions={
-          <Button variant="secondary" size="sm" onClick={() => onNavigate("/providers")}>
-            {copy.providers.title}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {/* A provider that can sign in offers it here, next to its own
+                accounts, instead of only on the accounts page. */}
+            {current.capabilities.login ? (
+              <Button size="sm" onClick={() => setSignInProvider(current.id)}>
+                {copy.market.signIn}
+              </Button>
+            ) : null}
+            <Button variant="secondary" size="sm" onClick={() => onNavigate("/providers")}>
+              {copy.providers.title}
+            </Button>
+          </div>
         }
       />
       {/* One summary line: kind, account count, and each status with its own
@@ -133,6 +158,18 @@ export function ProvidersPage({
       {activeTab === "advanced" ? (
         <AdvancedPanel providerID={current.id} refreshRevision={refreshRevision} onAPIError={onAPIError} onNotice={onNotice} />
       ) : null}
+      <AddAccountDialog
+        open={signInProvider !== ""}
+        preselect={signInProvider}
+        onClose={() => setSignInProvider("")}
+        onError={onAPIError}
+        onDone={() => {
+          setSignInProvider("");
+          providers.reload();
+          accounts.reload();
+          onNotice(copy.providers.importDone);
+        }}
+      />
     </div>
   );
 }
@@ -216,7 +253,20 @@ function summarize(accounts: Array<{ status: string }>): Record<string, number> 
 // the plugin fetches that entry's published manifest itself, so the operator
 // never handles a package.json. Pasting a manifest stays available for an
 // offline or in-house plugin.
-function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onNotice: (message: string) => void }) {
+//
+// An imported provider signs in here too: its package is already installed by the
+// import, so the button opens the same add-account dialog the accounts page uses,
+// already pointed at that provider. Sending the operator elsewhere would be a
+// dead end, because no other application knows about this plugin's install.
+function ImportedProviders({
+  onChanged,
+  onNotice,
+  onSignIn,
+}: {
+  onChanged: () => void;
+  onNotice: (message: string) => void;
+  onSignIn: (providerID: string) => void;
+}) {
   const copy = useCopy();
   const { locale } = useI18n();
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -363,9 +413,21 @@ function ImportedProviders({ onChanged, onNotice }: { onChanged: () => void; onN
                 </p>
                 <p className="text-xs text-gray-500">{notes[0]}</p>
                 {entry.hook_error ? <p className="text-xs text-amber-700">{String(entry.hook_error)}</p> : null}
-                <Button size="sm" variant="ghost" onClick={() => remove(id)} loading={busy}>
-                  {copy.common.delete}
-                </Button>
+                {/* The sign-in is run by this plugin, so it belongs next to the
+                    imported provider rather than behind the account page. */}
+                <div className="mt-auto flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    disabled={entry.sign_in_available !== true}
+                    title={entry.sign_in_available === true ? undefined : copy.market.signInNeedsPackage}
+                    onClick={() => onSignIn(id)}
+                  >
+                    {copy.market.signIn}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => remove(id)} loading={busy}>
+                    {copy.common.delete}
+                  </Button>
+                </div>
               </Card>
             );
           })}

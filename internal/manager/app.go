@@ -1553,10 +1553,17 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 				body = staged
 			}
 		}
+		// The page is a single self-contained document whose bytes change with
+		// every release. Without an explicit directive a browser may keep the old
+		// document and its old strings after a self-update, which is how an
+		// operator ends up reading a sentence the plugin no longer contains.
 		return cpaapi.ManagementResponse{
 			StatusCode: http.StatusOK,
-			Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
-			Body:       append([]byte(nil), body...),
+			Headers: http.Header{
+				"Content-Type":  []string{"text/html; charset=utf-8"},
+				"Cache-Control": []string{"no-store, must-revalidate"},
+			},
+			Body: append([]byte(nil), body...),
 		}
 	}
 	if configErr := a.configError(); configErr != "" {

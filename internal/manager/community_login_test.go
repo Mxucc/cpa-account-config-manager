@@ -105,3 +105,47 @@ func TestCommunityProviderBaseURL(t *testing.T) {
 		t.Fatalf("an unknown provider produced %q", got)
 	}
 }
+
+// The catalog is what the provider page renders, and the notes stored with an
+// import describe the release that recorded it. An entry imported before this
+// plugin ran community sign-ins would otherwise keep telling the operator to
+// finish the login in another application.
+func TestProviderCatalogReportsTheCurrentSignInState(t *testing.T) {
+	app := newAccountLoginTestApp(t, &stubLoginDoer{})
+	packageDir := filepath.Join(app.providerPackageRoot(), "magpie-community__opencode-zcode-auth")
+	if errMkdir := os.MkdirAll(packageDir, 0o700); errMkdir != nil {
+		t.Fatalf("mkdir: %v", errMkdir)
+	}
+	if _, errImport := app.providerImportStore().Import(
+		[]byte(`{"name":"@magpie-community/opencode-zcode-auth","version":"0.1.57","main":"./opencode.mjs"}`),
+		"magpie", packageDir,
+	); errImport != nil {
+		t.Fatalf("Import: %v", errImport)
+	}
+	response := app.HandleManagement(context.Background(), accountLoginRequest(
+		http.MethodGet, "/v0/management"+managementRoutePrefix+"/providers/catalog", "", nil,
+	))
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.StatusCode, response.Body)
+	}
+	var decoded struct {
+		Imported []struct {
+			Notes           []string `json:"notes"`
+			SignInAvailable bool     `json:"sign_in_available"`
+		} `json:"imported"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &decoded); errDecode != nil {
+		t.Fatalf("decode: %v", errDecode)
+	}
+	if len(decoded.Imported) != 1 {
+		t.Fatalf("imported = %#v", decoded.Imported)
+	}
+	entry := decoded.Imported[0]
+	if !entry.SignInAvailable {
+		t.Fatal("an installed provider reported no sign-in")
+	}
+	joined := strings.Join(entry.Notes, " ")
+	if strings.Contains(joined, "not executed") || strings.Contains(joined, "Re-import") {
+		t.Fatalf("notes still describe the old behaviour: %q", joined)
+	}
+}

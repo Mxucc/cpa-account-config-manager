@@ -114,6 +114,33 @@ func (s *ImportStore) List() []ImportedProvider {
 	return out
 }
 
+// importedProviderDescription is what the provider page shows for a community
+// plugin. It is computed at read time rather than stored, so an entry imported
+// before this plugin ran community sign-ins stops claiming that nothing runs.
+func importedProviderDescription(entry ImportedProvider) string {
+	if strings.TrimSpace(entry.Directory) == "" {
+		return "Imported Magpie/OpenCode provider plugin. Only its manifest was recorded, so its sign-in cannot run here; re-import it by package name to install the code."
+	}
+	return "Imported Magpie/OpenCode provider plugin. This plugin installed its package and runs the provider's own sign-in, then creates the CPA channel that routes its models."
+}
+
+// LiveNotes is what the page shows under an imported provider. The notes stored
+// with the entry describe the import that first recorded it, and an entry
+// recorded before community sign-in existed would otherwise keep telling the
+// operator to complete the login in another application.
+func LiveNotes(entry ImportedProvider) []string {
+	if strings.TrimSpace(entry.Directory) == "" {
+		return []string{
+			"Only the manifest was recorded; no plugin code is installed for it.",
+			"Re-import this provider by its package name so its sign-in can run here.",
+		}
+	}
+	return []string{
+		"Installed: the provider's own sign-in runs here, and the credential it produces becomes a CPA channel.",
+		"Model and allowance hooks run while hook execution is enabled.",
+	}
+}
+
 // Definitions adapts the imported providers to the provider registry.
 func (s *ImportStore) Definitions() []Definition {
 	imported := s.List()
@@ -123,11 +150,13 @@ func (s *ImportStore) Definitions() []Definition {
 			ID:          entry.ID,
 			DisplayName: entry.Name,
 			Kind:        "plugin",
-			Description: "Imported Magpie/OpenCode provider plugin; hooks are not executed in this build.",
+			Description: importedProviderDescription(entry),
 			Capabilities: Capabilities{
 				Models: entry.Capabilities.Models,
 				Quota:  entry.Capabilities.Quota,
-				Login:  entry.Capabilities.Login,
+				// A sign-in is offered for an entry whose package is installed,
+				// because this plugin is the thing that runs it.
+				Login: strings.TrimSpace(entry.Directory) != "",
 			},
 		})
 	}
@@ -203,15 +232,6 @@ func (s *ImportStore) Import(manifest []byte, source, directory string) (Importe
 		name = id
 	}
 
-	notes := []string{
-		"Provider hooks (auth, models, usage) are recorded but not executed.",
-		"Add the vendor's base URL and key as a CPA channel to route its models.",
-	}
-	magpieMarker := document.Magpie != nil || containsKeyword(document.Keywords, "magpie") || containsKeyword(document.Keywords, "opencode-plugin")
-	if magpieMarker {
-		notes = append(notes, "Recognised as a Magpie/OpenCode provider plugin.")
-	}
-
 	pluginDir := strings.TrimSpace(directory)
 	if pluginDir != "" {
 		absoluteDir, errAbs := filepath.Abs(pluginDir)
@@ -248,17 +268,17 @@ func (s *ImportStore) Import(manifest []byte, source, directory string) (Importe
 		Source:    normalizeImportSource(source),
 		Directory: pluginDir,
 		Capabilities: Capabilities{
-			// A provider plugin's whole purpose is a model list and usually usage;
-			// login depends on whether it declares an auth entry, which M1 cannot
-			// prove without executing it.
+			// A provider plugin's whole purpose is a model list and usually
+			// usage; a sign-in needs the package installed, which the caller
+			// reports by passing a directory.
 			Models: true,
 			Quota:  true,
-			Login:  false,
+			Login:  pluginDir != "",
 		},
 		HookExecution: false,
 		ImportedAt:    time.Now().UTC(),
-		Notes:         notes,
 	}
+	entryRecord.Notes = LiveNotes(entryRecord)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

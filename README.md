@@ -306,8 +306,8 @@ make package VERSION=X.Y.Z
 ### Magpie / OpenCode 供应商插件导入
 
 - 界面「供应商 → 导入插件」粘贴插件的 `package.json`，或调用 `POST .../providers/import`（`{"manifest":"...","source":"magpie"}`）。
-- 导入只登记供应商定义（id、名称、版本、入口、能力提示），**不执行任何插件代码**，返回的 `hook_execution` 恒为 `false`；`DELETE .../providers/import?id=` 可移除。
-- 要路由该供应商的模型，仍需把它作为 CPA 渠道配置（Base URL + Key）。钩子执行（Bun sidecar）未在本版本启用，界面会如实说明。
+- 导入会登记供应商定义（id、名称、版本、入口、能力提示），并在按包名导入时把该插件的 npm 包下载到插件私有目录（`provider-packages/`）；登记的 `hook_execution` 仍为 `false`，因为钩子执行是另一个开关。`DELETE .../providers/import?id=` 可移除。
+- 该供应商的登录由本插件执行：见下文「社区供应商登录」。模型与额度钩子在 `magpie_hook_execution` 开启后运行。
 
 ### 旧界面
 
@@ -329,14 +329,24 @@ make package VERSION=X.Y.Z
 ### 账号管理
 
 - 社区供应商的登录由本插件执行：`POST /providers/import` 在登记定义的同时把该插件包下载到插件的私有目录（`provider-packages/`），「添加账号」里点它就跑插件自己的 `authorize()`（浏览器或设备码），登录成功后自动在 CPA 建好对应的渠道。宿主没装 Bun 时会明确说明，而不是把用户推去别的应用。
-- 账号页提供「添加账号」：选择供应商后由 CPA 完成登录（浏览器或设备码），插件只转发 `GET /accounts/login`、`POST /accounts/login/start` 与 `GET /accounts/login/status`；已导入的社区供应商在弹窗里如实标注需在原插件内登录。
+- 账号页提供「添加账号」：CPA 自己实现的供应商由 CPA 完成登录（浏览器或设备码），插件只转发 `GET /accounts/login`、`POST /accounts/login/start` 与 `GET /accounts/login/status`。
+
+### 社区供应商登录
+
+- 社区供应商（Magpie/OpenCode 插件）的登录**由本插件执行**，不会要求去别的应用登录：
+  - 按包名导入时已把插件包下载到 `provider-packages/`；「供应商」页的已导入卡片和「添加账号」弹窗都提供「登录」。
+  - 点「登录」会打开同一个添加账号弹窗并自动开始该供应商的登录；插件在自己的 sidecar 里调用它的 `authorize()`（浏览器链接或粘贴密钥），完成后把凭据写成 CPA 的 `openai-compatibility` 渠道，重复登录会更新同名渠道而不是新增。
+  - 宿主没有 JavaScript 运行时（Bun）时，插件会自己安装（`POST .../providers/runtime`），而不是让用户去别处配。
+  - 只有清单、没有插件代码的旧导入项会明确说明「按包名重新导入一次即可在这里登录」，按钮给出该原因，不会假装能用。
+
+- 关闭时：导入项只登记定义，`/providers/accounts` 不含插件账号，`hook_execution` 恒为 `false`；社区供应商的登录不受该开关影响，仍可在本插件内完成。
 - 账号页提供：编辑配置（走 `POST .../batch/preview` + `.../batch/start` 的预览-执行两步）、模型目录（`.../accounts/models`）、模型测试（`.../accounts/model-test`）、刷新令牌（`.../accounts/token/refresh`）、删除（`.../accounts/delete/preview` + `.../accounts/delete/start`）、批量编辑/批量删除、重复账号扫描（`.../accounts/deduplicate/preview`，建议删除走批量删除预览）、导入（`.../import/preview` + `.../import/start`）与导出（`.../export/accounts`，格式 cpa/sub2api/cockpit/9router/codex/axonhub/codexmanager/json/jsonl/csv）。
 - 所有改动都先给出预览再执行；预览过期需要重新生成。
 
 ### 插件钩子执行（可选，默认关闭）
 
 - 设置项 `magpie_hook_execution` 默认 `false`，通过 `GET/PUT .../providers/settings` 读写，持久化在数据目录的 `provider-settings.json`。
-- 关闭时：导入项只登记定义，`/providers/accounts` 不含插件账号，`hook_execution` 恒为 `false`。
+- 关闭时：导入项只登记定义，`/providers/accounts` 不含插件账号，`hook_execution` 恒为 `false`；社区供应商的登录不受该开关影响，仍可在本插件内完成。
 - 开启且本机有 Bun 时：对每个已导入且带 `directory` 的插件运行一次 sidecar（`internal/magpiecompat`），只调用登录声明、模型目录、额度三个钩子，**从不调用 `fetch`**，因此不接管请求路由；结果按同一套 `Account/QuotaWindow` 规则并入 `/providers/accounts`。
 - 隔离：一次探测一个进程、20 秒超时并杀进程、stdout 上限 4 MB、并发上限 2、可执行文件白名单仅 `bun`、插件目录必须位于数据目录的 `magpie-plugins/` 下。
 - 失败不会影响原生供应商：Bun 缺失、超时、崩溃或输出超限只在 `GET .../providers/catalog` 的对应条目上给出 `hook_error` 原因。

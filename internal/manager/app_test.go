@@ -376,6 +376,24 @@ func TestInspectionLiveRouteDisablesCaching(t *testing.T) {
 	}
 }
 
+// The page is one self-contained document whose text changes with every release.
+// Without a cache directive a browser keeps the old document after a self-update,
+// and the operator reads sentences this build no longer contains.
+func TestPluginPageIsNotCached(t *testing.T) {
+	app := NewApp(&fakeAuthHost{}, []byte("index"))
+	defer app.Close()
+	response := app.HandleManagement(context.Background(), cpaapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   resourceRoutePrefix + "/index.html",
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("page response = %d %s", response.StatusCode, response.Body)
+	}
+	if got := response.Headers.Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
 func TestInspectionReadRoutesDoNotArmPendingModelProbes(t *testing.T) {
 	app := NewApp(&fakeAuthHost{}, []byte("index"))
 	defer app.Close()

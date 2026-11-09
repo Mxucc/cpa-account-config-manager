@@ -1106,11 +1106,21 @@ export function ExportAccountsDialog({
   );
 }
 
-// Adding an account. CPA owns every provider login, so this dialog is a provider
-// picker plus a relay: it asks CPA to start a flow, shows the URL or device code
-// CPA returned, and polls until CPA reports that it saved the credential. No
-// provider endpoint is called from the browser and no second key is stored.
-export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps) {
+// Adding an account. CPA owns its own provider logins, so those are a picker plus
+// a relay: the dialog asks CPA to start a flow, shows the URL or device code CPA
+// returned, and polls until CPA reports that it saved the credential. A community
+// provider is different: its sign-in lives in the package this plugin installed,
+// so the dialog runs it here and the credential it produces becomes a CPA channel.
+//
+// preselect starts one provider's sign-in as soon as the dialog opens, which is
+// what the provider page's own sign-in button needs.
+export function AddAccountDialog({
+  open,
+  onClose,
+  onError,
+  onDone,
+  preselect,
+}: DialogProps & { preselect?: string }) {
 	const copy = useManagementCopy();
 	const [providers, setProviders] = useState<AccountLoginProvider[]>([]);
 	const [community, setCommunity] = useState<AccountLoginProvider[]>([]);
@@ -1127,6 +1137,9 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 	// browser page.
 	const [pendingKeyProvider, setPendingKeyProvider] = useState("");
 	const [apiKey, setApiKey] = useState("");
+	// A preselected provider starts once per open, so the dialog cannot restart a
+	// sign-in on every render.
+	const [preselected, setPreselected] = useState("");
 
 	useEffect(() => {
 		if (!open) {
@@ -1246,6 +1259,21 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 			setBusy("");
 		}
 	};
+
+	// A preselected provider starts its sign-in once, as soon as the provider list
+	// that names it has arrived. Without the guard the effect would restart a
+	// sign-in on every render and mint a new state each time.
+	useEffect(() => {
+		if (!open || !preselect || loading) return;
+		if (preselected === preselect) return;
+		const target = community.find((entry) => entry.id === preselect) ?? providers.find((entry) => entry.id === preselect);
+		if (!target) return;
+		setPreselected(preselect);
+		void start(target);
+		// start and the two lists are read here, not depended on: re-running on a
+		// new function identity is exactly the restart this guard prevents.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, preselect, loading, community, providers, preselected]);
 
 	const installRuntime = async () => {
 		setInstallingRuntime(true);
@@ -1383,10 +1411,14 @@ export function AddAccountDialog({ open, onClose, onError, onDone }: DialogProps
 									<Button
 										size="sm"
 										loading={busy === provider.id}
+										// A provider whose package is not installed
+										// cannot sign in here yet; the hint below says
+										// how to fix that instead of leaving a dead button.
 										disabled={provider.flow === "external"}
+										title={provider.flow === "external" ? copy.communityMissing : undefined}
 										onClick={() => void start(provider)}
 									>
-										{copy.addAccount}
+										{provider.flow === "external" ? copy.communityMissing : copy.addAccount}
 									</Button>
 								</li>
 							))}

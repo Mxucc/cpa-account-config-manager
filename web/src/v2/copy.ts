@@ -18,7 +18,7 @@ export interface Copy {
   market: {
     title: string; hint: string; search: string; import: string; importing: string; imported: string;
     empty: string; unreachable: string; noVersion: string; advanced: string; advancedHint: string;
-    providersOnly: string; hidden: string;
+    providersOnly: string; hidden: string; signIn: string; signInNeedsPackage: string;
     reasons: { unreachable: string; timeout: string; unreadable: string; unavailable: string };
   };
   quota: { title: string; subtitle: string; window: string; used: string; remaining: string; reset: string; limit: string; wallet: string; aside: string; notes: { referencePricedUsage: string } };
@@ -57,13 +57,14 @@ const zh: Copy = {
   },
   overview: { title: "总览", subtitle: "所有供应商的账号健康、订阅支出与额度热点", accounts: "账号总数", ready: "可用", limited: "额度受限", invalid: "凭据异常", spend: "月度订阅支出", providers: "供应商", hotspots: "额度热点", recent: "供应商分布" },
   accounts: { title: "账号", subtitle: "同一套字段与操作覆盖所有供应商", provider: "供应商", status: "状态", plan: "计划", quota: "额度", billing: "计费", models: "模型", actions: "操作", refresh: "刷新", test: "测试", bind: "发布渠道", empty: "没有符合条件的账号", filterProvider: "按供应商筛选", filterStatus: "按状态筛选" },
-  providers: { title: "供应商", subtitle: "内置供应商、Magpie/OpenCode 插件导入与能力对照", accounts: "账号", capabilities: "能力", open: "打开", import: "导入插件", importHint: "粘贴 Magpie/OpenCode 供应商插件的 package.json。导入只登记定义，不执行插件代码。", importDone: "已导入供应商", hooks: "执行插件钩子", hooksHint: "开启后会运行已导入插件的模型目录与额度钩子；不接管请求路由。", hooksNeedsBun: "未检测到 Bun，钩子不会执行。", hooksOff: "钩子执行已关闭，导入项只登记定义。", tabs: { accounts: "账号", quota: "额度与计划", models: "模型与价格", routing: "路由", advanced: "兼容（旧界面）" } },
+  providers: { title: "供应商", subtitle: "内置供应商、Magpie/OpenCode 插件导入与能力对照", accounts: "账号", capabilities: "能力", open: "打开", import: "导入插件", importHint: "粘贴 Magpie/OpenCode 供应商插件的 package.json。按包名导入会一并下载插件代码，登录由本插件执行。", importDone: "已导入供应商", hooks: "执行插件钩子", hooksHint: "开启后会运行已导入插件的模型目录与额度钩子；不接管请求路由。", hooksNeedsBun: "未检测到 Bun，钩子不会执行。", hooksOff: "钩子执行已关闭，导入项只登记定义。", tabs: { accounts: "账号", quota: "额度与计划", models: "模型与价格", routing: "路由", advanced: "兼容（旧界面）" } },
   market: {
-    title: "Magpie 社区插件", hint: "从社区插件仓库直接导入，不需要手填 package.json。清单由插件服务端读取，导入只登记定义、不执行插件代码。",
+    title: "Magpie 社区插件", hint: "从社区插件仓库直接导入，不需要手填 package.json。按包名导入会同时下载插件代码，因此它的登录可以直接在本插件里完成。",
     search: "搜索插件", import: "导入", importing: "导入中…", imported: "已导入",
     empty: "没有匹配的插件", unreachable: "无法读取社区插件列表", noVersion: "版本未读取",
     advanced: "高级：粘贴 package.json", advancedHint: "离线或自建插件才需要手填清单。",
     providersOnly: "仅列出供应商插件", hidden: "已隐藏非供应商条目",
+    signIn: "登录", signInNeedsPackage: "这条导入没有安装插件代码，按包名重新导入一次就能在这里登录。",
     reasons: { unreachable: "无法连接社区插件仓库，请检查服务器出网。", timeout: "读取社区插件仓库超时。", unreadable: "社区插件仓库返回的内容无法解析。", unavailable: "社区插件列表当前不可用。" },
   },
   quota: { title: "额度与计划", subtitle: "统一窗口、重置时间与订阅周期", window: "窗口", used: "已用", remaining: "剩余", reset: "重置", limit: "上限", wallet: "钱包余额", aside: "不参与路由", notes: { referencePricedUsage: "参考价折算用量" } },
@@ -116,13 +117,14 @@ const en: Copy = {
   },
   overview: { title: "Overview", subtitle: "Account health, subscription spend and quota hotspots across every provider", accounts: "Accounts", ready: "Ready", limited: "Quota limited", invalid: "Credential issues", spend: "Monthly subscription spend", providers: "Providers", hotspots: "Quota hotspots", recent: "By provider" },
   accounts: { title: "Accounts", subtitle: "One set of fields and actions for every provider", provider: "Provider", status: "Status", plan: "Plan", quota: "Quota", billing: "Billing", models: "Models", actions: "Actions", refresh: "Refresh", test: "Test", bind: "Publish channel", empty: "No account matches these filters", filterProvider: "Filter by provider", filterStatus: "Filter by status" },
-  providers: { title: "Providers", subtitle: "Built-in vendors, imported Magpie/OpenCode plugins and their capabilities", accounts: "accounts", capabilities: "Capabilities", open: "Open", import: "Import plugin", importHint: "Paste a Magpie/OpenCode provider plugin package.json. Import only records the definition; no plugin code runs.", importDone: "Imported provider", hooks: "Run plugin hooks", hooksHint: "Runs the model and allowance hooks of imported plugins. Request routing is never taken over.", hooksNeedsBun: "Bun was not found; hooks will not run.", hooksOff: "Hook execution is off; imports only record a definition.", tabs: { accounts: "Accounts", quota: "Quota & plans", models: "Models & pricing", routing: "Routing", advanced: "Legacy console" } },
+  providers: { title: "Providers", subtitle: "Built-in vendors, imported Magpie/OpenCode plugins and their capabilities", accounts: "accounts", capabilities: "Capabilities", open: "Open", import: "Import plugin", importHint: "Paste a Magpie/OpenCode provider plugin package.json. Importing by package name also downloads the plugin code, and this plugin runs its sign-in.", importDone: "Imported provider", hooks: "Run plugin hooks", hooksHint: "Runs the model and allowance hooks of imported plugins. Request routing is never taken over.", hooksNeedsBun: "Bun was not found; hooks will not run.", hooksOff: "Hook execution is off; imports only record a definition.", tabs: { accounts: "Accounts", quota: "Quota & plans", models: "Models & pricing", routing: "Routing", advanced: "Legacy console" } },
   market: {
-    title: "Magpie community plugins", hint: "Import straight from the community registry — no package.json to paste. The plugin reads the registry server side, and an import only records a definition; no plugin code runs.",
+    title: "Magpie community plugins", hint: "Import straight from the community registry — no package.json to paste. Importing by package name also downloads the plugin code, so its sign-in runs in this plugin.",
     search: "Search plugins", import: "Import", importing: "Importing…", imported: "Imported",
     empty: "No plugin matches", unreachable: "The community plugin list is unavailable", noVersion: "version not read",
     advanced: "Advanced: paste a package.json", advancedHint: "Only an offline or in-house plugin needs a pasted manifest.",
     providersOnly: "Provider plugins only", hidden: "other registry entries hidden",
+    signIn: "Sign in", signInNeedsPackage: "This import installed no plugin code; import it again by package name to sign in here.",
     reasons: { unreachable: "The community plugin registry is unreachable; check the server's outbound network.", timeout: "Reading the community plugin registry timed out.", unreadable: "The community plugin registry returned something unreadable.", unavailable: "The community plugin list is currently unavailable." },
   },
   quota: { title: "Quota & plans", subtitle: "Unified windows, reset times and subscription cycles", window: "Window", used: "Used", remaining: "Remaining", reset: "Resets", limit: "Limit", wallet: "Wallet balance", aside: "Excluded from routing", notes: { referencePricedUsage: "Reference-priced usage" } },

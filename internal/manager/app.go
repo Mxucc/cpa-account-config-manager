@@ -1581,6 +1581,11 @@ func (a *App) HandleManagement(ctx context.Context, req cpaapi.ManagementRequest
 		if strings.TrimSpace(managementKey) != "" {
 			a.startClinePassMaintenance()
 		}
+		// Reading the provider list happens on the same request that carries the
+		// operator's key, and a community account's channel state needs that key to
+		// read the channel list. Holding it here is what lets the routing page say
+		// what a provider's channel actually routes on first load.
+		a.rememberCommunityManagementKey(managementKey)
 		// The runtime route sits under /providers, which the provider router owns:
 		// answer it first, or the router reports it as an unknown provider route.
 		if (method == http.MethodGet || method == http.MethodPost) && path == "/v0/management"+managementRoutePrefix+"/providers/runtime" {

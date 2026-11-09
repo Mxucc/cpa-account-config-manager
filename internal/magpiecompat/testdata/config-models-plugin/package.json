@@ -1,0 +1,6 @@
+{
+  "name": "@fixture/opencode-config-models",
+  "version": "1.0.0",
+  "main": "./index.mjs",
+  "type": "module"
+}

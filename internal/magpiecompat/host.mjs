@@ -95,10 +95,31 @@ function methodNames(auth) {
   return [];
 }
 
-function providerEntries(provider) {
-  if (!provider) return [];
-  if (typeof provider === "function") return [];
-  return Object.entries(provider).filter(([, value]) => value && typeof value === "object");
+// A Magpie/OpenCode plugin names its provider surface in one of two shapes:
+//
+//   provider: { workbuddy: { models() {}, ... } }   keyed by provider id
+//   provider: { id: "workbuddy", models() {} }      one provider, hooks inline
+//
+// The second shape is what every package built on OpenCode 2.x's
+// {id, setup(ctx)} convention returns, so a probe that only walked object values
+// read its `models` function as a nested provider table and found no hooks at
+// all: the account showed zero models and no allowance while the plugin was
+// perfectly healthy.
+function providerSurfaces(provider) {
+  if (!provider || typeof provider === "function") return [];
+  const looksLikeOneProvider =
+    typeof provider.id === "string" ||
+    typeof provider.models === "function" ||
+    typeof provider.listModels === "function" ||
+    typeof provider.catalog === "function" ||
+    typeof provider.usage === "function";
+  if (looksLikeOneProvider) {
+    const id = typeof provider.id === "string" ? provider.id : "";
+    return [{ id, hooks: provider }];
+  }
+  return Object.entries(provider)
+    .filter(([, value]) => value && typeof value === "object")
+    .map(([id, value]) => ({ id, hooks: value }));
 }
 
 function normaliseModel(item) {
@@ -110,15 +131,35 @@ function normaliseModel(item) {
   return "";
 }
 
+// modelsOf reads whatever a provider's model hook produced: an array, a
+// {models: [...]} envelope, or the id-keyed record OpenCode 2.x returns.
+function modelsOf(produced) {
+  if (Array.isArray(produced)) return produced;
+  if (produced && typeof produced === "object") {
+    if (Array.isArray(produced.models)) return produced.models;
+    return Object.values(produced);
+  }
+  return [];
+}
+
 async function collectModels(provider) {
   const models = [];
-  for (const [, hooks] of providerEntries(provider)) {
-    const list = hooks.models ?? hooks.listModels ?? hooks.catalog;
+  for (const surface of providerSurfaces(provider)) {
+    const list = surface.hooks.models ?? surface.hooks.listModels ?? surface.hooks.catalog;
     if (typeof list !== "function") continue;
-    const produced = await list();
-    const rows = Array.isArray(produced) ? produced : produced?.models;
-    if (!Array.isArray(rows)) continue;
-    for (const row of rows) {
+    let produced;
+    try {
+      // A models hook may inspect the account it is given. A probe has no
+      // credential to hand it, so it is called the way an unauthenticated list
+      // is called; a hook that needs one answers the plugin's own default list.
+      produced = await list(
+        { id: surface.id, models: surface.hooks.models },
+        { auth: undefined, provider: { id: surface.id } },
+      );
+    } catch {
+      continue;
+    }
+    for (const row of modelsOf(produced)) {
       const id = normaliseModel(row);
       if (id && !models.includes(id)) models.push(id);
       if (models.length >= 500) return models;
@@ -170,19 +211,68 @@ function normaliseWindows(usage) {
     }));
 }
 
+// configSurface runs a plugin's config hook against a scratch config and returns
+// the provider ids and models it declares.
+//
+// config is a producer: the plugin is handed the object to fill in and writes
+// provider.<id>.models there. Many packages publish their whole model catalog
+// this way and leave provider.models to answer the signed-in account's own list,
+// so a probe that only called provider.models reported zero models for an
+// installed, healthy plugin.
+async function configSurface(hooks) {
+  if (typeof hooks?.config !== "function") return { ids: [], models: [] };
+  let scratch;
+  try {
+    scratch = {};
+    const produced = await hooks.config(scratch);
+    // A config hook may fill the object it is given or return one instead.
+    if (produced && typeof produced === "object" && produced.provider) scratch = produced;
+  } catch {
+    return { ids: [], models: [] };
+  }
+  const provider = scratch?.provider;
+  if (!provider || typeof provider !== "object") return { ids: [], models: [] };
+  const models = [];
+  for (const value of Object.values(provider)) {
+    const table = value?.models;
+    if (!table || typeof table !== "object") continue;
+    for (const id of Object.keys(table)) {
+      if (id && !models.includes(id)) models.push(id);
+      if (models.length >= 500) return { ids: Object.keys(provider), models };
+    }
+  }
+  return { ids: Object.keys(provider), models };
+}
+
 async function collectWindows(provider) {
-  for (const [id, hooks] of providerEntries(provider)) {
-    const read = hooks.usage ?? hooks.auth?.usage ?? hooks.allowance;
+  for (const surface of providerSurfaces(provider)) {
+    // usage lives on the provider hooks or beside them under auth, which is where
+    // an OpenCode 2.x-style plugin puts it.
+    const read = surface.hooks.usage ?? surface.hooks.auth?.usage ?? surface.hooks.allowance;
     if (typeof read !== "function") continue;
     try {
-      const windows = normaliseWindows(await read({ provider: id }));
+      const windows = normaliseWindows(
+        await read({ provider: surface.id }, { auth: undefined, provider: { id: surface.id } }),
+      );
       if (windows.length > 0) return windows;
-    } catch (error) {
+    } catch {
       // A usage hook that throws must not hide the model list.
-      return [];
+      continue;
     }
   }
   return [];
+}
+
+// collectAuthWindows reads usage from the auth hooks, the other place a plugin
+// may publish it.
+async function collectAuthWindows(auth) {
+  const read = auth?.usage;
+  if (typeof read !== "function") return [];
+  try {
+    return normaliseWindows(await read({}, { auth: undefined, provider: {} }));
+  } catch {
+    return [];
+  }
 }
 
 const timeout = setTimeout(() => fail("plugin probe timed out inside the sidecar"), 15000);
@@ -191,6 +281,7 @@ timeout.unref?.();
 try {
   const hooks = await loadHooks();
   const warnings = [];
+  const config = await configSurface(hooks);
   let models = [];
   let windows = [];
   try {
@@ -198,12 +289,15 @@ try {
   } catch (error) {
     warnings.push(`models hook failed: ${String(error?.message ?? error).slice(0, 120)}`);
   }
+  if (models.length === 0) models = config.models;
   try {
     windows = await collectWindows(hooks.provider);
+    if (windows.length === 0) windows = await collectAuthWindows(hooks.auth);
   } catch (error) {
     warnings.push(`usage hook failed: ${String(error?.message ?? error).slice(0, 120)}`);
   }
-  const providerId = providerEntries(hooks.provider)[0]?.[0] ?? manifest.magpie?.id ?? manifest.name ?? "";
+  const providerId =
+    providerSurfaces(hooks.provider)[0]?.id || config.ids[0] || manifest.magpie?.id || manifest.name || "";
   say({
     ok: true,
     result: {

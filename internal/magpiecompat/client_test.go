@@ -67,6 +67,33 @@ func TestProbeReadsModelsAndWindowsFromARealPlugin(t *testing.T) {
 	}
 }
 
+// A package built on OpenCode 2.x's {id, setup(ctx)} convention names one provider
+// in an object (not a table) and publishes its catalog through config(). A probe
+// that only walked provider values found no hooks at all and reported zero models
+// for a healthy, installed plugin, which is what made a new WorkBuddy account look
+// broken after it was added.
+func TestProbeReadsModelsPublishedThroughConfig(t *testing.T) {
+	if !BunAvailable() {
+		t.Skip("bun is not installed; the real-plugin path cannot be exercised here")
+	}
+	directory, errAbs := filepath.Abs(filepath.Join("testdata", "config-models-plugin"))
+	if errAbs != nil {
+		t.Fatalf("fixture path: %v", errAbs)
+	}
+	runner := New("", "", Options{Timeout: 30 * time.Second})
+	result, errProbe := runner.Probe(context.Background(), directory)
+	if errProbe != nil {
+		t.Fatalf("Probe() error = %v", errProbe)
+	}
+	if result.ID != "cfg-one" {
+		t.Fatalf("id = %q, want cfg-one", result.ID)
+	}
+	want := []string{"cfg-alpha", "cfg-beta", "cfg-gamma"}
+	if strings.Join(result.Models, ",") != strings.Join(want, ",") {
+		t.Fatalf("models = %v, want %v", result.Models, want)
+	}
+}
+
 func TestProbeTimeoutKillsTheSidecar(t *testing.T) {
 	runner := shRunner(t, "sleep 5", Options{Timeout: 200 * time.Millisecond})
 	started := time.Now()

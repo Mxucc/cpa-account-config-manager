@@ -23,7 +23,7 @@ import {
 } from "../../ui/kit";
 import { AccountQuota, accountWindows, billingLabel, cycleLabel, formatMoney, metricLabel, StatusBadge, useAsync, useCopy } from "../shared";
 import { useI18n } from "../../i18n";
-import type { ProviderAccount } from "../types";
+import type { ProviderAccount, ProviderView } from "../types";
 import type { AccountEditableConfig, AccountListResponse, TargetScope } from "../../types";
 import {
   AddAccountDialog,
@@ -44,6 +44,22 @@ type DialogKind = "edit" | "models" | "test" | "delete" | "batchEdit" | "batchDe
 
 const rawAccountID = (account: ProviderAccount) =>
   account.id.startsWith(`provider:${account.provider.id}:`) ? account.id.slice(`provider:${account.provider.id}:`.length) : account.id;
+
+// canRefresh reports whether the server has a refresh path for this account's
+// provider. The capability list is the server's own answer, so the page asks it
+// instead of keeping a second copy of which provider supports what.
+function canRefresh(account: ProviderAccount, providers: ProviderView[]): boolean {
+  const definition = providers.find((entry) => entry.id === account.provider.id);
+  if (!definition) {
+    // An account whose provider is not in the registry yet keeps the old rule
+    // rather than losing a control that may still work.
+    return account.provider.id !== "codex" || Boolean(account.credential.refreshable);
+  }
+  if (definition.capabilities.refresh) return true;
+  // Codex has no provider-level refresh, but CPA itself can refresh the token of
+  // a credential that says it is refreshable.
+  return account.provider.id === "codex" && Boolean(account.credential.refreshable);
+}
 
 
 // ManagedAccount is a normalized account plus the CPA-side id it maps to. CPA only
@@ -324,7 +340,10 @@ export function AccountsPage({
                       size="sm"
                       loading={busy === `${account.id}:refresh`}
                       onClick={() => refresh(account)}
-                      disabled={account.provider.id === "codex" && !account.credential.refreshable}
+                      // A provider that does not implement refresh must not offer
+                      // a button that answers "unknown provider": an installed
+                      // community plugin has no refresh hook at all.
+                      disabled={!canRefresh(account, providers.data?.providers ?? [])}
                     >
                       {copy.accounts.refresh}
                     </Button>

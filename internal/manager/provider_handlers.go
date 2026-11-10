@@ -52,6 +52,7 @@ func providerManagementRoutes() []cpaapi.ManagementRoute {
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/test", Description: "Probe one model through an account credential."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/models", Description: "Read a community provider's model catalog and the selection published for it."},
 		{Method: http.MethodPut, Path: providerRouteRelative + "/models", Description: "Publish one selection of a community provider's models."},
+		{Method: http.MethodPost, Path: providerRouteRelative + "/models/test", Description: "Test one community provider's channel: the credential upstream and the routed callable model."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/bind", Description: "Publish or update one account's CPA channel."},
 		{Method: http.MethodDelete, Path: providerRouteRelative + "/account/channel", Description: "Remove the CPA channel this plugin published for a community provider."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/catalog", Description: "List provider presets and imported Magpie/OpenCode provider plugins."},
@@ -98,6 +99,11 @@ func (a *App) HandleQuotaReset(_ context.Context, _ cpaapi.QuotaResetRequest) (c
 func (a *App) handleProviderRoutes(ctx context.Context, req cpaapi.ManagementRequest, method, path string) (cpaapi.ManagementResponse, bool) {
 	if path != providerRoutePrefix && !strings.HasPrefix(path, providerRoutePrefix+"/") {
 		return cpaapi.ManagementResponse{}, false
+	}
+	// A community provider's channel test: the credential against the provider, and
+	// the gateway's own entry point for the callable model id.
+	if response, handled := a.handleCommunityTest(req, method, path); handled {
+		return response, true
 	}
 	// A community provider's model catalog and the selection published for it.
 	if response, handled := a.handleCommunityModels(req, method, path); handled {

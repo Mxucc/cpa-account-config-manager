@@ -174,6 +174,46 @@ export function ProvidersPage({
   );
 }
 
+// ChannelTest is the answer of a community channel test.
+type ChannelTest = {
+  provider: string;
+  prefix?: string;
+  callable?: string;
+  upstream: { ok: boolean; status: number; latency_ms: number; model?: string; reason?: string };
+  routed: { ok: boolean; status: number; latency_ms: number; model?: string; reason?: string };
+  hint?: string;
+};
+
+// ChannelTestResult shows both legs, because they fail for different reasons and a
+// single "failed" would send the operator after the wrong thing.
+function ChannelTestResult({ result, copy }: { result: ChannelTest; copy: ReturnType<typeof useCopy> }) {
+  const leg = (label: string, legResult: ChannelTest["upstream"]) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-gray-500">{label}</span>
+      {legResult.ok ? <Badge tone="green">{copy.providers.legOk}</Badge> : <Badge tone="red">{copy.providers.legFailed}</Badge>}
+      <span className="text-xs text-gray-600">
+        HTTP {legResult.status || "-"} · {legResult.latency_ms} ms{legResult.model ? ` · ${legResult.model}` : ""}
+      </span>
+      {legResult.reason ? <span className="text-xs text-red-600">{legResult.reason}</span> : null}
+    </div>
+  );
+  return (
+    <Notice tone={result.upstream.ok && result.routed.ok ? "ok" : "warn"}>
+      <div className="space-y-1.5">
+        {result.callable ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500">{copy.providers.callableName}</span>
+            <span className="font-mono text-xs text-gray-900">{result.callable}</span>
+          </div>
+        ) : null}
+        {leg(copy.providers.upstreamLeg, result.upstream)}
+        {leg(copy.providers.routedLeg, result.routed)}
+        {result.hint ? <p className="text-xs text-gray-700">{result.hint}</p> : null}
+      </div>
+    </Notice>
+  );
+}
+
 // A community provider's models live in the channel this plugin published, so this
 // panel is where they are read and chosen. Showing only a count left the operator
 // with no way to see which models exist, no way to choose, and no way to change
@@ -187,6 +227,24 @@ function ModelsPanel({ providerID }: { providerID: string }) {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  // The channel test answers two independent questions: does the credential work
+  // against the provider, and does the gateway route the callable model id here.
+  const [testing, setTesting] = useState("");
+  const [testResult, setTestResult] = useState<ChannelTest | null>(null);
+
+  const runTest = async (model?: string) => {
+    setTesting(model ?? "*");
+    setError("");
+    setNotice("");
+    setTestResult(null);
+    try {
+      setTestResult(await providerApi.testCommunityChannel(providerID, model));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setTesting("");
+    }
+  };
   const rows = accounts.data?.accounts ?? [];
   const catalog = models.data?.rows ?? [];
   const published = models.data?.published ?? [];
@@ -237,6 +295,7 @@ function ModelsPanel({ providerID }: { providerID: string }) {
         {models.data?.warning ? <Notice tone="warn">{models.data.warning}</Notice> : null}
         {notice ? <Notice tone="ok">{notice}</Notice> : null}
         {error ? <Notice tone="error">{error}</Notice> : null}
+        {testResult ? <ChannelTestResult result={testResult} copy={copy} /> : null}
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" onClick={selectAll} disabled={catalog.length === 0}>
             {copy.providers.selectAll}
@@ -246,6 +305,9 @@ function ModelsPanel({ providerID }: { providerID: string }) {
           </Button>
           <Button size="sm" loading={saving} disabled={chosen.length === 0} onClick={() => void save()}>
             {copy.providers.publishModels}
+          </Button>
+          <Button size="sm" variant="secondary" loading={testing === "*"} onClick={() => void runTest()}>
+            {testing === "*" ? copy.providers.testing : copy.providers.testChannel}
           </Button>
         </div>
       </Card>
@@ -261,6 +323,7 @@ function ModelsPanel({ providerID }: { providerID: string }) {
               <tr>
                 <Th>{copy.providers.modelColumn}</Th>
                 <Th>{copy.providers.modelState}</Th>
+                <Th align="right">{copy.accounts.actions}</Th>
               </tr>
             </thead>
             <tbody>
@@ -284,6 +347,11 @@ function ModelsPanel({ providerID }: { providerID: string }) {
                     ) : (
                       <Badge tone="gray">{copy.routing.unpublished}</Badge>
                     )}
+                  </Td>
+                  <Td className="v2-cell-actions">
+                    <Button size="sm" variant="ghost" loading={testing === row.id} onClick={() => void runTest(row.id)}>
+                      {copy.providers.testModel}
+                    </Button>
                   </Td>
                 </tr>
               ))}

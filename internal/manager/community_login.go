@@ -395,7 +395,12 @@ func (a *App) publishCommunityChannel(login *communityLogin, credential *magpiec
 		"api-key-entries": []map[string]any{
 			{"api-key": credential.Access},
 		},
-		"models":   models,
+		"models": models,
+		// The prefix is the fallback that makes the channel usable at all: a plain
+		// model id such as "glm-5.3" is published by dozens of channels, so CPA may
+		// route a request for it to somebody else's row. With a prefix this provider
+		// also answers a name only it owns, "<provider>/<model>".
+		"prefix":   communityChannelPrefix(login.provider),
 		"disabled": false,
 	}
 	if errSave := a.writeCommunityChannel(label, body); errSave != nil {

@@ -78,6 +78,20 @@ export const providerApi = {
       `/providers/models?provider=${encodeURIComponent(provider)}`,
       { method: "PUT", body: JSON.stringify({ models }) },
     ),
+  // testCommunityChannel runs the two legs that decide whether a community channel
+  // is usable: the credential against the provider, and the gateway's own route for
+  // the callable model id.
+  testCommunityChannel: (provider: string, model?: string) =>
+    request<{
+      provider: string;
+      prefix?: string;
+      callable?: string;
+      upstream: { ok: boolean; status: number; latency_ms: number; model?: string; reason?: string };
+      routed: { ok: boolean; status: number; latency_ms: number; model?: string; reason?: string };
+      hint?: string;
+    }>(`/providers/models/test?provider=${encodeURIComponent(provider)}${model ? `&model=${encodeURIComponent(model)}` : ""}`, {
+      method: "POST",
+    }),
   // removeChannel deletes the CPA channel this plugin published for a community
   // provider. It is the only removable object such an account has, because it owns
   // no CPA auth file.

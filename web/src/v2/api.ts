@@ -62,6 +62,22 @@ export const providerApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // communityModels reads a community provider's catalog and what its channel
+  // currently routes. A community account has no CPA auth file, so its models live
+  // in the channel this plugin published.
+  communityModels: (provider: string) =>
+    request<{
+      provider: string;
+      available: string[];
+      published: string[];
+      rows: Array<{ id: string; published: boolean }>;
+      warning?: string;
+    }>(`/providers/models?provider=${encodeURIComponent(provider)}`),
+  saveCommunityModels: (provider: string, models: string[]) =>
+    request<{ status?: string; published?: number; error?: string; reason?: string }>(
+      `/providers/models?provider=${encodeURIComponent(provider)}`,
+      { method: "PUT", body: JSON.stringify({ models }) },
+    ),
   // removeChannel deletes the CPA channel this plugin published for a community
   // provider. It is the only removable object such an account has, because it owns
   // no CPA auth file.

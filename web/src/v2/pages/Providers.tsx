@@ -174,42 +174,129 @@ export function ProvidersPage({
   );
 }
 
+// A community provider's models live in the channel this plugin published, so this
+// panel is where they are read and chosen. Showing only a count left the operator
+// with no way to see which models exist, no way to choose, and no way to change
+// what CPA routes.
 function ModelsPanel({ providerID }: { providerID: string }) {
   const copy = useCopy();
   const accounts = useAsync(() => providerApi.accounts(providerID), [providerID]);
   const pricing = useAsync(() => providerApi.pricing(providerID), [providerID]);
+  const models = useAsync(() => providerApi.communityModels(providerID), [providerID]);
+  const [selected, setSelected] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
   const rows = accounts.data?.accounts ?? [];
+  const catalog = models.data?.rows ?? [];
+  const published = models.data?.published ?? [];
+
+  // The selection follows the server until the operator touches a checkbox.
+  const chosen = selected ?? published;
+  const isOn = (id: string) => chosen.includes(id);
+
+  const toggle = (id: string) => {
+    setSelected(isOn(id) ? chosen.filter((entry) => entry !== id) : [...chosen, id]);
+  };
+  const selectAll = () => setSelected(catalog.map((row) => row.id));
+  const selectNone = () => setSelected([]);
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const answer = await providerApi.saveCommunityModels(providerID, chosen);
+      if (answer?.error) {
+        setError(answer.reason ? `${answer.error}: ${answer.reason}` : answer.error);
+        return;
+      }
+      setNotice(copy.providers.modelsSaved);
+      setSelected(null);
+      models.reload();
+      accounts.reload();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (accounts.loading && !accounts.data) return <Skeleton className="h-64" />;
-  if (rows.length === 0) return <EmptyState title={copy.common.empty} description={copy.accounts.empty} />;
+
   return (
     <div className="v2-page">
-      <Card flush>
-        <Table>
-          <thead>
-            <tr>
-              <Th>{copy.accounts.provider}</Th>
-              <Th>{copy.accounts.models}</Th>
-              <Th>{copy.usage.priceSource}</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((account) => (
-              <tr key={account.id}>
-                <Td className="font-medium text-gray-900">{account.display_name}</Td>
-                <Td>
-                  {account.models.count}
-                  {account.models.error ? <span className="mt-0.5 block text-xs text-red-600">{account.models.error}</span> : null}
-                </Td>
-                <Td className="text-gray-600">
-                  {account.billing.rate_source ?? (pricing.data?.available ? copy.usage.priceSource : copy.common.unknown)}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+      <Card className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>{copy.providers.modelsTitle}</CardTitle>
+          <span className="text-xs text-gray-500">
+            {copy.providers.modelsPublished}: {published.length} / {catalog.length}
+          </span>
+        </div>
+        <p className="v2-hint">{copy.providers.modelsHint}</p>
+        {models.data?.warning ? <Notice tone="warn">{models.data.warning}</Notice> : null}
+        {notice ? <Notice tone="ok">{notice}</Notice> : null}
+        {error ? <Notice tone="error">{error}</Notice> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={selectAll} disabled={catalog.length === 0}>
+            {copy.providers.selectAll}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={selectNone} disabled={chosen.length === 0}>
+            {copy.providers.selectNone}
+          </Button>
+          <Button size="sm" loading={saving} disabled={chosen.length === 0} onClick={() => void save()}>
+            {copy.providers.publishModels}
+          </Button>
+        </div>
       </Card>
-      {pricing.data && !pricing.data.available ? (
-        <p className="text-xs text-gray-500">{pricing.data.reason}</p>
+
+      {models.loading && !models.data ? (
+        <Skeleton className="h-64" />
+      ) : catalog.length === 0 ? (
+        <EmptyState title={copy.common.empty} description={copy.providers.modelsHint} />
+      ) : (
+        <Card flush>
+          <Table>
+            <thead>
+              <tr>
+                <Th>{copy.providers.modelColumn}</Th>
+                <Th>{copy.providers.modelState}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalog.map((row) => (
+                <tr key={row.id}>
+                  <Td>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                        checked={isOn(row.id)}
+                        onChange={() => toggle(row.id)}
+                        aria-label={row.id}
+                      />
+                      <span className="font-mono text-xs text-gray-900">{row.id}</span>
+                    </label>
+                  </Td>
+                  <Td>
+                    {isOn(row.id) ? (
+                      <Badge tone="green">{copy.routing.published}</Badge>
+                    ) : (
+                      <Badge tone="gray">{copy.routing.unpublished}</Badge>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
+      )}
+
+      {rows.length > 0 ? (
+        <p className="v2-hint">
+          {copy.providers.modelsAccountNote}
+          {pricing.data && !pricing.data.available ? ` ${pricing.data.reason}` : ""}
+        </p>
       ) : null}
     </div>
   );

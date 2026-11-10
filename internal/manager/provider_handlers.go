@@ -50,6 +50,8 @@ func providerManagementRoutes() []cpaapi.ManagementRoute {
 		{Method: http.MethodGet, Path: providerRouteRelative + "/pricing", Description: "Read the price catalog a provider's billing uses."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/refresh", Description: "Refresh one account's quota, plan and models."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/test", Description: "Probe one model through an account credential."},
+		{Method: http.MethodGet, Path: providerRouteRelative + "/models", Description: "Read a community provider's model catalog and the selection published for it."},
+		{Method: http.MethodPut, Path: providerRouteRelative + "/models", Description: "Publish one selection of a community provider's models."},
 		{Method: http.MethodPost, Path: providerRouteRelative + "/account/bind", Description: "Publish or update one account's CPA channel."},
 		{Method: http.MethodDelete, Path: providerRouteRelative + "/account/channel", Description: "Remove the CPA channel this plugin published for a community provider."},
 		{Method: http.MethodGet, Path: providerRouteRelative + "/catalog", Description: "List provider presets and imported Magpie/OpenCode provider plugins."},
@@ -96,6 +98,10 @@ func (a *App) HandleQuotaReset(_ context.Context, _ cpaapi.QuotaResetRequest) (c
 func (a *App) handleProviderRoutes(ctx context.Context, req cpaapi.ManagementRequest, method, path string) (cpaapi.ManagementResponse, bool) {
 	if path != providerRoutePrefix && !strings.HasPrefix(path, providerRoutePrefix+"/") {
 		return cpaapi.ManagementResponse{}, false
+	}
+	// A community provider's model catalog and the selection published for it.
+	if response, handled := a.handleCommunityModels(req, method, path); handled {
+		return response, true
 	}
 	switch {
 	case method == http.MethodGet && path == providerRoutePrefix:

@@ -288,7 +288,8 @@ function ModelsPanel({ providerID }: { providerID: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>{copy.providers.modelsTitle}</CardTitle>
           <span className="text-xs text-gray-500">
-            {copy.providers.modelsPublished}: {published.length} / {catalog.length}
+            {copy.providers.modelsPublished}: {published.length} / {catalog.length} ·{" "}
+            {models.data?.source === "account" ? copy.providers.modelSourceAccount : copy.providers.modelSourcePackage}
           </span>
         </div>
         <p className="v2-hint">{copy.providers.modelsHint}</p>

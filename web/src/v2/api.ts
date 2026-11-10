@@ -71,6 +71,7 @@ export const providerApi = {
       available: string[];
       published: string[];
       rows: Array<{ id: string; published: boolean }>;
+      source?: string;
       warning?: string;
     }>(`/providers/models?provider=${encodeURIComponent(provider)}`),
   saveCommunityModels: (provider: string, models: string[]) =>

@@ -112,6 +112,7 @@ export function AccountsPage({
   onSelect,
   onRefreshNeeded,
   onNotice,
+  onOpenProviderModels,
   // The provider page renders this list inside its own header and tabs, so the
   // page header and the provider filter would only repeat what is above.
   embedded = false,
@@ -121,6 +122,10 @@ export function AccountsPage({
   onSelect: (id: string | undefined) => void;
   onRefreshNeeded: () => void;
   onNotice: (message: string) => void;
+  // A community account has no CPA auth file, so its model list and its channel
+  // test live on the provider page. The drawer links there instead of offering
+  // actions that cannot work for it.
+  onOpenProviderModels?: (providerID: string) => void;
   embedded?: boolean;
 }) {
   const copy = useCopy();
@@ -138,6 +143,10 @@ export function AccountsPage({
   // page from stacking unrelated dialogs on top of each other.
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [dialogAccount, setDialogAccount] = useState<ManagedAccount | null>(null);
+  // Multi-select: the batch actions work on what the operator ticked, and fall back
+  // to every visible editable account when nothing is ticked, which is how they
+  // behaved before the table gained checkboxes.
+  const [checked, setChecked] = useState<string[]>([]);
   // CPA manages its own auth files. Only those accounts can be edited, deleted,
   // model-tested or exported through CPA's endpoints, so the page resolves each
   // normalized account to the CPA-side id first and offers the rest of the
@@ -170,7 +179,12 @@ export function AccountsPage({
     () => managed.map((account) => account.cpaID).filter((id): id is string => Boolean(id)),
     [managed],
   );
-  const filteredScope: TargetScope = useMemo(() => ({ mode: "selected", ids: managedIDs }), [managedIDs]);
+  const selectedIDs = useMemo(
+    () => managed.filter((account) => account.cpaID && checked.includes(account.id)).map((account) => account.cpaID as string),
+    [managed, checked],
+  );
+  const scopeIDs = selectedIDs.length > 0 ? selectedIDs : managedIDs;
+  const filteredScope: TargetScope = useMemo(() => ({ mode: "selected", ids: scopeIDs }), [scopeIDs]);
 
   const openDialog = (kind: DialogKind, account?: ManagedAccount) => {
     setActionError("");
@@ -278,11 +292,11 @@ export function AccountsPage({
             <RefreshCw size={13} /> {copy.common.refresh}
           </Button>
           <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
-          <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={managedIDs.length === 0}>
-            {managementCopy.batchEdit} ({managedIDs.length})
+          <Button variant="secondary" size="sm" onClick={() => openDialog("batchEdit")} disabled={scopeIDs.length === 0}>
+            {managementCopy.batchEdit} ({scopeIDs.length})
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => openDialog("batchDelete")} disabled={managedIDs.length === 0}>
-            {managementCopy.batchDelete} ({managedIDs.length})
+          <Button variant="secondary" size="sm" onClick={() => openDialog("batchDelete")} disabled={scopeIDs.length === 0}>
+            {managementCopy.batchDelete} ({scopeIDs.length})
           </Button>
           <Button variant="secondary" size="sm" onClick={() => openDialog("dedupe")}>
             {managementCopy.dedupe}
@@ -305,6 +319,15 @@ export function AccountsPage({
           <Table>
             <thead>
               <tr>
+                <Th>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                    aria-label={copy.accounts.selectAll}
+                    checked={filtered.length > 0 && checked.length === filtered.length}
+                    onChange={(event) => setChecked(event.target.checked ? filtered.map((account) => account.id) : [])}
+                  />
+                </Th>
                 <Th>{copy.accounts.provider}</Th>
                 <Th>{copy.accounts.status}</Th>
                 <Th>{copy.accounts.plan}</Th>
@@ -317,6 +340,19 @@ export function AccountsPage({
             <tbody>
               {managed.map((account) => (
                 <tr key={account.id}>
+                  <Td>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                      aria-label={account.display_name}
+                      checked={checked.includes(account.id)}
+                      onChange={(event) =>
+                        setChecked((current) =>
+                          event.target.checked ? [...current, account.id] : current.filter((id) => id !== account.id),
+                        )
+                      }
+                    />
+                  </Td>
                   <Td className="max-w-[16rem]">
                     <button
                       type="button"
@@ -381,6 +417,7 @@ export function AccountsPage({
         cpaID={selectedCPAID}
         open={Boolean(selected)}
         onClose={() => onSelect(undefined)}
+        onOpenModels={onOpenProviderModels}
         onAction={(kind) => {
           if (!selected) return;
           const target = { ...selected, cpaID: selectedCPAID };
@@ -504,6 +541,7 @@ export function AccountDrawer({
   open,
   onClose,
   onAction,
+  onOpenModels,
 }: {
   account: ProviderAccount | null;
   cpaID: string | null;
@@ -512,6 +550,8 @@ export function AccountDrawer({
   // The drawer offers the same management actions as the table row, so an
   // operator who opened the detail view does not have to go back to find them.
   onAction?: (kind: "edit" | "models" | "test" | "delete" | "removeChannel") => void;
+  // Where a community account's model list and channel test live.
+  onOpenModels?: (providerID: string) => void;
 }) {
   const copy = useCopy();
   const managementCopy = useAccountManagementCopy();
@@ -609,6 +649,11 @@ export function AccountDrawer({
                 {/* A community account has no CPA auth file: what can be removed is
                     the channel this plugin published for it. Offering nothing left an
                     account an operator could not get rid of. */}
+                {account.provider.kind === "plugin" && onOpenModels ? (
+                  <Button variant="secondary" size="sm" onClick={() => onOpenModels(account.provider.id)}>
+                    {managementCopy.modelsAndTest}
+                  </Button>
+                ) : null}
                 {account.provider.kind === "plugin" && account.binding ? (
                   <Button variant="ghost" size="sm" onClick={() => onAction("removeChannel")}>
                     {managementCopy.removeChannel}

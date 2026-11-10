@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"cpa-account-config-manager/internal/magpiecompat"
 )
 
 // A community provider's model list.
@@ -22,9 +24,45 @@ type communityModelRow struct {
 	Published bool   `json:"published"`
 }
 
+// communityAccountModels asks the plugin for the catalog the signed-in account
+// actually serves. The package's static list is only the default for when nobody is
+// signed in, so this is what answers "are these really all the models?".
+func (a *App) communityAccountModels(ctx context.Context, providerID string) ([]string, string) {
+	if a == nil || !a.pluginRuntimeAvailable() {
+		return nil, ""
+	}
+	directory, _, errDirectory := a.importedProviderDirectory(ctx, providerID)
+	if errDirectory != nil || strings.TrimSpace(directory) == "" {
+		return nil, ""
+	}
+	_, credential, errChannel := a.communityOwnChannelCredential(providerID)
+	if errChannel != nil || strings.TrimSpace(credential) == "" {
+		return nil, ""
+	}
+	runner := magpiecompat.New("", "", magpiecompat.Options{})
+	if runner == nil || !runner.Available() {
+		return nil, ""
+	}
+	answer, errModels := runner.Models(ctx, directory, magpiecompat.LoginCredential{Access: credential})
+	if errModels != nil {
+		return nil, "the plugin could not list this account's models"
+	}
+	if len(answer.Models) == 0 {
+		if answer.Reason != "" {
+			return nil, answer.Reason
+		}
+		return nil, ""
+	}
+	return answer.Models, ""
+}
+
 // communityModelCatalog lists what the provider's package publishes, in catalog
 // order, with the ids the operator can select.
 func (a *App) communityModelCatalog(providerID string) []string {
+	return a.communityModelCatalogWithReason(providerID, "")
+}
+
+func (a *App) communityModelCatalogWithReason(providerID, fallbackReason string) []string {
 	probe := a.communityProbe(providerID)
 	out := make([]string, 0, len(probe.models))
 	seen := map[string]bool{}
@@ -205,4 +243,7 @@ type communityModelsView struct {
 	Channels  int                 `json:"channels"`
 	Stale     []string            `json:"stale,omitempty"`
 	Warning   string              `json:"warning,omitempty"`
+	// Source says whose list this is: "account" when the plugin answered with the
+	// signed-in plan's own catalog, "package" when it is the offline default.
+	Source string `json:"source,omitempty"`
 }

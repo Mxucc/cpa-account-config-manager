@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -68,9 +69,20 @@ func (a *App) handleCommunityModels(req cpaapi.ManagementRequest, method, path s
 // communityModelsView builds the read answer: the catalog, what is published, and
 // which published ids the package no longer offers.
 func (a *App) buildCommunityModelsView(providerID string) cpaapi.ManagementResponse {
-	available := a.communityModelCatalog(providerID)
+	// Prefer the account's own catalog: the package's static list is only the
+	// default for when nobody is signed in, so showing it as the whole truth would
+	// under-report what the plan actually serves.
+	available, reason := a.communityAccountModels(context.Background(), providerID)
+	source := "account"
+	if len(available) == 0 {
+		available = a.communityModelCatalog(providerID)
+		source = "package"
+	}
 	published, errPublished := a.communityPublishedModels(providerID)
-	view := communityModelsView{Provider: providerID, Available: available, Published: published}
+	view := communityModelsView{Provider: providerID, Available: available, Published: published, Source: source}
+	if reason != "" {
+		view.Warning = reason
+	}
 	if errPublished != nil {
 		view.Warning = errPublished.Error()
 	}

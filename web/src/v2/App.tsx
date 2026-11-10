@@ -198,6 +198,10 @@ export function V2App() {
               onSelect={(id) => navigate(id ? `/accounts/selected/${encodeURIComponent(id)}` : "/accounts")}
               onRefreshNeeded={onRefreshNeeded}
               onNotice={setNotice}
+              // A community account's models and channel test live on its provider
+              // page, so the drawer opens that page instead of a dialog that cannot
+              // work without a CPA auth file.
+              onOpenProviderModels={(id) => navigate(`/providers/${encodeURIComponent(id)}/models`)}
             />
           ) : null}
           {route.view === "providers" ? (

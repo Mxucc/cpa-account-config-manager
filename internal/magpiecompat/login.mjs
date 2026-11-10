@@ -229,12 +229,17 @@ async function run() {
   // Some providers publish their API base only through the config hook, which is
   // what OpenCode applies to the provider entry. Ask it for that shape once.
   let configuredBase = "";
+  // The provider entry the config hook fills in. The account model list is asked
+  // against it, because that is the object OpenCode hands a plugin's models hook.
+  let configProvider = {};
   try {
     if (typeof hooks.config === "function") {
       const config = { provider: {} };
       await hooks.config(config);
       for (const entry of Object.values(config.provider ?? {})) {
-        const api = entry && typeof entry === "object" ? entry.api : "";
+        if (!entry || typeof entry !== "object") continue;
+        if (Object.keys(configProvider).length === 0) configProvider = entry;
+        const api = entry.api;
         if (typeof api === "string" && /^https?:\/\//i.test(api.trim())) {
           configuredBase = api.trim();
           break;
@@ -255,6 +260,46 @@ async function run() {
         methods,
       },
     });
+    return;
+  }
+
+  if (action === "models") {
+    // The account's own catalog, which is what the plan actually serves. The
+    // package's static list is a default for when nobody is signed in; asking with
+    // the stored credential is the only way to learn the real one.
+    const credential = argument.credential && typeof argument.credential === "object" ? argument.credential : {};
+    const access = String(credential.access ?? "").trim();
+    if (!access) {
+      say({ ok: true, result: { provider: providerID(hooks), models: [], reason: "no credential is stored for this provider" } });
+      return;
+    }
+    const auth = {
+      type: "oauth",
+      access,
+      refresh: String(credential.refresh ?? ""),
+      expires: Number(credential.expires ?? 0) || 0,
+      accountId: String(credential.account_id ?? ""),
+      ...(credential.state && typeof credential.state === "object" ? { ...credential.state } : {}),
+    };
+    const providerArg = configProvider ?? {};
+    let models = [];
+    let reason = "";
+    try {
+      if (typeof hooks.provider?.models === "function") {
+        const produced = await hooks.provider.models(providerArg, { auth });
+        const rows = Array.isArray(produced) ? produced : produced && typeof produced === "object" ? Object.values(produced) : [];
+        models = rows
+          .map((row) => (typeof row === "string" ? row : row?.id ?? row?.name ?? row?.model))
+          .filter((id) => typeof id === "string" && id.trim() !== "")
+          .map((id) => id.trim())
+          .slice(0, 500);
+      } else {
+        reason = "this plugin does not expose an account model list";
+      }
+    } catch (error) {
+      reason = String(error?.message ?? error).slice(0, 200);
+    }
+    say({ ok: true, result: { provider: providerID(hooks), models, reason } });
     return;
   }
 

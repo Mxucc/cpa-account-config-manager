@@ -112,6 +112,46 @@ func (r *Runner) Methods(ctx context.Context, directory string) (LoginMethods, e
 	return methods, nil
 }
 
+// AccountModels is what a plugin answers for the account a credential belongs to.
+// Models is empty with a Reason when the plugin cannot name them, which is different
+// from a provider that serves nothing.
+type AccountModels struct {
+	Provider string   `json:"provider"`
+	Models   []string `json:"models"`
+	Reason   string   `json:"reason,omitempty"`
+}
+
+// Models asks a plugin for the signed-in account's own model catalog. The package's
+// static list is the default for when nobody is signed in; the account's real plan is
+// only knowable with the credential.
+func (r *Runner) Models(ctx context.Context, directory string, credential LoginCredential) (AccountModels, error) {
+	if !r.Available() {
+		return AccountModels{}, ErrBunUnavailable
+	}
+	argument := map[string]any{
+		"credential": map[string]any{
+			"access":     credential.Access,
+			"refresh":    credential.Refresh,
+			"expires":    credential.Expires,
+			"account_id": credential.AccountID,
+			"state":      credential.State,
+		},
+	}
+	payload, errMarshal := json.Marshal(argument)
+	if errMarshal != nil {
+		return AccountModels{}, fmt.Errorf("the model request could not be encoded")
+	}
+	result, errRun := r.runLogin(ctx, directory, "models", payload, 45*time.Second)
+	if errRun != nil {
+		return AccountModels{}, errRun
+	}
+	var answer AccountModels
+	if errDecode := json.Unmarshal(result, &answer); errDecode != nil {
+		return AccountModels{}, fmt.Errorf("%w: the plugin answered no usable model list", ErrPluginInvalid)
+	}
+	return answer, nil
+}
+
 // LoginMethods exposes a plugin's declared methods to the caller, which needs them
 // to decide between a browser flow and a pasted key.
 func (s *LoginSession) Method() string { return s.method }

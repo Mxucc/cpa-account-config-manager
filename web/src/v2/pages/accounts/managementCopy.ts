@@ -72,6 +72,9 @@ export interface ManagementCopy {
   close: string;
   unmanaged: string;
   removeChannel: string;
+  view: string;
+  testModelShort: string;
+  exportConfig: string;
   modelsAndTest: string;
   removeChannelHint: string;
   removedChannel: string;
@@ -178,6 +181,9 @@ const zh: ManagementCopy = {
   close: "关闭",
   unmanaged: "该账号没有 CPA auth 文件（插件自建的社区账号），所以编辑、模型目录与测试不适用；可以移除本插件为它发布的渠道。",
   removeChannel: "移除渠道",
+  view: "查看",
+  testModelShort: "测试模型",
+  exportConfig: "导出配置",
   modelsAndTest: "模型与测试",
   removeChannelHint: "只删除本插件为这个供应商建立的 CPA 渠道，不会动你自己的账号。",
   removedChannel: "渠道已移除",
@@ -284,6 +290,9 @@ const en: ManagementCopy = {
   close: "Close",
   unmanaged: "This account has no CPA auth file (a community account this plugin created), so edit, models and test do not apply. The channel this plugin published for it can be removed.",
   removeChannel: "Remove channel",
+  view: "View",
+  testModelShort: "Test model",
+  exportConfig: "Export config",
   modelsAndTest: "Models & test",
   removeChannelHint: "Removes only the CPA channel this plugin created for the provider; your own account is untouched.",
   removedChannel: "Channel removed",

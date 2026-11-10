@@ -183,6 +183,15 @@ export function AccountsPage({
     () => managed.filter((account) => account.cpaID && checked.includes(account.id)).map((account) => account.cpaID as string),
     [managed, checked],
   );
+  // A row's export covers that row alone; the toolbar's export covers the scope.
+  const [exportScope, setExportScope] = useState<TargetScope | null>(null);
+  const openExport = (account: ManagedAccount) => {
+    if (!account.cpaID) return;
+    setActionError("");
+    setExportScope({ mode: "selected", ids: [account.cpaID] });
+    setDialog("export");
+  };
+
   const scopeIDs = selectedIDs.length > 0 ? selectedIDs : managedIDs;
   const filteredScope: TargetScope = useMemo(() => ({ mode: "selected", ids: scopeIDs }), [scopeIDs]);
 
@@ -305,7 +314,15 @@ export function AccountsPage({
           <Button variant="secondary" size="sm" onClick={() => openDialog("import")}>
             {managementCopy.importAccounts}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => openDialog("export")} disabled={filtered.length === 0}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setExportScope(null);
+              openDialog("export");
+            }}
+            disabled={filtered.length === 0}
+          >
             {managementCopy.exportAccounts}
           </Button>
         </Toolbar>
@@ -386,24 +403,43 @@ export function AccountsPage({
                     )}
                   </Td>
                   <Td>{account.models.count}</Td>
-                  {/* Two actions keep the row inside the viewport; edit and
-                      delete live in the drawer, one click from the name. */}
+                  {/* Every account carries its own actions: an operator should not
+                      have to open a drawer to edit or delete the row they are
+                      looking at. A community account has no CPA auth file, so its
+                      actions are the ones that object supports. */}
                   <Td className="v2-cell-actions">
                     <Button variant="ghost" size="sm" onClick={() => onSelect(account.id)}>
-                      {copy.common.details}
+                      {managementCopy.view}
                     </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      loading={busy === `${account.id}:refresh`}
-                      onClick={() => refresh(account)}
-                      // A provider that does not implement refresh must not offer
-                      // a button that answers "unknown provider": an installed
-                      // community plugin has no refresh hook at all.
-                      disabled={!canRefresh(account, providers.data?.providers ?? [])}
-                    >
-                      {copy.accounts.refresh}
-                    </Button>
+                    {account.cpaID ? (
+                      <>
+                        <Button variant="ghost" size="sm" onClick={() => openDialog("edit", account)}>
+                          {managementCopy.edit}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openDialog("test", account)}>
+                          {managementCopy.testModelShort}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openExport(account)}>
+                          {managementCopy.exportConfig}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openDialog("delete", account)}>
+                          {managementCopy.delete}
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        {onOpenProviderModels ? (
+                          <Button variant="ghost" size="sm" onClick={() => onOpenProviderModels(account.provider.id)}>
+                            {managementCopy.testModelShort}
+                          </Button>
+                        ) : null}
+                        {account.binding ? (
+                          <Button variant="ghost" size="sm" onClick={() => void removeChannel(account.provider.id)}>
+                            {managementCopy.removeChannel}
+                          </Button>
+                        ) : null}
+                      </>
+                    )}
                   </Td>
                 </tr>
               ))}
@@ -525,9 +561,12 @@ export function AccountsPage({
         }}
       />
       <ExportAccountsDialog
-        scope={filteredScope}
+        scope={exportScope ?? filteredScope}
         open={dialog === "export"}
-        onClose={() => setDialog(null)}
+        onClose={() => {
+          setDialog(null);
+          setExportScope(null);
+        }}
         onError={setActionError}
         onNotice={onNotice}
       />

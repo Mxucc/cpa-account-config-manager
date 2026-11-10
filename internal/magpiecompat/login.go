@@ -118,7 +118,13 @@ func (r *Runner) Methods(ctx context.Context, directory string) (LoginMethods, e
 type AccountModels struct {
 	Provider string   `json:"provider"`
 	Models   []string `json:"models"`
-	Reason   string   `json:"reason,omitempty"`
+	// Plan and Account identify the signed-in account the way the provider names
+	// it, so a row can say whose account it is instead of only which vendor.
+	Plan    string `json:"plan,omitempty"`
+	Account string `json:"account,omitempty"`
+	// Windows is the allowance the provider reports for this account.
+	Windows []Window `json:"windows,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
 }
 
 // Models asks a plugin for the signed-in account's own model catalog. The package's

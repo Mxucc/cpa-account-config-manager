@@ -328,8 +328,8 @@ export function Dialog({ open, title, onClose, children, footer }: { open: boole
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col rounded-xl border border-gray-200 bg-white shadow-md">
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3.5">
-          <h2 className="v2-section-title">{title}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="close">
+          <h2 className="v2-section-title min-w-0 break-words">{title}</h2>
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={onClose} aria-label="close">
             <X size={16} />
           </Button>
         </div>
@@ -354,7 +354,10 @@ export function Drawer({ open, title, onClose, children }: { open: boolean; titl
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-gray-900/30" role="dialog" aria-modal="true" aria-label={title}>
       <aside className="h-full w-full max-w-xl overflow-y-auto border-l border-gray-200 bg-white shadow-md">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-5 py-3.5">
+        {/* The header is not sticky on purpose: a sticky bar sits over the content
+            that scrolls under it, which put this close button on top of the account
+            action buttons and made them hard to click. */}
+        <div className="flex items-start justify-between gap-3 border-b border-gray-200 bg-white px-5 py-3.5">
           <h2 className="v2-section-title">{title}</h2>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="close">
             <X size={16} />

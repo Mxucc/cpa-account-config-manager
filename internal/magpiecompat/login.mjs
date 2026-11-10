@@ -299,7 +299,42 @@ async function run() {
     } catch (error) {
       reason = String(error?.message ?? error).slice(0, 200);
     }
-    say({ ok: true, result: { provider: providerID(hooks), models, reason } });
+    // What Magpie shows for the same account: the plan name and the allowance
+    // windows. auth.usage takes a getter so the plugin can renew the credential.
+    let plan = "";
+    let windows = [];
+    let account = String(credential.account_id ?? "").trim();
+    try {
+      if (typeof hooks.auth?.usage === "function") {
+        const usage = await hooks.auth.usage(() => auth);
+        if (usage && typeof usage === "object") {
+          if (typeof usage.plan === "string") plan = usage.plan.trim().slice(0, 120);
+          if (!account) {
+            const said = usage.account ?? usage.email ?? usage.name ?? "";
+            if (typeof said === "string") account = said.trim().slice(0, 200);
+          }
+          const rows = Array.isArray(usage.windows) ? usage.windows : [];
+          windows = rows
+            .filter((row) => row && typeof row === "object" && typeof row.name === "string" && row.name.trim())
+            .slice(0, 12)
+            .map((row) => ({
+              name: row.name.trim().slice(0, 60),
+              used: number(row.used ?? row.usedPercent ?? row.used_percent),
+              limit: number(row.limit ?? row.total ?? row.amount),
+              balance: number(row.balance ?? row.remaining),
+              unit: typeof row.unit === "string" ? row.unit.slice(0, 12) : undefined,
+              reset: typeof row.reset === "string" ? row.reset.slice(0, 40) : typeof row.resetsAt === "string" ? row.resetsAt.slice(0, 40) : undefined,
+              aside: row.aside === true,
+            }));
+          if ((usage.error || usage.reason) && !reason) {
+            reason = String(usage.error ?? usage.reason).slice(0, 200);
+          }
+        }
+      }
+    } catch (error) {
+      if (!reason) reason = String(error?.message ?? error).slice(0, 200);
+    }
+    say({ ok: true, result: { provider: providerID(hooks), models, plan, windows, account, reason } });
     return;
   }
 

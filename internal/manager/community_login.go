@@ -425,9 +425,10 @@ func (a *App) communityProviderDeclaredBase(providerID string) string {
 // request, and a probe spawns a process: without this, one page load ran the same
 // plugin several times and the account list took fifteen seconds to answer.
 var communityProbeCache = struct {
-	mu      sync.Mutex
-	entries map[string]communityProbeEntry
-}{entries: map[string]communityProbeEntry{}}
+	mu       sync.Mutex
+	entries  map[string]communityProbeEntry
+	statuses map[string]communityStatusEntry
+}{entries: map[string]communityProbeEntry{}, statuses: map[string]communityStatusEntry{}}
 
 const communityProbeCacheTTL = 60 * time.Second
 
@@ -435,6 +436,12 @@ type communityProbeEntry struct {
 	models   []string
 	baseURL  string
 	probedAt time.Time
+}
+
+// communityStatusEntry is one cached account status answer.
+type communityStatusEntry struct {
+	value magpiecompat.AccountModels
+	at    time.Time
 }
 
 // communityProbe returns one imported provider's catalog and base URL, reusing a

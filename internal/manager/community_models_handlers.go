@@ -54,7 +54,17 @@ func (a *App) handleCommunityModels(req cpaapi.ManagementRequest, method, path s
 				"reason":   errWrite.Error(),
 			}), true
 		}
-		view := a.buildCommunityModelsView(providerID)
+		// The answer is built from what was just written, not by re-reading the
+		// channel: a read that lands before CPA has applied the change would report
+		// the old list, and the page would show every model as unpublished until the
+		// operator refreshed again.
+		view := a.communityModelsViewValue(providerID)
+		view.Available = mergeModelIDs(request.Models, view.Available)
+		view.Published = mergeModelIDs(request.Models, nil)
+		view.Rows = nil
+		for _, id := range view.Available {
+			view.Rows = append(view.Rows, communityModelRow{ID: id, Published: containsID(view.Published, id)})
+		}
 		return jsonResponse(http.StatusOK, map[string]any{
 			"provider":  providerID,
 			"status":    "saved",
@@ -68,7 +78,7 @@ func (a *App) handleCommunityModels(req cpaapi.ManagementRequest, method, path s
 
 // communityModelsView builds the read answer: the catalog, what is published, and
 // which published ids the package no longer offers.
-func (a *App) buildCommunityModelsView(providerID string) cpaapi.ManagementResponse {
+func (a *App) communityModelsViewValue(providerID string) communityModelsView {
 	// Prefer the account's own catalog: the package's static list is only the
 	// default for when nobody is signed in, so showing it as the whole truth would
 	// under-report what the plan actually serves.
@@ -108,5 +118,10 @@ func (a *App) buildCommunityModelsView(providerID string) cpaapi.ManagementRespo
 	if len(available) == 0 && view.Warning == "" {
 		view.Warning = "this provider published no model catalog"
 	}
-	return jsonResponse(http.StatusOK, view)
+	return view
+}
+
+// buildCommunityModelsView renders that value as a management response.
+func (a *App) buildCommunityModelsView(providerID string) cpaapi.ManagementResponse {
+	return jsonResponse(http.StatusOK, a.communityModelsViewValue(providerID))
 }

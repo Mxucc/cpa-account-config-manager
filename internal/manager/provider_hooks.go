@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"cpa-account-config-manager/internal/magpiecompat"
 	"cpa-account-config-manager/internal/provider"
@@ -127,6 +128,13 @@ func (a *App) importedPluginAccounts(ctx context.Context) []provider.Account {
 			input.DisplayName = entry.Name
 		}
 		account := provider.FromMagpiePlugin(input)
+		// With a signed-in account the plugin can say who it is, what plan it is on
+		// and what allowance is left. Without that the row was only a vendor name
+		// with no usage, which is exactly what made a signed-in account look like an
+		// unidentified placeholder.
+		if status, known := a.communityAccountStatus(ctx, entry.ID); known {
+			applyCommunityStatus(&account, status)
+		}
 		// A provider whose channel CPA does not route has to say so on the account
 		// itself: the routing page reads this field, so an account without one is an
 		// account that page cannot describe.
@@ -137,6 +145,46 @@ func (a *App) importedPluginAccounts(ctx context.Context) []provider.Account {
 		out = append(out, account)
 	}
 	return out
+}
+
+// applyCommunityStatus puts the signed-in account's identity, plan and allowance on
+// the row the page renders. The window mapping is provider.FromMagpiePlugin's, so a
+// plugin window follows the same used/limit/balance rules as every other provider.
+// Only what the provider reported is filled: an unknown field stays unknown.
+func applyCommunityStatus(account *provider.Account, status magpiecompat.AccountModels) {
+	if account == nil {
+		return
+	}
+	windows := make([]provider.MagpieWindow, 0, len(status.Windows))
+	for _, window := range status.Windows {
+		windows = append(windows, provider.MagpieWindow{
+			Name: window.Name, Used: window.Used, Limit: window.Limit, Balance: window.Balance,
+			Unit: window.Unit, Reset: window.Reset, Aside: window.Aside,
+		})
+	}
+	mapped := provider.FromMagpiePlugin(provider.MagpiePluginInput{
+		ProviderID:  account.Provider.ID,
+		DisplayName: account.DisplayName,
+		Models:      status.Models,
+		Windows:     windows,
+		UpdatedAt:   time.Now().UTC(),
+	})
+	if name := strings.TrimSpace(status.Account); name != "" {
+		account.DisplayName = name
+		account.Credential.Configured = true
+	}
+	if plan := strings.TrimSpace(status.Plan); plan != "" {
+		account.Plan.Name = plan
+	}
+	if len(mapped.Quota) > 0 {
+		account.Quota = mapped.Quota
+		if account.Billing.Mode == provider.BillingUnknown {
+			account.Billing = mapped.Billing
+		}
+	}
+	if mapped.Models.Count > 0 {
+		account.Models = mapped.Models
+	}
 }
 
 // communityChannelStates maps a community provider id onto the state of the CPA

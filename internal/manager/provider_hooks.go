@@ -135,6 +135,19 @@ func (a *App) importedPluginAccounts(ctx context.Context) []provider.Account {
 		if status, known := a.communityAccountStatus(ctx, entry.ID); known {
 			applyCommunityStatus(&account, status)
 		}
+		// The credential names the account when the provider put an identity in it,
+		// which is what makes two accounts of one vendor tellable apart.
+		if a.communityChannelHasCredential(entry.ID) {
+			account.Credential.Configured = true
+		}
+		if label := a.communityAccountLabel(entry.ID); label != "" {
+			account.DisplayName = label
+		}
+		if len(account.Quota) == 0 && account.Credential.Configured {
+			// Saying nothing would read as "no limit"; the provider answered with no
+			// allowance window, and that is the honest sentence.
+			account.StatusNote = "the provider reported no allowance window for this account"
+		}
 		// A provider whose channel CPA does not route has to say so on the account
 		// itself: the routing page reads this field, so an account without one is an
 		// account that page cannot describe.

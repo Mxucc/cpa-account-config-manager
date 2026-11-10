@@ -635,6 +635,10 @@ func (a *App) publishCommunityChannelModelRefresh(providerID string) (int, error
 		}
 		if matched {
 			entry["models"] = models
+			// Republishing also repairs the namespace: a row written before the
+			// prefix existed answers only the plain model id, which another channel
+			// can take.
+			entry["prefix"] = communityChannelPrefix(providerID)
 			updated++
 		}
 		items = append(items, entry)

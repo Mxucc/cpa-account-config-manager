@@ -182,6 +182,9 @@ func (a *App) writeCommunityChannelModels(providerID string, models []string) (i
 			continue
 		}
 		entries[index]["models"] = rows
+		// The prefix is part of publishing, not an extra: without it the model ids
+		// compete with every other channel that publishes the same id.
+		entries[index]["prefix"] = communityChannelPrefix(providerID)
 		updated++
 	}
 	if updated == 0 {
